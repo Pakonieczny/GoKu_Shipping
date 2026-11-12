@@ -59,6 +59,7 @@ async function loadStoredForAlign(tRef) {
     const row = {
       id       : d.id,
       fp       : align.fingerprint(data),
+      lk       : align.looseKey(data),
       tsMs     : align.msOf(data.timestamp),
       createdMs: align.msOf(data.createdAt),
       direction: data.direction || (data.senderRole === "customer" ? "inbound" : "outbound")

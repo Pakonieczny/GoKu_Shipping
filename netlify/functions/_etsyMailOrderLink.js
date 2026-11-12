@@ -1620,6 +1620,22 @@ async function linkPutAway(station, body = {}) {
   return { ok: true, n: r.n, health: pub.res, link: LinkHealth.summaryOf(pub.doc) };
 }
 
+/** MAILLINK (Paul, 12 Nov 2026: "The last 3 readings of an Etsy conversation failed ... I cannot reset it"): the read notice's Re-read now.
+ *  The conversation whose read failed is read again in full at once (a scrape job for the Chrome extension: it reads Etsy's page, no
+ *  Etsy API call, nothing sent) and the count of failed reads starts again, so the notice clears for everybody; three more failed reads
+ *  bring it back (see readRecover in _etsyMailLinkConsistency.js). Only the link's own bookkeeping changes. Two presses within 8 s share one answer. */
+let _reread = { at: 0, value: null };
+async function linkReread(station, body = {}) {
+  const now = Date.now();
+  if (_reread.value && now - _reread.at < 8000) return _reread.value;
+  const r = await require("./_etsyMailLinkConsistency").readRecover(db, { now, manual: true, by: station && station.name });
+  const pub = await LinkHealth.publish(db, now, { keepStamp: true });
+  _health = { at: now, value: pub.res }; _recheck = { at: 0, value: null };
+  const value = { ok: true, queued: !!r.queued, waiting: !!(r.jobId && !r.queued), thread: !!r.threadId, health: pub.res, link: LinkHealth.summaryOf(pub.doc) };
+  _reread = { at: now, value };
+  return value;
+}
+
 // ─── testing the line with an Etsy account of our own ───────────────────
 
 /* "Send a test" goes through every real part (this server, the inbox, the Etsy helper, Etsy, the Gmail watcher and the
@@ -1964,7 +1980,7 @@ module.exports = {
   cancel: withFlush(cancel), markCopied: withFlush(markCopied), markSent: withFlush(markSent), read: withFlush(read),
   onQueueChange: withFlush(onQueueChange),
   setStatus: withFlush(setStatus), setLang: withFlush(setLang), linkUrl: withFlush(linkUrl),
-  simulateReply: withFlush(simulateReply), translate, health, linkRecheck, linkDismiss, linkResolve, linkPutAway, historyInfo, history,
+  simulateReply: withFlush(simulateReply), translate, health, linkRecheck, linkDismiss, linkResolve, linkPutAway, linkReread, historyInfo, history,
   testInfo: withFlush(testInfo), testStart: withFlush(testStart), testCancel,
   // exposed for tests
   _internal: { foldMessages, sameText, normText, summary, cleanText, cleanId, applyPatch, friendlyFailure, parkedCopy, isDelete, SB, sbQueueView, resetRecheck: () => { _recheck = { at: 0, value: null }; } }

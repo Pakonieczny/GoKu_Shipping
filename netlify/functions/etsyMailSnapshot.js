@@ -216,10 +216,30 @@ function unmangleObjectStrings(obj, _seen) {
 }
 
 // Etsy page-change alarm. A scrape that reads no messages, only blank
-// ones, none with a time, or nothing matching the stored copy of a known
-// thread means Etsy changed its page (or signed the extension out).
-// Each scrape updates EtsyMail_Config/scrapeHealth; the inbox shows a red
-// line after three bad scrapes in a row.
+// ones, or none with a time means Etsy changed its page (or signed the
+// extension out). Each scrape updates EtsyMail_Config/scrapeHealth; the
+// inbox shows a red line after three bad scrapes in a row.
+//
+// MAILLINK (Paul, 12 Nov 2026: "The last 3 readings of an Etsy conversation failed (Scraped messages matched none of the
+// stored ones)", and nothing could reset it). A read that shares nothing with the stored copy is NOT by itself a broken page:
+//   - a read of only the newest messages (incremental) shares nothing whenever more new messages arrived than fit on the screen,
+//     or the visible ones are the shop's own replies sent from the inbox (stored as one "just sent" stand-in, which matching skips):
+//     that is the ordinary gap, answered with needsFullScrape, and the full read that follows stores what was missing;
+//   - a complete read (full) that is well formed (text and times) but shares nothing, even on the words alone, is a fresh full
+//     sync: its messages are stored and the conversation is marked (thread.alignMiss). Only when the NEXT complete read of the
+//     same conversation shares nothing either (what was stored from Etsy's page last time does not come back the same) is the
+//     page really unreadable, and only that counts as a bad read.
+// So the alarm is kept for real, persistent failures, and a good read clears it by itself (consecutiveBad: 0).
+const ALIGN_MISS_TTL_MS = 7 * 24 * 3600 * 1000;
+const NO_OVERLAP_REASON = "Scraped messages matched none of the stored ones";
+function alignVerdict({ storedCount, realCount, matched, scrapeMode, prevMiss, nowMs }) {
+  const none = storedCount >= 3 && realCount >= 3 && matched === 0;
+  if (!none) return { kind: "ok", issue: null };
+  if (scrapeMode !== "full") return { kind: "gap", issue: null };
+  const fresh = !!prevMiss && typeof prevMiss === "object" && typeof prevMiss.atMs === "number" && nowMs - prevMiss.atMs < ALIGN_MISS_TTL_MS;
+  return fresh ? { kind: "repeat", issue: NO_OVERLAP_REASON } : { kind: "resync", issue: null };
+}
+
 function scrapeProblem(body, messages, ctx) {
   const d = body.diagnostics || {};
   if (body.session && body.session.etsyLoggedIn === false) return "Etsy signed the extension out";
@@ -232,7 +252,7 @@ function scrapeProblem(body, messages, ctx) {
     && !(Array.isArray(m.imageUrls) && m.imageUrls.length) && m.messageType !== "image").length;
   if (blank * 2 > real.length) return "Messages came in without their text";
   if (real.length >= 3 && real.every(m => typeof m.timestampMs !== "number")) return "Messages came in without times";
-  if (ctx && ctx.storedCount >= 3 && real.length >= 3 && ctx.matched === 0) return "Scraped messages matched none of the stored ones";
+  // (nothing matching the stored copy: alignVerdict, which tells an ordinary gap and a fresh full sync from a page that is unreadable)
   return null;
 }
 
@@ -506,14 +526,35 @@ exports.handler = async (event) => {
     const scrapeMode = (body.diagnostics && body.diagnostics.scrapeMode) || null;
     const incoming = messages.map(m => ({
       fp  : m ? align.fingerprint(m) : "",
+      lk  : m ? align.looseKey(m) : "",
       tsMs: m && typeof m.timestampMs === "number" ? m.timestampMs : null
     }));
     const scrapeTimeMs = typeof scrapedAt === "number" ? scrapedAt : Date.now();
     const aligned = align.alignScrape(storedEtsy, incoming, { scrapedAt: scrapeTimeMs });
-    const scrapeIssue = scrapeProblem(body, messages, {
+    const matchedCount = aligned.matchOf.filter(j => j >= 0).length;
+    const prevMiss = tSnap.exists ? ((tSnap.data() || {}).alignMiss || null) : null;
+    const verdict = alignVerdict({
       storedCount: threadExisted ? storedEtsy.length : 0,
-      matched: aligned.matchOf.filter(j => j >= 0).length
+      realCount  : messages.filter(Boolean).length,
+      matched    : matchedCount,
+      scrapeMode,
+      prevMiss,
+      nowMs      : Date.now()
     });
+    const scrapeIssue = scrapeProblem(body, messages) || verdict.issue;
+    // The conversation's own record of a complete read that shared nothing (see alignVerdict): set by a fresh full sync, cleared by
+    // the first read that lines up again. Only on a well-formed read (a page that came back blank or without times proves nothing).
+    if (threadExisted && !scrapeProblem(body, messages)) {
+      if (verdict.kind === "resync" || verdict.kind === "repeat") {
+        threadPatch.alignMiss = { atMs: Date.now(), n: ((prevMiss && prevMiss.n) || 0) + 1, pageMessages: messages.length, stored: storedEtsy.length };
+      } else if (prevMiss && matchedCount > 0) {
+        threadPatch.alignMiss = FV.delete();
+      }
+    }
+    if (verdict.kind !== "ok" || aligned.loose) {
+      console.log(`[snapshot] ${threadId}: ${aligned.loose ? "matched on the words alone (" + matchedCount + ")" : "no overlap with " + storedEtsy.length + " stored"}`
+        + ` · mode ${scrapeMode || "?"} · ${verdict.kind}`);
+    }
 
     // Copies stored by the old dedupe: proven by this scrape, or found by
     // the pattern the old bug left (findLegacyDuplicates).
@@ -559,6 +600,9 @@ exports.handler = async (event) => {
         } catch (_) { /* previews are optional */ }
       }
       if (j >= 0) continue;   // already stored
+      // A second complete read in a row that shares nothing with what the first one stored: the page's words do not come back the
+      // same, so storing them again would only make copies. Nothing is stored; the read counts as bad (alignVerdict).
+      if (verdict.kind === "repeat") continue;
 
       // Sanitize listing cards — accept only expected fields, drop anything weird
       const listingCards = Array.isArray(m.listingCards)
@@ -1062,6 +1106,7 @@ exports.handler = async (event) => {
       updatedMessages : updatedCount,
       duplicatesRemoved,
       needsFullScrape,
+      resync          : verdict.kind === "resync",
       totalScanned    : messages.length,
       imagesToMirror
     });

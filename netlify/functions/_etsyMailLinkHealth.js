@@ -225,16 +225,27 @@ function evaluate(ev, now) {
 
   // ── reading answers in: each new message is a scrape job for the helper, and its page must still be readable ──
   const sh = ev.scrapeHealth || null;
-  const badRun = sh && (sh.consecutiveBad || 0) >= T.pageBadRuns && typeof sh.lastBadAtMs === "number" && now - sh.lastBadAtMs < DAY;
+  // MAILLINK (Paul, 12 Nov 2026: the red "readings failed" notice that nobody could reset). A run of bad reads is a verdict only while
+  // nothing has been read well since (lastOkAtMs) and nobody pressed Re-read since (resetAtMs). The inbox re-reads the last failing
+  // conversation by itself, with back-off (scrapeHealth.recover, queued by etsyMailLinkWatchdog.js): while that re-read waits the light
+  // says so; while the helper's computer is off nothing can be read, so it waits calmly too.
+  const lastBad = sh && typeof sh.lastBadAtMs === "number" ? sh.lastBadAtMs : 0;
+  const clearedSince = sh && ((sh.lastOkAtMs || 0) > lastBad || (sh.resetAtMs || 0) >= lastBad);
+  const badRun = sh && (sh.consecutiveBad || 0) >= T.pageBadRuns && lastBad > 0 && now - lastBad < DAY && !clearedSince;
   const lim = readLimits(now, seen != null && seen < T.helperAlive && ok("helper"));   // longer at night, while the helper is heard from
   const waitText = `${ns}${ns >= 40 ? "+" : ""} new Etsy ${ns === 1 ? "message is" : "messages are"} waiting to be read into the inbox, the oldest for ${ago(late)}.`;
   if (badRun) {
     const signedOut = sh.lastBadReason === "Etsy signed the extension out";
-    const since = ` The last failure was ${ago(now - sh.lastBadAtMs)} ago and nothing has been read since.`;
-    add("read", "Reading answers", now - sh.lastBadAtMs < 2 * HOUR ? "down" : "warn", (signedOut
+    const since = ` The last failure was ${ago(now - lastBad)} ago and nothing has been read since.`;
+    const rec = sh.recover && typeof sh.recover === "object" && (sh.recover.atMs || 0) >= lastBad ? sh.recover : null;
+    const recText = rec ? ` The inbox asked the Etsy helper to read that conversation again ${ago(Math.max(1000, now - rec.atMs))} ago (try ${rec.n || 1}) and keeps retrying by itself.` : " The inbox re-reads it by itself within a few minutes.";
+    const act = signedOut ? "" : " If it stays: press Re-read now under Details, and if that fails too, reload the inbox's Etsy extension in Chrome (chrome://extensions, the circular arrow) and keep its Etsy tab signed in.";
+    const level = away ? "wait" : now - lastBad < 2 * HOUR ? "down" : "warn";
+    add("read", "Reading answers", level, (signedOut
       ? "The inbox's Etsy helper is signed out of Etsy, so new messages cannot be read. Sign in to Etsy in the browser that has the extension."
-      : `The last ${sh.consecutiveBad} readings of an Etsy conversation failed (${clean(sh.lastBadReason, 100) || "no messages read"}). Etsy may have changed its page.`) + since,
-    signedOut ? "Signed out of Etsy" : "Etsy page not read", 4);
+      : `The last ${sh.consecutiveBad} readings of an Etsy conversation failed (${clean(sh.lastBadReason, 100) || "no messages read"}).`) + since
+      + (away ? " The helper's computer is off now: it is read again by itself when the helper is back." : signedOut ? "" : recText + act),
+    signedOut ? "Signed out of Etsy" : "Etsy page not read", 4, { reread: !signedOut, thread: sh.lastBadThreadId || null, bad: sh.consecutiveBad || 0 });
   }
   else if (!ok("jobs") || !jobs) add("read", "Reading answers", "warn", "Could not look at the messages waiting to be read.", "Reading unknown", 4);
   else if (away && ns > 0) add("read", "Reading answers", "wait", `${ns}${ns >= 40 ? "+" : ""} new Etsy ${ns === 1 ? "message is" : "messages are"} waiting to be read into the inbox; the helper reads ${ns === 1 ? "it" : "them"} when it is back.`, "Answers delayed", 4);

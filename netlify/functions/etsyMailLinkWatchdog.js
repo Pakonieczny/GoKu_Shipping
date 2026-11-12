@@ -9,7 +9,8 @@
  *         EtsyMail_OrderLinkMeta/bell.link  a four-field summary every sorter receives in the sync answer it already makes
  *       with the time the trouble began (downSinceMs / incidentId) so the apps can alert once per incident.
  *    3. Once a night, the consistency check (_etsyMailLinkConsistency.js) when it exists in this build; and on every run, a fresh
- *       look at the conversations that check found short (its re-reads, and the notice clearing by itself when the counts agree).
+ *       look at the conversations that check found short (its re-reads, and the notice clearing by itself when the counts agree),
+ *       and a fresh full read of a conversation whose page read failed (readRecover, with back-off), so that alarm heals itself.
  *  A reader treats a judgement older than 12 minutes as "the monitor stopped" (amber), so this function failing is itself shown.
  *
  *  Cost: about 12 reads and 2 writes a run (about 0.12 M operations a month). No Etsy call, no AI, nothing sent to a customer.
@@ -56,6 +57,12 @@ async function run({ now = Date.now(), reconcile } = {}) {
       if (typeof Consistency.tick === "function") {
         const t = await Consistency.tick(db, { now, prev: ev.consistency });
         if (t && t.ran && t.doc) { ev.consistency = t.doc; out.gapsLooked = true; }
+      }
+      // MAILLINK: a failed page read is read again by itself, with back-off (readRecover); nobody has to press anything
+      if (typeof Consistency.readRecover === "function" && ev.readOk.scrapeHealth !== false && ev.scrapeHealth) {
+        const rr = await Consistency.readRecover(db, { now, sh: ev.scrapeHealth });
+        out.readRecover = rr;
+        if (rr && rr.ran) ev.scrapeHealth = Object.assign({}, ev.scrapeHealth, { recover: { atMs: now, n: rr.n, jobId: rr.jobId, manual: false } });
       }
     }
   } catch (e) { out.consistency = Object.assign({}, out.consistency, { error: String(e && e.message).slice(0, 120) }); console.warn("linkWatchdog consistency:", e && e.message); }

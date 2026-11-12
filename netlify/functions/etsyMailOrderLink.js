@@ -15,6 +15,8 @@
  *    resolve, reopen, lang, link_url, simulate, translate, health,
  *    link_recheck, link_dismiss, link_resolve    → the missing-messages notice's Check now / Dismiss / Matches Etsy (see _etsyMailLinkConsistency.js);
  *                                                  they touch only the link's own bookkeeping, so they are the same in the sandbox
+ *    link_reread                                 → the read notice's Re-read now: the failed conversation is read again in full and
+ *                                                  the failed-read count starts again (readRecover in _etsyMailLinkConsistency.js)
  *    history_info { receiptId, engagementId }    → { threads: [{ threadId, count, lastAtMs }], total }
  *    history { receiptId, threadId, after }      → { messages, next }  (the buyer's whole history, a page at a time)
  *    simulate { engagementId, text, delayMs }    (sandbox only) the customer's side: a reply now, or after delayMs (up to two minutes,
@@ -97,6 +99,7 @@ exports.handler = async (event) => {
       case "link_dismiss": return json(200, await link.linkDismiss(station, body));
       case "link_resolve": return json(200, await link.linkResolve(station, body));
       case "link_putaway": return json(200, await link.linkPutAway(station, body));
+      case "link_reread": return json(200, await link.linkReread(station, body));
       case "history_info": return json(200, await link.historyInfo(body));
       case "history":    return json(200, await link.history(body));
       case "test_info":  return json(200, await link.testInfo());

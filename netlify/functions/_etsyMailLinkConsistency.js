@@ -416,4 +416,63 @@ async function resolve(db, { sig, by = "", now = Date.now() } = {}) {
   return Object.assign({ doc }, outcome);
 }
 
-module.exports = { maybeRun, run, judge, recheck, tick, dismiss, resolve, advance, BACKOFF, TRIES_PER_DAY, MANUAL_GAP_MS, SETTLE_READS };
+/* ─── MAILLINK: the page-read alarm heals itself (Paul, 12 Nov 2026) ───
+ * "The last 3 readings of an Etsy conversation failed ... nothing has been read since" stayed red until some new customer message
+ * happened to be read well, and nobody could reset it. Now the 5-minute watchdog answers a bad read by itself: the conversation
+ * whose read failed (scrapeHealth.lastBadThreadId) is read again IN FULL (the same fullReread mark and scrape job as a gap's
+ * re-read: the Chrome extension reads Etsy's page, no Etsy API call, nothing sent), at once, then after 10 min, 30 min, 2 h and
+ * every 6 h while reads keep failing. One re-read waits at a time, so a helper whose computer is off never gets a pile of jobs,
+ * and everything is in Firestore, so a reload, a restart of the watchdog or of the helper loses nothing. The first good read of
+ * anything clears the alarm (etsyMailSnapshot.js writes consecutiveBad: 0).
+ * A person's Re-read now (manual) does the same at once and also clears the count (resetAtMs), so the notice goes for everybody;
+ * if the page really is unreadable, three more failed reads bring it back.
+ * scrapeHealth.recover = { atMs, n, jobId, manual }: this bad run's re-reads so far (a re-read older than the last bad read
+ * belongs to an earlier run). */
+const RECOVER_WAIT = [0, 10 * MIN, 30 * MIN, 2 * HOUR, 6 * HOUR];
+const SIGNED_OUT = "Etsy signed the extension out";
+async function readRecover(db, opts = {}) {
+  const now = opts.now || Date.now(), manual = !!opts.manual;
+  const ref = db.collection(CFG).doc("scrapeHealth");
+  let sh = opts.sh;
+  if (sh === undefined) { const sn = await ref.get(); sh = sn.exists ? (sn.data() || {}) : null; }
+  sh = sh || {};
+  const lastBad = typeof sh.lastBadAtMs === "number" ? sh.lastBadAtMs : 0;
+  const open = (sh.consecutiveBad || 0) >= 1 && lastBad > 0 && lastBad > (sh.lastOkAtMs || 0) && lastBad > (sh.resetAtMs || 0) && now - lastBad < DAY;
+  if (!manual && !open) return { ran: false, why: "healthy" };
+  if (!manual && sh.lastBadReason === SIGNED_OUT) return { ran: false, why: "signed_out" };   // a person must sign in; re-reading cannot help
+  const rec = sh.recover && typeof sh.recover === "object" && (sh.recover.atMs || 0) >= lastBad ? sh.recover : null;
+  const n = rec ? (rec.n || 0) : 0;
+  // one re-read waits at a time (a helper that is off must not come back to a pile of jobs); a day-old one is asked again
+  const pending = !!(rec && rec.jobId && now - (rec.atMs || 0) < DAY && pendingJob(await jobInfo(db, rec.jobId)));
+  if (!manual && pending) return { ran: false, why: "waiting", jobId: rec.jobId };
+  if (!manual) {
+    const wait = RECOVER_WAIT[Math.min(n, RECOVER_WAIT.length - 1)];
+    if (rec && now - (rec.atMs || 0) < wait) return { ran: false, why: "backoff", nextAtMs: (rec.atMs || 0) + wait };
+  }
+  const tid = String(sh.lastBadThreadId || "");
+  let jobId = pending ? rec.jobId : null;
+  if (!pending && /^etsy_conv_[A-Za-z0-9_-]{1,40}$/.test(tid)) {
+    const ts = await db.collection(THREADS).doc(tid).get();
+    const t = ts.exists ? (ts.data() || {}) : null;
+    if (t && t.etsyConversationUrl) {
+      jobId = `readrecover_${tid}_${lastBad || now}_${n}` + (manual ? "_m" + now : "");
+      await db.collection(THREADS).doc(tid).update({ fullReread: { atMs: now, jobId } });
+      try {
+        await db.collection(JOBS).doc(jobId).create({
+          jobId, jobType: "scrape", status: "queued", threadId: tid,
+          payload: { etsyConversationUrl: t.etsyConversationUrl, source: "readRecover", gmailMessageId: null, gmailThreadId: t.gmailThreadId || null, rescrape: true, fullRead: true, reason: "page_read_failed" },
+          attempts: 0, claimedBy: null, claimedAt: null, lastError: null, lastHeartbeatAt: null, result: null,
+          createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp()
+        });
+      } catch (e) {
+        if (!(e && (e.code === 6 || /already.?exists/i.test(String(e.message))))) throw e;
+      }
+    }
+  }
+  const patch = { recover: pending ? Object.assign({}, rec, { manual }) : { atMs: now, n: n + 1, jobId, manual } };
+  if (manual) Object.assign(patch, { consecutiveBad: 0, resetAtMs: now, resetBy: String(opts.by || "").replace(/\s+/g, " ").trim().slice(0, 40) || null });
+  await ref.set(patch, { merge: true });
+  return { ran: true, jobId, n: pending ? n : n + 1, queued: !pending && !!jobId, threadId: tid || null, manual };
+}
+
+module.exports = { maybeRun, run, judge, recheck, tick, dismiss, resolve, advance, readRecover, BACKOFF, TRIES_PER_DAY, MANUAL_GAP_MS, SETTLE_READS, RECOVER_WAIT };

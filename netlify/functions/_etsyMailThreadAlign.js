@@ -18,16 +18,57 @@
 
 // "Translate to English" is Etsy's button label, rendered on some scrapes
 // of a customer message and not on others.
+//
+// MAILLINK (Paul, 12 Nov 2026: "The last 3 readings of an Etsy conversation failed (Scraped messages matched none of the stored
+// ones)"): the same words came back from Etsy's page in a slightly different dress from one read to the next, and an exact
+// match then found nothing. What the page adds or changes around a message's words is ignored here: HTML entities (&amp;
+// &#39; ...), invisible characters (zero-width spaces, variation selectors, soft hyphens), the "…" and dash variants, and
+// Etsy's own labels around a message (translation links, "Read more", "Edited").
+const ENTITY = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", hellip: "...", ndash: "-", mdash: "-", rsquo: "'", lsquo: "'", rdquo: '"', ldquo: '"' };
+function decodeEntities(s) {
+  return s.replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]{2,8});/gi, (m, e) => {
+    if (e[0] === "#") {
+      const cp = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      try { return Number.isFinite(cp) && cp > 0 ? String.fromCodePoint(cp) : m; } catch (_) { return m; }
+    }
+    const v = ENTITY[e.toLowerCase()];
+    return v != null ? v : m;
+  });
+}
+// Etsy's labels that sit before or after a message's words on some reads and not on others.
+const LABEL_TAIL = /\s*(?:translate to english|see original|show original|see translation|show translation|view original|translated by etsy|translated from [a-z\u00c0-\u024f ]{2,30}|auto-?translated|read more|show more|see more|show less|\(edited\)|edited)\s*$/i;
+const LABEL_HEAD = /^\s*(?:(?:message|subject)\s*:|translated by etsy\s*[:·•-]?|translated from [a-z\u00c0-\u024f ]{2,30}\s*[:·•-]|auto-?translated\s*[:·•-]?)\s*/i;
 function normalizeText(s) {
-  return String(s == null ? "" : s)
-    .replace(/^\s*(?:Message|Subject):\s*/i, "")
-    .replace(/\s*Translate to English\s*$/i, "")
+  let t = decodeEntities(String(s == null ? "" : s))
+    .replace(/[\u200b-\u200d\u2060\ufeff\u00ad\ufe0e\ufe0f]/g, "")
+    .replace(/\u2026/g, "...")
+    .replace(/[\u2010-\u2015\u2212]/g, "-");
+  for (let k = 0; k < 3; k++) { const n = t.replace(LABEL_HEAD, "").replace(LABEL_TAIL, ""); if (n === t) break; t = n; }
+  return t
     .toLowerCase()
-    .replace(/[‘’]/g, "'")
-    .replace(/[“”]/g, '"')
+    .replace(/[‘’`´]/g, "'")
+    .replace(/[“”«»„]/g, '"')
     .replace(/https?:\/\/(?:www\.)?/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+// The words alone (letters and digits of any script), for the second, looser look of alignScrape: a scrape whose exact
+// fingerprints share nothing with what is stored is compared once more on these, whoever the page says wrote them (a page
+// change that flips or loses the sender's side must not make every stored message look foreign). Image-only messages keep
+// their image ids. Short texts ("ok", "thanks") are too common to prove anything on their own and get no loose key.
+function looseKey(m) {
+  if (!m) return "";
+  const txt = normalizeText(m.text != null ? m.text : "");
+  let w = "";
+  try { w = txt.replace(/[^\p{L}\p{N}]+/gu, ""); } catch (_) { w = txt.replace(/[^a-z0-9]+/g, ""); }
+  if (w.length >= 6) return "W:" + w;
+  if (!txt) {
+    const urls = Array.isArray(m.imageUrls) ? m.imageUrls : [];
+    const ids = urls.map(imageId).filter(Boolean).sort();
+    if (ids.length) return "I:" + ids.join(",");
+  }
+  return "";
 }
 
 // The image's own id in an Etsy conversation-image URL:
@@ -42,8 +83,10 @@ function imageId(url) {
   return parts.length >= 2 ? parts[parts.length - 2] : clean;
 }
 
+// The shop's side under any of the names a scraper version has used for it.
+const SHOP_ROLES = new Set(["staff", "shop_owner", "shop", "seller", "owner", "self", "me", "outbound"]);
 function roleOf(senderRole) {
-  return senderRole === "staff" || senderRole === "shop_owner" ? "s" : "c";
+  return SHOP_ROLES.has(String(senderRole || "").toLowerCase()) ? "s" : "c";
 }
 
 // Text wins; an image-only message is keyed by its image ids.
@@ -73,6 +116,47 @@ function sortStored(stored) {
     (a.tsMs - b.tsMs) || ((a.createdMs || 0) - (b.createdMs || 0)) || String(a.id).localeCompare(String(b.id)));
 }
 
+// The heaviest common subsequence of the stored list and the scrape on one key ("fp" or "lk"): incoming index -> stored index or -1.
+function heaviest(sorted, incoming, key) {
+  const n = incoming.length, m = sorted.length;
+  const matchOf = new Array(n).fill(-1);
+  if (!n || !m) return matchOf;
+  // Earlier-saved copies get a small bonus (below one match's weight).
+  const order = sorted.map((s, j) => j).sort((a, b) =>
+    ((sorted[a].createdMs || 0) - (sorted[b].createdMs || 0)) || (a - b));
+  const bonus = new Float64Array(m);
+  order.forEach((j, rank) => { bonus[j] = m - rank; });
+  const W = (m + 1) * (n + 1) + 1;          // one match outweighs every bonus together
+  const cols = m + 1;
+  const dp = new Float64Array((n + 1) * cols);
+  const kOf = x => (x && x[key]) || "";
+  for (let i = n - 1; i >= 0; i--) {
+    const fpI = kOf(incoming[i]);
+    for (let j = m - 1; j >= 0; j--) {
+      let best = Math.max(dp[(i + 1) * cols + j], dp[i * cols + j + 1]);
+      if (fpI && fpI === kOf(sorted[j])) {
+        const take = W + bonus[j] + dp[(i + 1) * cols + j + 1];
+        if (take > best) best = take;
+      }
+      dp[i * cols + j] = best;
+    }
+  }
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    const here = dp[i * cols + j];
+    const fpI = kOf(incoming[i]);
+    if (fpI && fpI === kOf(sorted[j])
+        && here === W + bonus[j] + dp[(i + 1) * cols + j + 1]) {
+      matchOf[i] = j; i++; j++;
+    } else if (here === dp[(i + 1) * cols + j]) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+  return matchOf;
+}
+
 /**
  * alignScrape(stored, incoming)
  *   stored:   [{ id, fp, tsMs, createdMs }]  scraped (source "etsy") messages already saved
@@ -86,6 +170,9 @@ function sortStored(stored) {
  *   duplicates:  stored ids this scrape proves are extra copies
  *   gap:         nothing in this scrape matched what is stored, so older
  *                messages above the visible part may be missing
+ *   loose:       the match was made on the words alone (looseKey), because
+ *                no exact fingerprint matched (incoming/stored items may
+ *                carry `lk`, their looseKey)
  *
  * Matching is a heaviest common subsequence: the most messages in the same
  * order, and among equal choices the copy saved first (the original, whose
@@ -94,40 +181,14 @@ function sortStored(stored) {
 function alignScrape(storedIn, incoming, { scrapedAt = Date.now() } = {}) {
   const sorted = sortStored(storedIn.filter(s => s && s.fp && s.tsMs != null));
   const n = incoming.length, m = sorted.length;
-  const matchOf = new Array(n).fill(-1);
-
-  if (n && m) {
-    // Earlier-saved copies get a small bonus (below one match's weight).
-    const order = sorted.map((s, j) => j).sort((a, b) =>
-      ((sorted[a].createdMs || 0) - (sorted[b].createdMs || 0)) || (a - b));
-    const bonus = new Float64Array(m);
-    order.forEach((j, rank) => { bonus[j] = m - rank; });
-    const W = (m + 1) * (n + 1) + 1;          // one match outweighs every bonus together
-    const cols = m + 1;
-    const dp = new Float64Array((n + 1) * cols);
-    for (let i = n - 1; i >= 0; i--) {
-      const fpI = incoming[i].fp;
-      for (let j = m - 1; j >= 0; j--) {
-        let best = Math.max(dp[(i + 1) * cols + j], dp[i * cols + j + 1]);
-        if (fpI && fpI === sorted[j].fp) {
-          const take = W + bonus[j] + dp[(i + 1) * cols + j + 1];
-          if (take > best) best = take;
-        }
-        dp[i * cols + j] = best;
-      }
-    }
-    let i = 0, j = 0;
-    while (i < n && j < m) {
-      const here = dp[i * cols + j];
-      if (incoming[i].fp && incoming[i].fp === sorted[j].fp
-          && here === W + bonus[j] + dp[(i + 1) * cols + j + 1]) {
-        matchOf[i] = j; i++; j++;
-      } else if (here === dp[(i + 1) * cols + j]) {
-        i++;
-      } else {
-        j++;
-      }
-    }
+  let matchOf = heaviest(sorted, incoming, "fp");
+  // MAILLINK: nothing matched exactly: one more look on the words alone (looseKey), whoever the page says wrote them. A page
+  // whose labels, quotes or sender sides changed still lines up with what is stored, so nothing is stored twice and the read is
+  // not taken for a broken one.
+  let loose = false;
+  if (n && m && !matchOf.some(j => j >= 0) && incoming.some(x => x && x.lk) && sorted.some(x => x.lk)) {
+    const again = heaviest(sorted, incoming, "lk");
+    if (again.some(j => j >= 0)) { matchOf = again; loose = true; }
   }
 
   const matched = matchOf.filter(j => j >= 0);
@@ -155,9 +216,10 @@ function alignScrape(storedIn, incoming, { scrapedAt = Date.now() } = {}) {
   }
 
   // Extra copies: inside the stretch this scrape covers, a message stored
-  // more often than the page shows it. Only when the scrape clearly lines up.
+  // more often than the page shows it. Only when the scrape clearly lines up,
+  // and never on a loose match (its page and stored fingerprints differ).
   const duplicates = [];
-  if (matched.length >= 3 || (matched.length >= 2 && matched.length * 2 >= n)) {
+  if (!loose && (matched.length >= 3 || (matched.length >= 2 && matched.length * 2 >= n))) {
     const lo = Math.min(...matched), hi = Math.max(...matched);
     const onPage = new Map();
     for (const it of incoming) if (it.fp) onPage.set(it.fp, (onPage.get(it.fp) || 0) + 1);
@@ -179,7 +241,7 @@ function alignScrape(storedIn, incoming, { scrapedAt = Date.now() } = {}) {
     }
   }
 
-  return { sorted, matchOf, newTs, duplicates, gap };
+  return { sorted, matchOf, newTs, duplicates, gap, loose };
 }
 
 /**
@@ -252,4 +314,4 @@ function findLegacyDuplicates(storedIn, others = []) {
   return Array.from(removed);
 }
 
-module.exports = { normalizeText, imageId, fingerprint, msOf, sortStored, alignScrape, findLegacyDuplicates };
+module.exports = { normalizeText, imageId, fingerprint, looseKey, roleOf, msOf, sortStored, alignScrape, findLegacyDuplicates };
