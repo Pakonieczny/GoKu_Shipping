@@ -25758,7 +25758,9 @@ const OrderWin = window.OrderWin = (() => {
     });
     const bb = panel.querySelector("[data-ow-back]"); if (bb) bb.onclick = () => goBack();
     const full = panel.querySelector("[data-full]"); if (full) full.onclick = () => fullSheet(x0 && (x0.poolId || x0.id));
-    const off = panel.querySelector("[data-off]"); if (off) off.onclick = () => fullSheet(x0 && (x0.poolId || x0.id));
+    // (OWTAKEOFF, Paul 11 Nov 2026: "the Remove from Sheet button in the detailed order modal was not working": it only opened the sheet, as "Open full sheet" does; it now opens the sheet with
+    //  this piece's Take off choice (Hold / Cancel) already open)
+    const off = panel.querySelector("[data-off]"); if (off) off.onclick = () => fullSheet(x0 && (x0.poolId || x0.id), { off: true });
     if(oldFind)panel.querySelector('#owSheetOrderFind')?.replaceWith(oldFind);
     const find=byId('owSheetOrderFind');if(find){find.value=SV.q;find.oninput=()=>{SV.q=find.value;paintSheetMatches();};find.onkeydown=e=>{if(e.key!=='Enter')return;const first=byId('owSheetMatches')?.querySelector('[data-order-rid]');if(first){e.preventDefault();first.click();}};if(findActive)find.focus({preventScroll:true});}
     paintSheetMatches();
@@ -25861,14 +25863,14 @@ const OrderWin = window.OrderWin = (() => {
   }
   /** The sheet window takes this view's place (never one window over another), grown out of the sheet drawn here, and
    *  this view comes back as it was when the sheet window closes, unless something else has opened meanwhile. */
-  function fullSheet(select) {
-    if(window.Seal?.defer('order-full-sheet',()=>fullSheet(select)))return;
+  function fullSheet(select, more) {
+    if(window.Seal?.defer('order-full-sheet',()=>fullSheet(select, more)))return;
     const s = SV.list && SV.list[SV.at]; if (!s || !s.id || !window.SheetWin || !SheetWin.open) return;
     const cv = byId("owSheetCv"), R = cv.getBoundingClientRect(), inf = SV.info, snap = inf && inf.snap ? inf.snap() : null, face = W.face === "back" ? "back" : "front";
     W.back = { key: W.key, row: rowOf(W.key), rows: W.rows, walk: W.walk, hl: W.hl, sheetId: s.id, focus: select || SV.focus };
     closeNow();
     // (on the side shown here: a sheet looked at from its Back opens on its Back, Paul 28 Sep)
-    SheetWin.open(s.id, Object.assign(select ? { select } : {}, { face, origin: { tint: "", stock: inf && inf.stock, rects: () => (R.width ? { box: R, sheet: R } : null), snap: snap ? () => snap : null } }));
+    SheetWin.open(s.id, Object.assign(select ? Object.assign({ select }, more && more.off ? { off: true } : {}) : {}, { face, origin: { tint: "", stock: inf && inf.stock, rects: () => (R.width ? { box: R, sheet: R } : null), snap: snap ? () => snap : null } }));
     const w = SheetWin._W && SheetWin._W.dlg; if (w) w.addEventListener("close", comeBack, { once: true });
   }
   function comeBack() {
@@ -27142,7 +27144,7 @@ const Recall = window.Recall = (() => {
    has no rest to show. Nothing has to register; new screens get it by carrying the attribute. */
 const Kin = window.Kin = (() => {
   let cur = null;
-  const all = rid => document.querySelectorAll(`[data-rid="${String(rid).replace(/["\\]/g, "")}"]`);
+  const all = rid => [...document.querySelectorAll(`[data-rid="${String(rid).replace(/["\\]/g, "")}"]`)].filter(n => !n.closest("dialog.swAway"));   // (a sheet window stood down under the order view is not lit)
   function mark(rid) {
     if (rid === cur) return;
     if (cur) all(cur).forEach(n => n.classList.remove("kin"));

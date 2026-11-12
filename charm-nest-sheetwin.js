@@ -1095,6 +1095,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // into is this sheet's card where one is on screen)
     else { dropSnap(false); W.pre = null; if (W.origin && W.origin.id !== id) { const c = [...document.querySelectorAll(`.libCard[data-id="${CSS.escape(id)}"]`)].find(shown); W.origin = c ? cardOrigin(id, c, null) : null; } }
     W.id = id; W.rec = null; W.live = null; W.geom = false; W.pieces = []; W.byId = new Map(); W.byPool = new Map(); W.orders = new Map();
+    W.offAsk = opts.off && opts.select ? String(opts.select) : null;   // (OWTAKEOFF: opened from the order window's Take off: that piece's Take off choice opens at once)
     W.sel = null; W.hover = null; W.fx = []; W.lit = null; W.litRid = ""; W.set = W.set && opts.keepSet ? W.set : null;
     // the side it opens on (Paul, 28 Sep): a sheet looked at from its Back (a turned Nest or Library card, Sets window
     // tile or Sets menu preview, the order view's Sheet tab) opens on its Back, its engraving asked for at once
@@ -1631,7 +1632,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       boxRO = new ResizeObserver(es => {
         const t = es[es.length - 1].target, w = t.clientWidth, h = t.clientHeight; if (w < 40 || h < 40) return;   // (a closed window keeps the size it had)
         const was = W.box; W.box = { width: w, height: h };
-        if (was && (was.width !== w || was.height !== h) && W.dlg && W.dlg.open && W.st) fitPlate();
+        if (was && (was.width !== w || was.height !== h) && W.dlg && W.dlg.open && W.st) { if (W.away || W.coming) W.refit = true; else fitPlate(); }   // (fitted once it is back, not mid-flight)
       });
       boxRO.observe(E.plateBox);
     }
@@ -3100,6 +3101,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const host = W.el.detail.querySelector("[data-r2=off]"); if (!host) return;
     if (!x.poolId && !x.rid) { host.remove(); return; }
     if (W.flow) { host.innerHTML = ""; return; }
+    if (W.offAsk && (x.poolId === W.offAsk || x.id === W.offAsk)) { W.offAsk = null; return renderOff(x); }   // (OWTAKEOFF)
     host.innerHTML = `<button type="button" class="swOffBtn">${ICON.off}Take off the sheet…</button>`;
     host.querySelector("button").onclick = () => renderOff(x);
   }
