@@ -8825,7 +8825,10 @@ const Engrave = window.Engrave = (() => {
   const pendingCount = () => [...items().values()].filter(j => !j.editingBack && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone" && !unplacedPre(j)).length;   // (ENGPRE: the run's Engrave step waits for the engraving of pieces in the run; a line not nested yet is the Engrave tab's own list, counted by pendingRows)
   /** How many placements have already been settled in this run — the numerator of "3 of 9" on the card. */
   const DECIDED = ["approved", "written", "skipped"];                    // the pieces that are decided: listed after the ones still to settle, and opened in the same detail card (NODECIDED)
-  const decidedJobs = () => [...items().values()].filter(j => DECIDED.includes(j.state) && j.row.state !== "gone" && j.copies.length);
+  // (NONEKEPT, Paul 12 Nov 2026: "the actual order disappears somewhere": a piece a person approved with None (takeAway: state "none", decision.removed) is decided too: it stays in the list, under Approved, with its
+  //  "no engraving" seal, and opens in the same card, where Front / Back puts its words back)
+  const personNone = j => !!(j && j.state === "none" && j.decision && j.decision.removed);
+  const decidedJobs = () => [...items().values()].filter(j => (DECIDED.includes(j.state) || personNone(j)) && j.row.state !== "gone" && j.copies.length);
   /** A recalled set's engraving: each back written on its sheets becomes a decided job on the line it belongs to, with
    *  its words, who approved it and the file, so the Decided list reads the same for a set from March as for today's. */
   function fromRecall() {
@@ -12704,7 +12707,7 @@ const Engrave = window.Engrave = (() => {
      the rows that hold an approved piece (an approved or "Saved to sheet" engraving, an approved monogram), drawn by the same renderPlacementRows from the same decidedSelect() (so the search and the date chips apply, and a row is told as it is in Placements). A piece cut
      plain (skipped) is decided but not approved: a row of only those is in Placements alone. The chip's number is the rows it shows (approvedRows). Nothing is read, stored or waited on for it. */
   const onApproved = () => EG.tab === "approved";
-  const isApprovedJob = j => j.state === "approved" || j.state === "written";
+  const isApprovedJob = j => j.state === "approved" || j.state === "written" || personNone(j);   // (NONEKEPT)
   const approvedSelect = () => decidedSelect().filter(isApprovedJob);
   const approvedRows = () => listRows(approvedSelect());
   const shownList = () => (onApproved() ? approvedSelect() : shownQueue().concat(decidedSelect()));   // (APPTAB: Back / Next stop at what the open tab lists, and at the rest of the piece's own order)
