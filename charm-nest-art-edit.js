@@ -601,6 +601,15 @@
   /** The faces the pool row says have an edit: { front: at, back: at } (0 when none). */
   const flagsOf = row => { const a = row && row.artEdit && typeof row.artEdit === "object" ? row.artEdit : {}; return { front: +a.front > 0 ? +a.front : 0, back: +a.back > 0 ? +a.back : 0 }; };
   const said = (row, face) => !!(row && row.artEdit && typeof row.artEdit === "object" && Object.prototype.hasOwnProperty.call(row.artEdit, face));
+  /* PREPOOLLIST (Paul, 12 Nov 2026: "This piece's artwork was edited elsewhere" on the second Save of a piece not pooled yet): such a piece has no pool row to carry its stamps, so the cloud keeps one
+     list of them (artPrepoolList: { "<poolId>[~front]": at }), read by this page at most once a minute and only for a piece with no row: its edit is then put on it as a row's stamp would. */
+  let prepool = null, prepoolAt = 0, prepoolAsk = null;
+  async function prepoolMap(fresh) {
+    if (prepool && !fresh && Date.now() - prepoolAt < 60000) return prepool;
+    if (!prepoolAsk) prepoolAsk = (async () => { try { const r = host.api ? await host.api("charmNestLibrary", { op: "artPrepoolList" }, { quiet: true }) : null; prepool = (r && r.ids && typeof r.ids === "object") ? r.ids : (prepool || {}); prepoolAt = Date.now(); } catch (_) { prepool = prepool || {}; } finally { prepoolAsk = null; } return prepool; })();
+    return prepoolAsk;
+  }
+  const preFlags = (map, poolId) => ({ front: +(map || {})[recKey(poolId, "front")] || 0, back: +(map || {})[recKey(poolId, "back")] || 0 });
   /** Read the records of these faces (each { poolId, face, at }) that this page does not hold as at least that new: one artList call for all of them. */
   async function load(list) {
     const keys = [...new Set((list || []).filter(x => x && x.poolId && faceKey(x.face)).filter(x => { const c = cache.get(recKey(x.poolId, x.face)); return !c || (+x.at > 0 && (!c.rec || +c.rec.at < +x.at)); }).map(x => recKey(x.poolId, x.face)))];
@@ -633,7 +642,7 @@
   async function piece(charm, poolId, row) {
     if (!charm || !poolId || !Array.isArray(charm.members)) return charm;
     row = row || (host.rowOf ? host.rowOf(poolId) : null);
-    const fl = flagsOf(row);
+    const fl = row ? flagsOf(row) : preFlags(await prepoolMap(), poolId);   // (PREPOOLLIST: a piece with no pool row yet: the cloud's list says which faces have an edit)
     for (const f of FACES) if (!fl[f] && said(row, f)) remember(poolId, f, null);   // (taken off elsewhere: the row says so)
     const want = FACES.filter(f => fl[f] || (cache.get(recKey(poolId, f)) || {}).rec || (charm.artEdit && charm.artEdit[f]));
     if (!want.length) return charm;
@@ -690,7 +699,7 @@
     if (!host.api) throw new Error("the page cannot save artwork edits yet");
     // (the edit this page last saw of that face: the cloud refuses the save when another computer saved one since; a page that never read it expects what the piece's own charm or pool row says)
     const had = cache.get(recKey(poolId, face)), row = host.rowOf ? host.rowOf(poolId) : null;
-    const expectedAt = ctx.expectedAt != null ? +ctx.expectedAt || 0 : had ? (had.rec ? +had.rec.at || 0 : 0) : (charm && charm.artEdit && charm.artEdit[face] && +charm.artEdit[face].at) || flagsOf(row)[face] || 0;
+    const expectedAt = ctx.expectedAt != null ? +ctx.expectedAt || 0 : had ? (had.rec ? +had.rec.at || 0 : 0) : (charm && charm.artEdit && charm.artEdit[face] && +charm.artEdit[face].at) || (row ? flagsOf(row)[face] : preFlags(await prepoolMap(true), poolId)[face]) || 0;   // (PREPOOLLIST: no row yet: the cloud's list, read fresh)
     let res;
     const pk = await pack(art);   // (TQ1: a picture's big paths beside the record, gzipped)
     try { res = await host.api("charmNestLibrary", Object.assign({ op: "artPut", poolId, face, by, expectedAt }, art ? { art: pk.art } : { clear: true }, pk.blob ? { blob: pk.blob } : {})); }
@@ -698,6 +707,7 @@
     if (!res || !res.ok) { const d = res || {}; throw Object.assign(new Error(d.error || "the artwork edit was not saved"), { conflict: !!d.conflict, cutRefused: !!d.cutRefused }); }
     const rec = await unpack(res.art || null, pk.ds.length ? pk.ds : null);
     remember(poolId, face, rec);
+    if (!row && prepool) { const k = recKey(poolId, face); if (rec && rec.at) prepool[k] = +rec.at; else delete prepool[k]; }   // (PREPOOLLIST: this page's copy of the list follows its own save)
     if (host.flag) host.flag(poolId, face, rec ? rec.at : null);
     let applied = charm ? apply(charm, rec, face) : null;
     if (applied) applied = await ready(applied, host.parsedOf ? host.parsedOf(charm) : null);
