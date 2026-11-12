@@ -280,6 +280,8 @@
   // what a buyer's text carries that no one can see or cut: the placeholder Etsy leaves where a picture or sticker was
   // pasted (U+FFFC, which browsers draw as a boxed "OBJ"), the replacement mark (U+FFFD), zero-width spaces and control codes
   const visible = s => String(s == null ? "" : s).replace(/[\uFFFC\uFFFD\u200B\u2060\uFEFF\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+  /** BUYERFILE: a value that is only a web link (Etsy keeps a buyer's uploaded photo as https://i.etsystatic.com/ipf/…): the buyer's file, never a design option. */
+  const BUYER_FILE = /^\s*https?:\/\/[^\s<>"]+\s*$/i;
   const isPersonalisation = name => /personali[sz]ation|engraving text|custom text/i.test(String(name || ""));
   /* A size in millimetres, written anywhere in a drop-down value ("12mm + engraving", "Large (14mm)", "1.2 cm"): "12MM" (centimetres as millimetres), or null when there is none or the value names two sizes. */
   /* SIZEFIT review (15 Oct 2026): a decimal comma is a decimal ("1,2 cm" was read as 2 cm = 20 mm, "10,5mm" as 5 mm); full-width digits and "12mm_engraved" are read; a range or a list ("10-12mm", "10 or 12mm") is two sizes,
@@ -541,9 +543,9 @@
      A metal word beside it ("GOLD 1-3 Characters") and a price are read too. A bare "3 letters" / "Number of Initials: 3" stays the count question it always was (three initial discs, or three letters on one?);
      a value that a listing's own table ties to its own SKU is still that SKU's (the SKU rule comes first). The limit is a CHECK: spec.engraveLimit says it on the line, and a longer engraving is a note, never a hold.
      → { min, max (0 = no ceiling), unit: "character" | "letter" | "initial" | "line", metal: "gold" | "silver" | "rose" | "", text } or null. */
-  const LIMIT_NAME = /\b(?:characters?|chars?|(?:number|no\.?|#|count|amount)\s+of\s+(?:letters?|initials?|lines?|characters?)|how\s+many\s+(?:letters?|initials?|lines?|characters?|chars?)|(?:letters?|initials?|lines?|characters?)\s+(?:count|limit|max(?:imum)?|allowed)|max(?:imum)?\s+(?:letters?|initials?|lines?|characters?)|lines?\s+of\s+(?:text|engraving)|text\s+lines?|engraving\s+(?:length|limit|size|lines?))\b/i;
-  const LIMIT_UNIT_NAME = /\b(?:letters?|initials?|lines?|characters?|chars?)\b/i;
-  const LIMIT_N = "(\\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)", LIMIT_U = "(characters?|chars?|letters?|initials?|lines?(?:\\s+of\\s+(?:text|engraving))?)";
+  const LIMIT_NAME = /\b(?:characters?|chars?|char(?!ms?\b)[a-z]{3,8}|caracters?|(?:number|no\.?|#|count|amount)\s+of\s+(?:letters?|initials?|lines?|characters?|char(?!ms?\b)[a-z]{3,8})|how\s+many\s+(?:letters?|initials?|lines?|characters?|chars?|char(?!ms?\b)[a-z]{3,8})|(?:letters?|initials?|lines?|characters?)\s+(?:count|limit|max(?:imum)?|allowed)|max(?:imum)?\s+(?:letters?|initials?|lines?|characters?)|lines?\s+of\s+(?:text|engraving)|text\s+lines?|engraving\s+(?:length|limit|size|lines?))\b/i;
+  const LIMIT_UNIT_NAME = /\b(?:letters?|initials?|lines?|characters?|chars?|char(?!ms?\b)[a-z]{3,8}|caracters?)\b/i;   // (CHARACTR, Paul 11 Nov 2026: "6-10 Charactr-SILVER" is characters misspelled; "charm" never is)
+  const LIMIT_N = "(\\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)", LIMIT_U = "(characters?|chars?|char(?!ms?(?![a-z]))[a-z]{3,8}|caracters?|letters?|initials?|lines?(?:\\s+of\\s+(?:text|engraving))?)";
   const LIMIT_FORMS = [
     ["upto", new RegExp("(?:^|[^\\p{L}\\p{N}])(?:up\\s*to|upto|max(?:imum)?\\.?|no\\s+more\\s+than|at\\s+most|\u2264|<=)\\s*:?\\s*" + LIMIT_N + "\\s*" + LIMIT_U + "?(?![\\p{L}\\p{N}])", "iu")],
     ["range", new RegExp("(?:^|[^\\p{L}\\p{N}])" + LIMIT_N + "\\s*(?:-|\u2013|\u2014|~|to)\\s*" + LIMIT_N + "\\s*" + LIMIT_U + "?(?![\\p{L}\\p{N}])", "iu")],
@@ -554,7 +556,7 @@
   ];
   const LIMIT_FILLER = /^(?:engrav\w*|text|of|total|only|per|side|piece|bar|front|back|personali[sz]\w*|custom|max(?:imum)?|limit|allowed|filled|fill|plated|sterling|solid|karat|\d{1,2}kt?|\d{1,2}k|yellow|white|metal|and|with|price|usd|chain|necklace|tiny|mini|small)$/i;
   const limitNum = s => { s = String(s || "").toLowerCase(); return /^\d+$/.test(s) ? +s : NUMWORDS[s] || 0; };
-  const limitUnit = s => { s = String(s || "").toLowerCase(); return /^char/.test(s) ? "character" : /^letter/.test(s) ? "letter" : /^initial/.test(s) ? "initial" : /^line/.test(s) ? "line" : ""; };
+  const limitUnit = s => { s = String(s || "").toLowerCase(); return /^c?h?ara?c|^char/.test(s) ? "character" : /^letter/.test(s) ? "letter" : /^initial/.test(s) ? "initial" : /^line/.test(s) ? "line" : ""; };
   /** One value (or one part of a value) as an engraving limit, read with the option's NAME (which may carry the unit and says it is a limit: "Number of Characters"); null when it is not one. */
   function limitValue(value, name) {
     const nm = decodeEntities(String(name == null ? "" : name)), byName = LIMIT_NAME.test(nm);
@@ -4655,6 +4657,7 @@
     for (const v of line.variations || []) {
       const name = v.name || v.formatted_name, value = String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim();
       if (name && value && !spec.font) { const fm = fontInMetal(name, value, fx); if (fm) spec.font = fontSpecOf(fm, fm.listing ? "rule:font-listing" : "rule:font-in-metal"); }   // ("Metal? Font Choice?": the metal is read as before, the font from the same value)
+      if (name && value && !spec.engraveLimit) { const l0 = engraveLimitRead(name, value); if (l0) spec.engraveLimit = l0; }   // (CHARACTR: "How Many Characters & Metal Color?: 6-10 Charactr-SILVER" is the metal option too: its limit is still the line's check)
       if (!name || !value || isMetalVariation(name, value) || isPersonalisation(name)) continue;   // (BFWHY: a value that is only a metal / length / sides is the metal option whatever it is called)
       const hit = optionLookup(ctx.optionMaps, line.listingId, name, value);
       let mapped = hit ? Object.assign({ field: hit.field, value: hit.value, source: hit.source }, hit.engrave ? { engrave: hit.engrave } : {}) : null;
@@ -4672,7 +4675,10 @@
       if (!mapped && members && members.source === "options" && SIDE_THING.test(name)) { const k = /\bleft\b/i.test(name) ? "L" : /\bright\b/i.test(name) ? "R" : "", m = k && members.members.find(x => x.side === k); if (m) mapped = { field: "design", value: m.sku, source: "rule:pair-side" }; }
       if (!mapped) {                                                            // deterministic name rules, no free-text reading
         const asForm = formByWords(value);
-        if (HUGGIE_SET.test(value)) mapped = { field: "form", value: "huggie", source: "rule:huggie-set" };
+        // BUYERFILE (Paul, 11 Nov 2026, orders 4226979286, 4229616128, 4226381231, 4229813310, 4227069460: "Send us your photo for handwriting here: https://i.etsystatic.com/ipf/…"): an option whose value is
+        // only a link is the file the buyer sent (Etsy's upload of a photo or drawing), never a choice of charm: "the correct SKU was selected and that's all that matters". It is kept on the line, never held.
+        if (BUYER_FILE.test(value)) mapped = { field: "ignore", value: null, source: "rule:buyer-file" };
+        else if (HUGGIE_SET.test(value)) mapped = { field: "form", value: "huggie", source: "rule:huggie-set" };
         else if (isSizeOption(name, value) && (looksLikeSize(value) || mmTokenOf(value, name))) mapped = { field: "size", value: mmTokenOf(value, name) || SIZE_VALUES[bareValue(value)] || bareValue(value).toUpperCase().replace(/\s+/g, ""), source: "rule:size" };
         else if (isChainOption(name) && looksLikeLength(value)) mapped = { field: "chain", value, source: "rule:length" };
         else if (isChainOption(name) && asForm) mapped = { field: "form", value: asForm, source: "rule:form" };
