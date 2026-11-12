@@ -265,7 +265,8 @@
     const rosePlan=sheet.rosePlanJson ? JSON.parse(sheet.rosePlanJson) : sheet.rosePlan;
     // (a sheet of a metal with a green line, Rose Gold, 10K or 14K, that holds a physical sheet has its separation contour in the file: its layer keeps the name the laser's template knows)
     const cutR=root.CharmNestRose;
-    if((sheet.metal==='rose'||(cutR&&cutR.cuts(sheet.metal))) && sheet.roseStockId && !rosePlan)throw new Error('Prepare the '+((cutR&&cutR.cutWord&&cutR.cutWord(sheet.metal))||'Rose Gold')+' separation contour before exporting');
+    // (DLALWAYS, Paul 12 Nov 2026: "download should always be allowed even on partial incomplete sheets": a sheet whose separation contour is not prepared yet is downloaded without it, and says so)
+    const contourMissing=(sheet.metal==='rose'||(cutR&&cutR.cuts(sheet.metal))) && sheet.roseStockId && !rosePlan ? ((cutR&&cutR.cutWord&&cutR.cutWord(sheet.metal))||'Rose Gold') : '';
     if(rosePlan){
       root.CharmNestRose.validate(rosePlan.profile,front.pageW,front.pageH);
       const ref=out.context.register(out.context.obj({Type:'OCG',Name:L.PDFString.of('ROSE SEPARATION CUT')}));
@@ -280,7 +281,7 @@
     const refs=out.context.enumerateIndirectObjects().filter(([,o])=>o instanceof L.PDFDict && o.get(L.PDFName.of('Type'))?.toString()==='/OCG').map(([r])=>r);
     if(refs.length) out.catalog.set(L.PDFName.of('OCProperties'),out.context.obj({OCGs:refs,D:{Order:refs,ON:refs}}));
     const ai=await out.save({useObjectStreams:false});
-    return {ai,layout,...(plan?{frontLayout:plan.entries}:{}),widthPt:front.pageW,heightPt:page.getHeight(),cutHeightPt:front.pageH};
+    return {ai,layout,...(plan?{frontLayout:plan.entries}:{}),...(contourMissing?{contourMissing}:{}),widthPt:front.pageW,heightPt:page.getHeight(),cutHeightPt:front.pageH};
   }
   const vector = () => root.CharmNestVector || (typeof require==='function' ? require('./charm-nest-vector.js') : null);
   const flatten = (...args) => vector().flatten(...args);

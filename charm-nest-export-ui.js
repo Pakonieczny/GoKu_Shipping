@@ -25,7 +25,7 @@
     // (earring pieces on this sheet, each with its side: the manifest says how many, and the zip's IMPORT.txt explains the Left / Right layers; none: as before)
     const earPieces=(sheet.charms||[]).filter(c=>c&&(c.side==='L'||c.side==='R')&&(sheet.placements||[]).some(p=>p.id===c.id)).length;
     // (front engravings: the manifest lists each one and whether it sits on its charm or above the sheet; a sheet with none has no such key)
-    let data=composed.ai,metadata={sheetId:sheet.id||sheet.sheetId,fileBase:sheet.fileBase,units:'mm',backs:composed.layout,...(earPieces?{pairPieces:earPieces}:{}),...(composed.frontLayout?{fronts:composed.frontLayout}:{})};
+    let data=composed.ai,metadata={sheetId:sheet.id||sheet.sheetId,fileBase:sheet.fileBase,units:'mm',backs:composed.layout,...(earPieces?{pairPieces:earPieces}:{}),...(composed.frontLayout?{fronts:composed.frontLayout}:{}),...(composed.contourMissing?{contourMissing:composed.contourMissing}:{})};
     if(format==='dxf') {
       const result=CharmNestExport.productionDxf ? await CharmNestExport.productionDxf(composed.ai) : await (async()=>{const parsed=await CharmNestPDF.parseSource(composed.ai,'Production sheet');return CharmNestExport.dxf(CharmNestExport.productionPaths(parsed),CharmNestExport.layerNames(parsed));})();
       data=new TextEncoder().encode(result.text);
@@ -75,6 +75,9 @@
       CN.toast('Downloaded '+files.length+' sheet'+(files.length===1?'':'s')+' · '+format.toUpperCase(),'ok');
       // (a front engraving that is laid above the sheet instead of on its charm is said at once, whatever the download: a single file has no IMPORT.txt)
       const aboveFronts=files.reduce((n,f)=>n+(f.metadata.fronts||[]).filter(e=>!e.placed).length,0);
+      // (DLALWAYS: a sheet downloaded before its separation contour was prepared says so: the file has no contour layer)
+      const noContour=files.filter(f=>f.metadata.contourMissing);
+      if(noContour.length)CN.toast((noContour.length===1?'Downloaded without its ':'Downloaded '+noContour.length+' sheets without their ')+noContour[0].metadata.contourMissing+' separation contour: prepare it before laser cutting','bad',12000);
       if(aboveFronts)CN.toast(aboveFronts+' front engraving'+(aboveFronts===1?' is':'s are')+' above the sheet, not on '+(aboveFronts===1?'its charm':'their charms')+' (see IMPORT.txt or the layers named FRONT)','bad',12000);
     } catch(e){CN.toast('Export stopped: '+e.message,'bad',12000);}
     finally{busy=false;refresh();}
