@@ -335,7 +335,7 @@ const ListMedia = (() => {
     const own=opts?(opts.design && inSet(row,opts.design)?String(opts.design).toUpperCase():earDesign(row,opts.side)):'';   // (one piece of a set of designs: its own design, as drawn)
     // (MOONSTARS, Paul 19 Oct 2026: "The vector thumbnail should show both the moon and stars": a line cut body by body (the stars from one body, the moon from the other) is pictured as its whole master design, never its first pooled piece)
     const whole=bodiesRow(row) && !(opts && (opts.side==='L' || opts.side==='R' || opts.highlight || opts.piece===true || opts.body===0 || opts.body===1));
-    const charm=(pairRow(row) || sideOne || both || own || whole)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
+    const charm=(pairRow(row) || sideOne || both || own || whole)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length) || editedPreview(row);
     const turn=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && opts.mirror===true && !charm?.mirror;
     let ro=opts?.highlight && pairRow(row)?{highlight:opts.highlight}:turn?{mirror:true}:null;
     if(charm)return P.frontPreview ? (ro ? P.frontPreview(charm,px || 220,ro) : P.frontPreview(charm,px || 220)) : Engrave.renderFront(charm,px || 220);
@@ -371,7 +371,11 @@ const ListMedia = (() => {
      Orders row, the order window, the piece dots and the Engrave previews kept the old drawing until a reload. The pieces of a design shared that key too, so the old drawing could show for another
      order of the new design. pieceSig names the piece a picture is drawn from (its design and drawing); designVer the library entry's version (its drawing hash and indexing time, REDRAW: the same
      SKU drawn again). Both are in every picture key: a different piece or a new drawing is a different picture, drawn again at once. */
-  const drawnPiece=row=>(row?.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length) || null;
+  /* THISORDER (Paul, 12 Nov 2026, order 4227069460: the handwriting saved on a heart's front, the order window's Vector design still the plain heart): a line not pooled yet (nesting paused) whose
+     piece was changed in the Charm Editor (ARTPRE) is drawn from the charm it WILL have, which carries that change (Pool.previewSwap), not from the master. */
+  const unpooledIds=row=>!(row?.poolIds || []).length && Pool.previewIds ? Pool.previewIds(row) || [] : [];
+  const editedPreview=row=>unpooledIds(row).map(id=>Pool.previewCharmOf(id)).find(c=>c?.artEdit && (c.artEdit.front || c.artEdit.back) && c.outline && c.members?.length) || null;
+  const drawnPiece=row=>(row?.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length) || editedPreview(row) || null;
   const pieceSig=row=>{const c=drawnPiece(row);return c?String(c.orderInfo?.sku || c.sku || '').toUpperCase()+'#'+String(c.hash || c.charmHash || '')+(c.mirror?'m':'')+(c.bodyIndex!=null?'b'+c.bodyIndex:''):'';};
   const designVer=sku=>{const e=sku?Master.entryFor(sku):null;return e?String(e.charmHash || '')+'@'+String(e.indexedAt || e.updatedAt || ''):'';};
   /** What makes two lines' vector designs one picture: the pieces of one design (its SKU and size) share a thumbnail; a line with no SKU is its own pooled charm's; '' when there is nothing to draw. */
@@ -437,7 +441,7 @@ const ListMedia = (() => {
   function refresh(ids){
     try{
       const want=ids && ids.length ? new Set(ids.map(String)) : null, MT=window.CharmNestMadeThumb;
-      const hit=row=>{if(!want)return true;const own=(MT && MT.host().poolIdsOf ? MT.host().poolIdsOf(row) : row?.poolIds) || [];return own.some(id=>want.has(String(id)));};
+      const hit=row=>{if(!want)return true;const own=((MT && MT.host().poolIdsOf ? MT.host().poolIdsOf(row) : row?.poolIds) || []).concat(unpooledIds(row));return own.some(id=>want.has(String(id)));};   // (THISORDER: a line not pooled yet, by the pool ids it will have)
       for(const el of document.querySelectorAll('[data-vector],#owVector')){const r=el._mvRow;if(r && el.isConnected && hit(r))vectorInto(el,r);}
       for(const el of document.querySelectorAll('[data-pc-thumb]')){if(el._pcRedo && el.isConnected)el._pcRedo();}
       // (PICBUSY: a canvas a piece was painted on as made (the order window's sheet panel, the sheet window's piece) is painted again with the piece's new drawing, its box saying Updating meanwhile)
@@ -5738,6 +5742,10 @@ const Pool = window.Pool = (() => {
   }
   /** The charm a piece that is not on any sheet yet WILL have (null once it has its real one, or for a piece never previewed). */
   const previewCharmOf = poolId => (poolId && !charmOf(poolId) && previews.get(poolId)) || null;
+  /* THISORDER (Paul, 12 Nov 2026, order 4227069460: the handwriting drawn on a heart's front in the Charm Editor, saved, and "nothing on the order changed"): a piece not pooled yet (nesting paused)
+     keeps its Charm Editor edit under the pool id it will have (ARTPRE), but every picture of it and its engraving jobs read the charm it WILL have, this preview, which kept the master's drawing.
+     The edit is put on the preview too (the art-edit host's swap): the order window, the engraving card and the jobs show it at once. → whether a preview took it. */
+  const previewSwap = (poolId, next) => { if (!poolId || !next || charmOf(poolId) || !previews.has(poolId)) return false; previews.set(poolId, next); return true; };
   /** The pool ids a line that is not pooled will get, from its last preview ([] when none was made). */
   const previewIds = row => { row = (row && row.parentRow) || row; return (row && previewIdsOf.get(row.key)) || []; };
   // (who: { by, signedIn, device } for the order timeline's stamp, stampWho; sent beside the patch, not stored on the rows)
@@ -5835,7 +5843,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(ListMedia.oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig, greenFits, partnerSheets, greenPage, greenResume, greenHeld, greenLeftover };
+  return { keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewSwap, previewIds, previewSig: trySig, greenFits, partnerSheets, greenPage, greenResume, greenHeld, greenLeftover };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -12050,6 +12058,8 @@ const Engrave = window.Engrave = (() => {
       if (geom && geom.aiPath) {
         const src = await Pool.masterCharm(entry, sp.size), rec = B.pool.rows.get(pid) || null;
         const base = await Pool.ensureBase(src, rec && Pool.pieceOf ? Pool.pieceOf(pid) : null, rec).catch(() => src.charms[0]);
+        // (THISORDER: a piece not pooled yet has no pool row to say it was edited (ARTPRE): its own records are read, once a page, so it opens as it was saved and its next Save expects that save)
+        if (!rec) await window.CharmNestArtEdit.load(["front", "back"].map(face => ({ poolId: pid, face, at: 0 })));
         charm = await window.CharmNestArtEdit.piece(base, pid, rec);   // (a piece whose own edit cannot be read throws: it is never opened as the master draws it)
       }
     }
@@ -13362,7 +13372,7 @@ const Engrave = window.Engrave = (() => {
     const wordsJob = job.state !== "review" && !appView;   // (no placement drawn yet: words to settle, being read or fitted)
     /* ALWAYSBAR (Paul, 12 Nov 2026, order 4227069460): the row under the work area (Centre, Lines, the size, the turn) is always drawn. With no words placed on this face yet the controls that act on the
        words are there, disabled, saying why; the turn of the whole piece works as soon as the piece's charm is on this page (turnBare). A face engraved by the Charm Editor's parts alone keeps its note. */
-    const ctlOn = !!f && !wordsJob && !f.artOnly, ctlBar = ctlOn || !(f && !wordsJob && f.artOnly);
+    const ctlOn = !!f && !wordsJob && !f.artOnly, ctlBar = ctlOn || (job.state === "words" && !(job.text || "").trim());   // (BARREFIT: only a face waiting for words gets the bar early; a face being fitted or drawn again keeps the card as it was)
     const ctlWhy = ctlOn ? "" : (job.text || "").trim() ? `The words of the ${fw} are being fitted: these act on them once they are placed` : `No words on the ${fw} yet: type them in the panel, then these act on them`;
     const turnOn = ctlOn || bareTurnable(job);
     const requests = job.requests || {};
@@ -28746,6 +28756,11 @@ if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
       const list = sh.charms.slice(); list[i] = mine; sh.charms = list; n++;
     }
     if (n) Session.schedule();
+    // (THISORDER: a piece on no sheet yet, nesting paused: the charm it WILL have takes the edit too, so its pictures and its engraving jobs show it at once; Pool.previewSwap)
+    else if (Pool.previewSwap) {
+      const pv = Pool.previewCharmOf(poolId);
+      if (pv && pv !== next) { let mine = next; if (pv !== prev && face) { mine = AE.apply(pv, rec || null, face); AE.ready(mine, (sourceOf(pv.sourceId) || {}).parsed || null).catch(() => {}); } if (mine && Pool.previewSwap(poolId, mine)) n++; }
+    }
     try { window.CharmNestMadeThumb?.expect([poolId], { landed: true }); window.CharmNestMadeThumb?.changed("art", [poolId]); } catch (_) { /* THUMBSYNC: the list boxes show the piece's new art at the next sweep (PICBUSY: with the Updating ring from this moment) */ }
     return n;
   },
@@ -28786,7 +28801,7 @@ if (window.CharmNestMadeThumb) {
     api: (fn, body, opts) => api(fn, body, opts),
     who: () => { try { return employeeName() || ""; } catch (_) { return ""; } },
     sandbox: () => WORKSPACE_SANDBOX,
-    charmOf: poolId => Pool.charmOf(poolId) || null,
+    charmOf: poolId => Pool.charmOf(poolId) || (Pool.previewCharmOf && Pool.previewCharmOf(poolId)) || null,   // (PREMADE: a piece not on a sheet yet is drawn on the charm it WILL have, as the Engrave card draws it)
     jobsOfPiece: poolId => Engrave.jobsOfPiece(poolId),
     madeJob: job => Engrave.madeJobOf(job),   // (MADEV: an approved face the upkeep put away, laid out again on a copy for its picture, as the engraving card draws it)
     pieceIndex: () => {
@@ -28801,7 +28816,10 @@ if (window.CharmNestMadeThumb) {
       const own = (row.poolIds || []).filter(Boolean); if (own.length) return own;
       const rid = String(row.order?.receiptId ?? ""), tid = String(row.line?.transactionId ?? ""); if (!rid || !tid) return [];
       const pre = rid + "_" + tid + "_", tail = id => +String(id).split("_").pop() || 0;
-      return learnedPools(rid).filter(p => p && String(p.poolId || "").startsWith(pre) && !MADE_GONE.has(p.state)).map(p => p.poolId).sort((a, b) => tail(a) - tail(b));
+      const learned = learnedPools(rid).filter(p => p && String(p.poolId || "").startsWith(pre) && !MADE_GONE.has(p.state)).map(p => p.poolId).sort((a, b) => tail(a) - tail(b));
+      // (PREMADE, nesting paused: a line not pooled yet has no pool ids and no pool rows, but its engraving jobs (ENGPRE) are on the ids it WILL get (Pool.previewIds): its list boxes and the order
+      //  window's Vector design show the piece as it will be made, as a pooled line's do. Nothing is sent for them: madeThumbPut needs the pool row, which `known` asks for)
+      return learned.length ? learned : ((window.Pool && Pool.previewIds && Pool.previewIds(row)) || []).slice();
     },
     keepMade: (poolId, made) => {
       for (const r of [B.pool.rows.get(poolId), learnedPools(String(poolId).split("_")[0]).find(p => p && p.poolId === poolId)]) if (r) { if (made) r.made = made; else delete r.made; }

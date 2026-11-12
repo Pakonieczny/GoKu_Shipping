@@ -457,7 +457,15 @@
        seeing an option to stay with this order ... that should be the default option"): opened from the Charm Editor (after its Save, or its Send to sheet… command) the pop-up asks only where it
        goes (this order, first and chosen, another order, or no order), the metal and how many; a piece with no order is named after its design. */
     const simple = !!(o.after || o.fromEditor); st.simple = simple;
-    const ord = ctx ? `<button type="button" class="cpOpt" data-cp-attach="this" role="radio"><span class="cpDot"></span><span class="cpOptT"><b>This ${ctx.custom ? 'custom ' : ''}order</b><span><span class="mono">${esc(ctx.rid)}</span>${ctx.buyer ? ' · ' + esc(ctx.buyer) : ''}${ctx.label ? ' · ' + esc(ctx.label) : ''}${ctx.sku ? ' · ' + esc(ctx.sku) : ''}</span></span></button>` : '';
+    /* THISORDER (Paul, 12 Nov 2026, order 4227069460, a HEART_3750 necklace: "choosing 'This order' must UPDATE THIS ORDER's own piece, not add a separate piece beside it"). The pop-up over a
+       piece's Save (CES2) holds that piece's own design (pc-<poolId>, the version the bridge keeps of each Charm Editor save of a piece), and that Save has ALREADY put the drawing on the piece
+       (its artwork record, artPut; a piece not pooled yet under the pool id it will have, ARTPRE). "This order" sent it again as a CUSTOM piece of the order (customPiecePut): a second piece
+       on a new sheet, beside the order's own piece. For a catalog charm's line (no design of its own to make: needsDesign) "This order" now IS the order's own piece: nothing is added, the
+       metal and the count are not asked, and the press says it is kept on that piece. A custom line (needsDesign), another order, no order, and the card's explicit "Replace on the order…"
+       (the piece made again, a fix: fromEditor without after) send a piece as before. */
+    const pcPid = (/^pc-(.+)$/.exec(st.designId) || [])[1] || (o.design ? piecePool(o.design) : ''), pcRow = ctx && pcPid && ownPool(ctx.rid, pcPid) ? pieceLineOf(null, null, ctx.rid, pcPid) : null;
+    st.piece = pcRow && !needsDesign(pcRow) && !(o.fromEditor && !o.after) ? { poolId: pcPid, row: pcRow, sku: (pcRow.spec && pcRow.spec.designSku) || (pcRow.line && pcRow.line.sku) || 'piece' } : null;
+    const ord = ctx ? `<button type="button" class="cpOpt" data-cp-attach="this" role="radio"><span class="cpDot"></span><span class="cpOptT"><b>This ${ctx.custom ? 'custom ' : ''}order${st.piece ? ' · its own piece' : ''}</b><span><span class="mono">${esc(ctx.rid)}</span>${ctx.buyer ? ' · ' + esc(ctx.buyer) : ''}${ctx.label ? ' · ' + esc(ctx.label) : ''}${ctx.sku ? ' · ' + esc(ctx.sku) : ''}</span>${st.piece ? `<span data-cp-this-piece>Kept on this order's own ${esc(st.piece.sku)}, as you saved it: no piece is added</span>` : ''}</span></button>` : '';
     dlg.innerHTML = `<div class="dlg">
 <div class="dlgHead"><div class="cpHd"><h3 id="cpT">Send to sheet</h3><span class="sub">The piece is cut exactly as designed, on the next sheet of the metal you pick</span></div>
   <div class="right"><span class="cpTag" title="Every piece sent from here is marked handmade custom on its sheet and in its files"><i></i>Handmade custom</span><button type="button" class="cpX" data-cp-close aria-label="Close">×</button></div></div>
@@ -481,9 +489,9 @@
         </div>
         <div class="cpHint">It gets its own number, <b>CUSTOM-${ymd()}-…</b>, rides a sheet and the laser like any piece, and has no shipping label.</div>
       </div></div></section>
-    <section class="cpSec"><h4 id="cpMetT">Metal</h4><div class="cuMetals" role="radiogroup" aria-labelledby="cpMetT">${METALS.map(m => `<button type="button" class="cuM" data-cp-metal="${m.key}" role="radio" title="${esc(m.word)}" style="--mc:${esc(colourOf(m.key))}"><i></i>${esc(m.code)}</button>`).join('')}</div>
+    <section class="cpSec" data-cp-metsec><h4 id="cpMetT">Metal</h4><div class="cuMetals" role="radiogroup" aria-labelledby="cpMetT">${METALS.map(m => `<button type="button" class="cuM" data-cp-metal="${m.key}" role="radio" title="${esc(m.word)}" style="--mc:${esc(colourOf(m.key))}"><i></i>${esc(m.code)}</button>`).join('')}</div>
       <div class="cpGoes" data-cp-goes aria-live="polite"></div></section>
-    <section class="cpSec cpRow"><h4 id="cpQtyT">How many</h4><span class="cuQty" role="group" aria-labelledby="cpQtyT"><button type="button" data-cp-qty="-1" aria-label="One fewer">−</button><b data-cp-n>1</b><button type="button" data-cp-qty="1" aria-label="One more">+</button></span></section>
+    <section class="cpSec cpRow" data-cp-qtysec><h4 id="cpQtyT">How many</h4><span class="cuQty" role="group" aria-labelledby="cpQtyT"><button type="button" data-cp-qty="-1" aria-label="One fewer">−</button><b data-cp-n>1</b><button type="button" data-cp-qty="1" aria-label="One more">+</button></span></section>
   </div>
 </div>
 <div class="dlgFoot"><span class="left cpWho" data-cp-who></span><span class="cpWhy" data-cp-why aria-live="polite"></span><button type="button" class="btn ghost sm" data-cp-close>Cancel</button><button type="button" class="btn gold sm" data-cp-send>Send to sheet</button></div>
@@ -521,6 +529,9 @@
       other.innerHTML = st.other ? `<div class="cpPick"><b>${esc(st.other.rid)}</b><span>${esc([st.other.buyer, st.other.what].filter(Boolean).join(' · '))}</span><button type="button" class="cpLink" data-cp-unpick="other">Change</button></div>` : '';
       for (const b of dlg.querySelectorAll('[data-cp-reason]')) { const on = b.dataset.cpReason === st.reason; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); }
       q('[data-cp-fix]').hidden = st.reason !== 'fix';
+      // (THISORDER: the order's own piece takes the drawing: no metal, no count, no sheet; the head says so)
+      const up = updating(); q('[data-cp-metsec]').hidden = up; q('[data-cp-qtysec]').hidden = up; q('.cpTag').hidden = up;
+      q('#cpT').textContent = up ? 'Keep on this order' : 'Send to sheet'; q('.cpHd .sub').textContent = up ? "Saved on this order's own piece: it is cut from this drawing with the order, on its own sheet" : 'The piece is cut exactly as designed, on the next sheet of the metal you pick';
       paintFix();
     }
     function paintFix() {
@@ -545,6 +556,7 @@
       tint(q('[data-cp-plate] svg'), st.metal);     // (the piece is drawn in the metal it goes on)
     }
     const orderNow = () => (st.attach === 'this' && st.ctx ? st.ctx.rid : st.attach === 'other' && st.other ? st.other.rid : null);
+    const updating = () => st.attach === 'this' && !!st.ctx && !!st.piece;   // (THISORDER: "This order" is the order's own piece)
     const goesNow = () => goesOnto(st.metal, orderNow());
     function whyNot() {
       if (st.loadErr) return 'The design could not be read';
@@ -556,6 +568,7 @@
         if (!st.reason) return 'Say why it is made';
         if (st.reason === 'fix' && !st.fix) return 'Pick the order or piece it fixes';
       }
+      if (updating()) return '';
       if (!st.metal) return 'Pick the metal';
       return '';
     }
@@ -563,10 +576,10 @@
       const why = st.err || whyNot(), b = q('[data-cp-send]'), w = q('[data-cp-why]'), g = st.metal ? st.goes || (st.goes = goesNow()) : null;
       w.textContent = st.busy ? '' : why; w.classList.toggle('bad', !!st.err);
       b.setAttribute('aria-disabled', String(!!whyNot() || st.busy)); b.disabled = st.busy;
-      b.innerHTML = st.busy ? '<span class="cpSpin"></span>Sending…' : esc(`Send ${st.qty > 1 ? st.qty + ' ' : ''}to ${g ? g.name : 'sheet'}`);
+      b.innerHTML = st.busy ? '<span class="cpSpin"></span>Sending…' : updating() ? esc(`Keep on order ${st.ctx.rid}'s piece`) : esc(`Send ${st.qty > 1 ? st.qty + ' ' : ''}to ${g ? g.name : 'sheet'}`);
       q('[data-cp-n]').textContent = String(st.qty);
       for (const x of dlg.querySelectorAll('[data-cp-qty]')) x.disabled = st.busy || (+x.dataset.cpQty < 0 ? st.qty <= 1 : st.qty >= 99);
-      const by = who(); q('[data-cp-who]').innerHTML = by ? `Sent by <b>${esc(by)}</b> · handmade custom` : 'You sign in when you send';
+      const by = who(); q('[data-cp-who]').innerHTML = updating() ? (by ? `Saved by <b>${esc(by)}</b> · on the order's own piece` : '') : by ? `Sent by <b>${esc(by)}</b> · handmade custom` : 'You sign in when you send';
     }
     const all = () => { paintAttach(); paintMetal(); sync(); };
 
@@ -590,6 +603,8 @@
       if (why || st.busy) { const w = q('[data-cp-why]'); w.textContent = why; w.classList.remove('cpNudge'); void w.offsetWidth; w.classList.add('cpNudge'); if (why === 'Add an identifying note') { const n = q('[data-cp-name]'); n.classList.remove('cpShake'); void n.offsetWidth; n.classList.add('cpShake'); n.focus(); } return; }
       const by = who() || await askWho('Kept with this custom piece: who sent it, and when.', 'send this piece to a sheet');
       if (!by || !M || M.st !== st) return;
+      // (THISORDER: the Save already put the drawing on this order's own piece (its artwork record, the pool id it has or will have): nothing is sent, no piece is added)
+      if (updating()) { const pc = st.piece; say(`Order ${st.ctx.rid}: the drawing is on its own ${pc.sku} (no piece added)`, 'ok', 6000); done({ poolIds: [pc.poolId], orderId: st.ctx.rid, sendId: null, updated: true }); return; }
       st.busy = true; st.err = ''; sync();
       const g = st.goes = goesNow(), orderId = orderNow(), none = st.attach === 'none';
       try {
@@ -712,16 +727,23 @@
   }
   /** The line of order `rid` that holds the piece `pid` (`row` first, then the pull, then what `x` names), or null. */
   function pieceLineOf(x, row, rid, pid) {
-    const own = r => r && r.order && String(r.order.receiptId) === rid && (r.poolIds || []).map(String).includes(pid);
+    // (THISORDER: a line not pooled yet (nesting paused) holds the piece it WILL have: its preview ids, else <receipt>_<transaction>_1, as plainPieceOf opens it)
+    const own = r => r && r.order && String(r.order.receiptId) === rid && ((r.poolIds || []).map(String).includes(pid) || (!(r.poolIds || []).length && preIdsOf(r).includes(pid)));
     return own(row) ? row : rowsAll().find(own) || rowsOf(x).find(own) || null;
   }
   /* OWHEAD (Paul 29 Oct 2026: "Add the already existing 'Edit Design' button" to the order window's header, on every order): an order with no design of its own (a plain catalog charm) opens
      the piece the window has chosen NOW (EDITTARGET: chosenPiece, `prefer`), else the line's first piece, through the piece path, Engrave.openCharmEditor, as its engraving card does; null when the
      line has no piece in the pool yet (nothing an edit could be kept on). */
+  /** The pool ids a line not pooled yet WILL have, its own only: its preview's (Pool.previewIds), else <receipt>_<transaction>_1. */
+  function preIdsOf(row) {
+    if (!row || !row.order) return [];
+    const rid = String(row.order.receiptId), P = root.Pool, ids = ((P && typeof P.previewIds === 'function' ? P.previewIds(row) : null) || []).map(String).filter(id => ownPool(rid, id));
+    return ids.length ? ids : row.line && row.line.transactionId != null ? [`${rid}_${row.line.transactionId}_1`] : [];
+  }
   function plainPieceOf(x, prefer) {
     const row = rowsOf(x)[0]; if (!row || !row.order) return null;
     // (a piece not pooled yet (nesting paused, held, waiting) opens on the pool id it WILL get (Pool.previewIds, else <receipt>_<transaction>_1), its charm read from the master library as its engraving card's button does)
-    const rid = String(row.order.receiptId), P = root.Pool, pre = (row.poolIds || []).length ? '' : (((P && typeof P.previewIds === 'function' ? P.previewIds(row) : null) || []).map(String).find(id => ownPool(rid, id)) || (row.line && row.line.transactionId != null ? `${rid}_${row.line.transactionId}_1` : ''));
+    const rid = String(row.order.receiptId), pre = (row.poolIds || []).length ? '' : (preIdsOf(row)[0] || '');
     const want = ownPool(rid, prefer) ? String(prefer) : ((row.poolIds || []).map(String).find(id => ownPool(rid, id)) || pre);
     const line = want ? (pieceLineOf(x, row, rid, want) || (want === pre ? row : null)) : null;
     return line ? { rid, poolId: want, row: line, att: null } : null;

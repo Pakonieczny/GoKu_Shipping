@@ -356,6 +356,7 @@
 
   /* ── what moved: the sweep ── */
   const SIGS = new Map(), quiet = new Map(), touched = new Set(), redrawn = new Set();
+  const UNSENT = new Set();   // (PREMADE: pieces not pooled yet whose picture waits for their pool row: madeThumbPut keeps it on that row, so it is sent once the piece is pooled)
   let sweepT = 0, refreshT = 0, first = true;
   /** Something may have moved (poolIds: the pieces, when known): looked at SWEEP ms later, once for a burst. */
   function changed(why, ids) {
@@ -372,6 +373,7 @@
     const moved = [], states = new Map();
     for (const id of ids) {
       const st = stateOf(id), sig = st ? st.sig : '', prev = SIGS.get(id); states.set(id, st);
+      if (UNSENT.has(id) && known(id)) { UNSENT.delete(id); if (sig) want(id, true); }   // (PREMADE: pooled since: its picture goes now)
       if (prev === undefined) {
         SIGS.set(id, sig);
         if (!sig || isQuiet(id)) continue;
@@ -456,6 +458,9 @@
     const made = cloudOf(id);
     if (st && made && made.sig === st.sig && verOf(made) >= V) { stats.skipped++; return; }
     if (!st && !made) { stats.skipped++; return; }
+    // (PREMADE, nesting paused: a piece not pooled yet (ENGPRE) has no pool row to keep its picture on: the PNG was uploaded, refused ("this piece is not in the pool") and deleted at every edit.
+    //  Nothing is sent until the piece is pooled; the sweep sends it then)
+    if (!known(id)) { UNSENT.add(id); stats.skipped++; return; }
     const pic = st ? pictureOf(id, st) : null;
     if (st && !pic) { const p = pend.get(id) || { first: Date.now(), backfill: true }; if ((p.tries = (p.tries || 0) + 1) <= 8) { p.due = Date.now() + 5000; pend.set(id, p); } stats.skipped++; return; }   // (a shelved face whose font is loading: tried again shortly)
     const by = String(safe(() => host.who && host.who(), '') || '').trim() || null;
