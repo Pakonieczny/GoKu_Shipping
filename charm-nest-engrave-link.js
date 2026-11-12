@@ -36,7 +36,7 @@
   const lead = v => { const m = /^(\d{4,20})(?:[_:\-]|$)/.exec(String(v == null ? "" : v)); return m ? m[1] : ""; };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const bounded = (p, ms) => Promise.race([Promise.resolve(p).catch(() => {}), sleep(ms)]);
-  const tab = job => (job && (DONE.includes(job.state) || PLACE.includes(job.state)) ? "place" : null);   // (NODECIDED: one list, one tab)
+  const tab = job => (job && (DONE.includes(job.state) || PLACE.includes(job.state) || (job.state === "none" && job.decision && job.decision.removed)) ? "place" : null);   // (NODECIDED: one list, one tab) (NONEKEPT, 12 Nov 2026: a piece a person approved with None opens too, so Front / Back can put its words back)   // (NODECIDED: one list, one tab)
   const live = j => !!(j && j.row && j.row.state !== "gone");
   const ridOfJob = j => digits(j && j.row && j.row.order && j.row.order.receiptId);
   const jobs = () => { try { const E = window.Engrave; return E && E.items ? [...E.items().values()] : []; } catch (_) { return []; } };
