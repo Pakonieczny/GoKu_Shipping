@@ -12234,7 +12234,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     /* ─── Etsy page-change alarm ─────────────────────────────────────
        etsyMailSnapshot records each scrape in EtsyMail_Config/scrapeHealth.
        Three bad scrapes in a row (no messages, blank messages, no times,
-       or nothing matching the stored thread) mean Etsy changed its page or
+       or two complete reads of one conversation that never line up) mean Etsy changed its page or
        signed the extension out: a red line shows in the top bar, and a red
        dot on the top-bar toggle when the bar is hidden. One Firestore read
        a minute; no Etsy calls. */
@@ -12251,15 +12251,17 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         const label = document.getElementById("emScrapeAlarmLabel");
         const toggle = document.getElementById("emTopbarToggleBtn");
         if (!el || !label) return;
+        // MAILLINK: a good read since, or a person's Re-read now since (resetAtMs), clears it (the same rule as _etsyMailLinkHealth.js)
         const bad = !!d && (d.consecutiveBad || 0) >= 3
-          && typeof d.lastBadAtMs === "number" && Date.now() - d.lastBadAtMs < 24 * 3600000;
+          && typeof d.lastBadAtMs === "number" && Date.now() - d.lastBadAtMs < 24 * 3600000
+          && !((d.lastOkAtMs || 0) > d.lastBadAtMs) && !((d.resetAtMs || 0) >= d.lastBadAtMs);
         el.hidden = !bad;
         if (toggle) toggle.classList.toggle("em-alarm", bad);
         if (!bad) return;
         label.textContent = d.lastBadReason === "Etsy signed the extension out"
           ? "Extension signed out of Etsy" : "Etsy page not read";
         el.title = "The last " + d.consecutiveBad + " scrapes failed: " + (d.lastBadReason || "no messages read") + ". "
-          + "Etsy may have changed its page, or the extension's Etsy tab is signed out. "
+          + "The inbox reads that conversation again by itself. If it stays, reload the Etsy extension in Chrome and keep its Etsy tab signed in. "
           + (d.lastOkAtMs ? "Last good read " + ago(d.lastOkAtMs) + "." : "No good read recorded yet.");
       }
       async function poll() {

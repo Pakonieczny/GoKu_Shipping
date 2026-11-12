@@ -482,6 +482,23 @@
       gapNote = { tone: "warn", text: `Could not put them away just now (${e.message}). Try again in a minute.`, at: Date.now() };
     } finally { gapBusy = false; paintLights(); healthLater(); }
   }
+  /** MAILLINK (Paul, 12 Nov 2026: "The email link is down: The last 3 readings of an Etsy conversation failed ... I cannot reset it"):
+   *  Re-read now reads the conversation whose read failed again from Etsy, in full, and starts the count of failed reads again, so
+   *  the notice clears for everybody at once. The inbox does the same by itself with back-off; this is for a person who will not wait. */
+  async function rereadNow() {
+    if (!M.key || gapBusy || healthBusy) return;
+    gapBusy = true; gapNote = null; paintLights();
+    try {
+      const res = await call("link_reread", {}, { timeout: 30000 });
+      applyLinkResult(res);
+      gapNote = { tone: "ok", text: res.queued ? "Reset. The Etsy helper reads that conversation again in full now; the notice comes back only if three more reads fail."
+        : res.waiting ? "Reset. A re-read of that conversation is already waiting for the Etsy helper; the notice comes back only if three more reads fail."
+        : "Reset. The notice comes back only if three more reads fail.", at: Date.now() };
+    } catch (e) {
+      if (authLost(e)) return;
+      gapNote = { tone: "warn", text: e.status === 400 ? "This server cannot re-read yet: reload the page in a minute (a new version is on its way)." : `Could not re-read just now (${e.message}). Try again in a minute.`, at: Date.now() };
+    } finally { gapBusy = false; paintLights(); healthLater(); }
+  }
   async function dismissGap(sig) {
     if (!M.key || gapBusy || healthBusy || !sig) return;
     gapBusy = true; gapNote = null; paintLights();
@@ -530,6 +547,7 @@
     rows.push(row(M.link === "offline" ? "down" : "ok", "Sorter to inbox", M.link === "offline" ? "Not answering right now; what you write is kept" : "Connected" + (M.who && M.who.name ? " as " + M.who.name : "")));
     if (h) for (const c of h.checks) {
       if (c.id === "consistency" && c.data && c.data.n > 0 && (c.level === "warn" || c.level === "down")) rows.push(row(c.level, c.label, c.text + " ").replace("</span></li>", ` ${gapButtons(c.data.sig).replace("data-pill-check", "data-hcheck")}</span></li>`));
+      else if (c.id === "read" && c.data && c.data.reread && (c.level === "warn" || c.level === "down" || c.level === "wait")) rows.push(row(c.level, c.label, c.text + " ").replace("</span></li>", ` <button type="button" class="lnk" data-hreread${gapBusy || healthBusy ? " disabled" : ""} title="Read that conversation from Etsy again now and start the count of failed reads again">${gapBusy ? '<span class="cmSpin" aria-hidden="true"></span> Re-reading…' : "Re-read now"}</button></span></li>`));
       else if (c.id === "send" && c.data && c.data.dead > 0) rows.push(row(c.level, c.label, c.text + " ").replace("</span></li>", ` <button type="button" class="lnk" data-hputaway${gapBusy || healthBusy ? " disabled" : ""}>Put away</button></span></li>`));
       else rows.push(row(c.data && c.data.dismissed ? "wait" : c.level, c.label, c.text));   // (a dismissed notice is listed quietly: grey, not green)
     }
@@ -567,6 +585,8 @@
     if (rv && healthBox && healthBox.box.contains(rv)) resolveGap(rv.dataset.gapResolve);
     const pa = e.target.closest("[data-hputaway]");
     if (pa && healthBox && healthBox.box.contains(pa)) putAway();
+    const rr = e.target.closest("[data-hreread]");
+    if (rr && healthBox && healthBox.box.contains(rr)) rereadNow();
   });
   /** One place to write: its light and its sentence, redrawn only when they changed (a redrawn button loses focus). */
   function paintLight(el, owner, cls, st) {
@@ -728,7 +748,7 @@
     const gap = lp && lp.kind === "consistency" && lp.gap && lp.gap.n > 0 ? lp.gap : null;
     const okNote = !lp && gapNote && gapNote.tone === "ok" && Date.now() - gapNote.at < 180000;
     pillMenu.innerHTML = (gap ? `<div class="mmHead">Email link</div><div class="cmWarn ${lp.tone}"><b>${E(lp.word)}.</b> ${E(gapSentence(gap))} ${gapButtons(gap.sig)}</div>${gapNoteHtml()}${gapHint}`
-      : lp ? `<div class="mmHead">Email link</div><div class="cmWarn ${lp.tone}"><b>${E(lp.word)}.</b> ${E(lp.text)} <button type="button" class="lnk" data-pill-check${healthBusy || gapBusy ? " disabled" : ""}>${gapBusy ? '<span class="cmSpin" aria-hidden="true"></span> Checking…' : "Check now"}</button>${lp.word === "Messages need attention" ? ` <button type="button" class="lnk" data-pill-putaway${healthBusy || gapBusy ? " disabled" : ""}>Put away</button>` : ""}</div>${gapNoteHtml()}`
+      : lp ? `<div class="mmHead">Email link</div><div class="cmWarn ${lp.tone}"><b>${E(lp.word)}.</b> ${E(lp.text)} <button type="button" class="lnk" data-pill-check${healthBusy || gapBusy ? " disabled" : ""}>${gapBusy ? '<span class="cmSpin" aria-hidden="true"></span> Checking…' : "Check now"}</button>${lp.word === "Messages need attention" ? ` <button type="button" class="lnk" data-pill-putaway${healthBusy || gapBusy ? " disabled" : ""}>Put away</button>` : ""}${lp.word === "Etsy page not read" ? ` <button type="button" class="lnk" data-pill-reread${healthBusy || gapBusy ? " disabled" : ""} title="Read that conversation from Etsy again now and start the count of failed reads again">Re-read now</button>` : ""}</div>${gapNoteHtml()}`
       : okNote || (gapNote && Date.now() - gapNote.at < 180000) ? `<div class="mmHead">Email link</div>${gapNote.tone === "ok" ? `<div class="cmWarn ok" role="status" aria-live="polite"><b>✓</b> ${E(gapNote.text)}</div>` : gapNoteHtml()}` : "") + `<div class="mmHead">Customers</div>` + (open.length ? open.slice(0, 12).map(s => {
       const who = (s.customer && (s.customer.name || s.customer.username)) || "Customer";
       const line = s.unread > 0 ? `“${E(plain(s.lastInboundPreview || "a photo"))}”` : s.failed > 0 ? "A message did not go — open it to retry" : s.attention > 0 ? "A message may or may not have gone — open it and check Etsy" : "Waiting to be sent by hand on Etsy";
@@ -739,6 +759,7 @@
     pillMenu.querySelectorAll("[data-gap-dismiss]").forEach(x => x.onclick = e => { e.stopPropagation(); dismissGap(x.dataset.gapDismiss); });
     pillMenu.querySelectorAll("[data-gap-resolve]").forEach(x => x.onclick = e => { e.stopPropagation(); resolveGap(x.dataset.gapResolve); });
     pillMenu.querySelectorAll("[data-pill-putaway]").forEach(x => x.onclick = e => { e.stopPropagation(); putAway(); });
+    pillMenu.querySelectorAll("[data-pill-reread]").forEach(x => x.onclick = e => { e.stopPropagation(); rereadNow(); });
   }
 
   /** Show one question: in the order window when its order is in the pull, otherwise in the order window that is
