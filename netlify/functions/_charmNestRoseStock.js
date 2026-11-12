@@ -153,7 +153,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
     if(b.noCuts===true)return {stock:snap.data(),cuts:[],more:false};
     let q=stocks().doc(b.stockId).collection('cuts').orderBy('revision','desc');if(b.before)q=q.startAfter(+b.before);
     // Keep even the largest saved contours below the function response limit.
-    const cuts=await q.limit(4).get();return {stock:snap.data(),cuts:cuts.docs.map(d=>d.data()),more:cuts.size===4};
+    const cuts=await q.limit(4).get();return {stock:snap.data(),cuts:cuts.docs.map(d=>d.data()).filter(c=>!c.setAsideAt),more:cuts.size===4};   // (ASIDE: a cut set aside is no part of the sheet's history: nothing grey is drawn for it)
   }
   // the leftovers that can be used again; {metal} keeps one metal's (no metal: every metal's, as before)
   async function roseList(b){const want=b&&b.metal?asMetal(b.metal):null;const snap=await stocks().where('available','==',true).limit(100).get();return {stocks:snap.docs.map(d=>d.data()).filter(d=>!want||metalOf(d)===want).sort((a,b)=>a.createdMs-b.createdMs)};}
@@ -512,19 +512,21 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
         // (ASIDE) nothing drawn or cut: only the outline a set-aside cut left on its physical sheet is put right (the stock's last cut is this sheet's, and it was set aside)
         const sid=id(sheet.roseStockId)?sheet.roseStockId:null;
         if(sid){
-          const hr=stocks().doc(sid),hd=await tx.get(hr),hs=hd.exists?hd.data():null;
-          if(hs&&+hs.revision>=1&&hs.lastCutSheetId===b.sheetId&&asideRevs.has(+hs.revision)&&(!hs.owner||hs.owner===b.sheetId)){
-            const want=await priorOf(hr,+hs.revision);
-            if((hs.profileJson||null)!==want){
-              tx.update(hr,{profileJson:want,owner:b.sheetId,available:false,reopenedAt:at,reopenedBy:by,updatedAt:FV.serverTimestamp()});
-              return {ok:true,changed:true,healed:true,lines:0,cut:null,stock:{...hs,profileJson:want,owner:b.sheetId,available:false,updatedAt:null}};
-            }
+          const hr=stocks().doc(sid),hd=await tx.get(hr),hs=hd.exists?hd.data():null,marks=[];
+          for(const r of asideRevs){ const q=await tx.get(hr.collection('cuts').where('revision','==',r).limit(1)),d=q.docs[0]; if(d&&d.data().sheetId===b.sheetId&&!d.data().setAsideAt)marks.push(d.ref); }   // (its set-aside cuts, marked: no history drawn for them)
+          let want,heal=false;
+          if(hs&&+hs.revision>=1&&hs.lastCutSheetId===b.sheetId&&asideRevs.has(+hs.revision)&&(!hs.owner||hs.owner===b.sheetId)){ want=await priorOf(hr,+hs.revision); heal=(hs.profileJson||null)!==want; }
+          for(const m of marks)tx.update(m,{setAsideAt:at,setAsideBy:by});
+          if(heal){
+            tx.update(hr,{profileJson:want,owner:b.sheetId,available:false,reopenedAt:at,reopenedBy:by,updatedAt:FV.serverTimestamp()});
+            return {ok:true,changed:true,healed:true,marked:marks.length,lines:0,cut:null,stock:{...hs,profileJson:want,owner:b.sheetId,available:false,updatedAt:null}};
           }
+          if(marks.length)return {ok:true,changed:true,marked:marks.length,lines:0,cut:null,stock:null};
         }
         return {ok:true,changed:false,lines:0,cut:null,stock:null};
       }
       // (reads first: the stock the cut was recorded on, the leftover it made, the earlier cut's outline)
-      let cut=null,stockOut=null,ref=null,rem=null,prior=null;
+      let cut=null,stockOut=null,ref=null,rem=null,prior=null,curCutRef=null;
       if(wasCut){
         cut={at:+sheet.roseCutAt||null,revision:sheet.roseCutRevision!=null&&Number.isFinite(+sheet.roseCutRevision)?+sheet.roseCutRevision:null,stockId:id(sheet.roseStockId)?sheet.roseStockId:null,leftover:null,how:'none'};
         if(cut.stockId){
@@ -538,12 +540,14 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
             if(r&&r.status==='inUse'&&r.inUseBySheetId&&r.inUseBySheetId!==b.sheetId)throw new Error(`The leftover sheet ${name}'s green line made is in use by ${r.inUseBySheetName||'another sheet'}: give it back first, then ${name}'s charms can change`);
             if(r&&r.status==='used'&&r.usedBySheetId&&r.usedBySheetId!==b.sheetId)throw new Error(`The leftover sheet ${name}'s green line made was used by ${r.usedBySheetName||'another sheet'}: its metal is that sheet's now, so ${name}'s charms stay as they are`);
             if(cut.revision>1)prior=await priorOf(ref,cut.revision);   // (ASIDE: a cut set aside before is skipped)
+            { const cq=await tx.get(ref.collection('cuts').where('revision','==',cut.revision).limit(1)); curCutRef=cq.docs[0]?cq.docs[0].ref:null; }   // (ASIDE: this cut, marked set aside below)
             cut.leftover=`${ref.id}-${cut.revision}`;cut.how=r?(r.status==='available'?'discarded':'kept'):'none';
             stockOut={...stock,profileJson:prior,owner:b.sheetId,available:false,updatedAt:null};
           }else ref=null;
         }
       }
       // writes
+      if(curCutRef)tx.update(curCutRef,{setAsideAt:at,setAsideBy:by});
       if(ref&&stockOut){
         tx.update(ref,{profileJson:prior,owner:b.sheetId,available:false,reopenedAt:at,reopenedBy:by,updatedAt:FV.serverTimestamp()});
         if(rem&&remnantSync&&remnantSync.superseded)remnantSync.superseded(tx,rem,{sheetId:b.sheetId,sheetName:name,by,at,reason:`Its sheet (${name}) changed after its green line was recorded`});
