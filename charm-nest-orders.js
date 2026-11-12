@@ -2970,7 +2970,8 @@
       necklace: Object.freeze({ sku: Object.freeze(["CARDS 1 - (2 CARDS)", "CARDS 1 - 2 CARDS", "PLAYING_0805"]) }), huggie: Object.freeze({ sku: Object.freeze(["CARDS 1 - (2 CARDS) (HUGGIE)"]) }),
       ownSku: () => false }),
     // LETTERCHOICE (Paul, 9 Nov 2026): the initial letter listing; a `letter` row is read by letterChoiceRead (section 3c'''', below), not by charmOnlyRead
-    Object.freeze({ id: "letter-charm-only", letter: true, listings: Object.freeze(["1871836213"]), noun: "letter", nouns: "letters", ask: "Which letter?",
+    Object.freeze({ id: "letter-charm-only", letter: true, listings: Object.freeze(["1871836213", "1636731698"]), formOf: Object.freeze({ "1636731698": "necklace" }),   // (LETTER1698, Paul 12 Nov 2026: "Initial Necklace Personalized Jewelry Letter", INITIAL_1698: the same LETTER_NECKLACE alphabet, always; a necklace listing, no Necklace / Huggie option)
+      noun: "letter", nouns: "letters", ask: "Which letter?",
       necklace: Object.freeze({ base: "LETTER_NECKLACE-", names: LETTER_CHOICE_NAMES }), huggie: Object.freeze({ base: "LETTER_NECKLACE-", suffix: " (HUGGIE)", names: LETTER_CHOICE_NAMES }),
       read: t => lettersInText(t).letters.map(l => ({ name: l, word: l })), skuRead: () => "", ownSku: s => !!letterMemberOf(s) })
   ]);
@@ -3135,7 +3136,7 @@
   function letterChoiceRead(line, order, row, o) {
     o = o || {}; const me = o.me, loose = o.loose; if (!row || !row.letter || !me) return null;
     line = line || {};
-    const f = letterLineForm(line, o.lf), form = typeof f === "string" ? f : "", engraved = numberEngraveChosen(line);
+    const f0 = letterLineForm(line, o.lf), lid = String(line.listingId == null ? "" : line.listingId).replace(/\D/g, ""), f = typeof f0 === "string" ? f0 : (row.formOf && row.formOf[lid]) || f0, form = typeof f === "string" ? f : "", engraved = numberEngraveChosen(line);   // (LETTER1698: a listing of one form needs no option to say it)
     const out = { profile: row.id, noun: row.noun, family: row.necklace.base, form: form || "unknown", symbols: [], textOnly: false, optionSku: "" };
     const quote = t => `“${clip(t, 40)}”`;
     const merge = rs => { rs = rs.filter(r => !r.empty); if (!rs.length) return { letters: [], empty: true, odd: "" }; const odd = (rs.find(r => r.odd) || {}).odd || ""; return odd ? { letters: [], empty: false, odd } : { letters: [...new Set(rs.flatMap(r => r.letters))], empty: false, odd: "" }; };
