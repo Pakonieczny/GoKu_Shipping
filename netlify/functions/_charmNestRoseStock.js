@@ -153,7 +153,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
     if(b.noCuts===true)return {stock:snap.data(),cuts:[],more:false};
     let q=stocks().doc(b.stockId).collection('cuts').orderBy('revision','desc');if(b.before)q=q.startAfter(+b.before);
     // Keep even the largest saved contours below the function response limit.
-    const cuts=await q.limit(4).get();return {stock:snap.data(),cuts:cuts.docs.map(d=>d.data()).filter(c=>!c.setAsideAt),more:cuts.size===4};   // (ASIDE: a cut set aside is no part of the sheet's history: nothing grey is drawn for it)
+    const cuts=await q.limit(4).get();return {stock:snap.data(),cuts:(seen=>cuts.docs.map(d=>d.data()).filter(c=>!c.setAsideAt&&!(c.sheetId&&(seen.has(c.sheetId)||!seen.add(c.sheetId)))))(new Set()),more:cuts.size===4};   // (ASIDE: a cut set aside is no part of the sheet's history: nothing grey is drawn for it)
   }
   // the leftovers that can be used again; {metal} keeps one metal's (no metal: every metal's, as before)
   async function roseList(b){const want=b&&b.metal?asMetal(b.metal):null;const snap=await stocks().where('available','==',true).limit(100).get();return {stocks:snap.docs.map(d=>d.data()).filter(d=>!want||metalOf(d)===want).sort((a,b)=>a.createdMs-b.createdMs)};}
