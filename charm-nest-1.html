@@ -6966,6 +6966,46 @@ async function previewPng(sh) {
   try { const cv = document.createElement("canvas"); const st = stockFor(sh.metal, sh); cv.width = 1026; cv.height = Math.round(1026 * st.hPt / st.wPt); paintPreview(cv, sh, true); const blob = await new Promise(r => cv.toBlob(r, "image/png")); return blob; } catch (_) { return null; }
 }
 
+/* ═══ LIVEPV · a sheet's picture is never a stale photo (Paul, 12 Nov 2026: "this cannot be a picture that static it needs to be dynamic as
+   changes are made. This must always update") ═══
+   Every sheet picture outside the Nest cards (the Library, the sets: img[data-sheet-preview]) of a sheet this page holds is drawn here
+   from the sheet itself, with paintPreview as the Nest card draws it, and drawn again as soon as the sheet changes (its pieces, their
+   places, its Rose Gold stock and cuts, its engravings, its state). The saved picture shows only for a sheet this page does not hold. */
+(function livePreviews() {
+  const memo = new Map();
+  const r1 = v => Math.round((+v || 0) * 10) / 10;
+  const sigOf = sh => JSON.stringify([
+    sh.sheetId, sh.metal, !!sh.dirty, sh.status || "", !!sh.draft, sh.setId || "", sh.persistedAt || sh.savedAt || sh.updatedAt || 0,
+    (sh.placements || []).map(p => [p.id, r1(p.xPt != null ? p.xPt : p.x), r1(p.yPt != null ? p.yPt : p.y), r1(p.angle), p.scale || 1]),
+    (sh.charms || []).filter(c => c.excluded).length, (sh.charms || []).length,
+    sh.roseStock ? [sh.roseStock.id, sh.roseStock.revision] : 0, sh.roseCutAt || 0, sh.rosePlanHash || "",
+    (sh.roseHistory || []).map(c => [c.revision, c.sheetId, c.setAsideAt ? 1 : 0]),
+    (sh.backPool || []).map(b => [b.poolId, b.approvedAt || 0]), sh.laserDoneAt || 0
+  ]);
+  function draw(sh) {
+    const st = stockFor(sh.metal, sh), cv = document.createElement("canvas");
+    cv.width = 900; cv.height = Math.max(1, Math.round(900 * st.hPt / st.wPt));
+    paintPreview(cv, sh, true);
+    return cv.toDataURL("image/png");
+  }
+  function tick() {
+    const imgs = document.querySelectorAll("img[data-sheet-preview]"); if (!imgs.length) return;
+    const by = new Map(); for (const p of allSheets()) if (p && p.sheetId) by.set(p.sheetId, p);
+    for (const img of imgs) {
+      const sh = by.get(img.dataset.sheetPreview); if (!sh || !(sh.placements || []).length || !img.isConnected || !img.offsetParent) continue;
+      const sig = sigOf(sh); let m = memo.get(sh.sheetId);
+      if (!m || m.sig !== sig) { let url; try { url = draw(sh); } catch (e) { console.warn("[livePreview]", sh.sheetId, e && e.message); continue; } m = { sig, url }; memo.set(sh.sheetId, m); }
+      if (img.getAttribute("src") !== m.url) { img.removeAttribute("loading"); img.src = m.url; img.dataset.livePreview = "1"; delete img.dataset.assetFailed; delete img.dataset.assetLoading; }
+    }
+  }
+  setInterval(() => { if (document.hidden) return; try { tick(); } catch (e) { console.warn("[livePreview]", e && e.message); } }, 1200);
+  // a list drawn again (the Library, a set opened) gets the live pictures at once, not on the next beat
+  let queued = false; const soon = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; try { tick(); } catch (_) {} }); };
+  const watch = () => new MutationObserver(soon).observe(document.body, { childList: true, subtree: true });
+  if (document.body) watch(); else document.addEventListener("DOMContentLoaded", watch, { once: true });
+  window.LivePreview = { tick, forget: id => id ? memo.delete(id) : memo.clear() };
+})();
+
 /* ═══ 10 · rendering: rail ══════════════════════════════════════════════ */
 const labelOf = m => (METALS.find(x => x.key === m) || {}).label || m;
 /* ── Motion on the Nest tab (Paul, 27 Sep 20:09-20:24: "anytime things would disappear from my user screen due to
@@ -9031,7 +9071,7 @@ try {
 <!-- the send animation, the very same file the inbox runs (SendFlight): a sent customer message flies from its box into the thread -->
 <script src="send-flight.js?v=20261010-sf1"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1-mr2-mq2-sf1-sm1-md1-ml1-ma1-cost18-wal1-ru2-nv3-nv6-bm1-ml2"></script>
-<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1-pf1-pp1-pn1-sn1-nestfront-setfix1-gk1-rl1-ged1-nv6-rgc1-ipl4-crn1-str1-lf1-go1-nl1-as1-sc2"></script>
+<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1-pf1-pp1-pn1-sn1-nestfront-setfix1-gk1-rl1-ged1-nv6-rgc1-ipl4-crn1-str1-lf1-go1-nl1-as1-sc2-lp1"></script>
 <script src="charm-nest-partial-data.js?v=20261007-opt1-sheets"></script>
 <script src="charm-nest-partial-nest.js?v=20261007-ps2c-fit75-pso1-psc1-pp1-cg1-crn1-of1"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1-pp1-sn1"></script>
