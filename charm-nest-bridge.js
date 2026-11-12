@@ -11738,6 +11738,16 @@ const Engrave = window.Engrave = (() => {
   async function charmEditWordsApply(w, now, face, view, by) {
     const W = CE_WORDS(), M = window.CharmEditor.model, eng = window.CharmNestCeText ? window.CharmNestCeText.textToPaths : charmEditText;
     let job = items().get(w.job.key) || w.job; const out = { face, text: now.words.join(" "), font: "", moved: false, lost: false, unkept: now.style.slice(), kept: false };
+    // (CEREMOVE: the words deleted on a face the editor's parts engrave: the setup's words for this face emptied, as the card's words box saves it (charm-nest-engrave-setup.js EDITOR WORDS:
+    //  env.clearWords, an approved face reopened first): the job has no words, the face is fitted as art alone and waits for its Approve; the line's override keeps "no words" through a reload)
+    if (now.gone) {
+      const patch = { [face]: { text: "" }, reason: { code: "other", text: "Words removed in the Charm Editor", of: face }, ...(job.slot ? { slot: job.slot } : {}) };
+      const r = await saveSetup(job.row, patch);
+      if (r && !r.ok) { out.kept = true; out.why = r.message || (r.cancelled ? "put away" : "not saved"); return out; }
+      job = items().get(job.key) || job;
+      if (engravedWords(job).length && !(job.fit && job.fit.artOnly)) { out.kept = true; out.why = `they are still the engraving's (empty the ${face} words box or press No engraving)`; return out; }
+      out.removed = true; out.text = ""; return out;
+    }
     const fontKey = String((now.item && now.item.fontKey) || w.item.fontKey || fontIdOf(job));
     if (now.text || now.font) {
       const word = now.font ? (W && W.fontWordOf(fontKey, O)) || "" : (job.faceFontWord || "");
@@ -11977,7 +11987,14 @@ const Engrave = window.Engrave = (() => {
         todo.push({ face, changes });
       }
       const wordsTodo = Object.keys(words).filter(f => wordsNow[f].changed && !wordsNow[f].gone);
-      for (const f of Object.keys(words)) if (wordsNow[f].gone && !words[f].repair) kept.push(f);   // (the words deleted in the editor: the engraving keeps them, said; its card's words box or No engraving takes them off)
+      // (CEREMOVE, Paul 12 Nov 2026, order 4220952355: words of his own added on the front, saved, approved; then the card's own words deleted in the editor and saved: "the black words come back".
+      //  The engraving's words deleted on a face the editor's own parts engrave (as the record will hold them after this save) are TAKEN OFF the engraving, as the card's words box emptied takes
+      //  them off (EDITOR WORDS: clearWords): the face is engraved as the editor drew it. On a face with no art of the editor's, the engraving keeps them, said; No engraving takes them off)
+      const artAfter = f => {
+        const w = todo.find(x => x.face === f); if (w) return (w.changes.added || []).some(a => a && a.role !== "cut");
+        const j = words[f].job, live = j ? (items().get(j.key) || j) : null; return !!live && faceHasEditorArt(live, f);
+      };
+      for (const f of Object.keys(words)) if (wordsNow[f].gone && !words[f].repair) { if (words[f].job && artAfter(f)) wordsTodo.push(f); else kept.push(f); }
       // every face of every copy is checked before anything is sent: a part that cannot be kept as asked, and nothing is saved
       for (const w of todo) for (const pid of t.poolIds) {
         try { AE.encode(w.changes, { charm: Pool.charmOf(pid) || charm, view: views[w.face], face: w.face, placed: placedOf(pid) }); }
@@ -12077,6 +12094,7 @@ const Engrave = window.Engrave = (() => {
       const cap = s => s.charAt(0).toUpperCase() + s.slice(1), wordsSaid = applied.map(a => {
         if (a.kept) return `The ${a.face} words were not changed: ${a.why}`;
         const j = pj[a.face], st = j ? j.state : "";
+        if (a.removed) return `The ${a.face} engraving's words are taken off: the ${a.face} is engraved as you drew it${st === "review" ? ": approve it" : ""}`;   // (CEREMOVE)
         return `The ${a.face} engraving now reads "${a.text}"${a.font ? ` in ${a.font}` : ""}${a.moved ? ", where you put it" : a.lost && wordsNow[a.face].place ? " (placed by the fit: they do not fit where you put them)" : ""}${st === "review" ? ": approve it" : ""}${a.unkept.length ? ` · ${cap(a.unkept.join(", "))}: the engraving sets its own` : ""}`;
       });
       // (SHAREDSHAPE: what the sheet's check of a changed cut line found, said with the save)
