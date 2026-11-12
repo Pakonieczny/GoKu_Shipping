@@ -11835,6 +11835,12 @@ const Engrave = window.Engrave = (() => {
     // (CEREMOVE: the words deleted on a face the editor's parts engrave: the setup's words for this face emptied, as the card's words box saves it (charm-nest-engrave-setup.js EDITOR WORDS:
     //  env.clearWords, an approved face reopened first): the job has no words, the face is fitted as art alone and waits for its Approve; the line's override keeps "no words" through a reload)
     if (now.gone) {
+      if (!faceHasEditorArt(job, face)) {   // (CEGONE: no art of the editor's on this face: the face is taken off the engraving, as None for it; the other face stays as it is)
+        const su = setupOf(job.row) || {}, left = (su.faces || []).filter(x => x !== face), mode = left.length >= 2 ? "both" : left.length === 1 ? left[0] : "none";
+        const r0 = await saveSetup(job.row, { mode, reason: { code: "other", text: `${face === "front" ? "Front" : "Back"} words removed in the Charm Editor`, of: face }, ...(job.slot ? { slot: job.slot } : {}) });
+        if (r0 && !r0.ok) { out.kept = true; out.why = r0.message || (r0.cancelled ? "put away" : "not saved"); return out; }
+        out.removed = true; out.noneFace = true; out.text = ""; out.mode = mode; return out;
+      }
       const patch = { [face]: { text: "" }, reason: { code: "other", text: "Words removed in the Charm Editor", of: face }, ...(job.slot ? { slot: job.slot } : {}) };
       const r = await saveSetup(job.row, patch);
       if (r && !r.ok) { out.kept = true; out.why = r.message || (r.cancelled ? "put away" : "not saved"); return out; }
@@ -12092,7 +12098,9 @@ const Engrave = window.Engrave = (() => {
         const w = todo.find(x => x.face === f); if (w) return (w.changes.added || []).some(a => a && a.role !== "cut");
         const j = words[f].job, live = j ? (items().get(j.key) || j) : null; return !!live && faceHasEditorArt(live, f);
       };
-      for (const f of Object.keys(words)) if (wordsNow[f].gone && !words[f].repair) { if (words[f].job && artAfter(f)) wordsTodo.push(f); else kept.push(f); }
+      // (CEGONE, Paul 12 Nov 2026: "I can't delete the original back engraving and the saves don't take hold"; found live: words deleted in the editor on a face with no art came back, "Saved · nothing changed"):
+      //  words deleted in the editor are ALWAYS taken off: on a face with the editor's art it is engraved as drawn (CEREMOVE); on a face with none, that face is not engraved any more (as None for that face)
+      for (const f of Object.keys(words)) if (wordsNow[f].gone && !words[f].repair) { if (words[f].job) wordsTodo.push(f); else kept.push(f); }
       // every face of every copy is checked before anything is sent: a part that cannot be kept as asked, and nothing is saved
       for (const w of todo) for (const pid of t.poolIds) {
         try { AE.encode(w.changes, { charm: Pool.charmOf(pid) || charm, view: views[w.face], face: w.face, placed: placedOf(pid) }); }
@@ -12192,6 +12200,7 @@ const Engrave = window.Engrave = (() => {
       const cap = s => s.charAt(0).toUpperCase() + s.slice(1), wordsSaid = applied.map(a => {
         if (a.kept) return `The ${a.face} words were not changed: ${a.why}`;
         const j = pj[a.face], st = j ? j.state : "";
+        if (a.removed && a.noneFace) return a.mode === "none" ? `The ${a.face} words are taken off: this piece has no engraving now (it is under Approved; choose Front or Back there to engrave it again)` : `The ${a.face} words are taken off: the ${a.face} is not engraved now, the ${a.mode} stays`;   // (CEGONE)
         if (a.removed) return `The ${a.face} engraving's words are taken off: the ${a.face} is engraved as you drew it${st === "review" ? ": approve it" : ""}`;   // (CEREMOVE)
         return `The ${a.face} engraving now reads "${a.text}"${a.font ? ` in ${a.font}` : ""}${a.moved ? ", where you put it" : a.lost && wordsNow[a.face].place ? " (placed by the fit: they do not fit where you put them)" : ""}${st === "review" ? ": approve it" : ""}${a.unkept.length ? ` · ${cap(a.unkept.join(", "))}: the engraving sets its own` : ""}`;
       });
