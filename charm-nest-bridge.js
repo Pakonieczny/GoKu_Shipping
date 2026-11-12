@@ -10554,7 +10554,8 @@ const Engrave = window.Engrave = (() => {
     { const d = drawnBounds(view.members) || handles; cv._zero = [d[0], d[3]]; }   // (ENGVIEW: the rulers' zero, the piece's top-left as drawn)
     // CHARM EDIT · BACK (27 Oct 2026): what a person added to this BACK is engraved by the back's own file with the words, so every picture of the back draws it where the file puts it (backArtOf):
     // the work area as a front draws its art (the laser's colours, muted), the pictures written with the piece in the words' ink, as the file engraves it; under the cut line and the words
-    const added = onFront ? [] : backArtOf(job), ownArt = g => { if (!added.length) return; if (editable) frontArtOn(g, added, tx, k, cv.width, cv.height, FRONT_ART_ALPHA.own); else backArtInk(g, added, tx, k); };   // (OWNART: every part added to a back is the person's own: full strength)
+    // (BLUEBACK, Paul 12 Nov 2026: and every one of them, the work area too, in the back's own colours as its file engraves them: backArtInk, the words' blue)
+    const added = onFront ? [] : backArtOf(job), ownArt = g => { if (!added.length) return; backArtInk(g, added, tx, k); };   // (OWNART: every part added to a back is the person's own: full strength)
     cv._backArt = added;
     ownArt(ctx);
     const cutLines = g => { for (const m of view.members) { g.beginPath(); P.pathToCanvas(g, m, tx); g.strokeStyle = "#000"; g.lineWidth = Math.max(1, (G.CUT_LINE_PT || 0.5) * k); g.stroke(); } };   // (MARGINS: the engravable tint above reaches this line's inner edge, charm-nest-geom.js EDGE_MM)
@@ -10564,7 +10565,7 @@ const Engrave = window.Engrave = (() => {
     outline.getContext("2d").drawImage(cv, 0, 0);
     const under = () => outline;
     /** Repaint: the static layers, then the text — the fitted one, or a provisional one while a hand is moving it. */
-    const glyphsOf = g => { ctx.fillStyle = "#111"; for (const gl of g) { ctx.beginPath(); for (const c of gl.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); } else if (c.type === "C") { const a = tx(c.x1, c.y1), b2 = tx(c.x2, c.y2), d2 = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b2[0], b2[1], d2[0], d2[1]); } else if (c.type === "Q") { const a = tx(c.x1, c.y1), d2 = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], d2[0], d2[1]); } else if (c.type === "Z") ctx.closePath(); } ctx.fill("nonzero"); } };
+    const glyphsOf = g => { ctx.fillStyle = onFront ? "#111" : BACK_INK(); for (const gl of g) { ctx.beginPath(); for (const c of gl.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); } else if (c.type === "C") { const a = tx(c.x1, c.y1), b2 = tx(c.x2, c.y2), d2 = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b2[0], b2[1], d2[0], d2[1]); } else if (c.type === "Q") { const a = tx(c.x1, c.y1), d2 = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], d2[0], d2[1]); } else if (c.type === "Z") ctx.closePath(); } ctx.fill("nonzero"); } };
     cv._paint = (prov) => {
       ctx.clearRect(0, 0, cv.width, cv.height); ctx.drawImage(under(), 0, 0);
       const dr = cv._draft ? draftPaint(job) : null, src = dr || job.fit;   // (the work area of a card with the panel: the staged words in the staged font, in place of the committed fit, until Save / Cancel; see 7.5b)
@@ -10703,11 +10704,22 @@ const Engrave = window.Engrave = (() => {
     BACK_ART.set(view, { list, art });
     return art;
   }
-  /** The added parts in the pictures written with a piece (the approval .png, the Approved card, the seals): one ink, the words' own (#111), as the file engraves them: a fill filled, a line stroked at its pen. */
+  /* BLUEBACK (Paul, 12 Nov 2026: "All back engraving is the wrong color. Letters/numbers, all back engraving, unless otherwise chosen, needs to be blue, the same blue we already have an option for in the
+     editor, which stands for hatching when using our laser system"): a back's words, in every picture renderBack draws (the work area, the approval .png the shelves and the index show, the cards, the
+     seals), are the hatching blue as the screen shows it (CharmNestBacks.INK, the Charm Editor's hatch swatch); the back's file writes them [0, 0, 1] (charm-nest-pdf.js BACK_INK). A front's stay #111. */
+  const BACK_INK = () => (window.CharmNestBacks && CharmNestBacks.INK) || "#1a5fc4";
+  /** The added parts of a back, in every picture of it, as the file engraves them (charm-nest-pdf.js backArtPaint): a traced image's grey part in its own grey, a coloured pen a person chose in its
+   *  colour, everything else in the words' blue (BACK_INK); a fill filled, a line stroked at its pen. */
   function backArtInk(ctx, art, tx, k) {
-    ctx.save(); ctx.fillStyle = "#111"; ctx.strokeStyle = "#111"; ctx.lineJoin = "round"; ctx.lineCap = "round";
-    // (SHEETBACK, Paul 28 Oct 2026: "that image must be perfectly visible": a traced image's grey part is drawn in its own grey, as the back file writes it (charm-nest-pdf.js buildBackFile), never one black blob)
-    for (const s of art) { ctx.beginPath(); P.pathToCanvas(ctx, s, tx); if (s.fill) { ctx.fillStyle = s.artGrey && Array.isArray(s.fillRGB) ? `rgb(${s.fillRGB.slice(0, 3).map(v => Math.round(Math.max(0, Math.min(1, +v || 0)) * 255)).join(",")})` : "#111"; ctx.fill(String(s.paintOp || "").endsWith("*") ? "evenodd" : "nonzero"); } else { ctx.lineWidth = Math.max(0.6, (s.lwPt || 0.25) * k); ctx.stroke(); } }
+    const ink = BACK_INK(), css = c => `rgb(${c.slice(0, 3).map(v => Math.round(Math.max(0, Math.min(1, +v || 0)) * 255)).join(",")})`;
+    ctx.save(); ctx.lineJoin = "round"; ctx.lineCap = "round";
+    // (SHEETBACK, Paul 28 Oct 2026: "that image must be perfectly visible": a traced image's grey part is drawn in its own grey, as the back file writes it (charm-nest-pdf.js buildBackFile), never one blob)
+    for (const s of art) {
+      const paint = P.backArtPaint ? P.backArtPaint(s) : {};
+      ctx.beginPath(); P.pathToCanvas(ctx, s, tx);
+      if (s.fill) { ctx.fillStyle = s.artGrey && Array.isArray(s.fillRGB) ? css(s.fillRGB) : ink; ctx.fill(String(s.paintOp || "").endsWith("*") ? "evenodd" : "nonzero"); }
+      if (s.stroke) { ctx.strokeStyle = paint.stroke ? css(paint.stroke) : ink; ctx.lineWidth = Math.max(0.6, (s.lwPt || 0.25) * k); ctx.stroke(); }
+    }
     ctx.restore();
   }
   /** Where renderBack wrote "1 mm grid" (canvas px): { x, y, w, h }. */
@@ -15571,7 +15583,7 @@ const Sets = window.Sets = (() => {
     const card = el("div", "setCard"); card.dataset.laserCard="set";card._laserSet=st;card._laserSheets=all.map(r=>r.id);card._sheets=all;
     card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Sheets" : "Sheets"}</span></div>` : `<div class="sh"><span class="nm" data-set-title>${esc(O.setLabel(st.seq))}${st.day?" · "+esc(st.day):""}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}" title="${esc(UNDO_SET_TIP)}">Undo set · reopen its orders</button>` : ""}</div></details>` : ""}</div>`}
           <div class="sheetsRow">${shown.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span data-sheet-count="${esc(r.id)}"><b>${r.placedCount}</b>/${r.charmCount}</span><span data-sheet-density="${esc(r.id)}"><b>${Math.round((r.density || 0) * 100)}%</b></span><span data-sheet-orders="${esc(r.id)}">${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r),'Sheet',r)}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}${(st.goldPending || []).map(r => goldPendingTile(st, r)).join("")}</div>
-          ${st.cardinalLinks ? `<div class="noteBox" data-set-links>${esc(st.cardinalLinks.charAt(0).toUpperCase() + st.cardinalLinks.slice(1))}.</div>` : ""}
+          ${""/* (Paul, 12 Nov 2026: "Remove this text from all sets and from the UI, this is not necessary": the "Orders ... link ..." note is no longer drawn) */}
           ${releasedChangeHtml(st, all)}
           ${window.SetRepair ? SetRepair.lineHtml(st) : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}

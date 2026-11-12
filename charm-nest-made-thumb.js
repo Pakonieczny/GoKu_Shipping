@@ -35,7 +35,7 @@
   if (root) root.CharmNestMadeThumb = api;
 })(typeof self !== 'undefined' ? self : typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
-  const V = 4;                                   // the drawing's own version (sent with the picture, kept on the pool row's made.v: MADEV): 2 FACES (named, a hairline), 3 BIGTHUMB, 4 BOXFIX (drawn to the list's fixed box); a picture of an older drawing is drawn again and sent, paced
+  const V = 5;                                   // the drawing's own version (sent with the picture, kept on the pool row's made.v: MADEV): 2 FACES (named, a hairline), 3 BIGTHUMB, 4 BOXFIX (drawn to the list's fixed box); a picture of an older drawing is drawn again and sent, paced
   const TILE = 288, MARGIN = 0.02;               // a list box is drawn at least TILE device px high (BOXFIX: the cloud's picture: a 4:3 box, 384 x 288), each face with a 2 % margin
   const DEBOUNCE = 1500, MAX_WAIT = 6000, PACE = 1500, SWEEP = 120, REFRESH = 200;
   const MAX_PIECES = 4, INK = '#1c1a17', METAL = '#f1ece1', RULE = '#d6cfc2';
@@ -114,8 +114,11 @@
   const canvas = (w, h) => { const c = doc.createElement('canvas'); c.width = Math.max(2, Math.round(w)); c.height = Math.max(2, Math.round(h)); return c; };
   /** The frame of one face of a piece (the Engrave card's own: CharmNestEngravePreview.frameFor). */
   const frameOf = (poolId, t) => safe(() => EP().frameFor(t.job ? { job: t.job, face: t.face } : { row: { poolIds: [poolId] }, face: t.face }), null);
-  function glyphs(ctx, list, tx) {
-    ctx.fillStyle = INK;
+  /* BLUEBACK (Paul, 12 Nov 2026: "all back engraving ... needs to be blue, the same blue we already have an option for in the editor ... including all the vector thumbnails of back engraving
+     everywhere"): a BACK's words in the Charm Editor's hatch blue (CharmNestBacks.INK); a front's keep INK. (The back's added parts come blue from the frame: charm-nest-engrave-preview.js backInked.) */
+  const BACK_INK = () => (root && root.CharmNestBacks && root.CharmNestBacks.INK) || '#1a5fc4';
+  function glyphs(ctx, list, tx, face) {
+    ctx.fillStyle = face === 'back' ? BACK_INK() : INK;
     for (const g of list || []) {
       ctx.beginPath();
       for (const c of g.cmds || []) {
@@ -191,7 +194,7 @@
         const thin = Math.max(0.05, (CUT_CSS * dpx) / k), cut = (F.cut || []).map(m => Object.assign({}, m, { lwPt: thin })), outline = cut[(F.cut || []).indexOf(F.outline)] || Object.assign({}, F.outline, { lwPt: thin });
         P.drawCharm(ctx, { outline, members: (F.art || []).concat(cut) }, tx, k);
         // (the words only on the frame they were fitted in: the job's own view, the one frameFor drew)
-        if (p.t.words && F.kind === 'view') glyphs(ctx, p.t.words.fit.glyphs, tx);
+        if (p.t.words && F.kind === 'view') glyphs(ctx, p.t.words.fit.glyphs, tx, p.t.face);
       } catch (e) { safe(() => console.warn('made thumbnail', e)); }
       if (labels) { if (col) chip(words[i], bx + side / 2, oy0 + (fhs[i] - chipH) / 2); else chip(words[i], ox + fws[i] / 2, by + maxH + Math.round(fontPx * 0.15)); }
       if (i) { ctx.fillStyle = RULE; if (col) ctx.fillRect(Math.round(BW * 0.04), Math.round(oy0 - gap / 2 - hair / 2), Math.round(BW * 0.92), hair); else ctx.fillRect(Math.round(ox - gap / 2 - hair / 2), Math.round(BH * 0.04), hair, Math.round(BH * 0.92)); }

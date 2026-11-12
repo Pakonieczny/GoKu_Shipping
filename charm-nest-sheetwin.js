@@ -1755,7 +1755,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         if (x.c && !backFace()) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
         else { ctx.strokeStyle = "rgba(60,54,46,.5)"; ctx.lineWidth = W.dpr; outlinePath(ctx, x); ctx.stroke(); }
         // from behind, this charm's own words, where the laser burns them (a charm with no engraving stays plain)
-        if (backFace() && x.c) { const geo = engGeoOf(x, W.backs); tryDo(() => drawBackArt(ctx, x, tx0(x.c), k, "#2f2512")); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: "#2f2512" })); }   // (SHEETBACK: and what the Charm Editor added to its back)
+        if (backFace() && x.c) { const geo = engGeoOf(x, W.backs); tryDo(() => drawBackArt(ctx, x, tx0(x.c), k, backInk())); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: backInk() })); }   // (SHEETBACK: and what the Charm Editor added to its back. BLUEBACK, Paul 12 Nov 2026: in the hatching blue)
         // the front of the plate: this charm's FRONT words, as they lie on it (not turned over); a charm with no front engraving is drawn as it always was
         else if (x.c && x.eng && x.eng.faces && x.eng.faces.front) { const geo = engGeoOf(x, W.backs, "front"); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: "#2f2512" })); }
         if (cu) { outlinePath(ctx, x); ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = 1.6 * W.dpr; ctx.setLineDash([4 * W.dpr, 3 * W.dpr]); ctx.stroke(); ctx.setLineDash([]); }
@@ -1869,8 +1869,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function markBack(ctx, x) {
     if (!x.c) return;
     if (!backFace() && !(x.eng && x.eng.faces && x.eng.faces.front)) return;
-    if (backFace()) tryDo(() => drawBackArt(ctx, x, tx0(x.c), W.k, "#2f2512"));   // (SHEETBACK)
-    const geo = engGeoOf(x, W.backs, backFace() ? undefined : "front"); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: "#2f2512" }));
+    if (backFace()) tryDo(() => drawBackArt(ctx, x, tx0(x.c), W.k, backInk()));   // (SHEETBACK)
+    const geo = engGeoOf(x, W.backs, backFace() ? undefined : "front"); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: backFace() ? backInk() : "#2f2512" }));   // (BLUEBACK: a back's words blue, a front's in their ink)
   }
   // a point clicked on a picture, where its charm is not known yet: a gold ring about a charm's size, and its centre
   function markAt(ctx, at) {
@@ -6987,15 +6987,22 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const backArtOf = x => { const a = x && x.c && x.c.artBack; return Array.isArray(a) ? a.filter(artPaint) : []; };
   /** The words typed among them (the editor keeps a text's words with its outlines: artText), as one string ("" when none). */
   const backArtText = x => backArtOf(x).map(s => String(s.artText || "").trim()).filter(Boolean).join("\n");
+  /* BLUEBACK (Paul, 12 Nov 2026: "all back engraving, unless otherwise chosen, needs to be blue, the same blue we already have an option for in the editor"): the screen's blue of a back's
+     engraving (CharmNestBacks.INK, the Charm Editor's hatch swatch), and the added parts painted by the back file's own rule (CharmNestPDF.backArtPaint): a traced image's grey in its grey, a
+     coloured pen a person chose in its colour, everything else in the back's blue. */
+  const backInk = () => (window.CharmNestBacks && CharmNestBacks.INK) || "#1a5fc4";
+  const rgbCss = c => `rgb(${c.slice(0, 3).map(v => Math.round(Math.max(0, Math.min(1, +v || 0)) * 255)).join(",")})`;
   /** Lays the added back parts of a piece on a context already at the piece's place (tx: the charm's own points → the context, k: its scale). True when any was drawn. */
   function drawBackArt(ctx, x, tx, k, ink) {
     const art = backArtOf(x); if (!art.length || !window.CharmNestPDF || !CharmNestPDF.pathToCanvas) return false;
+    ink = ink || backInk();
     ctx.save(); ctx.lineJoin = "round"; ctx.lineCap = "round";
     for (const s of art) {
-      const grey = s.artGrey && Array.isArray(s.fillRGB) ? `rgb(${s.fillRGB.map(v => Math.round(Math.max(0, Math.min(1, +v || 0)) * 255)).join(",")})` : null;
+      const paint = CharmNestPDF.backArtPaint ? CharmNestPDF.backArtPaint(s) : {};
+      const grey = s.artGrey && Array.isArray(s.fillRGB) ? rgbCss(s.fillRGB) : null;
       ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, s, tx);
-      if (s.fill) { ctx.fillStyle = grey || ink || "#2f2512"; ctx.fill(String(s.paintOp || "").endsWith("*") ? "evenodd" : "nonzero"); }
-      if (s.stroke) { ctx.strokeStyle = ink || "#2f2512"; ctx.lineWidth = Math.max(0.6, (+s.lwPt || 0.25) * k); ctx.stroke(); }
+      if (s.fill) { ctx.fillStyle = grey || ink; ctx.fill(String(s.paintOp || "").endsWith("*") ? "evenodd" : "nonzero"); }
+      if (s.stroke) { ctx.strokeStyle = paint.stroke ? rgbCss(paint.stroke) : ink; ctx.lineWidth = Math.max(0.6, (+s.lwPt || 0.25) * k); ctx.stroke(); }
     }
     ctx.restore(); return true;
   }
@@ -7085,7 +7092,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // order, nothing laid over them and nothing faded (a charm with no engraving keeps its plain back)
     const pills = [];
     if (G.backSide) for (const x of G.pieces) {
-      const geo = engGeoOf(x, G.backs), ink = mine.has(x) ? "#2f2512" : "#3f3320";
+      const geo = engGeoOf(x, G.backs), ink = backInk();   // (BLUEBACK, Paul 12 Nov 2026: every back's words in the hatching blue, this order's and the others' alike)
       // (SHEETBACK: what the Charm Editor added to the back — its words, an image — is laid on the charm first, the back's own words over it; a back made only in the editor is drawn by its parts)
       if (x.c && backArtOf(x).length) orderPiece(ctx, G, x, () => { const c = x.c, k = G.k, cx = c.centerPt[0], cy = c.centerPt[1]; tryDo(() => drawBackArt(ctx, x, (px, py) => [(px - cx) * k, (cy - py) * k], k, ink)); });
       if (!geo || !geo.glyphs) { if (faceTextOf(x, "back") && !backArtOf(x).length) pills.push(x); continue; }
@@ -7277,8 +7284,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     };
     ctx.fillStyle = o.fill || (cu ? "rgba(125,86,168,.20)" : "rgba(200,162,78,.10)"); path(true); ctx.fill("evenodd");
     ctx.strokeStyle = "rgba(60,54,46,.5)"; ctx.lineWidth = dpr; path(false); ctx.stroke();
-    const geo = c ? engGeoOf(x, backs) : null, art = c ? !!tryDo(() => drawBackArt(ctx, x, t, k, "#2f2512")) : false;   // (SHEETBACK: the parts the Charm Editor added to the back)
-    if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, t, { fill: "#2f2512" }));
+    const geo = c ? engGeoOf(x, backs) : null, art = c ? !!tryDo(() => drawBackArt(ctx, x, t, k, backInk())) : false;   // (SHEETBACK: the parts the Charm Editor added to the back)
+    if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, t, { fill: backInk() }));   // (BLUEBACK: in the hatching blue)
     if (cu) { path(false); ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = 1.6 * dpr; ctx.setLineDash([4 * dpr, 3 * dpr]); ctx.stroke(); ctx.setLineDash([]); }
     return !!(geo && geo.glyphs) || art;
   }

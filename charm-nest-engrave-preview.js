@@ -186,12 +186,20 @@
      the back's own file (charm-nest-pdf.js buildBackFile: turned over with the cut, M then R), so the Back box draws them as the Front box draws the design's art: in the frame of the face (view.M then
      view.R, or the charm's own turn), in the laser's colours (CharmNestPDF.drawCharm: a hatched part blue, a line in its pen). A back with nothing added is drawn exactly as before. */
   const backAddsOf = charm => (charm && Array.isArray(charm.artBack) && charm.artBack.some(isArt) ? charm.artBack : null);   // (the charm's own list: a frame is kept per list)
+  /* BLUEBACK (Paul, 12 Nov 2026: "all back engraving, unless otherwise chosen, needs to be blue, the same blue we already have an option for in the editor ... including all the vector thumbnails of
+     back engraving everywhere"): a back's engraving is drawn in the Charm Editor's hatch blue (BACK_INK, CharmNestBacks.INK): its words (the CSS below) and the parts added to it, each painted by the
+     back file's own rule (CharmNestPDF.backArtPaint): a traced image's grey in its grey, a coloured pen a person chose in its colour, everything else (a hatched part, a black or grey line) in the blue. */
+  const BACK_INK = '#1a5fc4', BACK_RGB = [0x1a / 255, 0x5f / 255, 0xc4 / 255];
+  const backInked = s => {
+    const P = PDFLIB(), paint = P && P.backArtPaint ? P.backArtPaint(s) : {};
+    return Object.assign({}, s, { hatchBlue: false, hatchLine: false, fillRGB: s.fill && s.artGrey && paint.fill ? paint.fill : BACK_RGB.slice(), strokeRGB: paint.stroke || BACK_RGB.slice() });
+  };
   /** The frame of a back view with the parts added to the back (`adds`, the charm's artBack) in it: the view's own frame and box, its art those parts turned as the view turns the charm. One per view and list. */
   function frameOfViewWith(view, adds) {
     const F = frameOfView(view); if (!F || !adds || F.face !== 'back') return F;
     return memo(adds, 'v' + ident(view), () => {
       const G = GEO(); if (!G || !G.transformSeg) return F;
-      const art = adds.filter(isArt).map(d => { try { const a = view.M ? G.transformSeg(d, view.M) : d; return view.R ? G.transformSeg(a, view.R) : a; } catch (_) { return null; } }).filter(Boolean);
+      const art = adds.filter(isArt).map(d => { try { const a = view.M ? G.transformSeg(d, view.M) : d; return backInked(view.R ? G.transformSeg(a, view.R) : a); } catch (_) { return null; } }).filter(Boolean);
       return { kind: 'view', face: 'back', box: F.box, outline: F.outline, cut: F.cut, art };
     });
   }
@@ -223,7 +231,7 @@
       const cx = (ob[0] + ob[2]) / 2, cy = (ob[1] + ob[3]) / 2, M = face === 'front' ? null : G.mirrorX(cx), R = G.rotateAbout(cx, cy, 90 - upA);
       const T = s => G.transformSeg(M ? G.transformSeg(s, M) : s, R);
       const tcut = cut.map(T), box = unionBox(tcut); if (!box) return null;
-      const art = face === 'front' ? charm.members.filter(m => !cut.includes(m) && isArt(m)).map(T) : (backAddsOf(charm) || []).filter(isArt).map(T);   // (the back: what a person added to it, CHARM EDIT · BACK)
+      const art = face === 'front' ? charm.members.filter(m => !cut.includes(m) && isArt(m)).map(T) : (backAddsOf(charm) || []).filter(isArt).map(T).map(backInked);   // (the back: what a person added to it, CHARM EDIT · BACK; BLUEBACK: in the back's blue)
       return { kind: 'charm', face, box, outline: tcut[cut.indexOf(outline)], cut: tcut, art, up: upA };
     });
   }
@@ -460,6 +468,7 @@
 .engpvText{position:absolute;margin:0;white-space:pre;text-align:center;color:var(--ink,#1c1a17);transform-origin:50% 50%;pointer-events:none}
 .engpvText[hidden]{display:block;visibility:hidden}
 .engpvGhost{position:absolute;margin:0;white-space:pre;text-align:center;color:var(--ink,#1c1a17);transform-origin:50% 50%;pointer-events:none}
+.engpv[data-ink=back] .engpvText,.engpv[data-ink=back] .engpvGhost{color:${BACK_INK}}
 .engpv[data-held="1"] .engpvText{opacity:.55}
 .engpvSlot{position:absolute;transform-origin:50% 50%;box-sizing:border-box;border:1px dashed var(--ink45,#938c80);opacity:.7;pointer-events:none}
 .engpvWait{position:absolute;right:4px;bottom:3px;display:inline-flex;align-items:center;gap:5px;max-width:calc(100% - 8px);padding:1px 6px;border-radius:999px;background:var(--card,#fffefb);font:10px var(--sans,system-ui);color:var(--ink70,#5b554c);white-space:nowrap;overflow:hidden}
@@ -542,6 +551,7 @@
       if (statusOf(id) === 'idle' || (statusOf(id) === 'failed' && Date.now() - (FONTS.get(id).at || 0) >= 30000)) ensure(id);
       const status = statusOf(id), fs = FONTS.get(id), picWait = !!(src.entry && src.entry.status === 'loading');
       N.root.dataset.face = o.face === 'front' ? 'front' : o.face === 'back' ? 'back' : ''; N.root.dataset.font = status; N.root.dataset.fontId = id; N.root.dataset.pic = src.kind + (picWait ? ':loading' : '');
+      N.root.dataset.ink = (o.job ? faceOfJob(o.job) : o.face === 'front' ? 'front' : 'back') === 'back' ? 'back' : 'front';   // (BLUEBACK: the words of the face this picture draws, by frameFor's rule: a back's in its blue)
       if (src.flip) N.root.setAttribute('data-flip', '1'); else N.root.removeAttribute('data-flip');
       N.wait.hidden = status === 'ready' && !picWait; N.wait.removeAttribute('data-late'); if (status === 'failed') N.wait.setAttribute('data-fail', ''); else N.wait.removeAttribute('data-fail');
       const waitWord = status === 'failed' ? 'Font not available' : status !== 'ready' ? 'Loading font' : 'Loading charm';
@@ -659,5 +669,5 @@
     return { unlink() { for (const f of offs.splice(0)) f(); }, sync: go };
   }
 
-  return { render, update, ensure, ready, fontFamilyOf, fontIdOf, warm, link, positionOf, frameFor, fontStatus: statusOf, layoutOf, CAP_PER_EM, linesOf, fitLinesOf, draftOf, forget };
+  return { render, update, ensure, ready, fontFamilyOf, fontIdOf, warm, link, positionOf, frameFor, fontStatus: statusOf, layoutOf, CAP_PER_EM, linesOf, fitLinesOf, draftOf, forget, BACK_INK };
 });

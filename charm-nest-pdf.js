@@ -2422,6 +2422,25 @@
   /** The area a stroked line covers, as filled subpaths (the same page space as the line): every subpath's polyline widened to the line's own width, at least LINE_ART_MIN_PT
    *  (0.1 mm, the master's hairline). An open line is one closed polygon (one side out, the other back); a closed line is two rings (outer and inner, so it fills even-odd). This is
    *  what a blue hatching copy of black line art is written as (hatchCopies) and exported as (the DXF hatch): the laser hatches an area, never a hairline. */
+  /* ═══ BLUEBACK · back engraving is blue hatching ═══════════════════════════════════════════════════════════════════
+     Paul, 12 Nov 2026: "All back engraving is the wrong color. Letters/numbers, all back engraving, unless otherwise chosen, needs to be blue, the same blue we already have an option for in the
+     editor, which stands for hatching when using our laser system ... It must be saved on all the sheets as blue hatching when downloading DXF or AI files." A back's words are written in BACK_INK
+     (the hatching blue, HATCH_BLUE), and what a person added to a back in the Charm Editor (the charm's artBack) is painted by backArtPaint, the one rule the back file (buildBackFile) and every
+     picture of a back (charm-nest-bridge.js backArtInk, charm-nest-sheetwin.js drawBackArt, charm-nest-engrave-preview.js) read:
+       fill    a traced image's grey part keeps its grey (artGrey, a power of its own); every other fill is the hatching blue
+       stroke  a coloured pen a person chose (the editor's red line, any colour that is not the hatching blue) stays that line in that colour (`stroke`); a black, grey or blue line is
+               hatching: the area its line covers, filled blue (`area`: lineAreaOf), as "black LINE ART is blue hatching" writes a front's
+     → { fill: rgb | null, stroke: rgb | null, area: boolean } */
+  const BACK_INK = HATCH_BLUE;
+  const hatchBlueRGB = c => !!c && c.length >= 3 && c[2] >= 0.5 && c[2] - Math.max(c[0], c[1]) >= 0.4;   // (charm-nest-geom.js hatchBlue)
+  const chosenPen = c => Array.isArray(c) && c.length >= 3 && Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]) > 0.15 && !hatchBlueRGB(c);
+  function backArtPaint(s) {
+    const out = { fill: null, stroke: null, area: false };
+    if (!s) return out;
+    if (s.fill) out.fill = s.artGrey && Array.isArray(s.fillRGB) && s.fillRGB.length >= 3 ? s.fillRGB.slice(0, 3) : BACK_INK.slice();
+    if (s.stroke) { if (chosenPen(s.strokeRGB)) out.stroke = s.strokeRGB.slice(0, 3); else out.area = true; }
+    return out;
+  }
   const LINE_ART_MIN_PT = 0.283;
   function lineAreaOf(m) {
     const w = Math.max(+m.lwPt || 0, LINE_ART_MIN_PT) / 2, out = [], f = v => Math.round(v * 1000) / 1000;
@@ -2812,7 +2831,10 @@
     addOCG("ENGRAVE", "ocEngrave");
     page.pushOperators(ocgOps("ocEngrave"), pushGraphicsState());
     if (frontView) page.pushOperators(cm(Mp));
-    page.pushOperators(cm([1, 0, 0, 1, cx + T[4], cy + T[5]]), setFillingRgbColor(0, 0, 0));
+    // (BLUEBACK, Paul, 12 Nov 2026: "all back engraving ... needs to be blue ... which stands for hatching when using our laser system": a BACK's words are filled in the hatching blue
+    // [0, 0, 1], the colour the sheet's own hatching is written in (HATCH_BLUE), so the .ai keeps them blue and the DXF writes them as a blue SOLID hatch; a FRONT's words stay black, as ever)
+    const ink = isFront ? [0, 0, 0] : BACK_INK;
+    page.pushOperators(cm([1, 0, 0, 1, cx + T[4], cy + T[5]]), setFillingRgbColor(ink[0], ink[1], ink[2]));
     let glyphCount = 0;
     for (const g of spec.glyphs || []) {
       let cur = null, first = null;
@@ -2831,20 +2853,20 @@
     if (artBack.length) {
       page.pushOperators(popGraphicsState(), pushGraphicsState());
       if (frontView) page.pushOperators(cm(Mp));
-      page.pushOperators(cm(T), cm(R), cm(M), setFillingRgbColor(0, 0, 0), setStrokingRgbColor(0, 0, 0));
+      page.pushOperators(cm(T), cm(R), cm(M));
+      const subs = list => { for (const sub of list) for (const o of sub) {
+        if (o[0] === "m") page.pushOperators(moveTo(o[1][0], o[1][1]));
+        else if (o[0] === "l") page.pushOperators(lineTo(o[1][0], o[1][1]));
+        else if (o[0] === "c") page.pushOperators(appendBezierCurve(o[1][0], o[1][1], o[2][0], o[2][1], o[3][0], o[3][1]));
+        else if (o[0] === "h") page.pushOperators(closePath());
+      } };
       for (const s of artBack) {
-        if (s.stroke && !s.fill) page.pushOperators(setLineWidth(s.lwPt || 0.25));
-        // (Design & Engrave, 28 Oct 2026: a traced image's grey part keeps its grey, so the operator gives each grey its own power; every other part is the words' black)
-        const grey = s.artGrey && s.fill && Array.isArray(s.fillRGB) && s.fillRGB.length >= 3 ? s.fillRGB : null;
-        if (grey) page.pushOperators(setFillingRgbColor(grey[0], grey[1], grey[2]));
-        for (const sub of s.subpaths) for (const o of sub) {
-          if (o[0] === "m") page.pushOperators(moveTo(o[1][0], o[1][1]));
-          else if (o[0] === "l") page.pushOperators(lineTo(o[1][0], o[1][1]));
-          else if (o[0] === "c") page.pushOperators(appendBezierCurve(o[1][0], o[1][1], o[2][0], o[2][1], o[3][0], o[3][1]));
-          else if (o[0] === "h") page.pushOperators(closePath());
-        }
-        page.pushOperators(s.fill ? PDFOperator.of(String(s.paintOp || "").endsWith("*") ? PDFOperatorNames.FillEvenOdd : PDFOperatorNames.FillNonZero) : stroke());
-        if (grey) page.pushOperators(setFillingRgbColor(0, 0, 0));
+        // (Design & Engrave, 28 Oct 2026: a traced image's grey part keeps its grey, so the operator gives each grey its own power. BLUEBACK, Paul, 12 Nov 2026: every other part is the
+        // words' hatching blue, a fill filled blue and a black, grey or blue line as the blue area it covers (lineAreaOf); a coloured pen a person chose (the editor's red line) stays its line: backArtPaint)
+        const paint = backArtPaint(s);
+        if (paint.fill) { page.pushOperators(setFillingRgbColor(paint.fill[0], paint.fill[1], paint.fill[2])); subs(s.subpaths); page.pushOperators(PDFOperator.of(String(s.paintOp || "").endsWith("*") ? PDFOperatorNames.FillEvenOdd : PDFOperatorNames.FillNonZero)); }
+        if (paint.area) { const area = lineAreaOf(s); if (area.length) { page.pushOperators(setFillingRgbColor(BACK_INK[0], BACK_INK[1], BACK_INK[2])); subs(area); page.pushOperators(PDFOperator.of(PDFOperatorNames.FillEvenOdd)); } }
+        if (paint.stroke) { page.pushOperators(setStrokingRgbColor(paint.stroke[0], paint.stroke[1], paint.stroke[2]), setLineWidth(s.lwPt || 0.25)); subs(s.subpaths); page.pushOperators(stroke()); }
       }
     }
     page.pushOperators(popGraphicsState(), endMarkedContent());
@@ -3389,5 +3411,7 @@
   // the black-fill rule (kept off the long list for the same reason)
   // the thin-strip hatching rule and the stamp list the worker hand-back carries (kept off the long list for the same reason)
   root.CharmNestPDF.hatchStripOf = hatchStripOf; root.CharmNestPDF.GROUPING_STAMPS = GROUPING_STAMPS;
+  // BLUEBACK (Paul, 12 Nov 2026): the back's ink, the rule for the parts added to a back, and a page's content bytes (charm-nest-export.js turns an older back file's black engraving blue)
+  root.CharmNestPDF.BACK_INK = BACK_INK; root.CharmNestPDF.backArtPaint = backArtPaint; root.CharmNestPDF.pageContentBytes = pageContentBytes;
   root.CharmNestPDF.classifyBlackArt = classifyBlackArt; root.CharmNestPDF.lineAreaOf = lineAreaOf; root.CharmNestPDF.openRingOf = openRingOf; root.CharmNestPDF.classifyBlackFills = classifyBlackFills; root.CharmNestPDF.engravedDiscOf = engravedDiscOf; root.CharmNestPDF.isBlackFill = isBlackFill; root.CharmNestPDF.HATCH_BLUE = HATCH_BLUE; root.CharmNestPDF.hatchCopies = hatchCopies;
 })(typeof window !== "undefined" ? window : self);

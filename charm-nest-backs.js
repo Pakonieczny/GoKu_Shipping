@@ -107,10 +107,14 @@
     } catch (_) { out.glyphs = null; }
     return out;
   }
-  /** Fills one piece's words on a canvas already set up to draw that charm: `tx` is the charm's own source-pt mapping. */
+  /* BLUEBACK (Paul, 12 Nov 2026: "All back engraving is the wrong color. Letters/numbers, all back engraving, unless otherwise chosen, needs to be blue, the same blue we already have an option for in
+     the editor, which stands for hatching when using our laser system ... including all the vector thumbnails of back engraving everywhere"). INK is that blue as the screen shows it: the Charm Editor's
+     hatch swatch (charm-nest-charm-editor.js --c-hatch). The written file's blue is [0, 0, 1] (charm-nest-pdf.js BACK_INK). Every picture of a back draws its words in it; a front's words keep their ink. */
+  const INK = '#1a5fc4';
+  /** Fills one piece's words on a canvas already set up to draw that charm: `tx` is the charm's own source-pt mapping. opts.fill: another ink (a front's words); none: a back's blue (INK). */
   function drawEngrave(ctx, geo, tx, opts = {}) {
     if (!geo || !geo.glyphs || !geo.glyphs.length) return false;
-    ctx.save(); ctx.fillStyle = opts.fill || '#3f3320'; if (opts.alpha != null) ctx.globalAlpha = opts.alpha;
+    ctx.save(); ctx.fillStyle = opts.fill || INK; if (opts.alpha != null) ctx.globalAlpha = opts.alpha;
     ctx.beginPath();
     for (const g of geo.glyphs) { let cur = null;
       for (const k of g.cmds) {
@@ -247,5 +251,5 @@
   if (typeof document !== 'undefined') {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once:true}); else mount();
   }
-  return {recKey, placedIds, forSheet, markup, pieceWords, dimensions, previewUrl, recoverPreview, engraveOn, drawEngrave};
+  return {recKey, placedIds, forSheet, markup, pieceWords, dimensions, previewUrl, recoverPreview, engraveOn, drawEngrave, INK};
 });
