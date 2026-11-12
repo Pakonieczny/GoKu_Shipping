@@ -8292,7 +8292,20 @@ const Engrave = window.Engrave = (() => {
   const faceWord = job => (isFront(job) ? "front" : "back");
   /* the charm as THIS piece is cut: the Right earring is the Left mirrored (charm-nest-engrave-sides.js pieceCharm), so its fit, back view and back file are made on that; any other piece gets its charm back unchanged */
   const pieceCharmOf = (poolId, charm, hint) => { const S_ = window.CharmNestEngraveSides; return S_ && charm ? S_.pieceCharm(sidesCtx, poolId, charm, hint) : charm; };
-  const charmFor = job => job.editCharm || pieceCharmOf(job.copies[0], Pool.charmOf(job.copies[0]) || Pool.previewCharmOf(job.copies[0]), { slot: job.slot, side: job.row && job.row.side });   // (ENGPRE: a piece not on any sheet yet has the charm it WILL have, Pool.preview)
+  const charmFor = job => job.editCharm || pieceCharmOf(job.copies[0], Pool.charmOf(job.copies[0]) || Pool.previewCharmOf(job.copies[0]), { slot: job.slot, side: job.row && job.row.side });
+  /* CHARMBACK (Paul, 12 Nov 2026: the flat picture with no grid, and "no charm" on the bottom buttons): a piece not on a sheet yet (job.pre) whose preview charm this page does not hold (previews are memory-only:
+     a reload has none, and with nesting paused no engraving pass (background / earlyAll) makes them again; or the cache let it go) has it made again as soon as its card is drawn or a control needs it:
+     early() previews the line again (nothing written, nothing paid) and fits a face that was left waiting for it; the open card is drawn again once the charm is back. -> true while it is being made. */
+  const charmAsked = new Map();
+  function charmBack(job) {
+    const pid = job && (job.copies || [])[0];
+    if (!pid || !job.pre || job.editCharm || Pool.charmOf(pid) || Pool.previewCharmOf(pid)) return false;
+    const row = lineOf(job.row); if (!row || !row.key) return false;
+    const t = charmAsked.get(row.key); if (t && Date.now() - t < 15000) return true;
+    charmAsked.set(row.key, Date.now());
+    early(row).then(() => { if (!(Pool.charmOf(pid) || Pool.previewCharmOf(pid))) return; charmAsked.delete(row.key); if (EG.card && EG.card.isConnected && cardJobOf(job)) render(); }).catch(() => {});
+    return true;
+  }   // (ENGPRE: a piece not on any sheet yet has the charm it WILL have, Pool.preview)
   /** ENGPRE: a job made before its piece was on a sheet (`job.pre`) and not on one now: nothing waits for the sheet, no back file is written or retried until it is. */
   const unplacedPre = job => !!(job && job.pre && (job.copies || []).length && !job.copies.some(id => Pool.sheetOf(id)));
   /** ENGPRE: such a job whose piece is not even pooled yet (its `copies` are the pool ids it WILL get): it has no pool row, so nothing for it is written to the pool. */
@@ -9601,13 +9614,14 @@ const Engrave = window.Engrave = (() => {
   /** Turn the WHOLE piece (charm + engraving) to `deg` degrees from the system's placement, at once. -> { ok, same?, turn, why? }; nothing changes when it is refused. */
   function turnTo(job, deg) {
     const no = why => ({ ok: false, why, turn: turnOf(job) });
+    if (job && !job.fit) return turnBare(job, deg, no);   // (ALWAYSBAR: a face with no words yet is turned as the whole piece too)
     if (!job || !job.fit || !job.view || !job.mask) return no("not placed");
     if (job.fit.artOnly) return no("no words to turn");   // (EDITOR WORDS: a face engraved by the charm editor's parts alone)
     if (!placeEditable(job) || job.approvalPreparing || job.stamping || job.backSaving) return no("locked");
     deg = Math.round(+deg); if (!Number.isFinite(deg)) return no("not a number");
     deg = wrap180(deg);
     const was = turnOf(job); if (deg === was) return { ok: true, same: true, turn: was };
-    const charm = charmFor(job); if (!charm) return no("no charm");
+    const charm = charmFor(job); if (!charm) return no(charmBack(job) ? "Reading this charm's drawing again — try the turn again in a moment" : "no charm");
     if (!startEdit(job)) return no("locked");   // (NODECIDED: an approved piece turned is reopened by this first change)
     const base = upSystemOf(job), front = isFront(job);
     let view, mask;
@@ -9635,6 +9649,26 @@ const Engrave = window.Engrave = (() => {
     if (!ok) { try { ok = refit(job, { centre, angle }); } catch (_) { ok = false; } }
     if (!ok) { undo(); return no("The words do not fit with the charm turned that far"); }
     job.upSystem = base; if (deg === 0) delete job.turnUp; else job.turnUp = view.upAngle;
+    try { Session.schedule(); } catch (_) {}
+    return { ok: true, turn: deg };
+  }
+  /* ALWAYSBAR (Paul, 12 Nov 2026, order 4227069460: a Both piece whose words come as a photo, the Front with no words: "the bottom options must always be there"): a face with no words placed yet can be
+     turned as the whole piece too. Its view and mask are made at that turn and kept with the job (job.turnUp / job.upSystem, as turnTo keeps them), so the work area draws it turned (faceViewOf takes
+     the job's own view: charmEditView) and the fit its words get later is made turned the same way (fitInput's turnUp). Local only: nothing is read, written or sent. */
+  const bareTurnable = job => !!job && !job.fit && !job.editingBack && !["approved", "written", "skipped", "none"].includes(job.state) && !job.approvalPreparing && !job.stamping && !job.backSaving && (job.copies || []).length > 0 && !!(charmFor(job) || {}).outline;
+  function turnBare(job, deg, no) {
+    if (!bareTurnable(job)) return no(charmBack(job) ? "Reading this charm's drawing again — try the turn again in a moment" : "This face cannot be turned now");
+    deg = Math.round(+deg); if (!Number.isFinite(deg)) return no("not a number");
+    deg = wrap180(deg);
+    const was = turnOf(job); if (deg === was) return { ok: true, same: true, turn: was };
+    const charm = charmFor(job), front = isFront(job);
+    let base = job.view && Number.isFinite(+job.view.upAngle) ? upSystemOf(job) : null, view, mask;
+    try {
+      if (base == null) base = G.backView(charm, G.viewOptionsFor({ charmUp: charm.upAngle, entry: Master.entryFor(job.row.spec.designSku) || {}, nudged: false, oriented: job.orientVersion === G.ORIENT, ...(front ? { face: "front" } : {}) })).upAngle;   // (the system's own turn of this face: fitInput's, with no turn of a person)
+      view = G.backView(charm, { res: 6, upAngle: base - deg, holeOnly: true, ...(front ? { face: "front" } : {}) });
+      mask = G.engraveMask(view, { marginMm: S.settings.engraveMarginMm, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [], ...(!front && charm.artBack?.length ? { avoid: charm.artBack } : {}) });
+    } catch (e) { return no(e && e.message ? e.message : "the charm could not be turned"); }
+    job.view = view; job.mask = mask; job.upSystem = base; if (deg === 0) delete job.turnUp; else job.turnUp = view.upAngle;
     try { Session.schedule(); } catch (_) {}
     return { ok: true, turn: deg };
   }
@@ -10643,7 +10677,7 @@ const Engrave = window.Engrave = (() => {
        (Pool.charmOf), so its face fell back to the preview's flat picture: no grid, no rulers, no controls. It is drawn on the charm it WILL have (Pool.previewCharmOf), as charmFor does. */
     const pid = (job.copies || [])[0], drawn = pid ? Pool.charmOf(pid) : null, live = charmEditUsable(drawn) ? drawn : pid && Pool.previewCharmOf ? Pool.previewCharmOf(pid) : null; if (!charmEditUsable(live)) return null;
     let got = FACE_VIEWS.get(live); if (!got) FACE_VIEWS.set(live, got = {});
-    const row = job.row || {}, sp = row.spec || {}, sku = sp.designSku || (row.line && row.line.sku) || live.name, k = face + "|" + pairedUpOf(pid, live, face, sku);   // (UPRIGHT: one view per turn of the face shown: a turn of it turns this one the other way)
+    const row = job.row || {}, sp = row.spec || {}, sku = sp.designSku || (row.line && row.line.sku) || live.name, k = face + "|" + pairedUpOf(pid, live, face, sku) + "|" + (((jobsOfPiece(pid)[face] || {}).view || {}).upAngle ?? "");   // (UPRIGHT: one view per turn of the face shown: a turn of it turns this one the other way)
     if (!got[k]) got[k] = charmEditView(pid, live, face, sku);
     return { view: got[k], charm: live };
   }
@@ -13309,6 +13343,7 @@ const Engrave = window.Engrave = (() => {
     const it = Review.items().find(i => i.key === "eng:" + job.key) || { kind: "placement", key: "eng:" + job.key, row: job.row, job };
     const card = el("div", "rvItem"); card.dataset.kind = "placement"; card.dataset.state = job.state; card.dataset.key = job.key; card.tabIndex = 0; card._job = job;   // (APPRFIX-B: renderView keeps this card only while it is still the card of THIS job object, in review)
     const r = job.row, sp = r.spec, f = job.fit;
+    try { charmBack(job); } catch (_) { /* the card as before */ }   // (CHARMBACK: a piece not on a sheet yet whose charm this page let go has it made again)
     const fw = faceNoun(faceOfJob(job)), faced = isFrontJob(job) || lineHasFront(job.row);   // (the face this card is the engraving of; faced: the line has a front job, so the card says which face it is)
     const counts = (ctx && ctx.counts) || rowCountsOf({ length: remaining }), decided = counts.decided;
     const ears = ctx && Array.isArray(ctx.ears) && ctx.ears.length >= 2 && ctx.ears.includes(job) ? ctx.ears : null;
@@ -13325,6 +13360,11 @@ const Engrave = window.Engrave = (() => {
     const appView = approvedView(job);   // (NODECIDED: an approved / saved piece opens in this same card, drawn as a placement; its first change reopens it)
     const keptView = !appView && ["approved", "written"].includes(job.state) && !recalledJob(job);   // (approved, but its placement cannot be drawn here: the card still says Approved and shows the saved picture)
     const wordsJob = job.state !== "review" && !appView;   // (no placement drawn yet: words to settle, being read or fitted)
+    /* ALWAYSBAR (Paul, 12 Nov 2026, order 4227069460): the row under the work area (Centre, Lines, the size, the turn) is always drawn. With no words placed on this face yet the controls that act on the
+       words are there, disabled, saying why; the turn of the whole piece works as soon as the piece's charm is on this page (turnBare). A face engraved by the Charm Editor's parts alone keeps its note. */
+    const ctlOn = !!f && !wordsJob && !f.artOnly, ctlBar = ctlOn || !(f && !wordsJob && f.artOnly);
+    const ctlWhy = ctlOn ? "" : (job.text || "").trim() ? `The words of the ${fw} are being fitted: these act on them once they are placed` : `No words on the ${fw} yet: type them in the panel, then these act on them`;
+    const turnOn = ctlOn || bareTurnable(job);
     const requests = job.requests || {};
     // what to check with the buyer: what the buyer asked for that the words alone do not carry. NOWORTH (Paul, 18 Oct 2026, of the reader's
     // "Worth a look" note: "Remove this info/note from all UI in the app"): Claude's own questions from reading the order (job.questions, and the
@@ -13362,7 +13402,7 @@ const Engrave = window.Engrave = (() => {
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a piece's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? ` (an order's ${countedNouns(ears)} are one placement: Back and Next go through every ${countedNoun(ears)})` : " (an earring piece's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().pieceTag(job, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain">${byCard ? "" : `<h4 class="pvH">${cap1(fw)} · engraving</h4>`}<div class="pvApproval">${appView || keptView ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton egApproved" data-a="approved" disabled aria-disabled="true" title="approved — change anything and press Approve again: it gets a new seal">Approved</button></span>${job.state === "written" ? `<span class="egWrittenNote hint">Saved to sheet · approving again replaces its file</span>` : ""}` : f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the ${fw} file">Approve</button></span>` : ""}${f && !wordsJob && ears && !appView ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
-        <div class="ctl">${f && !wordsJob && f.artOnly ? `<span class="egArtOnly" role="status" style="font-size:11.5px;color:var(--ink70,#5b554c)">No words: the charm editor's parts are this ${fw}'s engraving</span>` : ""}${f && !wordsJob && !f.artOnly ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="egTurn" role="group" aria-label="Turn the whole charm and its engraving" title="Turn the whole charm and its engraving together, in degrees. Counter-clockwise is plus. 0 is where the system placed it."><button type="button" class="egTurnStep" data-a="turnStep" data-step="-1" title="Turn 1° clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree clockwise">↷</button><label class="egTurnField"><input type="number" data-a="turn" inputmode="numeric" min="-360" max="360" step="1" value="${turnOf(job)}" aria-label="Turn the whole charm and its engraving, in degrees"><span class="egTurnDeg" aria-hidden="true">°</span></label><button type="button" class="egTurnStep" data-a="turnStep" data-step="1" title="Turn 1° counter-clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree counter-clockwise">↶</button></span>` : ""}
+        <div class="ctl">${f && !wordsJob && f.artOnly ? `<span class="egArtOnly" role="status" style="font-size:11.5px;color:var(--ink70,#5b554c)">No words: the charm editor's parts are this ${fw}'s engraving</span>` : ""}${ctlBar ? `<button class="btn ghost sm" data-a="centre"${ctlOn ? ` title="put the text in the middle of the metal it may use"` : ` disabled title="${esc(ctlWhy)}"`}>Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count"${ctlOn ? "" : ` disabled title="${esc(ctlWhy)}"`}>${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="${ctlOn ? "cap height of the lettering" : esc(ctlWhy)}">${ctlOn ? capText(f) : "— mm"}</span><label class="spacingControl" ${ctlOn && (job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="egTurn" role="group" aria-label="Turn the whole charm and its engraving" title="Turn the whole charm and its engraving together, in degrees. Counter-clockwise is plus. 0 is where the system placed it."><button type="button" class="egTurnStep" data-a="turnStep" data-step="-1"${turnOn ? "" : " disabled"} title="Turn 1° clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree clockwise">↷</button><label class="egTurnField"><input type="number" data-a="turn" inputmode="numeric" min="-360" max="360" step="1" value="${turnOf(job)}"${turnOn ? "" : " disabled"} aria-label="Turn the whole charm and its engraving, in degrees"><span class="egTurnDeg" aria-hidden="true">°</span></label><button type="button" class="egTurnStep" data-a="turnStep" data-step="1"${turnOn ? "" : " disabled"} title="Turn 1° counter-clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree counter-clockwise">↶</button></span>` : ""}
 </div>
         <div class="pvSide">
           ${said}<section class="pvSec pvSetup" data-engsetup hidden></section>
@@ -13579,7 +13619,7 @@ const Engrave = window.Engrave = (() => {
         else if (el._svRedraw && el._svFv && svFaceRec(t, el._svFv) === el._svRec) el._svRedraw();
         else { card._remountWork(); return; }
       }
-      svHooks(t.face, t.words, t.seq, t.kind === "held" || (t.kind === "job" && t.ja === job));
+      svHooks(t.face, t.words, t.seq, t.kind === "held" || (t.kind === "job" && t.ja === job) || (t.kind === "view" && t.face === faceOf(job)));
     };
     /** What the work area must show now (the idle check compares): { face, words } (the target's face and words; the card's own drawing with no target: its face, any words). */
     card._svExpect = () => { const t = svTarget(); return t ? { face: t.face, words: t.words.join("\n") } : { face: viewFaceOf(job), words: null }; };
@@ -13706,7 +13746,7 @@ const Engrave = window.Engrave = (() => {
       mounted = px; mountedBelow = band; backHost.textContent = "";
       backHost.style.paddingTop = band + "px"; backHost.style.paddingBottom = NOTE + "px"; backHost.style.boxSizing = "border-box";
       pm.classList.toggle("egWide", wide);
-      if (tgt && (tgt.kind === "view" || (tgt.kind === "job" && tgt.ja !== job))) { framed = null; svDraw(tgt, px); svHooks(tgt.face, tgt.words, tgt.seq, false); card._svShape = tgt.shape; return; }
+      if (tgt && (tgt.kind === "view" || (tgt.kind === "job" && tgt.ja !== job))) { framed = null; svDraw(tgt, px); svHooks(tgt.face, tgt.words, tgt.seq, tgt.kind === "view" && tgt.face === faceOf(job)); card._svShape = tgt.shape; return; }   // (ALWAYSBAR: its own face drawn with no placement yet: the bar is this face's)
       if (tgt && tgt.kind === "job") svDraft(job, tgt);   // (this card's own face: drawn below as ever, the staged words its draft)
       // (FACEVIEW, Paul 28 Oct 2026: the piece's other face, chosen with the Front | Back switch or shown by a save of the Charm Editor that changed it: drawn as that face, view only; the words and
       //  the Approve block stay the face's being approved)
@@ -13828,7 +13868,7 @@ const Engrave = window.Engrave = (() => {
     if (turnBox) {
       const group = turnBox.closest(".egTurn"), steps = [...card.querySelectorAll('[data-a="turnStep"]')], panelOf = () => card._pieceMount && card._pieceMount.panel;
       let frame = 0, want = null, flashT = 0, holdT = 0, holdI = 0, holder = null;
-      const live = () => !!job.fit && placeEditable(job) && items().get(job.key) === job && !approvalBusy();
+      const live = () => (job.fit ? placeEditable(job) : bareTurnable(job)) && items().get(job.key) === job && !approvalBusy();   // (ALWAYSBAR: a face with no words yet turns too)
       const flash = () => { if (!group) return; group.classList.add("applied"); clearTimeout(flashT); flashT = setTimeout(() => group.classList.remove("applied"), 650); };
       const show = () => { turnBox.value = String(turnOf(job)); };
       const run = deg => {
