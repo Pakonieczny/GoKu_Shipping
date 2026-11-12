@@ -5974,6 +5974,9 @@ function startNestReady(sh, context) {
     if (useServer) return startServerNest(sh, job);
     // (GOLDOPT, Paul 12 Nov 2026: 10K and 14K are solid gold on small sheets, "nest the pieces the most efficient possible way": several careful searches at once, each
     //  placing the pieces in its own order (job.orderVariant), and the tightest layout wins, betterLayout)
+    // (GOLDLOCK, Paul 12 Nov 2026: 14K Draft 1 and 2 were flagged "Verification flagged": a sheet with pieces held where they are (lockedPlacements: a moved-in order, the saved layout; protectedRose) is
+    //  nested the single way it always was: the side-by-side searches are for a fresh nest only, where nothing is held)
+    if (job.multiStart && (job.lockedPlacements?.length || job.protectedRose)) delete job.multiStart;
     const n = job.multiStart ? Math.max(parallelCount(job.angles.length), job.multiStart) : parallelCount(job.angles.length);
     const workers = ensureWorkers(sh, n);
     sh.pool = { n, done: 0, results: [], trials: new Array(n).fill(0), winner: null };
