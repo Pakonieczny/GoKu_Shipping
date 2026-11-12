@@ -280,7 +280,7 @@
   // what a buyer's text carries that no one can see or cut: the placeholder Etsy leaves where a picture or sticker was
   // pasted (U+FFFC, which browsers draw as a boxed "OBJ"), the replacement mark (U+FFFD), zero-width spaces and control codes
   const visible = s => String(s == null ? "" : s).replace(/[\uFFFC\uFFFD\u200B\u2060\uFEFF\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
-  /** BUYERFILE: a value that is only a web link (Etsy keeps a buyer's uploaded photo as https://i.etsystatic.com/ipf/…): the buyer's file, never a design option. */
+  /** BUYERFILE: a value that is only a web link (Etsy keeps a buyer's uploaded photo as a link to its own picture store, ".../ipf/..."): the buyer's file, never a design option. */
   const BUYER_FILE = /^\s*https?:\/\/[^\s<>"]+\s*$/i;
   const isPersonalisation = name => /personali[sz]ation|engraving text|custom text/i.test(String(name || ""));
   /* A size in millimetres, written anywhere in a drop-down value ("12mm + engraving", "Large (14mm)", "1.2 cm"): "12MM" (centimetres as millimetres), or null when there is none or the value names two sizes. */
@@ -4675,7 +4675,7 @@
       if (!mapped && members && members.source === "options" && SIDE_THING.test(name)) { const k = /\bleft\b/i.test(name) ? "L" : /\bright\b/i.test(name) ? "R" : "", m = k && members.members.find(x => x.side === k); if (m) mapped = { field: "design", value: m.sku, source: "rule:pair-side" }; }
       if (!mapped) {                                                            // deterministic name rules, no free-text reading
         const asForm = formByWords(value);
-        // BUYERFILE (Paul, 11 Nov 2026, orders 4226979286, 4229616128, 4226381231, 4229813310, 4227069460: "Send us your photo for handwriting here: https://i.etsystatic.com/ipf/…"): an option whose value is
+        // BUYERFILE (Paul, 11 Nov 2026, orders 4226979286, 4229616128, 4226381231, 4229813310, 4227069460: "Send us your photo for handwriting here: <a link to the photo>"): an option whose value is
         // only a link is the file the buyer sent (Etsy's upload of a photo or drawing), never a choice of charm: "the correct SKU was selected and that's all that matters". It is kept on the line, never held.
         if (BUYER_FILE.test(value)) mapped = { field: "ignore", value: null, source: "rule:buyer-file" };
         else if (HUGGIE_SET.test(value)) mapped = { field: "form", value: "huggie", source: "rule:huggie-set" };
