@@ -614,6 +614,43 @@
   }
   // Append searches treat saved placements as obstacles, and Rose Gold
   // contours as reserved material. Every streamed layout retains the originals.
+  /* LONGFIRST (Paul, 12 Nov 2026): an elongated piece (a bar: longest side LONG_MM or more and LONG_ASPECT times its width) stood upright
+     in the block leaves an empty column beside it. Before the search, such pieces are seated flat (along the sheet's long axis)
+     against the top and bottom long edges, from the left inset, side by side, alternating top and bottom, while the block's expected
+     front (all the pieces' area over the usable height at the fill ceiling) reaches at least the bar's far end; the rest are left to
+     the search. Seated bars are locked placements for the rest of the search (and the unjam never lifts them). Wide sheets only. */
+  const LONG_MM = 20, LONG_ASPECT = 3;
+  function longFirstJob(job) {
+    const out = { ...job, _longFirstDone: true }, res = job.fineRes || 2, clr = +job.clearancePt || 0, MMPT = 72 / 25.4;
+    if (job.sheet.wPt < job.sheet.hPt || (job.sheet.remnant && job.sheet.remnant.axis !== "x")) return out;
+    const base = job.lockedPlacements?.length ? job.lockedPlacements : job.protectedRose ? job.protectedRose.placements : [], locked = new Set(base.map(p => p.id));
+    const flatOf = p => { const v = prepareVariant(p, 0, clr, res); if (!v) return null; const L = Math.max(v.solid.w, v.solid.h) / res, S = Math.min(v.solid.w, v.solid.h) / res; return L / MMPT >= LONG_MM && L / Math.max(1e-6, S) >= LONG_ASPECT ? { p, L, angles: v.solid.w >= v.solid.h ? [0, 180] : [90, 270] } : null; };
+    const bars = job.pieces.filter(p => !locked.has(p.id) && !p.pinned && !p.hold).map(flatOf).filter(Boolean).sort((a, b) => b.L - a.L);
+    if (!bars.length) return out;
+    const inset = job.sheet.insetPt == null ? 1.5 : +job.sheet.insetPt, usableH = job.sheet.hPt - 2 * inset;
+    const area = job.pieces.reduce((n, p) => n + (+p.areaPt2 || 0), 0), front = inset + area / Math.max(1, usableH * (job.maxFill > 0 && job.maxFill < 1 ? job.maxFill : .8));
+    const g = makeSheetGrid({ ...job.sheet, fixedPieces: base.map(pl => ({ piece: job.pieces.find(c => c.id === pl.id), placement: pl })) }, clr, res);
+    const band = Math.round((+job.longFirstBandMm || 8) * MMPT * res), seated = [];
+    const spot = (v, top) => {   // leftmost, then nearest the edge, within `band` of it
+      const ys = []; if (top) for (let y = 0; y <= Math.min(g.H - v.fine.h, band); y++) ys.push(y); else for (let y = g.H - v.fine.h; y >= Math.max(0, g.H - v.fine.h - band); y--) ys.push(y);
+      for (let x = 0; x + v.fine.w <= g.W; x++) for (const y of ys) if (g.fits(v.fine.pm, x, y)) return { x, y };
+      return null;
+    };
+    let top = true;
+    for (const b of bars) {
+      let pick = null;
+      for (const edge of [top, !top]) {
+        for (const a of b.angles) { const v = prepareVariant(b.p, a, clr, res); if (!v) continue; const s = spot(v, edge); if (s && (!pick || s.x + v.fine.w < pick.x + pick.v.fine.w)) pick = { ...s, v, a, edge }; }
+        if (pick && (pick.x + pick.v.fine.w) / res <= front) break; pick = null;
+      }
+      if (!pick) continue;
+      const { x, y, v, a } = pick; g.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y);
+      seated.push({ id: b.p.id, angle: a, cxPt: (x + v.solid.cx) / res, cyPt: (y + v.solid.cy) / res, xPt: (x + (v.fine.w - v.solid.w) / 2) / res, yPt: (y + (v.fine.h - v.solid.h) / 2) / res, wPt: v.solid.w / res, hPt: v.solid.h / res, contact: 0 });
+      top = !pick.edge;
+    }
+    if (!seated.length) return out;
+    return { ...out, lockedPlacements: base.concat(seated), longFirstIds: (job.longFirstIds || []).concat(seated.map(p => p.id)) };
+  }
   async function solveAppend(job, cb) {
     const guard=job.protectedRose, fixed=job.lockedPlacements?.length?job.lockedPlacements:guard.placements, ids=new Set(fixed.map(p=>p.id));
     if(guard)Rose.validate(guard.profile,job.sheet.wPt,job.sheet.hPt);
@@ -623,7 +660,7 @@
        again beside a charm that missed. Never one the green line holds (a Rose Gold or cut-leftover sheet's saved charms), never a
        one an operator pinned (the piece's `hold`; the pin the run puts on every placed charm is not one), never one older than the last UNJAM_WINDOW; the rest of the saved layout is a wall, as before. */
     const guardIds=new Set((guard?.placements||[]).map(p=>p.id)), pieceOf=id=>job.pieces.find(c=>c.id===id);
-    const movable=job.unjam&&job.careful?new Set(fixed.filter(p=>!guardIds.has(p.id)&&!pieceOf(p.id)?.hold).slice(-Math.max(1,+job.unjamWindow||UNJAM_WINDOW)).map(p=>p.id)):new Set();
+    const barIds=new Set(job.longFirstIds||[]),movable=job.unjam&&job.careful?new Set(fixed.filter(p=>!guardIds.has(p.id)&&!barIds.has(p.id)&&!pieceOf(p.id)?.hold).slice(-Math.max(1,+job.unjamWindow||UNJAM_WINDOW)).map(p=>p.id)):new Set();
     const remainderSheet={...job.sheet,...(guard?{remnant:guard.profile}:{}),fixedPieces:fixed.map(placement=>({piece:pieceOf(placement.id),placement,...(movable.has(placement.id)?{movable:true}:{})}))};
     const remaining=makeSheetGrid(remainderSheet,job.clearancePt,job.fineRes||2).usableCells/Math.pow(job.fineRes||2,2);
     const fixedArea=fixed.reduce((n,p)=>{const v=prepareVariant(job.pieces.find(c=>c.id===p.id),p.angle,job.clearancePt,job.fineRes||2);return n+(v?areaOf(v.fine.bits)/Math.pow(job.fineRes||2,2):0);},0);
@@ -645,6 +682,7 @@
   async function solve(job, cb) {
     job = linkGroups(job);   // (the pieces of one pair or set share one order, whatever the page named it)
     job = withWriteShrink(job);   // (25 Oct 2026: legal also once the writer shrinks each charm about its centre — see shrinkUnion)
+    if (job.careful && job.block && job.longFirst !== false && !job._longFirstDone) job = longFirstJob(job);   // (LONGFIRST: bars seated flat along the long edges first)
     if(job.protectedRose||job.lockedPlacements?.length)return solveAppend(job,cb||{});
     cb = cb || {};
     const t0 = now();
@@ -1780,7 +1818,7 @@
          skip. Nothing seated moves. The orders it seats are job-wide facts, reported as pocketFilled: the page keeps them
          on the sheet as it keeps any order seated by the search. It runs only when an order was turned away, at most
          POCKET_MS, and never past the fill ceiling.                                                                  */
-      const pocketFilled = [], pocketStages = []; let pocketMs = 0, pocketTried = 0;
+      const pocketFilled = [], pocketStages = []; let pocketMs = 0, pocketTried = 0, settleStats = null;
       if (job.pocketFill !== false && !out.timedOut && !userStop() && prepared.some(p => !out.rec.some(r => r.p === p))) {
         const t1 = now(), half = angles.length > 1 ? 180 / angles.length : 0;
         softUntil = t1 + (+job.pocketMs || POCKET_MS);
@@ -2055,6 +2093,35 @@
         finally { softUntil = Infinity; unjamOn = false; unjamStats.ms = Math.round(now() - t2); ({ rec, fine, coarse, cells } = out); }
         unjamStats.moved = [...movedSaved];
       }
+      /* SETTLE (Paul, 12 Nov 2026: a piece left floating with dead pockets around it): every piece this search seated slides, in order
+         of increasing x, as far left as it goes, then toward the nearer long edge, then left again, with the grid's own collision test,
+         until no piece moves. Saved charms (the walls of baseFine) never move; nothing leaves the usable area or overlaps. */
+      if (job.block && job.settle !== false && rec.length && !userStop()) {
+        const G = new Grid(fine.W, fine.H); G.occ.set(fine.occ); G.remnant = fine.remnant; G.corners = fine.corners;
+        const paint = (r, on) => { const b = r.v.fine.bits, w = r.v.fine.w; for (let yy = 0; yy < r.v.fine.h; yy++) for (let xx = 0; xx < w; xx++) if (b[yy * w + xx]) { const gx = r.x + xx, gy = r.y + yy, i = gy * G.words + (gx >> 5), m = (1 << (gx & 31)) >>> 0; if (on) G.occ[i] |= m; else G.occ[i] &= ~m; } };
+        const along = axisX ? [-1, 0] : [0, -1], H2 = axisX ? FH / 2 : FW / 2;
+        let moves = 0;
+        for (let sweep = 0; sweep < 8; sweep++) {
+          let movedNow = 0;
+          for (const r of rec.slice().sort((a, b) => (axisX ? a.x - b.x : a.y - b.y))) {
+            if (r.p.pinned) continue;
+            paint(r, false);
+            const pm = r.v.fine.pm, centre = axisX ? r.y + r.v.fine.h / 2 : r.x + r.v.fine.w / 2, side = centre < H2 ? -1 : 1, across = axisX ? [0, side] : [side, 0];
+            let x = r.x, y = r.y;
+            for (let round = 0; round < 6; round++) {
+              let m = false;
+              while (G.fits(pm, x + along[0], y + along[1])) { x += along[0]; y += along[1]; m = true; }
+              while (G.fits(pm, x + across[0], y + across[1])) { x += across[0]; y += across[1]; m = true; }
+              if (!m) break;
+            }
+            if (x !== r.x || y !== r.y) { r.x = x; r.y = y; movedNow++; }
+            paint(r, true);
+          }
+          moves += movedNow; if (!movedNow) break;
+        }
+        if (moves) ({ fine, coarse } = rebuildGrids(rec));
+        settleStats = { moves };
+      }
       /* Room for later orders (Paul, 24 Sep): a nearly full Gold or Silver sheet lets the next 35 orders try its gaps
          before it is released, unless not even one of the shop's smallest charms (see SMALL_PROBES) fits it. Each is
          tried at 15° steps over the whole sheet, 4×4 positions at a time as in legalMap. */
@@ -2077,7 +2144,7 @@
       metrics.layouts++; reportMetrics(true);
       return { placements, rejects: prepared.filter(p => !ids.has(p.id)).map(p => p.id), capped, noRoom: out.noRoom.map(p => p.id), density: cells / usableCellsFine, contactQuality: qualityOf(rec, fine), trial: 0, stripPacked: false,
         usablePt2: usableCellsFine / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), placedPt2: cells / (fineRes * fineRes), placedCells: cells, pocket: pocketPt(coarse, coarseRes),
-        grids: { fine, coarse }, rec, fitScore: out.fit, wastePt2: rec.reduce((n, r) => n + r.waste, 0) * MM_PX * MM_PX / (fineRes * fineRes), timedOut: out.timedOut, smallRoom, pocketFilled, ...(job.unjam ? { unjam: { ...unjamStats, moved: [...movedSaved], committed: unjamStats.rounds > 0 } } : {}), careful: { graded, exact: exactN, angles: angles.length, turn, passes, ahead: aheadStats, pocket: { filled: pocketFilled.length, orders: pocketTried, ms: Math.round(pocketMs), stages: pocketStages } } };
+        grids: { fine, coarse }, rec, fitScore: out.fit, wastePt2: rec.reduce((n, r) => n + r.waste, 0) * MM_PX * MM_PX / (fineRes * fineRes), timedOut: out.timedOut, smallRoom, pocketFilled, ...(job.unjam ? { unjam: { ...unjamStats, moved: [...movedSaved], committed: unjamStats.rounds > 0 } } : {}), settle: settleStats, careful: { graded, exact: exactN, angles: angles.length, turn, passes, ahead: aheadStats, pocket: { filled: pocketFilled.length, orders: pocketTried, ms: Math.round(pocketMs), stages: pocketStages } } };
     }
     let carefulDone = false;
     if (carefulOn && !best) {
