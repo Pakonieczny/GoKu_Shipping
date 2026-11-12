@@ -1480,7 +1480,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const rid = String(c.order || "").split("/")[0] || (poolId ? poolId.split("_")[0] : "");
       const m = / · (\d+)\/(\d+)$/.exec(name), copy = poolId ? +poolId.split("_").pop() || 1 : m ? +m[1] : 1;
       pieces.push({ id: p.id, p: { cxPt: +p.cxPt, cyPt: +p.cyPt, angle: +p.angle || 0, scale: +p.scale || 1, wPt: +p.wPt || 10, hPt: +p.hPt || 10 },
-        c: null, poolId, rid: /^\d+$/.test(rid) || /^CUSTOM-\d{8}-\d{1,6}$/.test(rid) ? rid : "",   // (CUSTOMORDERS, Paul 28 Oct 2026: a custom piece of no order is its own order, CUSTOM-<yyyymmdd>-<n>) sku: c.sku || (name.split(" · ")[1] || "").trim() || c.layer || "", name, copy, qty: m ? +m[2] : 1,
+        // (CUSTOMORDERS, Paul 28 Oct 2026: a custom piece of no order is its own order, CUSTOM-<yyyymmdd>-<n>)
+        // (SKUFIX, 12 Nov 2026: this comment once sat in the middle of the line and hid sku, name, copy and qty: the order list said "undefined")
+        c: null, poolId, rid: /^\d+$/.test(rid) || /^CUSTOM-\d{8}-\d{1,6}$/.test(rid) ? rid : "", sku: c.sku || (name.split(" · ")[1] || "").trim() || c.layer || "", name, copy, qty: m ? +m[2] : 1,
         tx: poolId ? poolId.split("_")[1] : "", sourceId: c.sourceId, index: c.index, hash: c.hash, thumb: c.thumbUrl || null,
         // (pairs: the ear a piece is, when the record says so; an old record says nothing and the window asks OrderPieces)
         // (amendment 2: every earring piece says its ear, and `mirror` when it is the mirror image of the drawn design; a record's own `pieceSides` map says the ear of a piece whose charm does not)
