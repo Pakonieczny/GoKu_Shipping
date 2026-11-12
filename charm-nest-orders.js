@@ -4046,7 +4046,28 @@
   const plainInscription = t => { const ls = String(t || "").split("\n"); return ls.length <= 3 && ls.every(l => l.length <= 40) && !FB_INSTR.test(t) && !/[()\[\]]/.test(t); };
   /** The faces a text labels: { n (labels taken), front, back (each { text, own } or null), problems: [codes], strays, lead }.
    *  problems: lead (words before the first label), empty (a label with no words), dup (a face labelled twice), mixed (two label styles), tail (words after the last "on the back"). */
+  /* FACEHEAD (Paul, 11 Nov 2026, order 4220952355: "the grid is not showing ... there's no engraving showing"): the buyer wrote each face as a HEADING line that names the face and ends in a colon,
+     the words on the lines under it ("center aligned on the front, typewriter font:" / "Merrick" / "center aligned on the back, typewriter font:" / "10.20.26" / "1:28am"). The label reader took
+     "on the front" as a label AFTER its words ("center aligned") and sent the piece to a person with no words on either face. A heading's own words are how to engrave (alignment, font), never the
+     words; the font it names is that face's font. Each face named once, nothing but a greeting before the first heading; anything else is read as before. */
+  function faceHeadings(body) {
+    const lines = String(body || "").split("\n"), heads = [];
+    lines.forEach((l, i) => { const t = l.trim(), m = /\bon\s+(?:the\s+)?(front|back)\b/i.exec(t); if (m && /:\s*$/.test(t)) heads.push({ i, face: m[1].toLowerCase(), line: t }); });
+    if (!heads.length || new Set(heads.map(h => h.face)).size !== heads.length) return null;
+    const lead = trimFace(lines.slice(0, heads[0].i).join("\n")); if (lead && !askOnly(lead)) return null;
+    const out = { n: heads.length, front: null, back: null, problems: [], strays: [], lead, named: heads.map(h => h.face) };
+    heads.forEach((h, k) => {
+      const raw = lines.slice(h.i + 1, k + 1 < heads.length ? heads[k + 1].i : lines.length).join("\n"), cb = cutBlock(raw);
+      if (cb.gap && !out.problems.includes("gap")) out.problems.push("gap");
+      const t = stripNote(trimFace(cb.text)), fm = /([A-Za-z][A-Za-z ]{0,20}?)\s+font\b/i.exec(h.line) || /\bfont\s*[:=\-]?\s*([A-Za-z][A-Za-z ]{0,20}?)\s*:?\s*$/i.exec(h.line);
+      const fw = fm ? fm[1].trim().split(/\s+/).slice(-2).join(" ") : "", own = fw && fontOfPhrase(fw) ? fw : fw && fontOfPhrase(fw.split(" ").pop()) ? fw.split(" ").pop() : "";
+      if (!t && !out.problems.includes("empty")) out.problems.push("empty");
+      out[h.face] = { text: t, own };
+    });
+    return out;
+  }
   function faceParse(body) {
+    { const hd = faceHeadings(body); if (hd) return hd; }   // (FACEHEAD: a heading per face, the words under it)
     const out = { n: 0, front: null, back: null, problems: [], strays: [], lead: "", named: [] };
     const { labels, strays } = faceLabels(body); out.strays = strays; out.n = labels.length; out.named = [...new Set(labels.map(l => l.face))];
     if (!labels.length) return out;

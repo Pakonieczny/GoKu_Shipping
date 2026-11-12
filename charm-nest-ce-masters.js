@@ -53,8 +53,10 @@
   const LW_CUT_PT = 0.25;                     // (the hairline charm-nest-art-edit.js paintOf writes a cut line with)
   const WALL_MM = 1, HOLE_MM = 1.5;           // a jump ring hole's diameter and the metal kept between it and the edge
   const SIZE_MIN_MM = 4, SIZE_MAX_MM = 80, HOLE_MIN_MM = 0.6, HOLE_MAX_MM = 5;
-  const SHAPES = ['circle', 'rounded', 'heart', 'tag', 'free'];
-  const SHAPE_WORD = { circle: 'Circle', rounded: 'Rounded rectangle', heart: 'Heart', tag: 'Tag', free: 'Your own outline' };
+  /* BLANKSHEET (Paul, 11 Nov 2026: "Change the default to your own outline, however, rename that to blank sheet and make that the first default option chosen by the system"): the frame alone is
+     "Blank sheet", first in the row, and every New design starts on it (the size asked for last time is kept). */
+  const SHAPES = ['free', 'circle', 'rounded', 'heart', 'tag'];
+  const SHAPE_WORD = { circle: 'Circle', rounded: 'Rounded rectangle', heart: 'Heart', tag: 'Tag', free: 'Blank sheet' };
   const fin = v => typeof v === 'number' && Number.isFinite(v);
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const r3 = v => Math.round(v * 1000) / 1000;
@@ -105,7 +107,7 @@
   /** A start as asked, made sound: a known outline, a size within reach (a circle as wide as it is high), a hole that fits. */
   function startSpec(s) {
     s = s || {};
-    const shape = SHAPES.includes(s.shape) ? s.shape : 'circle';
+    const shape = SHAPES.includes(s.shape) ? s.shape : 'free';   // (BLANKSHEET: the system's own default)
     let w = clamp(fin(+s.wMm) && +s.wMm > 0 ? +s.wMm : 15, SIZE_MIN_MM, SIZE_MAX_MM), h = clamp(fin(+s.hMm) && +s.hMm > 0 ? +s.hMm : w, SIZE_MIN_MM, SIZE_MAX_MM);
     if (shape === 'circle') h = w;
     const holeMm = clamp(fin(+s.holeMm) && +s.holeMm > 0 ? +s.holeMm : HOLE_MM, HOLE_MIN_MM, HOLE_MAX_MM), wallMm = fin(+s.wallMm) && +s.wallMm > 0 ? +s.wallMm : WALL_MM;
@@ -443,7 +445,7 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
     rounded: SV('<rect x="4.5" y="3.5" width="15" height="17" rx="3"/><circle cx="12" cy="7" r="1.2"/>'),
     heart: SV(`<path d="${dOf(heartSP(17, 15.5), 1, 3.5, 4.5)}"/><circle cx="12" cy="10.2" r="1.2"/>`),
     tag: SV('<path d="M8.5 3.5h7l4 4V19a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 19V7.5Z"/><circle cx="12" cy="7" r="1.2"/>'),
-    free: SV('<path d="M12 20.5 6 13.8l2.2-7L12 4l3.8 2.8 2.2 7Z"/><circle cx="12" cy="11.6" r="1.5"/><path d="M12 20.5v-7.4"/>')
+    free: SV('<path d="M6.5 3.5h7.5l4 4v13h-11.5Z"/><path d="M14 3.5v4h4"/>')   // (BLANKSHEET: a blank page)
   };
 
   /* CES1 (Paul, 9 Nov 2026: "there should be a popup modal with specific options ... This modal already exists but does not always show up"): the card after Save, and the picker, were put in the
@@ -776,7 +778,7 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
 
   /* ═══ 6 · the picker: the library's charms, or a new start ═══ */
   const START_KEY = 'cem.start';
-  const lastStart = () => { try { return startSpec(JSON.parse((root.localStorage && root.localStorage.getItem(START_KEY)) || 'null') || {}); } catch (_) { return startSpec({}); } };
+  const lastStart = () => { try { return startSpec(Object.assign({}, JSON.parse((root.localStorage && root.localStorage.getItem(START_KEY)) || 'null') || {}, { shape: 'free', hole: false })); } catch (_) { return startSpec({}); } };   // (BLANKSHEET: always opens on Blank sheet; the last size stays)
   const keepStart = s => { try { if (root.localStorage) root.localStorage.setItem(START_KEY, JSON.stringify({ shape: s.shape, wMm: s.wMm, hMm: s.hMm, hole: s.hole, holeMm: s.holeMm })); } catch (_) { /* a per-computer convenience */ } };
   let picker = null;
   function openPicker(o) { return showPicker(Object.assign({ pane: 'lib' }, o || {})); }

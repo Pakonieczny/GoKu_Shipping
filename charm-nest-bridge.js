@@ -8929,6 +8929,25 @@ const Engrave = window.Engrave = (() => {
     }
     return job;
   }
+  /* FACEHEAD (Paul, 11 Nov 2026, order 4220952355: no grid, no engraving, no controls on a front + back heart): a face that waits for a person only because the intake could not read its words
+     ("which words go on the front and which on the back"), that no person has answered, is read again from the order as it reads now, once per page: when the order now gives that face its
+     words, it is drawn and fitted and goes on to Approve as any face read from the order. A face a person has answered, or one the order still does not say, stays as it is. */
+  let rereading = false;
+  const stuckFace = j => !!j && j.state === "words" && j.wordsSource === "spec.engraving" && !(j.lines && j.lines.length) && !(j.decision && j.decision.text) && !j.stamping && !j.approvalPreparing && !j.editingBack;
+  async function rereadStuckFaces() {
+    if (rereading) return; rereading = true;
+    try {
+      const rows = new Map();
+      for (const j of items().values()) if (stuckFace(j) && !j.rereadAt) { j.rereadAt = Date.now(); const row = j.row && (j.row.parentRow || j.row); if (row && row.state !== "gone") rows.set(row.key, row); }
+      for (const row of rows.values()) {
+        const jobs = jobsOf(row), setup = facedSetup(row, jobs);
+        if (!setup || setup.needsPerson) continue;
+        const again = jobs.filter(j => stuckFace(j) && seedOf(setup, j)); if (!again.length) continue;
+        for (const j of again) j.state = "reclassify";
+        await classifyFaces(row, jobs, setup);
+      }
+    } finally { rereading = false; }
+  }
   async function classifyOnce(row, opts) {
     const jobs = ensureJobs(row), job = jobs[0]; const sp = row.spec; const owner = items();
     for (const j of jobs) CNEngravingSeals.keep(j);
@@ -12974,6 +12993,7 @@ const Engrave = window.Engrave = (() => {
     if (approvalUnderWay()) { oweRender(); return; }
     LiveStrip.render();
     const v = document.getElementById("engraveView");
+    if (!rereading && [...items().values()].some(j => stuckFace(j) && !j.rereadAt)) void rereadStuckFaces().catch(error => console.error("Engraving re-read failed", error));   // (FACEHEAD)
     if (!previewRecovery && previewRecoveryTimer === null && [...items().values()].some(needsPreview))
       previewRecoveryTimer = setTimeout(() => {
         previewRecoveryTimer = null;
