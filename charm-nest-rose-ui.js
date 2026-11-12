@@ -15,6 +15,8 @@
   const parse=s=>s?JSON.parse(s):null;
   /* (SUPERSEDED, Paul 12 Nov 2026: "the greys are overlapping with the real ones") a sheet has ONE cut on its physical sheet: the newest. An older cut by the same sheet (cut, reopened, cut again) is no part of the sheet's history and draws nothing grey */
   const current=h=>{const seen=new Set();return [...h].sort((x,y)=>(+y.revision||0)-(+x.revision||0)).filter(c=>{if(!c||c.setAsideAt)return false;const k=c.sheetId;if(!k)return true;if(seen.has(k))return false;seen.add(k);return true;});};
+  /* (Paul, 12 Nov 2026) a sheet already cut shows the physical sheet as it was when IT was cut: the cuts made after its own (further along the sheet) are no part of its picture */
+  const before=(h,sh)=>{const list=current(h);if(!sh||!sh.roseCutAt)return list;const own=list.find(c=>c.sheetId===sh.sheetId);return own?list.filter(c=>(+c.revision||0)<=(+own.revision||0)):list;};
   const decode=cuts=>cuts.filter(c=>c&&!c.setAsideAt).map(c=>({...c,plan:parse(c.planJson)}));   // (ASIDE, Paul 12 Nov 2026: a cut set aside draws nothing grey: it is no part of the sheet's history)
   const when=at=>Number.isFinite(at)?new Date(at).toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):null;
   const stamp=at=>Number.isFinite(at)?`<time datetime="${new Date(at).toISOString()}">${esc(when(at))}</time>`:'<span class="roseUndated">Time not recorded</span>';
@@ -291,7 +293,7 @@
   function render(sh){
     if(!hasLine(sh)||!sh.el)return;
     let host=sh.el.querySelector('.roseHistory');if(!host){host=document.createElement('div');host.className='roseHistory';sh.el.querySelector('.shPreviewWrap').before(host);}
-    const stock=sh.roseStock,history=current(sh.roseHistory||[]).sort((a,b)=>a.revision-b.revision),busy=!!(sh._rosePlanning||sh._roseLoading||sh._roseAction);
+    const stock=sh.roseStock,history=before(sh.roseHistory||[],sh).sort((a,b)=>a.revision-b.revision),busy=!!(sh._rosePlanning||sh._roseLoading||sh._roseAction);
     const stockId=stock?.id||sh.recalled?.roseStockId;
     const ready=!sh.roseCutAt&&!sh.recalled&&sh.persistedDone&&sh.verification?.ok&&!sh.dirty&&sh.placements.length&&!['nesting','finishing','queued'].includes(sh.status);
     const included=!!sh.setId&&!sh.draft;
@@ -457,7 +459,7 @@
   function stroke(ctx,paths,k,color,width,dashed=false){ctx.strokeStyle=color;ctx.lineWidth=width;ctx.setLineDash(dashed?[4,3]:[]);for(const path of paths||[]){ctx.beginPath();path.forEach(([x,y],i)=>i?ctx.lineTo(x*k,y*k):ctx.moveTo(x*k,y*k));ctx.stroke();}ctx.setLineDash([]);}
   function paint(ctx,sh,k,phase){
     if(!hasLine(sh))return;
-    ctx.save();const cuts=current(sh.roseHistory||[]);
+    ctx.save();const cuts=before(sh.roseHistory||[],sh);
     if(phase==='history'){
       const p=parse(sh.roseStock?.profileJson);
       if(p){ctx.fillStyle='#f0eeeb';p.values.forEach((v,i)=>{if(p.axis==='x')ctx.fillRect(0,i*p.step*k,v*k,p.step*k);else ctx.fillRect(i*p.step*k,0,p.step*k,v*k);});}
