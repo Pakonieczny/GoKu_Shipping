@@ -4959,6 +4959,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      the docks, the sheet pictures elsewhere), and again when its save ends (saved, or put back) */
   function hopRedraw(sheets) {
     for (const sh of sheets) { if (!sh) continue; tryDo(() => window.CN && CN.renderCard && CN.renderCard(sh)); tryDo(() => window.CN && CN.drawPreview && CN.drawPreview(sh)); }
+    // (found in a live test, 12 Nov 2026: a charm moved off the sheet under Manual Control left its neighbours red and "8 charms overlap" said: the colours are worked out again for the sheet as it stands)
+    if (MC.on && MC.sh && sheets.includes(MC.sh)) { tryDo(() => mcRecolour(null)); tryDo(() => paintFx()); }
     tryDo(() => window.SheetHop && SheetHop.refresh && SheetHop.refresh(true)); tryDo(() => window.LivePreview && LivePreview.tick());
     tryDo(() => window.Session && Session.schedule());
   }
