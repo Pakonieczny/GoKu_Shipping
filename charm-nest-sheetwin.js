@@ -3202,7 +3202,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!running) { if (!o.manual) sh._byHand = true; else sh._personWrite = true; const held = sh._manualHold; delete sh._manualHold; try { startNest(sh); } finally { if (held && !o.manual) sh._manualHold = held; } }
     const until = t0 + 240000 * spinScale();   // (STUCKSPIN: spinScale, 1 on the page)
     while (Date.now() < until) {
-      if ((running || sh.jobId !== job0) && !busy(sh) && (sh.persistedDone || sh.problem)) break;
+      if ((running || sh.jobId !== job0) && !sheetWorking(sh) && (sh.persistedDone || sh.problem)) break;   // (CANCELHELD: a sheet saved, then queued only to wait for Resume (its next turn, the run stopped) is done here: waitsForResume; the cancel waited 4 minutes)
       // a new problem on a sheet nothing is working on, or a search that never started, ends the wait at once
       // (either used to sit out the full 4 minutes)
       if (!busy(sh) && ((sh.problem && sh.problem !== prob0) || (!running && sh.jobId === job0 && sh.status !== "queued" && Date.now() - t0 > 5000))) break;

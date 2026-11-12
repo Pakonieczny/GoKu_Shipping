@@ -21359,7 +21359,10 @@ const Review = window.Review = (() => {
     if (!window.CancelUI || !it || it.done || it.decided || it.settled || it.info || it.nested || it.kind === "placement" || /^eng:/.test(String(it.key || ""))) return "";
     const rids = [...new Set((it.kind === "heldOrder" && it.rid ? rowsOfOrder(it.rid) : rowsOf(it)).filter(r => r && r.order).map(r => String(r.order.receiptId)))];
     if (rids.length !== 1 || (window.Cancelled && Cancelled.has && Cancelled.has(rids[0]))) return "";
-    return it.kind === "heldOrder" || rowsOfOrder(rids[0]).some(r => Orders.heldNow(r)) ? rids[0] : "";
+    // (CANCELHELD, Paul 11 Nov 2026: "I tried to cancel order option ... neither options work": an order held with Hold Order is an order on hold too: its mark, CharmNestReviewMark.isMarked, is the
+    //  hold; its pieces stay where they are, so no line of it reads heldNow, and its Review card had no Cancel Order)
+    const marked = (() => { try { return !!(window.CharmNestReviewMark && CharmNestReviewMark.isMarked(rids[0])); } catch (_) { return false; } })();
+    return it.kind === "heldOrder" || marked || rowsOfOrder(rids[0]).some(r => Orders.heldNow(r)) ? rids[0] : "";
   }
   function stampOf(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);

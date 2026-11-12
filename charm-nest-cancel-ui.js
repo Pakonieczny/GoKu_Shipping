@@ -353,7 +353,9 @@
       b.onclick = e => { e.stopPropagation(); e.preventDefault(); cancel(rid, { near: b }).catch(err => console.warn("cancel order", err)); };   // (SIGNIN: near, the button a sign-in is asked under)
       if (rel) rel.after(b); else acts.appendChild(b);
       node.dataset.rid = node.dataset.rid || rid;
-      if (flights.has(rid)) paintBusy(rid);
+      // (CANCELHELD: a card drawn again while its cancel is kept is not in the page yet (Review builds the card, then puts it in): paintBusy finds only the cards on the page, so this
+      //  card's own button says so itself, or it read "Cancel Order", pressable, while the cancel went on, and a second press did nothing)
+      if (flights.has(rid)) { node.classList.add("cnBusy"); b.disabled = true; b.innerHTML = `<span class="spin"></span>Cancelling`; const r0 = node.querySelector(RELSEL); if (r0 && !r0.disabled) { r0.disabled = true; r0.dataset.cnOff = "1"; } paintBusy(rid); }
       drawMsg(node, rid);
     } catch (e) { console.warn("cancel button", e); }
   }  // (NOHOLDPILE, Paul 20 Oct 2026: Orders › On hold is gone, "it competes with the existing Review tab": a held order is shown in Review)
