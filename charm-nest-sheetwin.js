@@ -3415,6 +3415,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         ((plan.pairNotes || []).length ? ` ${esc(plan.pairNotes.join(" "))}` : "") + (aloneNote ? ` ${esc(aloneNote)}` : "");
       if (cue) cue.end();
       paint(); endFlow(work);
+      // (REFILL, Paul 11 Nov 2026: "when a user removes a given piece from a sheet ... another piece is found to take its place on that particular sheet and taken from a newer In process sheet
+      //  to fill the empty gap"): the room freed on a draft sheet still filling is filled at once, as Hold did (holdKit.fill): the orders waiting for a sheet first, oldest first, then an order
+      //  moved, verified, from a newer filling sheet of the same metal. A sheet of a released set is never changed here.
+      if (!opt.noFill) for (const sh of pages) { try { if (holdKit.fillable(sh) && !(sh.setId && !sh.draft) && holdKit.freed(sh.sheetId)) await holdKit.fill(sh, who, { skip: rid ? [rid] : [], avoid: pages.filter(p => p !== sh).map(p => p.sheetId) }); } catch (e) { console.warn("sheet window: refill", e); } }
       if (sheetId && W.id === sheetId && W.dlg.open) open2(sheetId);
     } catch (e) {
       for (const st of work.steps) doneStep(st);
@@ -7532,7 +7536,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // cut · sent · unloaded · last · together). The window's pool cache for the order is dropped first: it is only a cache.
       offPlan: rid => { W.pools.delete(String(rid)); return offPlan({ rid: String(rid) }, true); },
       // the pieces off, headless, one change at a time (as the shared-orders window's Take off does)
-      takeOff: (plan, who, note) => takeOff(plan, { then: "hold", note: note || "", headless: true }, who),
+      takeOff: (plan, who, note) => takeOff(plan, { then: "hold", note: note || "", headless: true, noFill: true }, who),   // (REFILL: Hold fills by itself, holdKit.fill)
       freed: sheetId => (FREED.get(sheetId) || []).length,
       // (PAIR, Paul 26 Oct 2026: the set's own repair, Gate.unpair) an order's pieces moved off the sheets that hold them onto `target`, headless, the move this window makes (moveIn: each sheet they leave
       //  written as it stands, every other charm pinned where it is; the target nests them; labels made again; both saved sheets and the piece records read back). k = { rid, pieces:[{ c, src, placed }] };
