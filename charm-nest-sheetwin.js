@@ -4791,6 +4791,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         moved.push({ src, charms, placements, backs });
         Orders.keepRest(src);
       }
+      hopRedraw([...srcs, target]);   // (HOPDRAW: the sheets it leaves show it gone at once, before they are saved)
       off.state = "ok"; paint();
       // 2 · each filling sheet saved without it first
       stage = "sources"; journal(rid, { rid, ids: [...ids], from: srcs.map(s => s.sheetId || null), to: target.sheetId, by: who, at: Date.now(), stage });
@@ -4800,6 +4801,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       for (const s of spots) { const c = s.c; delete c.arrivalPin; c.pinned = o.free ? null : { cxPt: s.cxPt, cyPt: s.cyPt, angle: s.angle }; if (!target.charms.includes(c)) target.charms.push(c); }
       for (const m of moved) if (m.backs.length) target.backPool = (target.backPool || []).concat(m.backs);
       Orders.keepRest(target);
+      hopRedraw([target]);   // (HOPDRAW: and it shows on the sheet it goes to at once)
       const saved = await rewritePage(target, put, paint);
       // a sheet that feeds its orders in turns places these on its next turn
       for (const until = Date.now() + 240000; Date.now() < until && (target.feedWait || []).some(id => spots.some(s => s.c.id === id)) || busy(target) && Date.now() < until;) { put.state = "now"; put.detail = "its turn to be placed"; paint(); await pause(400); }
@@ -4823,6 +4825,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         const left = (FREED.get(sheetId) || []).filter(gh => freeStill(gh, G2, target, g => landed.some(s => Math.hypot(s.cxPt - g.x.p.cxPt, s.cyPt - g.x.p.cyPt) < Math.max(g.x.p.wPt || 20, g.x.p.hPt || 20) / 2)));
         setFreed(sheetId, left);
       }
+      hopRedraw(all);   // (HOPDRAW: drawn again as saved)
       work.state = "done"; work.title = ok ? `Order ${rid} moved to ${tName}` : `Order ${rid} moved to ${tName} · check flagged`;
       work.note = (ok ? "Verified: the saved sheets and piece records match. " : "") + (o.hop ? `Moved by ${esc(who)}; it is pinned where it was put on ${esc(tName)}.` : `${srcs.map(s => esc(sName(s))).join(", ")} keep${srcs.length === 1 ? "s" : ""} filling with the next orders.`);
       paint(); endFlow(work);
@@ -4837,6 +4840,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (e.later) back = ` It finishes on its card in the Nest tab; the order is on ${tName}.`;
       else if (moved.length) { back = await putBack(moved, target, spots).then(() => ` Order ${rid} went back to ${srcs.map(sName).join(", ")}.`).catch(e2 => ` Putting it back stopped too (${e2.message}); the run places order ${rid} again.`); }
       journal(rid, null);
+      hopRedraw(all);   // (HOPDRAW: put back is shown at once too)
       work.state = "failed"; work.title = `Order ${rid} not moved`; work.note = esc(e.message) + "." + esc(back);
       paint(); endFlow(work);
       if (W.dlg && W.dlg.open && W.id === sheetId) open2(sheetId);
