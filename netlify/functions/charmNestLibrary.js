@@ -1949,6 +1949,10 @@ async function op_poolPut(b) {
   return db.runTransaction(async tx => {
   const out = { written: 0, contended: [], placed: [] }, found = [];
   for (let i = 0; i < list.length; i += 100) found.push(...await txGetAll(tx, list.slice(i, i + 100).map(p => col(POOL).doc(p.poolId)), POOL_PUT_FIELDS));
+  // (ARTPRE: a piece pooled for the first time takes the stamps of the artwork edits saved for it before it was pooled, so every page reads them)
+  const fresh = list.filter((p, i) => !(found[i] && found[i].exists)), preArt = new Map();
+  for (let i = 0; i < fresh.length; i += 50) { const part = fresh.slice(i, i + 50), keys = part.flatMap(p => ["front", "back"].map(f => Faces.recKey(p.poolId, f))), got = await txGetAll(tx, keys.map(k => col(ART).doc(k)), ["poolId", "face", "at"]);
+    got.forEach(d => { if (!d.exists) return; const x = d.data() || {}, id = String(x.poolId || ""), f = x.face === "front" ? "front" : "back"; if (id && num(x.at) > 0) preArt.set(id, Object.assign(preArt.get(id) || {}, { [f]: num(x.at) })); }); }
   /* A line already on a saved sheet is never placed again (Paul, 29 Sep: an order's design went on its sheet twice): a
      row whose record puts it on a sheet (not taken off since: abandoned or superseded), and whose sheet's saved record
      still lists it, is not written over by a fresh placement (no sheet id). It is answered as placed, with where it is. */
@@ -1979,7 +1983,7 @@ async function op_poolPut(b) {
     if (cur && cur.runId && p.runId && cur.runId !== p.runId && !["complete", "abandoned", "committed"].includes(cur.state) && (Date.now() - (ms(cur.updatedAt) || 0)) < 24 * 3600 * 1000 && await liveRun(cur.runId)) { out.contended.push({ poolId: p.poolId, runId: cur.runId }); continue; }
     if (onSheet.has(p.poolId)) { out.placed.push(onSheet.get(p.poolId)); continue; }
     // (a piece of a pair carries side / bodyIndex / groupKey / groupSize: kept when they are sound, left out when not; a row without them is written as it always was)
-    const doc = Placement.cleanPiece(Object.assign({}, p, { poolId: p.poolId, updatedAt: FV.serverTimestamp() })); if (!cur) doc.createdAt = FV.serverTimestamp();
+    const doc = Placement.cleanPiece(Object.assign({}, p, { poolId: p.poolId, updatedAt: FV.serverTimestamp() })); if (!cur) { doc.createdAt = FV.serverTimestamp(); if (preArt.has(p.poolId)) doc.artEdit = Object.assign({}, doc.artEdit && typeof doc.artEdit === "object" ? doc.artEdit : {}, preArt.get(p.poolId)); }
     // a row taken off on purpose (held, cancelled) that is made up again is live again: its take-off marks stay (the order's history
     // reads them), so the row says when it was made live, and no reader takes the old marks for a take-off still in force
     if (cur && p.state && !Placement.TAKE_OFF_STATES.has(p.state) && Placement.takenOff(cur)) doc[Placement.REPOOLED] = FV.serverTimestamp();
@@ -2909,8 +2913,9 @@ async function op_artPut(b) {
   const key = Faces.recKey(poolId, face), ref = col(ART).doc(key), poolRef = col(POOL).doc(poolId);
   return db.runTransaction(async tx => {
     const snap = await tx.get(ref), pool = await tx.get(poolRef);
-    if (!pool.exists) return { error: "this piece is not in the pool (an artwork edit is kept for a pooled piece)", status: 404 };
-    const row = pool.data() || {}, old = snap.exists ? snap.data() : null, now = Date.now();
+    /* ARTPRE (Paul, 12 Nov 2026: "The charm editor won't let me save this change", nesting paused: no piece pooled yet). A piece not pooled yet keeps its edit too, under the pool id it WILL have
+       (the order's line and copy name it): no pool row is written now; op_poolPut stamps the row with the edit when the piece is pooled, so every page reads it then. */
+    const row = pool.exists ? pool.data() || {} : {}, old = snap.exists ? snap.data() : null, now = Date.now();
     if (b.expectedAt != null && b.expectedAt !== "" && num(b.expectedAt) !== num(old && old.at)) return { error: "This piece's artwork was edited elsewhere. Reopen it before saving your changes.", status: 409, conflict: true, art: artOut(old) };
     const sid = row.sheetId && !Placement.TAKE_OFF_STATES.has(row.state) ? str(row.sheetId, 80) : "", sheetRef = sid && isId(sid) ? col(SHEETS).doc(sid) : null;
     const sheet = sheetRef ? await tx.get(sheetRef).then(s => (s.exists ? s.data() : null)) : null, onSheet = !!sheet && !sheet.archived && Array.isArray(sheet.poolIds) && sheet.poolIds.map(String).includes(poolId);
@@ -2922,7 +2927,7 @@ async function op_artPut(b) {
     if (clear) { if (old) tx.delete(ref); }
     else tx.set(ref, Object.assign({ poolId, face, sku: str(row.sku, 60) || null, orderId: str(row.orderId || poolId.split("_")[0], 30), sheetId: onSheet ? sid : null }, art, { cutKey, by, at: now, edits: num(old && old.edits) + 1, updatedAt: FV.serverTimestamp() }, old ? { prev: { at: num(old.at), by: str(old.by, 80) } } : {}));
     // (the whole map is written: a merge keeps the pool row's other fields, and the other face's stamp is carried over by hand)
-    tx.set(poolRef, { artEdit: Object.assign({}, row.artEdit && typeof row.artEdit === "object" ? row.artEdit : {}, { [face]: clear ? null : now }), updatedAt: FV.serverTimestamp() }, { merge: true });
+    if (pool.exists) tx.set(poolRef, { artEdit: Object.assign({}, row.artEdit && typeof row.artEdit === "object" ? row.artEdit : {}, { [face]: clear ? null : now }), updatedAt: FV.serverTimestamp() }, { merge: true });   // (ARTPRE: none yet: stamped when pooled)
     if (onSheet) tx.set(sheetRef, Object.assign({ filesOwed: now, updatedAt: FV.serverTimestamp() }, cutChanged ? { cutCheck: Object.assign({}, sheet.cutCheck && typeof sheet.cutCheck === "object" ? sheet.cutCheck : {}, { [poolId]: { at: now, by } }) } : {}), { merge: true });
     return { ok: true, key, art: clear ? null : Object.assign({ poolId, face }, art, { cutKey, by, at: now }), sheetId: onSheet ? sid : null, filesOwed: onSheet ? now : null, cutChanged };
   });
