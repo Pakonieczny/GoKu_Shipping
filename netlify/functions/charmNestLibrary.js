@@ -2927,6 +2927,9 @@ async function op_artPut(b) {
     if (clear) { if (old) tx.delete(ref); }
     else tx.set(ref, Object.assign({ poolId, face, sku: str(row.sku, 60) || null, orderId: str(row.orderId || poolId.split("_")[0], 30), sheetId: onSheet ? sid : null }, art, { cutKey, by, at: now, edits: num(old && old.edits) + 1, updatedAt: FV.serverTimestamp() }, old ? { prev: { at: num(old.at), by: str(old.by, 80) } } : {}));
     // (the whole map is written: a merge keeps the pool row's other fields, and the other face's stamp is carried over by hand)
+    // (PREPOOLLIST, Paul 12 Nov 2026: "This piece's artwork was edited elsewhere" on the second Save of a piece not pooled yet: no pool row carries its stamp, so a page could not know of the first.
+    //  ONE document lists the pre-pool edits by record key, read once by a page (artPrepoolList), in place of a stamp on a row that does not exist yet)
+    if (!pool.exists) tx.set(col(ART).doc("_prepool"), { ids: { [key]: clear ? FV.delete() : now }, updatedAt: FV.serverTimestamp() }, { merge: true });
     if (pool.exists) tx.set(poolRef, { artEdit: Object.assign({}, row.artEdit && typeof row.artEdit === "object" ? row.artEdit : {}, { [face]: clear ? null : now }), updatedAt: FV.serverTimestamp() }, { merge: true });   // (ARTPRE: none yet: stamped when pooled)
     if (onSheet) tx.set(sheetRef, Object.assign({ filesOwed: now, updatedAt: FV.serverTimestamp() }, cutChanged ? { cutCheck: Object.assign({}, sheet.cutCheck && typeof sheet.cutCheck === "object" ? sheet.cutCheck : {}, { [poolId]: { at: now, by } }) } : {}), { merge: true });
     return { ok: true, key, art: clear ? null : Object.assign({ poolId, face }, art, { cutKey, by, at: now }), sheetId: onSheet ? sid : null, filesOwed: onSheet ? now : null, cutChanged };
@@ -4951,7 +4954,9 @@ OPS.customPieceList = op_customPieceList;   // CUSTOMORDERS (Paul, 28 Oct 2026):
 NO_GEN_BUMP.add("customPieceList");   // CUSTOMPOOL (Paul, 28 Oct 2026): a design sent to a sheet becomes its pool rows; an orderless piece is numbered CUSTOM-<yyyymmdd>-<n>
 /* ART EDIT (Paul, 27 Oct 2026): one piece's own artwork, kept beside it (op_artPut above). artPut writes the piece's record, its pool row's artEdit stamp and its sheet's filesOwed;
    artGet and artList only read the documents named (they move no counter). */
-Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList");
+/** PREPOOLLIST: the artwork edits kept for pieces not pooled yet: { ids: { "<poolId>[~front]": at } } (one read). */
+async function op_artPrepoolList() { const s = await col(ART).doc("_prepool").get(); const ids = s.exists && s.data() && s.data().ids && typeof s.data().ids === "object" ? s.data().ids : {}; return { ids }; }
+Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList, artPrepoolList: op_artPrepoolList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList"); NO_GEN_BUMP.add("artPrepoolList");
 Object.assign(OPS, { traceSrcPut: op_traceSrcPut, traceSrcGet: op_traceSrcGet }); NO_GEN_BUMP.add("traceSrcPut"); NO_GEN_BUMP.add("traceSrcGet");   // TRACESRC (28 Oct 2026): the picture a traced image was made from, in Storage by its own hash (op_traceSrcPut above); no pool row, sheet or Library record is written
 OPS.madeThumbPut = op_madeThumbPut;   // THUMBSYNC (28 Oct 2026): a piece's picture as it will be made, kept on its pool row (op_madeThumbPut above); it writes a pool row, so the placement counter moves
 /* DESIGN LOG (Paul, 28 Oct 2026: "I need to know when employees are commissioning custom pieces, especially when they don't belong to an order"): designLog {records} keeps one
