@@ -204,6 +204,14 @@
       // ── (d) R12: a Rose Gold / 10K / 14K sheet in the set without its green line cut (or approved) or its back engraving approved ──
       const greenPartnersIn = r => ((C.homes && C.homes.get(r.id)) || { partners: [] }).partners.filter(p => st.ids.includes(p));
       for (const r of live) {
+        // (Paul, 12 Nov 2026: "the Rose Gold sheet must be added to its set automatically; this problem must not come up later") a Rose Gold sheet the automatic cut put in THIS set, its ONE set
+        //  (autoMatched: Gate.autoCut), whose cut is not recorded yet waits here for its green line cut: what the set's Approve for laser cutting waits for, one plain waiting line with the reason
+        //  (autoCutWhy, the server's words), never R12, the red "breaks your rules" line or Rebuild. It is cut in place by the automatic cut's next try. 10K / 14K keep their person's press
+        if (R.metalClass(r) === 'RG' && !isCut(r) && r.roseFull !== true && str(r.autoMatched) === st.id) {
+          const why = str(r.autoCutWhy).trim().replace(/[.\s]+$/, '');
+          waits.push({ set: st.id, setName: st.name, sheet: r.id, name: C.name(r.id), kind: 'greenCut', ...(why ? { reasons: [why] } : {}), line: `waiting for the green line cut of ${C.name(r.id)}${why ? `: ${why}` : ''}` });
+          continue;
+        }
         // (Paul, 26 Oct 2026: its back engraving open is what the set's Approve for laser cutting waits for, a plain waiting line: never a rule it breaks)
         if (GOLD_FAMILY.includes(R.metalClass(r)) && backsOpen(r) && !goldGaps(r, { inSet: true }).length) waits.push({ set: st.id, setName: st.name, sheet: r.id, name: C.name(r.id), kind: 'backs', line: `waiting for the back engraving approval of ${C.name(r.id)}` });
         const gaps = goldGaps(r, { inSet: true }); if (!gaps.length) continue;

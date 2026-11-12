@@ -5589,7 +5589,10 @@ const Pool = window.Pool = (() => {
       // a line with pieces on a sheet that is closed (released full, cut) cannot join them: it is split, and said so (rule R3; the sets read it from the pool ids)
       if (matePages.length && !matePages.includes(page) && typeof splitGroups === "function") for (const g of splitGroups(pagesOf(metal), new Set(list.map(groupOf).filter(Boolean))).slice(0, 3)) agent({ metal, pool: true }, "warn", `Split pair/group ${g.group} (its other pieces are on a closed sheet): ${splitWords(g, p => `sheet ${p.page}`)} — both sheets must go in one set`);
       if (row.releasing && window.Gate?.keep) { Gate.keep(page); if (page.keepRelease) page.keepRelease.rid = String(row.order.receiptId); }   // (an order released from hold, OrderHold.release: a sheet already in its set keeps its set while it takes the order, from this moment: the set assembly would drop it while it nests)
-      if(page.placements.length){page.intakeAppend=true;page.appendOnly=true;page.dirty=true;if(!['nesting','finishing','queued'].includes(page.status))page.status='ready';renderCard(page);}else sheetDirty(page);
+      // (NOLINE, Paul 12 Nov 2026: a Rose Gold sheet whose green lines were never cut takes the order as ONE block with all its charms: its lines are set aside and it is nested again whole, never
+      //  appended outside a line nothing has cut)
+      if(page.metal==="rose"&&window.RoseStock&&typeof RoseStock.dropUncut==="function"&&RoseStock.dropUncut(page))sheetDirty(page);
+      else if(page.placements.length){page.intakeAppend=true;page.appendOnly=true;page.dirty=true;if(!['nesting','finishing','queued'].includes(page.status))page.status='ready';renderCard(page);}else sheetDirty(page);
     }
     // (RGC1: a line whose pieces wait for the open layout's green line is not on a sheet yet: it stays waiting, said on its line, and is placed again once that line is cut, greenResume)
     if (waited && waited === byMetal.size) { row.material = sp.material; delete row.poolTry; delete row.poolError; return; }
@@ -6096,10 +6099,18 @@ const Gate = window.Gate = (() => {
      (assemble), as they were before staysJoined (27 Oct 2026) kept them in and the emptied sheet stayed named in its set. Held only for that look (mergeSheets). */
   const mergeLeaving = new WeakSet();
   const staysJoined = sh => solid(sh.metal) && sh.solidPick === true && inSetNow(sh) && !sh.leftSet && !mergeLeaving.has(sh);
-  const staysInSet = sh => staysCut(sh) || staysJoined(sh);
+  /** (Paul, 12 Nov 2026: "the Rose Gold sheet must be added to its set automatically; this problem must not come up later") A Rose Gold sheet the automatic cut put in its ONE set (autoMatched,
+   *  Gate.autoCut) whose cut the server has not recorded yet WAITS IN that set for its green line cut: it is not taken out again (the set's Approve for laser cutting waits for it, a plain waiting line,
+   *  CharmNestSetInvariants waits 'greenCut'), also while it is written again; it is cut there by the automatic cut's next try. A person's take-out (Include off, Take out: its tick off) still wins. */
+  const staysWaiting = sh => sh.metal === "rose" && !sh.roseCutAt && !(+sh.laserDoneAt > 0) && sh.solidPick === true && inSetNow(sh) && !sh.leftSet && !!sh.autoMatched && String(sh.autoMatched) === String(sh.setId) && !mergeLeaving.has(sh);
+  const staysInSet = sh => staysCut(sh) || staysJoined(sh) || staysWaiting(sh);
   // (the run still arranges a metal's sheets once one of them is in, as it did once the metal was: only the set is per sheet)
   const anyPicked = (m, choices = selected(), runId = B.run?.runId) => choices[m] === true || allSheets().some(p => p.metal === m && p.solidPick === true && (!runId || !p.runId || p.runId === runId));
-  const nestable = (sh, run) => !modern(run?.runId) || !solid(sh.metal) || anyPicked(sh.metal, run?.solidIncluded || selected(), run?.runId) || sh.isolated;
+  /* (Paul, 12 Nov 2026: the live 14K Draft 1 sat un-nested, "waiting for you · tick Include in Options", and the Rose Gold sheet's automatic cut was refused for its piece, "A piece is not on a saved sheet
+     yet".) A 10K / 14K draft of the run that holds charms is nested by the run itself, ticked or not: its pieces are on a saved sheet like every other metal's. A queue over the fill ceiling is nested as the
+     card's "nest anyway" does (what does not fit goes on to the next sheet, the overflow); nothing waits for a tick. Only its set and its green line cut stay a person's press (Include / Approve & cut). */
+  const draftNests = (sh, run) => solid(sh.metal) && !!run && sh.runId === run.runId && !inSetNow(sh) && !sh.recalled && (sh.charms || []).some(c => !c.excluded);
+  const nestable = (sh, run) => !modern(run?.runId) || !solid(sh.metal) || anyPicked(sh.metal, run?.solidIncluded || selected(), run?.runId) || sh.isolated || draftNests(sh, run);
   /* The one exception: an order with pieces on two 10K/14K sheets (Paul, 28 Sep: "if there is an order that spans two
      sheets then you'd have to inform the user with a pop-up, and then let the user make the decision of what to do").
      splitWith lists the other sheets that share an order with this one and would stay on the other side of the set. */
@@ -6153,6 +6164,7 @@ const Gate = window.Gate = (() => {
     if (sh.leftSet && !inSetNow(sh)) return { include: false, reason: "Taken out of its set" };
     if (sh.roseCutAt && staysCut(sh)) return { include: true, reason: "Cut · stays in its set" };
     if (staysJoined(sh)) return { include: true, reason: "Approved · stays in its set" };   // (Paul, 27 Oct 2026: a 10K / 14K sheet a person approved into its set stays there while it is written again, as a cut one does)
+    if (staysWaiting(sh)) return { include: true, reason: "Waiting for its green line cut · stays in its set" };   // (Paul, 12 Nov 2026: a Rose Gold sheet waits for its automatic cut IN its one set)
     const r = O_.sheetRelease({ material: sh.metal, verified: !!sh.verification?.ok, placed: sh.placements.length,
       stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: solid(sh.metal) ? Object.assign({}, choices, { [sh.metal]: picked(sh, choices) }) : sh.metal === "rose" ? Object.assign({}, choices, { rose: picked(sh, choices) ? true : undefined }) : choices });
     // (Paul, 27 Oct 2026: a Rose Gold / 10K / 14K sheet joins a set by its approval like any sheet; its set's Approve waits for its back engravings, never its joining: SetEdit.engravingGap retired)
@@ -6451,7 +6463,7 @@ const Gate = window.Gate = (() => {
       const gold = goldFamily(p.metal);
       recs.push({ id: n.id, metal: p.metal, runId: p.runId, page: p.page, sheetIndex: p.sheetIndex, draft: !!p.draft, setId: p.setId || null, releaseFull: !!p.releaseFull, laserDoneAt: p.laserDoneAt, roseCutAt: p.roseCutAt,
         density: p.density, placedCount: (p.placements || []).length, releasedAt: p.releasedAt, joinedAt: p.joinedAt, ...(p.joinedBy ? { joinedBy: p.joinedBy } : {}), pieces: n.pieces,
-        ...(gold ? { cutApproved: p.solidPick === true, ...(p.autoMatched ? { autoMatched: String(p.autoMatched) } : {}) } : {}) });
+        ...(gold ? { cutApproved: p.solidPick === true, ...(p.autoMatched ? { autoMatched: String(p.autoMatched) } : {}), ...(p.autoCutWhy ? { autoCutWhy: String(p.autoCutWhy) } : {}) } : {}) });   // (autoCutWhy: Paul, 12 Nov 2026, why the automatic cut of a Rose Gold sheet waiting in its set is not recorded yet)
     }
     const ids = new Set(recs.map(r => r.id)), sets = [];
     for (const set of Sets.ofRun(run.runId)) {
@@ -6600,6 +6612,9 @@ const Gate = window.Gate = (() => {
      is never cut, approved or put in its set by itself, full or not: it waits greyed in its ONE set (the Library's set card, goldPendingOf), the set is held for it (its Approve for laser cutting stays
      grey: "Waiting for 14K Sheet 1: approve it and cut its green line", never a rule break), its charms move freely by hand meanwhile, and it joins the set when a person presses its Cut Sheet
      ("Approve & cut green line", SetRepair.cutPending). The server refuses an automatic cut of a 10K / 14K sheet as well (roseRecordCut, via 'auto'). */
+  /* (CUTFREE, Paul 12 Nov 2026: "Nothing can prevent a sheet from being cut with the green cut line.") The automatic cut asks nothing of the sheet's readiness (its orders' designs, engravings, backs,
+     QR label, files): only that its layout is saved and verified (the plan is drawn from it) and its partners are in its ONE set, formed and not approved. The server records it whatever the readiness;
+     the set's Approve for laser cutting still waits for it. A 10K / 14K sheet's cut stays a person's press (Paul, 26 Oct 2026), never refused for readiness either. */
   const autoCuts = m => m === "rose";
   const autoCutTried = new Map();
   /* ═══ RGONE · ONE Rose Gold sheet per set (Paul, 9 Nov 2026: "There should never be just one piece on a rose gold sheet to be cut that's ridiculous and the system should never automatically do this and
@@ -6666,6 +6681,8 @@ const Gate = window.Gate = (() => {
       for (const p of allSheets().filter(p => p.runId === run.runId && goldFamily(p.metal) && autoCuts(p.metal) && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled)) {
         if (p._roseAction || p._rosePlanning || p._roseLoading || p._autoCutting || p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || !p.persistedDone || !p.verification?.ok || !p.placements.length || p._manualHold) continue;
         const h = V && GH.get(V.idOf.get(p)); if (!h || !h.home) continue;                       // (no partner in a set yet: its set is not complete)
+        // (Paul, 12 Nov 2026: a person's own take-out wins: a Rose Gold sheet a person took out (Include off, Take out, a drop out of the set) is never put back by the automatic cut; its own press does)
+        if (p.autoCutOff || (p.leftSet && !inSetNow(p) && String(p.leftSet) === String(h.home))) continue;
         // (RGONE: one Rose Gold sheet per set. A set that already holds a cut Rose Gold sheet takes no second one by itself; several uncut ones of one set are made one sheet first, then that one is cut)
         { const home = String(h.home), stName = (sets.find(x => x.setId === h.home) || {}).name || "its set", cutOther = (RG1.cutIn.get(home) || []).filter(q => q !== p), sibs = RG1.uncut.get(home) || [];
           if (cutOther.length) {
@@ -6684,7 +6701,9 @@ const Gate = window.Gate = (() => {
         if (!h.partners.some(i => { const q = V.page.get(i); return q && q.setId === h.home && !q.draft && SRa && SRa.isCompleted(q); })) continue;
         const st = sets.find(x => x.setId === h.home); if (!st || approved(st) || !SRa || !SRa.closed(membersOfSet(st))) continue;
         const key = p.sheetId + "|" + st.setId + "|" + (p.jobId || "") + "|" + Object.keys(p.backPool || {}).length + "|" + Object.keys(p.outputs || {}).sort().join(",") + "|" + (p.label ? 1 : 0), last = autoCutTried.get(p.sheetId);
-        if (last && last.key === key && Date.now() - last.at < (last.refused ? 600000 : 60000)) continue;     // (refused and nothing changed on the sheet: again in ten minutes, not at every look: each try puts it in and takes it out)
+        // (refused and nothing changed on the sheet: again in ten minutes, not at every look. Paul, 12 Nov 2026: a sheet that waits IN its set is not put in and taken out by a try any more, so it is tried
+        //  again every minute: it is cut the moment its reasons clear, whichever sheet cleared them, e.g. a partner's piece now on a saved sheet)
+        if (last && last.key === key && Date.now() - last.at < (last.refused && !(last.waitsIn && inSetNow(p) && p.setId === h.home) ? 600000 : 60000)) continue;
         const tried = { key, at: Date.now() }; autoCutTried.set(p.sheetId, tried);
         const was = { inSet: inSetNow(p), pick: p.solidPick };
         p._roseAction = true; p._autoCutting = true; p.autoMatched = st.setId;   // (its back engraving does not hold its join while the press runs: basePolicy; the set's Approve for laser cutting holds the set)
@@ -6693,9 +6712,24 @@ const Gate = window.Gate = (() => {
           try { await RS.record(p, { by, via: "auto" }); }
           catch (e) {
             const why = String(e && e.message || e).replace(/^Not cut(?: yet)?: /, ""); tried.refused = true;
+            /* (Paul, 12 Nov 2026: "the Rose Gold sheet must be added to its set automatically; this problem must not come up later". The live RG Draft 1 shared orders with Set-1's GF and SS sheets; its
+               cut was refused, "order 4224708314: custom listing: no master design ...; order 4228567858: A piece is not on a saved sheet yet", and the include was undone, so it waited outside.)
+               The include STAYS: the sheet is in its ONE set (autoMatched), its card and its set say "waiting for its green line cut: <the server's words>", the set's Approve for laser cutting waits for it
+               (CharmNestSetInvariants waits 'greenCut': a plain waiting line, never "breaks your rules" or Rebuild) and the next try cuts it there (above: every minute, or at once when the sheet changes).
+               Only an include that did not happen (the press could not put it in) leaves it outside, as before.
+               (CUTFREE, Paul 12 Nov 2026, later the same day: "Nothing can prevent a sheet from being cut with the green cut line": the server no longer refuses a cut for the sheet's orders or production
+               checks, _charmNestRoseStock.js roseRecordCut, so this wait is brief: a refusal now means the layout or its stock changed under the press, and the next try records it) */
+            if (inSetNow(p) && !p.roseCutAt && p.setId === st.setId && !p.leftSet) {
+              p.solidPick = true; p.autoCutWhy = why; tried.waitsIn = true;   // (the automatic cut's yes, saved with it as solidIncluded: the server's join rule reads it; staysWaiting keeps it in)
+              p.autoCutWait = `In ${st.name || "its set"}, waiting for its green line cut: ${why}. It is cut automatically as soon as that clears`;
+              try { agent({ run: run.runId, metal: p.metal }, "warn", `${sheetNameOf(p)}: its green line was not cut automatically yet (${why}); it waits in ${st.name || "its set"} and is tried again`); } catch (_) {}
+              return;
+            }
+            delete p.autoCutWhy;
             p.autoCutWait = `Its green line is cut automatically, and it joins ${st.name || "its set"}, once it is ready: ${why}`;
             // (the include is undone: the sheet leaves the set again, an uncut green-line sheet waits outside, R12. The same for one an earlier press left in its set uncut (the live Set 1's RG Sheet 1).
             //  Its tick is not given back: a tick would put it in uncut again at the next look; the next automatic press includes it and cuts it in one go)
+            // (Paul, 12 Nov 2026: reached now only for a sheet in a set that is not the one it was matched to, or one a person took out meanwhile)
             if (inSetNow(p) && !p.roseCutAt) {
               p._roseAction = false; delete p._autoCutting; p.solidPick = false;
               try { await assemble(run); } catch (e2) { console.warn("[Gate.autoCut] undo", e2 && e2.message); }
@@ -6706,7 +6740,7 @@ const Gate = window.Gate = (() => {
             return;
           }
           try { agent({ run: run.runId, metal: p.metal }, "ok", `${sheetNameOf(p)}: green line cut automatically; it is in ${st.name || "its set"} with the Gold Filled and Sterling Silver sheets it shares orders with`); } catch (_) {}
-          delete p.autoCutWait;
+          delete p.autoCutWait; delete p.autoCutWhy;
         };
         go().finally(() => { p._roseAction = false; delete p._autoCutting; liveRefresh(p); });
       }
@@ -6977,6 +7011,8 @@ const Gate = window.Gate = (() => {
         choices[mm]=false;
       }
       for(const p of list)p.solidPick=!!included;
+      // (Paul, 12 Nov 2026: a person's take-out wins: a Rose Gold sheet taken out here is never put back by the automatic cut (Gate.autoCut), and loses the waiting place it had; its own Include or Cut Sheet press puts it back)
+      for(const p of list.filter(p=>p.metal==='rose')){if(included)delete p.autoCutOff;else{p.autoCutOff=true;delete p.autoMatched;delete p.autoCutWhy;}}
     } else if(m==='rose') {
       // (a Rose Gold change that names no sheet has no sheet to change: there is no run-wide Rose Gold tick any more. Callers pass the sheet: charm-nest-rose-ui.js, charm-nest-flow.js)
       if(typeof console!=='undefined')console.warn('[Gate.changeMembership] Rose Gold is included a sheet at a time: no sheet was named, nothing changed');
@@ -7221,9 +7257,10 @@ const Gate = window.Gate = (() => {
     if (committing(run)) throw new Error("The set is being committed. Try again soon.");
     if (committedSheet(sh)) throw new Error("Its set was sent to the station: take it out of there, not here");
     if (!inSetNow(sh)) return;
-    const was = { leftSet: sh.leftSet, draft: sh.draft, solidPick: sh.solidPick }, setId = sh.setId, undo = () => { sh.leftSet = was.leftSet; sh.draft = was.draft; sh.solidPick = was.solidPick; };
+    const was = { leftSet: sh.leftSet, draft: sh.draft, solidPick: sh.solidPick, autoCutOff: sh.autoCutOff }, setId = sh.setId, undo = () => { sh.leftSet = was.leftSet; sh.draft = was.draft; sh.solidPick = was.solidPick; if (was.autoCutOff) sh.autoCutOff = was.autoCutOff; else delete sh.autoCutOff; };
     sh.leftSet = setId; sh.draft = true;      // (draft first: basePolicy keeps a sheet out only while it is not in its set now)
     if (goldFamily(sh.metal)) sh.solidPick = false;   // (10K, 14K, Rose Gold: its own tick is off, as it is for a sheet taken out of a committed set)
+    if (sh.metal === "rose") sh.autoCutOff = true;    // (Paul, 12 Nov 2026: a person's take-out wins: the automatic cut never puts it back, Gate.autoCut)
     try { await assemble(run); }
     catch (e) { undo(); throw e; }
     if (sh.setId) {      // (assembleNow lets a sheet go by clearing its set)
@@ -15199,6 +15236,8 @@ const Sets = window.Sets = (() => {
     // Paul, 10 Oct: a set goes to the laser only with at least 1 completed GF sheet and 1 completed SS sheet (charm-nest-set-rules.js; a set committed before is never blocked)
     const principle = window.CharmNestSetRules && window.CharmNestSetRules.gate(set, sheets);
     if (principle && principle.applies && !principle.ok) throw pendingRelease(`${set.name || "This set"} ${principle.short}: a set needs at least 1 completed GF sheet and 1 completed SS sheet`);
+    // (Paul, 12 Nov 2026) a Rose Gold sheet that waits in this set for its automatic green line cut (Gate.autoCut) holds the set, in plain words: a wait, never a rule it breaks
+    { const rg = sheets.find(sh => sh.metal === "rose" && !sh.roseCutAt && !(+sh.laserDoneAt > 0) && sh.autoMatched && String(sh.autoMatched) === String(set.setId)); if (rg) throw pendingRelease(`${set.name || "This set"} is waiting for the green line cut of ${window.CharmNestSheetName ? CharmNestSheetName.name(rg) : rg.fileBase || "its Rose Gold sheet"}${rg.autoCutWhy ? `: ${rg.autoCutWhy}` : ""}`); }
     // the cardinal rule: every sheet that shares a multi-piece order with a sheet of this set is in it
     const split = Gate.cardinalSplit ? Gate.cardinalSplit(set) : [];
     if (split.length) {

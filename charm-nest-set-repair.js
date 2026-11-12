@@ -600,6 +600,8 @@ dialog.setRepairDlg{width:min(540px,94vw)}
       if (!pg) return r;
       if (+pg.releasedAt > 0) e.releasedAt = +pg.releasedAt;
       if (pg._roseFull === true) e.roseFull = true;
+      // (Paul, 12 Nov 2026: the set a Rose Gold sheet was matched to by the automatic cut, and why its cut waits: page facts the cloud does not keep. CharmNestSetInvariants reads them: it waits in that set)
+      if (pg.metal === 'rose' && pg.autoMatched && !pg.roseCutAt) { e.autoMatched = str(pg.autoMatched); if (pg.autoCutWhy) e.autoCutWhy = str(pg.autoCutWhy); }
       return Object.keys(e).length ? Object.assign({}, r, e) : r;
     });
   }
@@ -847,7 +849,13 @@ dialog.setRepairDlg{width:min(540px,94vw)}
       // (Paul, 26 Oct 2026: "we shouldn't double hold things") what the set's Approve for laser cutting waits for that is no rule it breaks: a green-line sheet's back engraving still to approve. One plain
       //  waiting line (CharmNestReadiness reads set.setWaits: Approve stays grey), never the red line or Rebuild. Derived at every drawing, never saved
       const ws = ((diag && diag.result && diag.result.waits) || []).filter(w => w.set === g.setId);
-      if (ws.length) { const who = ws.map(w => w.name), l = `waiting for the back engraving approval of ${who.length < 2 ? who.join('') : who.slice(0, -1).join(', ') + ' and ' + who[who.length - 1]}`; g.setWaits = { line: l.charAt(0).toUpperCase() + l.slice(1), short: l, items: ws.map(w => Object.assign({}, w)) }; }
+      // (Paul, 12 Nov 2026: and a Rose Gold sheet the automatic cut put in the set that waits for its green line cut, kind 'greenCut', with the reason in the server's words, said first)
+      if (ws.length) {
+        const backs = ws.filter(w => w.kind !== 'greenCut').map(w => w.name), parts = ws.filter(w => w.kind === 'greenCut').map(w => w.line);
+        if (backs.length) parts.push(`waiting for the back engraving approval of ${and(backs)}`);
+        const l = parts.join('; ');
+        g.setWaits = { line: l.charAt(0).toUpperCase() + l.slice(1), short: l, items: ws.map(w => Object.assign({}, w)) };
+      }
       else delete g.setWaits;
       const b = breaksOf(diag, g.setId);
       if (b) {

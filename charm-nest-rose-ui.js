@@ -255,14 +255,20 @@
       if(!inSet(sh)){const pol=G.policy?.(sh),why=pol&&!pol.include&&pol.reason?pol.reason:'';await undo(new Error('Not cut: this sheet is not in a set yet'+(why?` (${why})`:'')+'. Switch on In current set in Options, or reload the page, then press Cut Sheet again.'));}
       refresh(sh);
     }
-    let r;
+    let r,drew=false;
     try{
-      if(!sh.rosePlanHash||(!sh.recalled&&sh.rosePlanKey!==fingerprint(sh)))await plan(sh,{cut:true});
+      if(!sh.rosePlanHash||(!sh.recalled&&sh.rosePlanKey!==fingerprint(sh))){drew=true;await plan(sh,{cut:true});}
       // who cut it: the sorter's signed-in person (its own name, or the Design Station's sign-in); nobody is sent as ""
       // and the server keeps 'operator' in the stock ledger only, the order's roseCut then says "not signed in"
       let who='';try{who=String(o.by||window.CNEmployee?.name?.()||window.B?.employee||'').trim();}catch(_){who=String(o.by||window.B?.employee||'').trim();}
       r=await api('roseRecordCut',{sheetId:sh.sheetId,metal:sh.metal,stockId:sh.roseStock.id,revision:sh.roseRevision,planHash:sh.rosePlanHash,by:who,device:'charm-nest-1',via:o.via||(S.mode==='library'?'library':'nest')});   // via: which tab pressed it, saved on the leftover sheet this cut makes (_charmNestRemnants.js)
-    }catch(e){await undo(e);}
+    }catch(e){
+      /* NOLINE (Paul, 12 Nov 2026: RG Draft 1 held two green lines and not one cut: each automatic try drew its line, the server refused the cut, and the drawn line stayed, so the sheet's pieces
+         were locked inside a line nothing had cut and the next order's disc was nested alone outside it, with a line of its own). A line this press drew whose cut is not recorded is set aside again
+         on the server (roseReopen) and here: a green line exists only once its cut is recorded. Nothing is owed (no redraw): the next press draws it for the layout as it then stands. */
+      if(drew&&!sh.roseCutAt){try{await reopen(sh,{replace:true,force:true});}catch(_){/* the next press tries again */}delete sh.roseRedraw;}
+      await undo(e);
+    }
     // (the cuts the stock already holds stay on the card: a sheet that was moved onto the leftover its own cut made cuts again, and both cuts are shown, each with its date;
     //  only a copy of THIS cut, a retry of the same press, is replaced)
     sh.roseCutAt=r.cut.at;sh.roseStock=r.stock;sh.roseHistory=[...decode([r.cut]),...(sh.roseHistory||[]).filter(c=>c.revision!==r.cut.revision)];
@@ -460,7 +466,15 @@
       if(!sh.roseCutAt&&sh.rosePlan&&!sh.dirty){const view=shown(sh.rosePlan,sh);stroke(ctx,view.lines,k,'#008974',Math.max(2.5,.2*k),true);numberLines(ctx,view,k);}
     }ctx.restore();
   }
-  window.RoseStock=window.CutLine={protect,prepare,nestClaim,claimLate,letGo,takeOff,seatOn,approved,plan,reopen,redraw,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut,addsLine,unlined,full:sheetFull};   // addsLine/unlined: read-only questions for LibraryFlowRose.check
+  /** NOLINE (Paul, 12 Nov 2026): a Rose Gold sheet whose saved green lines were never cut takes new charms as ONE block: its lines are set aside (here at once, on the server with roseReopen)
+   *  and the whole sheet is nested again; the line is drawn by its next cut. Returns true when there was something to set aside. */
+  function dropUncut(sh){
+    if(!isRose(sh)||sh.roseCutAt||sh.recalled||!(sh.rosePlan||sh.roseProtected||sh.rosePlanHash))return false;
+    delete sh.rosePlan;delete sh.rosePlanHash;delete sh.rosePlanKey;delete sh.roseProtected;delete sh.roseRedraw;sh._roseFullKey=null;sh._roseError=null;
+    if(sh.sheetId&&S.cloud.ok)C.api('charmNestLibrary',{op:'roseReopen',sheetId:sh.sheetId,replace:true,by:'Brites Manager (automatic: uncut lines set aside)'},{quiet:true}).catch(e=>console.warn('[RoseStock.dropUncut]',e&&e.message));
+    return true;
+  }
+  window.RoseStock=window.CutLine={dropUncut,protect,prepare,nestClaim,claimLate,letGo,takeOff,seatOn,approved,plan,reopen,redraw,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut,addsLine,unlined,full:sheetFull};   // addsLine/unlined: read-only questions for LibraryFlowRose.check
   C.allSheets().forEach(render);
 })();
 
