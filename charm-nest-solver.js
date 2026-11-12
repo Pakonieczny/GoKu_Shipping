@@ -577,8 +577,8 @@
     }
     return polys;
   }
-  function bestResult(result, incumbent, sheet) {
-    if (!incumbent || result && betterLayout(result, incumbent, sheet)) return publicLayout(result);
+  function bestResult(result, incumbent, sheet, o = {}) {
+    if (!incumbent || result && betterLayout(result, incumbent, sheet, o)) return publicLayout(result);
     const out = { ...publicLayout(result), ...publicLayout(incumbent), retainedBest: true };
     for (const key of ["endedBy", "trials", "elapsedMs"]) if (result?.[key] != null) out[key] = result[key];
     if (result?.params) out.params = { ...result.params, ...incumbent.params };
@@ -1076,8 +1076,18 @@
     async function carefulAppend() {
       // dated charms wait oldest first, so the window below always holds the oldest orders still waiting
       const byAge = (a, b) => (rank.get(a.order) ?? -1) - (rank.get(b.order) ?? -1) || a.idx - b.idx;
-      const admitted = fifo ? prepared.filter(p => rank.get(p.order) < capOrders).sort(byAge) : prepared.slice();
+      let admitted = fifo ? prepared.filter(p => rank.get(p.order) < capOrders).sort(byAge) : prepared.slice();
       if (admitted.some(p => p.pinned)) return null;
+      /* GOLDOPT (Paul, 12 Nov 2026: 10K / 14K solid gold, "nest the pieces the most efficient possible way"): searches run side by side, each
+         placing the same admitted pieces in its own order (job.orderVariant): 0 oldest first, 1 largest first, 2 longest first, then largest
+         first shaken by the search's own seed. Which pieces the sheet holds is still decided by age (capOrders); only the sequence changes.
+         The tightest layout of them wins (betterLayout). A piece of a multi-piece order still travels with its order: its siblings follow it. */
+      if (job.orderVariant) {
+        const v = +job.orderVariant, len = p => { const s = p.variants && p.variants[0] && p.variants[0].solid; return s ? Math.max(s.w, s.h) : Math.sqrt(p.areaPt2 || 0); };
+        const key = new Map(admitted.map(p => [p, v === 1 ? p.areaPt2 : v === 2 ? len(p) : p.areaPt2 * (1 + 0.45 * (random() * 2 - 1))]));
+        const lead = new Map(); for (const p of admitted) lead.set(p.order, Math.max(lead.get(p.order) || -Infinity, key.get(p)));
+        admitted = admitted.slice().sort((a, b) => lead.get(b.order) - lead.get(a.order) || String(a.order).localeCompare(String(b.order)) || key.get(b) - key.get(a));
+      }
       const MM_PX = fineRes * 72 / 25.4, cellMm2 = 1 / (MM_PX * MM_PX);
       const sliverMm = +job.sliverMm || SLIVER_MM, weights = { ...FIT_WEIGHTS, ...(job.block ? BLOCK_WEIGHTS(baseFine, wallFine, MM_PX, (roseAxis || stripAxis) === "x") : {}), ...(job.fitWeights || {}) };
       /* Gold-filled and Sterling Silver (job.blockEase, Paul 11 Oct: "a somewhat straight vertical line front exactly like we already do with the RG 14/20 sheet"):
@@ -2697,9 +2707,11 @@
     }
     return Math.min(x1 / sheet.wPt, (sheet.wPt - x0) / sheet.wPt, y1 / sheet.hPt, (sheet.hPt - y0) / sheet.hPt);
   }
-  function betterLayout(candidate, incumbent, sheet) {
+  function betterLayout(candidate, incumbent, sheet, o = {}) {
     if (!incumbent) return true;
     if (candidate.placements.length !== incumbent.placements.length) return candidate.placements.length > incumbent.placements.length;
+    // (GOLDOPT, Paul 12 Nov 2026: 10K / 14K solid gold: of two complete layouts the one that uses less stock wins, the shorter strip; the grade decides only a tie)
+    if (o.reachFirst) { const ra = stripFraction(candidate.placements, sheet), rb = stripFraction(incumbent.placements, sheet); if (Math.abs(ra - rb) > 1e-4) return ra < rb; }
     // A careful append is judged by the space its charms leave unusable, not by how short the strip stays (that
     // squeezed each new charm into the first gap it fitted); with equal counts it also beats a layout without a grade.
     if (Number.isFinite(candidate.fitScore) || Number.isFinite(incumbent.fitScore)) {
