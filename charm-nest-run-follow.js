@@ -17,7 +17,7 @@
   const safe = (f, d) => { try { const v = f(); return v === undefined ? d : v; } catch (_) { return d; } };
   const api = body => root.CN && typeof root.CN.api === "function" ? root.CN.api("charmNestLibrary", body, { quiet: true }) : Promise.reject(new Error("no api"));
   const st = { runId: null, reads: 0, changed: 0, gone: 0, added: 0, last: null, busy: false, skipped: "" };
-  const FIELDS = ["state", "poolIds", "reason", "hold", "wait"];
+  const FIELDS = ["state", "poolIds", "reason", "hold", "wait", "heldAt", "_lp"];   // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer"): and the stamp of a line another computer changed
   const holdsRun = () => !!(root.B && root.B.run);
 
   async function openRunId() {
@@ -27,7 +27,7 @@
   }
   async function now(why) {
     if (st.busy) return st;
-    if (holdsRun()) { st.skipped = "this computer holds the run"; return st; }
+    if (holdsRun()) return applyOthers(why);   // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer"): the run's own computer takes the lines other computers changed
     st.busy = true;
     try {
       const id = st.runId || await openRunId(); if (!id) { st.skipped = "no open run"; return st; }
@@ -61,6 +61,53 @@
     } catch (e) { st.last = { at: Date.now(), why, error: String(e && e.message || e) }; return st; }
     finally { st.busy = false; }
   }
+  /* ── (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer") ──
+     patchRows(rows): this computer changed these order lines (a piece taken off, held, cancelled): they are written to the cloud run line by line (runLinesPatch), stamped.
+     applyOthers(): on the computer whose page runs the run, a line another computer stamped after this page's own copy is taken into its row (state, pieces, hold, engraving), its
+     pieces that left are dropped from this page's pool and engraving lists; its next whole save carries the stamp, so the server keeps what the other computer did. */
+  const dev = () => { let v = safe(() => root.localStorage.getItem("cn.dev"), ""); if (!/^d[0-9a-z]{4,14}$/.test(v || "")) { v = "d" + Math.random().toString(36).slice(2, 12); safe(() => root.localStorage.setItem("cn.dev", v)); } return v; };
+  const who = () => String(safe(() => root.B && root.B.employee, "") || "").trim();
+  let lastApply = 0, applyT = 0;
+  async function applyOthers(why) {
+    const run = root.B && root.B.run; if (!run || !run.runId) return st;
+    const t = Date.now(); if (t - lastApply < 15000) { if (!applyT) applyT = setTimeout(() => { applyT = 0; applyOthers("later"); }, 15000 - (t - lastApply)); return st; }
+    if (st.busy) return st; st.busy = true; lastApply = t;
+    try {
+      const res = await api({ op: "runGet", runId: run.runId }); const cr = res && (res.run || res); if (!cr || !cr.lines) return st;
+      if (!cr.lineEditAt || (st.appliedAt && +cr.lineEditAt <= +st.appliedAt)) return st;
+      const O = root.Orders, B = root.B, me = dev(); let n = 0;
+      for (const row of O.rows()) {
+        const l = cr.lines[row.key], lp = l && l._lp; if (!lp || lp.dev === me) continue;
+        if (row._lp && +row._lp.at >= +lp.at) continue;
+        const was = (row.poolIds || []).slice();
+        for (const f of ["state", "poolIds", "reason", "hold", "wait", "heldAt"]) { const v = l[f] === undefined ? (f === "poolIds" ? [] : null) : l[f]; row[f] = Array.isArray(v) ? v.slice() : v; }
+        if (l.engrave && row.engrave && typeof row.engrave === "object") for (const k of ["state", "approved", "approvedAt", "approvedBy", "decidedAt", "seals", "text"]) if (l.engrave[k] !== undefined) row.engrave[k] = l.engrave[k];
+        const gone = was.filter(id => !(row.poolIds || []).includes(id));
+        for (const id of gone) safe(() => B.pool.rows.delete(id));
+        if (gone.length) safe(() => { for (const j of root.Engrave.jobsOf(row)) { j.copies = (j.copies || []).filter(id => !gone.includes(id)); if (!j.copies.length) { root.Engrave.items().delete(j.key); if (root.Review) root.Review.remove("eng:" + j.key); } } });
+        row._lp = lp; n++;
+      }
+      st.appliedAt = +cr.lineEditAt; st.applied = (st.applied || 0) + n; st.last = { at: Date.now(), why, fromOthers: n };
+      if (n) { safe(() => root.Review && root.Review.syncOrderItems()); safe(() => O.render()); safe(() => root.Engrave && root.Engrave.render()); safe(() => root.Session && root.Session.schedule()); }
+      return st;
+    } catch (e) { st.last = { at: Date.now(), why, error: String((e && e.message) || e) }; return st; }
+    finally { st.busy = false; }
+  }
+  async function patchRows(rows) {
+    rows = (rows || []).filter(r => r && r.key && !r.parentRow); if (!rows.length) return null;
+    if (holdsRun()) return null;   // (the run's own page saves these lines with the run: RunCtl.save)
+    const runId = st.runId || await openRunId(); if (!runId) return null;
+    const O = root.Orders; if (!O || typeof O.lineRecord !== "function") return null;
+    const lines = {};
+    for (const r of rows) { const rec = safe(() => O.lineRecord(r), null), l = rec && rec[1]; if (!l) continue; lines[r.key] = { state: l.state, poolIds: l.poolIds || [], reason: l.reason || null, hold: l.hold || null, heldAt: r.heldAt || null, holdSeen: !!r.holdSeen, wait: l.wait || null, engrave: l.engrave || null }; }
+    if (!Object.keys(lines).length) return null;
+    let res = null, err = null;
+    for (let t = 0; t < 4; t++) { try { res = await api({ op: "runLinesPatch", runId, lines, dev: dev(), by: who() }); err = null; break; } catch (e) { err = e; await new Promise(r => setTimeout(r, 1500 * (t + 1))); } }
+    if (err) throw err;
+    if (res && res.at) for (const r of rows) if ((res.applied || []).includes(r.key)) r._lp = { at: res.at, dev: dev(), by: who() };
+    st.patched = (st.patched || 0) + ((res && res.applied) || []).length;
+    return res;
+  }
   function follow() {
     const Y = root.CNSync; if (!Y || typeof Y.follow !== "function") return;
     Y.follow({ name: "run-follow", kinds: "r", active: () => true, wants: k => k === "r:*" || !st.runId || k === "r:" + st.runId, read: why => now(why) });
@@ -77,6 +124,6 @@
     };
     go();
   }
-  root.CharmNestRunFollow = { state: () => Object.assign({}, st), now };
+  root.CharmNestRunFollow = { state: () => Object.assign({}, st), now, patchRows, applyOthers, dev };
   if (root.document) { if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", boot); else boot(); }
 })(typeof self !== "undefined" ? self : this);

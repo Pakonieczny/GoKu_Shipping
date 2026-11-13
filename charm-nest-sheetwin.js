@@ -3114,9 +3114,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   function renderOff(x) {
     const host = W.el.detail.querySelector("[data-r2=off]"); if (!host) return;
+    // (CLOUDALL C4, Paul 13 Nov 2026: "The Take of Sheet function is not working. Remember, only the actual charm selected should be removed ... replaced from a draft sheet with a piece that fits ... only from a single piece order"; "It doesn't matter which computer is doing that"): the sheet is first made changeable on this computer from the cloud (its record read, its pieces rebuilt), whichever computer this is
+    const CS = window.CharmNestCloudSheets, here = W.id ? allSheets().find(p => p.sheetId === W.id) : null;
+    if (CS && W.id && (!here || here.recalled) && !x._cloudReady) {
+      host.innerHTML = `<div class="swOff" role="group" aria-label="Take off the sheet"><h4>Take off the sheet</h4><div class="note">Opening this sheet from the cloud so it can be changed here…</div></div>`;
+      CS.ensureLive(W.id).then(() => { x._cloudReady = true; if (x.rid) W.pools.delete(String(x.rid)); if (host.isConnected) renderOff(x); }, e => { if (host.isConnected) host.innerHTML = `<div class="swOff" role="group" aria-label="Take off the sheet"><h4>Take off the sheet</h4><div class="note">This sheet could not be opened from the cloud: ${esc((e && e.message) || String(e))}. Nothing was changed.</div></div>`; });
+      return;
+    }
     const mates0 = x.rid ? offPlan(x, true) : null, one0 = offPlan(x, false);
     const many = mates0 && mates0.ids.size > one0.ids.size, lineN = one0.ids.size, ear = !!sideOfPiece(x) && lineN > 1;   // (ear: the line is a pair whose ears are known)
-    let pick = many ? "all" : "one", then = "hold", note = "";
+    let pick = "one", then = "hold", note = "";   // (CLOUDALL C4, Paul 13 Nov 2026: "The Take of Sheet function is not working. Remember, only the actual charm selected should be removed ... replaced from a draft sheet with a piece that fits ... only from a single piece order"; "It doesn't matter which computer is doing that"): the charm pressed is what comes off; the whole order only when that is chosen
     const paint = () => {
       // only a whole order is cancelled: one charm of it comes off and waits on hold
       const whole = !!x.rid && (pick === "all" || !many);
@@ -3129,13 +3136,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         : !n ? "" : whole ? `The order waits under On hold, here and in Orders, until someone puts it back. Every other charm stays exactly where it is, and each sheet gets a new QR label.`
         : `${ear ? `Its pair (Left and Right) waits` : lineN > 1 ? `Its piece (${lineN} copies) waits` : "Only this charm waits"} under On hold; the order's other pieces stay and are cut.`;
       const pairs = (plan.pairNotes || []).length ? `<div class="note">${plan.pairNotes.map(esc).join(" ")}</div>` : "";
+      // (CLOUDALL C4, Paul 13 Nov 2026: "The Take of Sheet function is not working. Remember, only the actual charm selected should be removed ... replaced from a draft sheet with a piece that fits ... only from a single piece order"; "It doesn't matter which computer is doing that"): the order's other pieces stay where they are, each named with its sheet; the freed spot is filled from a draft sheet with a one-piece order that fits
+      const restIds = pick === "one" && mates ? [...mates.ids].filter(id => !plan.ids.has(id)) : [];
+      const rest = (restIds.length ? `<div class="stay"><b>${restIds.length === 1 ? "1 other piece of this order stays" : restIds.length + " other pieces of this order stay"}</b>: ${restIds.map(id => { const pr = poolRowOf(id, x.rid) || {}; return `${esc(pr.sku || id)} on ${esc(whereNow(id) || "no sheet yet")}`; }).join(", ")}</div>` : "")
+        + (pick === "one" && n && then !== "cancel" ? `<div class="note">The empty spot is filled from a draft sheet with a one-piece order that fits; when none fits, it stays empty.</div>` : "");
       const label = then === "cancel" ? (n ? "Take off and cancel" : "Cancel the order") : "Take off and hold";
       host.innerHTML = `<div class="swOff" role="group" aria-label="Take off the sheet"><h4>Take off the sheet</h4>
         <div class="pick">${many ? `<label class="opt"><input type="radio" name="swOffWho" value="all"${pick === "all" ? " checked" : ""}><b>The whole order · ${mates.ids.size} pieces</b><small>${esc(listWhere(mates.ok.concat(mates.stay)))}</small></label>` : ""}
         <label class="opt"><input type="radio" name="swOffWho" value="one"${pick === "one" ? " checked" : ""}><b>${ear ? `This pair · ${lineN} pieces` : lineN > 1 ? `This piece · ${lineN} copies` : many ? "Only this charm" : "This charm"}</b><small>${esc(x.sku || x.name)}${ear ? ", Left and Right go together" : lineN > 1 ? ", its copies go together" : x.qty > 1 ? ` · copy ${x.copy} of ${x.qty}` : ""} · ${esc(lineN > 1 ? listWhere(one.ok.concat(one.stay)) : sheetWord(W.id, W.rec.fileBase))}</small></label></div>
         ${x.rid ? `<div class="then" role="radiogroup" aria-label="Then"><span class="fLabel">Then</span><button type="button" role="radio" data-then="hold" aria-checked="${then === "hold"}">${ICON.pause}Put on hold</button><button type="button" role="radio" data-then="cancel" aria-checked="${then === "cancel"}"${whole ? "" : ' disabled title="Only a whole order can be cancelled"'}>${ICON.off}Cancel the order</button></div>` : ""}
         <input class="swNote" type="text" maxlength="200" placeholder="${then === "cancel" ? "Why it was cancelled (optional)" : "Note for whoever puts it back (optional)"}" value="${esc(note)}" aria-label="Note">
-        ${stay}${pairs}${text ? `<div class="note">${text}</div>` : ""}
+        ${stay}${rest}${pairs}${text ? `<div class="note">${text}</div>` : ""}
         <div class="acts">${n || then === "cancel" ? `<button type="button" class="btn ${then === "cancel" ? "danger" : "velvet"} sm" data-o="go">${then === "cancel" ? ICON.off : ICON.pause}${label}</button>` : ""}<button type="button" class="btn ghost sm" data-o="keep">${n || then === "cancel" ? "Keep" : "Close"}</button></div></div>`;
       host.querySelectorAll("input[name=swOffWho]").forEach(r => r.onchange = () => { pick = r.value; paint(); });
       host.querySelectorAll("[data-then]").forEach(b => b.onclick = () => { if (b.disabled) return; then = b.dataset.then; paint(); host.querySelector(".swNote")?.focus(); });
@@ -3277,6 +3288,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   function endFlow(work) { if (W.flow === work) W.flow = null; if (W.dlg && W.dlg.open) renderWork(); }
 
+  /** (CLOUDALL C4, Paul 13 Nov 2026: "The Take of Sheet function is not working. Remember, only the actual charm selected should be removed ... replaced from a draft sheet with a piece that fits ... only from a single piece order"; "It doesn't matter which computer is doing that"): the draft sheets of a metal, opened from the cloud on this computer, so a freed spot can be filled from them */
+  async function openDrafts(sh) { const CS = window.CharmNestCloudSheets; if (!CS) return; for (const p of allSheets().slice()) { const r = p.recalled; if (p === sh || !r || p.metal !== sh.metal || !(r.draft || p.draft) || r.releaseFull || r.laserDoneAt || r.roseCutAt) continue; try { await CS.ensureLive(p.sheetId); } catch (e) { console.warn("sheet window: open draft", e); } } }
   async function takeOff(plan, opt, who) {
     const list = plan.ok; if (!list.length) return;
     const pressedAt = Date.now();   // (a cancel's moment on its timeline: when it was pressed, not when the record was kept)
@@ -3350,10 +3363,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // 2 · the order's lines wait on hold, so the run does not place them again; their engraving goes with the pieces
       //     (a cancel takes them off every list once its record is kept, below)
       const text = `Taken off ${names || "its sheet"} by ${who}${note ? ": " + note : ""}`;
+      const touchedRows = new Set();   // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer"): the lines this change touches, written to the cloud run below
       for (const r of Orders.rows()) {
         const mineRow = plan.whole && rid && String(r.order.receiptId) === rid;
         if (!mineRow && !(r.poolIds || []).some(id => ids.has(id))) continue;
-        r.poolIds = (r.poolIds || []).filter(id => !ids.has(id));
+        r.poolIds = (r.poolIds || []).filter(id => !ids.has(id)); touchedRows.add(r);
         for (const j of Engrave.jobsOf(r)) { j.copies = (j.copies || []).filter(id => !ids.has(id)); if (!j.copies.length) { Engrave.items().delete(j.key); Review.remove("eng:" + j.key); } }   // (each of a pair's ears or a necklace's discs has its own job: only the one whose pieces left goes)
         if (!r.poolIds.length && r.state !== "gone") { r.state = "held"; r.hold = r.reason = text; r.heldAt = Date.now(); r.holdSeen = false; CNListActivity.touch(r,r.heldAt); }
       }
@@ -3371,6 +3385,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         const row = Orders.rows().find(r => id.startsWith(String(r.key) + "_")); if (row && !(row.poolIds || []).includes(id)) row.poolIds = [...(row.poolIds || []), id];
       }
       for (const id of ids) B.pool.rows.delete(id);
+      // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer"): on any computer, the lines this change touched are written to the cloud run, stamped, so every computer (and the run's own saves) keeps them
+      try { if (window.CharmNestRunFollow && CharmNestRunFollow.patchRows) await CharmNestRunFollow.patchRows([...touchedRows]); } catch (e) { console.warn("sheet window: run lines", e); toast(`Taken off, but the order's lines were not written to the cloud run yet (${e.message}): they are written at the next change`, "bad", 9000); }
       // on hold (a cancel is stamped by the server as the order is cancelled): on the order's timeline, with who
       // (no window drawn: the sheet it came off is named when it was one sheet, as the Hold of a whole order takes one sheet at a time)
       const evSheet = sheetId || (pages.length === 1 && pages[0].sheetId) || null;
@@ -3425,7 +3441,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // (REFILL, Paul 11 Nov 2026: "when a user removes a given piece from a sheet ... another piece is found to take its place on that particular sheet and taken from a newer In process sheet
       //  to fill the empty gap"): the room freed on a draft sheet still filling is filled at once, as Hold did (holdKit.fill): the orders waiting for a sheet first, oldest first, then an order
       //  moved, verified, from a newer filling sheet of the same metal. A sheet of a released set is never changed here.
-      if (!opt.noFill) for (const sh of pages) { try { if (holdKit.fillable(sh) && !(sh.setId && !sh.draft) && holdKit.freed(sh.sheetId)) await holdKit.fill(sh, who, { skip: rid ? [rid] : [], avoid: pages.filter(p => p !== sh).map(p => p.sheetId) }); } catch (e) { console.warn("sheet window: refill", e); } }
+      if (!opt.noFill) for (const sh of pages) { try { const single = !plan.whole; if (single) await openDrafts(sh); if (holdKit.fillable(sh) && (single || !(sh.setId && !sh.draft)) && holdKit.freed(sh.sheetId)) await holdKit.fill(sh, who, { skip: rid ? [rid] : [], avoid: pages.filter(p => p !== sh).map(p => p.sheetId), only: single ? "draftSingle" : "" }); } catch (e) { console.warn("sheet window: refill", e); } }   // (CLOUDALL C4, Paul 13 Nov 2026: "The Take of Sheet function is not working. Remember, only the actual charm selected should be removed ... replaced from a draft sheet with a piece that fits ... only from a single piece order"; "It doesn't matter which computer is doing that"): one charm taken off: its spot is filled only from a draft sheet, by a piece of a one-piece order, released sheets too
       if (sheetId && W.id === sheetId && W.dlg.open) open2(sheetId);
     } catch (e) {
       for (const st of work.steps) doneStep(st);
@@ -7492,11 +7508,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const newer = (src, target) => src.metal === target.metal && (+src.page || 0) > (+target.page || 0);
     // the orders that can fill a spot, in line: the ones waiting (nothing of them placed) first, oldest first, then an order from a
     // newer sheet still filling (movableFrom keeps cut, recalled, sent, released and held-in-a-set sheets out), oldest first
-    function candidates(target, skip, avoid) {
+    function candidates(target, skip, avoid, only) {
       // (avoid: sheets the Hold still has to take pieces off: nothing is taken from them, so they never end up holding one order)
       // (an order in Review is paused wherever it sits: it never fills a spot, and is never taken off its sheet to do so)
       const inReview = rid => { try { return !!(window.CharmNestReviewHold && window.CharmNestReviewHold.inReview(rid)); } catch (_) { return false; } };
       const all = candidatesFor(target).filter(k => !skip.has(k.rid) && !inReview(k.rid) && ![...k.srcs].some(src => avoid.has(src.sheetId)));
+      // (CLOUDALL C4, Paul 13 Nov 2026: "The Take of Sheet function is not working. Remember, only the actual charm selected should be removed ... replaced from a draft sheet with a piece that fits ... only from a single piece order"; "It doesn't matter which computer is doing that"): a single charm's spot takes only a piece of a ONE-PIECE order that sits on a DRAFT sheet
+      if (only === "draftSingle") { const pieces = k => (window.Orders ? Orders.rows() : []).filter(r => String(r.order.receiptId) === k.rid && r.state !== "gone").reduce((n, r) => n + Math.max(1, (r.poolIds || []).length), 0); return all.filter(k => !k.waiting && k.pieces.length === 1 && pieces(k) === 1 && [...k.srcs].every(src => src.draft && !src.releaseFull)).map(k => Object.assign(k, { source: "draftSheet" })); }
       return all.filter(k => k.waiting).map(k => Object.assign(k, { source: "waiting" }))
         .concat(all.filter(k => !k.waiting && [...k.srcs].every(src => newer(src, target))).map(k => Object.assign(k, { source: "newerSheet" })));
     }
@@ -7521,7 +7539,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (!all.length) return empty;
       const G = plateGrid(virt), ghosts = all.filter(g => { const f = takenOf(g, G, virt); return f == null || f < TAKEN; }), boxes = roomBoxes(ghosts);
       if (!ghosts.length) return empty;
-      const cands = candidates(target, skip, new Set(o.avoid || []));
+      const cands = candidates(target, skip, new Set(o.avoid || []), o.only);
       if (!cands.length) return { list: [], spots: ghosts.length, filled: 0 };
       let last = performance.now();
       const breathe = async () => { if (performance.now() - last > 12) { await pause(0); last = performance.now(); } if (o.stop && o.stop()) throw new Error("stale"); };
@@ -7546,7 +7564,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     /** The planned orders go in one after another into the freed room of a sheet, each its own verified move (moveIn). A move
      *  that does not go through stops the rest (they stay where they are). hooks: from(item), placed(item), skipped(item, error). */
     async function fill(target, who, hooks = {}) {
-      const p = await room(target, { skip: hooks.skip, avoid: hooks.avoid, stop: hooks.stop, budgetMs: hooks.budgetMs });
+      const p = await room(target, { skip: hooks.skip, avoid: hooks.avoid, stop: hooks.stop, budgetMs: hooks.budgetMs, only: hooks.only });
       const placed = [];
       for (const item of p.list) {
         if (!fillable(target)) break;
