@@ -321,7 +321,7 @@
   const ROLE_ACI = {CUT:7, ENGRAVE:1, HATCH:5}, JOIN_MM = 0.25;
   /* LWBOLD (Paul, 12 Nov 2026: "the black and red lines are too thin and they're barely visible"): the CUT and ENGRAVE lines carry a display line weight, 0.50 mm (DXF 370 = 50, and $LWDISPLAY on);
      it is how they are drawn on screen only, the laser still follows each line's centre (no polyline width). The hatch lines keep the default weight: they are dense already */
-  const ROLE_LW = {CUT:50, ENGRAVE:50, HATCH:-3};   // (0.50 mm: Illustrator reads 0.30 mm as 0.85 pt, hardly more than its 0.71 pt default; Paul, 12 Nov: "still exactly the same")
+  const ROLE_LW = {CUT:50, ENGRAVE:70, HATCH:-3};   // (REDSOLID: red 0.70 mm, Paul 12 Nov: "The red lines are just much too thin" at 0.50 mm, "1 mm is too thick")   // (0.50 mm: Illustrator reads 0.30 mm as 0.85 pt, hardly more than its 0.71 pt default; Paul, 12 Nov: "still exactly the same")
   const grey = c => !c || Math.max(c[0],c[1],c[2]) - Math.min(c[0],c[1],c[2]) <= 0.15;
   function dxf(paths, declaredLayers=[], opts={}) {
     const hatchMm=Math.max(0.005,+(opts.hatchMm||root.CN_DXF_HATCH_MM||0.02)), step=hatchMm/MM;   // (Paul, 12 Nov 2026: "much much closer" and crosshatched: 0.02 mm, both ways)   // (paths are in points: MM is mm per point)
@@ -392,9 +392,11 @@
         continue;
       }
       if(path.fill && !cutFill) {
-        // blue (and black or grey) filled art is hatching; any other colour is filled engraving, hatched in its own colour job
-        const role=path.hatchBlue||blueRGB(path.fillRGB)||grey(path.fillRGB)?'HATCH':'ENGRAVE';
-        fillArea(vector().filled(path),target(path,role,path.fillRGB));
+        // blue (and black or grey) filled art is hatching; any other colour is engraving: (REDSOLID, Paul 12 Nov 2026: "no red lines are allowed to be hatching. All red lines must be solid red lines")
+        //  a red filled area (a thick engraved line drawn as a shape) is its solid red outline, never hatched
+        const role=path.hatchBlue||blueRGB(path.fillRGB)||grey(path.fillRGB)?'HATCH':'ENGRAVE', t=target(path,role,path.fillRGB);
+        if(role==='ENGRAVE'){for(const l of vector().filled(path)){const p=l.points;if(p&&p.length>=3)entities.push({type:'LWPOLYLINE',points:p,closed:true,layer:t.name,c:t.c,lw:t.lw,blk:t.blk});}}
+        else fillArea(vector().filled(path),t);
       }
       if(path.stroke || cutFill) {
         const c=cutFill?path.fillRGB:path.strokeRGB, role=cutFill||grey(c)?'CUT':blueRGB(c)?'HATCH':'ENGRAVE', t=target(path,role,c);
