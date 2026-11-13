@@ -22,7 +22,7 @@
    window.CharmNestEngraveSync: state() · flush() · pull(orders?) · sigOf(line) */
 (function (root) {
   "use strict";
-  const DEBOUNCE = 1500, MAX_WAIT = 6000, OWN_HOLD = 10000, NET_MS = 600000, BATCH = 40, START_DELAY = 6000;
+  const DEBOUNCE = 1500, MAX_WAIT = 6000, OWN_HOLD = 10000, NET_MS = 600000, BATCH = 40, START_DELAY = 800;   // (FASTSTART, Paul 13 Nov 2026: "So why is the grid take like 30 seconds or one minute to come up?")
   const JOB_FIELDS = ["face", "slot", "rowKey", "groupKey", "linked", "pre", "state", "reason", "text", "lines", "lineInput", "lineMode", "splitIndex", "lineGap", "decision", "source", "quote",
     "confidence", "requests", "questions", "claudeReasoning", "ignored", "wordsSource", "claudeJob", "claude", "fontKey", "fontAsked", "fontName", "fontStyle", "faceFontWord", "fontLocked",
     "fontMapped", "fontListing", "fontSubstituted", "wantSize", "nudged", "turnUp", "upSystem", "orientVersion", "approvedBy", "approvedAt", "engravingSeals", "decidedAt", "decidedBy",
@@ -184,10 +184,18 @@
     const lines = linesNow(), orders = [...new Set([...lines.values()].map(l => String(safe(() => l.order.receiptId, "") || l.key.split("_")[0])).filter(Boolean))];
     let have = new Set(); const cloudRaised = new Map();
     try {
+      // (FASTSTART, Paul 13 Nov 2026: "So why is the grid take like 30 seconds or one minute to come up?"): every line is read in one go, the piece on screen is put on first (and drawn at once), the rest six at a time; it used to be one line after another, 300 refits in a row
+      const got = [];
       for (let i = 0; i < orders.length; i += 600) {
         const res = await api({ op: "engraveSyncGet", orders: orders.slice(i, i + 600) });
-        for (const l of (res && res.lines) || []) { have.add(l.key); CLOUD.set(l.key, l); cloudRaised.set(l.key, !!(l.rec && l.rec.raised)); st.lastAt = Math.max(st.lastAt, l.at || 0); await take(l, "start"); }
+        for (const l of (res && res.lines) || []) { have.add(l.key); CLOUD.set(l.key, l); cloudRaised.set(l.key, !!(l.rec && l.rec.raised)); st.lastAt = Math.max(st.lastAt, l.at || 0); got.push(l); }
       }
+      const onScreen = new Set(); safe(() => { for (const c of root.document.querySelectorAll(".rvItem")) { const j = c._job; const r = j && j.row && (j.row.parentRow || j.row); if (r && r.key) onScreen.add(r.key); } });
+      got.sort((a, b) => (onScreen.has(b.key) ? 1 : 0) - (onScreen.has(a.key) ? 1 : 0));
+      const first = got.filter(l => onScreen.has(l.key)), rest = got.filter(l => !onScreen.has(l.key));
+      for (const l of first) await take(l, "start");
+      if (first.length) { safe(() => E().render()); safe(() => O().render()); }
+      let next = 0; await Promise.all(Array.from({ length: Math.min(6, rest.length) }, async () => { while (next < rest.length) { const l = rest[next++]; try { await take(l, "start"); } catch (_) {} } }));
     } catch (e) { st.fails++; }
     // what this page holds now is the start of what it sends; the computer with the run open seeds the cloud with every line it does not hold yet
     const seed = [];
