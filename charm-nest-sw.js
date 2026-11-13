@@ -46,7 +46,8 @@
 (function (root) {
   "use strict";
   const VERSION = "2026-10-28.1";   // this copy of the worker (status, Settings)
-  const RETIRED = false;            // true: the worker deletes its caches and unregisters itself on every computer (server-side retirement)
+  const RETIRED = true;    // (RETIRE, Paul 13 Nov 2026: "All the changes we made yesterday are not appearing on the computer here ... even when I refresh and kill the history": every computer drops its kept copy)
+  const RETIRED_WAS = false;            // true: the worker deletes its caches and unregisters itself on every computer (server-side retirement)
   const GEN = "v1";                 // the caches' generation: a new one throws away every kept file
   const STATIC = "cn-static-" + GEN, PICS = "cn-pics-" + GEN, META = "cn-sw-meta-" + GEN;
   const OURS = /^cn-(static|pics|sw-meta)-/;   // this worker's caches, of any generation (an older generation's are deleted when a new worker starts)
