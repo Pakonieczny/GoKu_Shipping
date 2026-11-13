@@ -206,6 +206,16 @@
     if (seed.length) { st.seeded = true; await send(seed); }
     safe(() => S().schedule());
     safe(() => E().render()); safe(() => O().render());
+    prewarm();
+  }
+  /* (GRIDNOW, Paul 13 Nov 2026: "It still shows up without the grid for several seconds"): every piece waiting in Design & Engrave has its charm's outline read in the background, one at a time while the page is idle, so a card opened later draws its grid at once */
+  function prewarm() {
+    const P = root.Pool, Eg = E(); if (!P || typeof P.preview !== "function" || !Eg || typeof Eg.items !== "function") return;
+    const todo = []; const seen = new Set();
+    for (const j of safe(() => [...Eg.items().values()], [])) { const pid = (j && j.copies || [])[0], line = j && j.row && (j.row.parentRow || j.row); if (!pid || !line || seen.has(line.key) || ["approved", "written"].includes(j.state)) continue; if (safe(() => P.charmOf(pid) || P.previewCharmOf(pid), null)) continue; seen.add(line.key); todo.push(line); }
+    const idle = f => (typeof root.requestIdleCallback === "function" ? root.requestIdleCallback(f, { timeout: 2000 }) : setTimeout(f, 60));
+    const step = () => { const line = todo.shift(); if (!line) return; Promise.resolve().then(() => P.preview(line)).catch(() => {}).then(() => idle(step)); };
+    idle(step);
   }
 
   /* ── hooks ── */
@@ -226,7 +236,9 @@
       active: () => true,
       wants: k => k === "p:*" || linesNow().size > 0,
       read: (why, keys) => {
-        artSoon();   // (a Charm Editor Save on another computer: the piece's artwork edit is read and put on this page's charm, ArtEdit.sync)
+        // (CESAFE, Paul 13 Nov 2026: "make sure nothing is fucked with the charm editor"): only a save made on ANOTHER computer is put on this page's charm; this computer's own save
+        //  (its tabs' writes, 'wrote') is never applied a second time over itself (that would approve the face again and write its sheet's files again)
+        if (why !== "wrote") artSoon();
         const named = (keys || []).filter(k => /^p:\d{4,30}$/.test(k)).map(k => k.slice(2));
         if (why === "keys" && named.length && !(keys || []).includes("p:*")) return pull(named, why);
         return pull(null, why);
