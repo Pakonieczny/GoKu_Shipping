@@ -6574,7 +6574,15 @@ async function finishNest(sh, { result, error }) {
       const fx = await fixOverlaps(sh, { byId, st, result, render, geom, areas });
       if (fx) ({ aiBytes, labelledBytes, render, geom } = fx);
     }
-    sh.verification = { geom, render, ok: geom.ok && !!(render && render.ok), minGapPt: geom.minGapPt, minEdgePt: geom.minEdgePt };
+    // (EXACTOVERLAP: the written file's own cut lines, zero overlap; what it changes is checked again by both checks)
+    try {
+      const xf = await exactFix(sh, { byId, st, result, aiBytes, labelledBytes });
+      if (xf && xf.changed) {
+        ({ aiBytes, labelledBytes } = xf); geom = await geomCheck(sh);
+        try { render = await renderCheck(sh, aiBytes, xf.specBase, st, new Map(xf.specBase.placements.map(p => [p.layerName, p.layerSig])), areas); } catch (e) { render = { ok: false, error: e.message }; }
+      }
+    } catch (e) { log(sh, "exact overlap check could not run: " + e.message); sh.exactOverlap = { at: Date.now(), ok: false, error: String(e.message || e) }; }
+    sh.verification = { geom, render, ok: geom.ok && !!(render && render.ok) && !(sh.exactOverlap && sh.exactOverlap.ok === false), minGapPt: geom.minGapPt, minEdgePt: geom.minEdgePt, exact: sh.exactOverlap || null };
     // (MCFREE, Paul 20 Oct 2026: charms a person placed by hand where they overlap, or run past the sheet's margin (Manual Control's own check, CNManual.conflicts), flag the
     //  sheet as its verifier does, whatever the pixels say: it joins no set, gets no green line and goes to no laser until they are moved clear)
     try { const hand = window.CNManual && typeof CNManual.conflicts === "function" ? CNManual.conflicts(sh, { placed: true }).n : 0; if (hand) Object.assign(sh.verification, { ok: false, handOverlap: hand }); } catch (_) {}
@@ -6707,6 +6715,120 @@ async function fixOverlaps(sh, o) {
   log(sh, `overlap fixed automatically: ${words}${sh.overlapFix.ok ? "" : " (the check still flags the sheet)"}`);
   agent({ metal: sh.metal }, sh.overlapFix.ok ? "ok" : "warn", sh.overlapFix.ok ? `Small overlap fixed automatically: ${words}` : `Small overlap: ${words}, but the check still flags the sheet`);
   return { aiBytes, labelledBytes, render, geom };
+}
+/* EXACTOVERLAP (Paul, 12 Nov 2026: "I know there's overlap, I've tested it [on the laser] ... you're not catching it"): the two checks above read pixels and, with the aggressive clearance
+   (a negative clearance: neighbours share a stroke), allow a sliver of overlap; the laser cuts the real lines, so GF Set-1 Sheet 1 had 6 overlapping pairs, RG 7 (one of 2.07 mm²), SS 9.
+   This check reads the written file itself: every charm's cut outline (charm-nest-export.js productionPaths, the same lines the .ai and the .dxf carry), and every pair of charms whose
+   outlines share ANY area (over EXACT_EPS_MM2) is an overlap, whatever the clearance. The fix (SHRINKBOTH): both charms shrink together about their own centres, 0.5 % at a time, never past
+   2.5 % in all (OVF_MIN_SCALE); when that cannot clear it, the smaller movable one is nudged straight away from the other (up to 1 mm), never into a third charm or past the inset. The file
+   is written again and read again, at most three rounds; what is still left flags the sheet (sh.exactOverlap.ok false: verification fails, it joins no set and goes to no laser). */
+const EXACT_EPS_MM2 = 0.0005, EXACT_MM = 25.4 / 72;
+async function exactOverlaps(aiBytes, st) {
+  const V = window.CharmNestVector, E = window.CharmNestExport, P = window.CharmNestPDF;
+  if (!V || !E || !P || !aiBytes) return null;
+  const parsed = await P.parseSource(aiBytes, "Production sheet"), paths = E.productionPaths(parsed);
+  const grey = c => !c || Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]) <= 0.15;
+  const loopsBy = new Map();
+  for (const p of paths) {
+    if (!p.charm) continue;
+    const cut = (p.cutSilhouette && p.fill && !p.stroke) || (p.stroke && grey(p.strokeRGB) && !p.fill);
+    if (!cut) continue;
+    const loops = (p.subpaths || []).map(s => V.flatten(s)).filter(f => f.points.length >= 3).map(f => f.points);
+    if (!loopsBy.has(p.charm)) loopsBy.set(p.charm, []);
+    loopsBy.get(p.charm).push(...loops);
+  }
+  const shapes = new Map();
+  for (const [name, loops] of loopsBy) {
+    const outer = V.boolean(loops, [], "union", "nonzero").filter(r => !r.hole).map(r => r.points);
+    if (!outer.length) continue;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const l of outer) for (const q of l) { if (q[0] < x0) x0 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[0] > x1) x1 = q[0]; if (q[1] > y1) y1 = q[1]; }
+    shapes.set(name, { name, polys: outer, box: [x0, y0, x1, y1] });
+  }
+  const pairs = [], list = [...shapes.values()];
+  for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+    const mm2 = exactShared(list[i], list[j]); if (mm2 > EXACT_EPS_MM2) pairs.push({ a: list[i].name, b: list[j].name, mm2: +mm2.toFixed(4) });
+  }
+  pairs.sort((p, q) => q.mm2 - p.mm2);
+  return { shapes, pairs };
+}
+const exactArea = ps => ps.reduce((n, p) => { let a = 0; for (let i = 0; i < p.length; i++) { const q = p[i], r = p[(i + 1) % p.length]; a += q[0] * r[1] - r[0] * q[1]; } return n + Math.abs(a) / 2; }, 0);
+/** The area two charms' outlines share, in mm² (0 when their boxes do not meet). */
+function exactShared(a, b) {
+  if (a.box[2] < b.box[0] || b.box[2] < a.box[0] || a.box[3] < b.box[1] || b.box[3] < a.box[1]) return 0;
+  const x = window.CharmNestVector.boolean(a.polys, b.polys, "intersection", "nonzero", "nonzero");
+  return exactArea(x.map(r => r.points)) * EXACT_MM * EXACT_MM;
+}
+/** A charm's outline scaled by s about (px, py) and moved by (dx, dy), all in the file's points. */
+function exactMoved(sh0, s, px, py, dx, dy) {
+  const polys = sh0.polys.map(l => l.map(q => [px + (q[0] - px) * s + dx, py + (q[1] - py) * s + dy]));
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const l of polys) for (const q of l) { if (q[0] < x0) x0 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[0] > x1) x1 = q[0]; if (q[1] > y1) y1 = q[1]; }
+  return { name: sh0.name, polys, box: [x0, y0, x1, y1] };
+}
+async function exactFix(sh, o) {
+  const { byId, st, result } = o; let { aiBytes, labelledBytes } = o, specBase = null, changed = false;
+  const job = buildJob(sh), locked = new Set((job.protectedRose?.placements || []).map(p => p.id)), saved = new Map((sh.nestInitial || []).map(p => [p.id, p]));
+  const inset = typeof handPlacedSheet === "function" && handPlacedSheet(sh) ? 0 : +S.settings.insetPt || 0, H = st.hPt, W = st.wPt;
+  const fixes = [];
+  let ex = null;
+  for (let round = 0; round < 3; round++) {
+    ex = await exactOverlaps(aiBytes, st); if (!ex || !ex.pairs.length) break;
+    const byLayer = new Map(sh.placements.map(p => [p.layerName, p])), touched = new Set(), planned = [];
+    const cur = new Map(ex.shapes);   // (each charm as it will stand after this round's fixes)
+    for (const pr of ex.pairs) {
+      if (touched.has(pr.a) || touched.has(pr.b)) continue;
+      const A = byLayer.get(pr.a), B = byLayer.get(pr.b); if (!A || !B) continue;
+      const may = p => !locked.has(p.id) && !(window.CharmNestCustomPool && CharmNestCustomPool.isFrozen(byId.get(p.id)));
+      const left = p => may(p) ? Math.max(0, 1 - OVF_MIN_SCALE / (p.fixScale || 1)) : 0;
+      const piv = p => [p.cxPt, H - p.cyPt];
+      const others = n => [...cur.values()].filter(x => x.name !== pr.a && x.name !== pr.b && x.name !== n);
+      const clearOfOthers = (sx, skip) => others(skip).every(x => exactShared(sx, x) <= EXACT_EPS_MM2);
+      const inside = sx => sx.box[0] >= inset - 1e-6 && sx.box[1] >= inset - 1e-6 && sx.box[2] <= W - inset + 1e-6 && sx.box[3] <= H - inset + 1e-6;
+      const sa0 = cur.get(pr.a), sb0 = cur.get(pr.b); let got = null;
+      // 1 · both shrink together (each never past what it has left)
+      for (let k = 1; k <= 5 && !got; k++) {
+        const s = 1 - 0.005 * k, sa = Math.max(1 - left(A), s), sb = Math.max(1 - left(B), s); if (sa >= 1 && sb >= 1) break;
+        const ma = exactMoved(sa0, sa, ...piv(A), 0, 0), mb = exactMoved(sb0, sb, ...piv(B), 0, 0);
+        if (exactShared(ma, mb) <= EXACT_EPS_MM2) got = [{ p: A, s: sa, dx: 0, dy: 0, shape: ma }, { p: B, s: sb, dy: 0, dx: 0, shape: mb }];
+      }
+      // 2 · the smaller movable one nudged straight away from the other, with what shrink each has left
+      if (!got) {
+        const area = x => exactArea(x.polys), cands = [A, B].filter(p => !locked.has(p.id)).sort((p, q) => area(cur.get(p.layerName)) - area(cur.get(q.layerName)));
+        search: for (const M of cands) {
+          const N = M === A ? B : A, m0 = cur.get(M.layerName), n0 = cur.get(N.layerName);
+          const sm = 1 - left(M), sn = 1 - left(N), mN = exactMoved(n0, sn, ...piv(N), 0, 0);
+          const [mx, my] = piv(M), [nx, ny] = piv(N); let ux = mx - nx, uy = my - ny; const ul = Math.hypot(ux, uy) || 1; ux /= ul; uy /= ul;
+          for (let d = 0.25; d <= 1 / EXACT_MM + 1e-9; d += 0.25) {
+            const mM = exactMoved(m0, sm, mx, my, ux * d, uy * d);
+            if (exactShared(mM, mN) <= EXACT_EPS_MM2 && clearOfOthers(mM, N.layerName) && inside(mM)) { got = [{ p: M, s: sm, dx: ux * d, dy: uy * d, shape: mM }, { p: N, s: sn, dx: 0, dy: 0, shape: mN }]; break search; }
+          }
+        }
+      }
+      if (!got) continue;
+      for (const g of got) { touched.add(g.p.layerName); cur.set(g.p.layerName, g.shape); if (g.s < 1 || g.dx || g.dy) planned.push(g); }
+    }
+    if (!planned.length) break;
+    for (const g of planned) {
+      const p = g.p;
+      if (g.s < 1) { p.scale = +((p.scale || 1) * g.s).toFixed(5); p.fixScale = +((p.fixScale || 1) * g.s).toFixed(5); }
+      p.cxPt += g.dx; p.cyPt -= g.dy;   // (the file's y runs up, the sheet's down)
+      const k = saved.get(p.id); if (k && k !== p) Object.assign(k, { cxPt: p.cxPt, cyPt: p.cyPt, scale: p.scale, ...(p.fixScale ? { fixScale: p.fixScale } : {}) });
+      fixes.push({ name: p.layerName, shrinkPct: +((1 - g.s) * 100).toFixed(2), movedMm: +(Math.hypot(g.dx, g.dy) * EXACT_MM).toFixed(3) });
+    }
+    sh.stage = `Clearing ${planned.length} overlapping charm${planned.length === 1 ? "" : "s"} · writing again…`; renderProgress(sh);
+    specBase = sheetSpec(sh, byId, st, result);
+    aiBytes = await CharmNestPDF.buildSheet(specBase);
+    sh.placements.forEach((p, i) => { p.layerName = specBase.placements[i].layerName; });
+    labelledBytes = await CharmNestPDF.buildSheet(Object.assign({}, specBase, { labelled: true, placements: specBase.placements.map(p => Object.assign({}, p)) }));
+    changed = true; ex = null;
+  }
+  if (!ex) ex = await exactOverlaps(aiBytes, st);
+  if (!ex) return null;
+  sh.exactOverlap = { at: Date.now(), ok: !ex.pairs.length, pairs: ex.pairs.slice(0, 20), fixes };
+  if (fixes.length) { const w = fixes.map(f => `${f.name} ${f.shrinkPct ? f.shrinkPct + "% smaller" : ""}${f.shrinkPct && f.movedMm ? ", " : ""}${f.movedMm ? "moved " + f.movedMm + " mm" : ""}`).join("; "); log(sh, `exact overlap check: cleared by ${w}`); agent({ metal: sh.metal }, ex.pairs.length ? "warn" : "ok", `Overlap (exact cut lines): ${w}${ex.pairs.length ? ` · still overlapping: ${ex.pairs.map(p => p.a + " ↔ " + p.b).join("; ")}` : ""}`); }
+  else if (ex.pairs.length) agent({ metal: sh.metal }, "warn", `Overlap (exact cut lines) not cleared within 2.5 % or 1 mm: ${ex.pairs.map(p => `${p.a} ↔ ${p.b} ${p.mm2} mm²`).join("; ")}`);
+  return { aiBytes, labelledBytes, specBase, changed };
 }
 /** One footprint from the render's area ({X0, Y0, bw, bh, core}) and the geometry check's mask ({x0, y0, w, h, bits}), page pixels; either may be missing. */
 function unionArea(a, g) {
