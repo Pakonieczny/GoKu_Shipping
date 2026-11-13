@@ -6006,6 +6006,7 @@ function writeAsPlaced(sh) {
   const usablePt2 = +(sh.liveInfo && sh.liveInfo.usablePt2) || Math.max(1, st.wPt * st.hPt), placedPt2 = sh.placements.reduce((n, p) => n + area(byId.get(p.id)), 0);
   sh.sheetId = sh.sheetId || `${sh.metal}${sh.page > 1 ? "-s" + sh.page : ""}-${Date.now().toString(36)}`;
   window.RoseStock?.protect(sh);
+  if (sh.setId && !sh.draft) sh._keepSet = { setId: sh.setId, seq: sh.seq };   // (KEEPSET: written as it stands, it stays in its set)
   sh.appendOnly = sh.intakeAppend = true; sh.nestInitial = sh.placements.map(p => ({ ...p })); sh.best = null; sh.bestKey = null; sh.evNest = null; sh.evSearch = null;
   sh.jobId = uid(); sh.startedAt = performance.now(); sh.status = "nesting"; sh.persistedDone = false; sh.dirty = false; sh.problem = null; sh.movedOn = null; sh.rejects = []; delete sh._byHand; delete sh._personWrite;
   const job = buildJob(sh);
@@ -6910,6 +6911,9 @@ async function nextSheetSeq(sh) {
     // their place the same way (Gate.keepsPlace): written again (an artwork edit, Manual Control) the sheet was drafted here first, and when the cloud refused the write its record stayed in the set
     // while this page held it in none: the Library's red line "14K Sheet 1 ... is not in it"
     if (Gate.keepsPlace && Gate.keepsPlace(sh)) return sh.seq || null;
+    // (KEEPSET, Paul 12 Nov 2026: "Why would you take them out of the sets ... will this process also fail like this moving forward?": a sheet written again AS IT STANDS (writeAsPlaced: an overlap
+    //  correction, a replaced piece; no charm added or taken off) keeps its set, its number and its label. Drafted here, the next look at the sets regrouped the run's sheets their own way)
+    if (sh._keepSet && sh._keepSet.setId === sh.setId && !sh.draft) { delete sh._keepSet; return sh.seq || null; }
     if (window.CharmNestSheetName && CharmNestSheetName.fileTag(sh)) sh.leftFileBase = sh.fileBase;   // (its set's file name: a sheet coming back to the set it left takes its own old number back, charm-nest-sheet-name.js claim. Diagnostic, 26 Oct 2026)
     sh.draft = true; sh.setId = null; sh.setDay = today(); sh.sheetIndex = null; delete sh.numberOwed; return null;
   }
