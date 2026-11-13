@@ -8439,11 +8439,12 @@ const Engrave = window.Engrave = (() => {
   const charmAsked = new Map();
   function charmBack(job) {
     const pid = job && (job.copies || [])[0];
-    if (!pid || !job.pre || job.editCharm || Pool.charmOf(pid) || Pool.previewCharmOf(pid)) return false;
+    // (EVERYPC, Paul 13 Nov 2026, on another computer: "why there's no grid why there's no options at the bottom of the grid" / "My computer doesn't do that"): not only a piece made before it was on a sheet: ANY piece whose charm this page does not hold (a computer that has not opened its sheet, a fresh load) has it drawn, in memory only
+    if (!pid || job.editCharm || Pool.charmOf(pid) || Pool.previewCharmOf(pid)) return false;
     const row = lineOf(job.row); if (!row || !row.key) return false;
     const t = charmAsked.get(row.key); if (t && Date.now() - t < 15000) return true;
     charmAsked.set(row.key, Date.now());
-    early(row).then(() => { if (!(Pool.charmOf(pid) || Pool.previewCharmOf(pid))) return; charmAsked.delete(row.key); if (EG.card && EG.card.isConnected && cardJobOf(job)) render(); }).catch(() => {});
+    (job.pre ? early(row) : Pool.preview(row)).then(() => { if (!(Pool.charmOf(pid) || Pool.previewCharmOf(pid))) return; charmAsked.delete(row.key); if (EG.card && EG.card.isConnected && cardJobOf(job)) render(); }).catch(() => {});
     return true;
   }   // (ENGPRE: a piece not on any sheet yet has the charm it WILL have, Pool.preview)
   /** ENGPRE: a job made before its piece was on a sheet (`job.pre`) and not on one now: nothing waits for the sheet, no back file is written or retried until it is. */
@@ -13567,7 +13568,7 @@ const Engrave = window.Engrave = (() => {
     const wordsJob = job.state !== "review" && !appView;   // (no placement drawn yet: words to settle, being read or fitted)
     /* ALWAYSBAR (Paul, 12 Nov 2026, order 4227069460): the row under the work area (Centre, Lines, the size, the turn) is always drawn. With no words placed on this face yet the controls that act on the
        words are there, disabled, saying why; the turn of the whole piece works as soon as the piece's charm is on this page (turnBare). A face engraved by the Charm Editor's parts alone keeps its note. */
-    const ctlOn = !!f && !wordsJob && !f.artOnly, ctlBar = ctlOn || (job.state === "words" && !(job.text || "").trim());   // (BARREFIT: only a face waiting for words gets the bar early; a face being fitted or drawn again keeps the card as it was)
+    const ctlOn = !!f && !wordsJob && !f.artOnly, ctlBar = ctlOn || !(job.text || "").trim();   // (EVERYPC, Paul 13 Nov 2026, on another computer: "why there's no grid why there's no options at the bottom of the grid" / "My computer doesn't do that"): a face with no words being fitted (None, words not typed, still being read) has the bar too, its controls disabled   // (BARREFIT: only a face waiting for words gets the bar early; a face being fitted or drawn again keeps the card as it was)
     const ctlWhy = ctlOn ? "" : (job.text || "").trim() ? `The words of the ${fw} are being fitted: these act on them once they are placed` : `No words on the ${fw} yet: type them in the panel, then these act on them`;
     const turnOn = ctlOn || bareTurnable(job);
     const requests = job.requests || {};
