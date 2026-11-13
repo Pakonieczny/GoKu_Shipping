@@ -6799,9 +6799,11 @@ async function exactFix(sh, o) {
           const N = M === A ? B : A, m0 = cur.get(M.layerName), n0 = cur.get(N.layerName);
           const sm = 1 - left(M), sn = 1 - left(N), mN = exactMoved(n0, sn, ...piv(N), 0, 0);
           const [mx, my] = piv(M), [nx, ny] = piv(N); let ux = mx - nx, uy = my - ny; const ul = Math.hypot(ux, uy) || 1; ux /= ul; uy /= ul;
-          for (let d = 0.25; d <= 1 / EXACT_MM + 1e-9; d += 0.25) {
-            const mM = exactMoved(m0, sm, mx, my, ux * d, uy * d);
-            if (exactShared(mM, mN) <= EXACT_EPS_MM2 && clearOfOthers(mM, N.layerName) && inside(mM)) { got = [{ p: M, s: sm, dx: ux * d, dy: uy * d, shape: mM }, { p: N, s: sn, dx: 0, dy: 0, shape: mN }]; break search; }
+          // (straight away from the other first, then 24 directions round: the shortest move that clears it, in 0.05 mm steps up to 1 mm)
+          const dirs = [[ux, uy]]; for (let k = 0; k < 24; k++) { const a = k * Math.PI / 12; dirs.push([Math.cos(a), Math.sin(a)]); }
+          for (let d = 0.05 / EXACT_MM; d <= 1 / EXACT_MM + 1e-9; d += 0.05 / EXACT_MM) for (const [vx, vy] of dirs) {
+            const mM = exactMoved(m0, sm, mx, my, vx * d, vy * d);
+            if (exactShared(mM, mN) <= EXACT_EPS_MM2 && clearOfOthers(mM, N.layerName) && inside(mM)) { got = [{ p: M, s: sm, dx: vx * d, dy: vy * d, shape: mM }, { p: N, s: sn, dx: 0, dy: 0, shape: mN }]; break search; }
           }
         }
       }
