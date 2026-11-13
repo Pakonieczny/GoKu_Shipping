@@ -28257,9 +28257,12 @@ const Arrivals = window.Arrivals = (() => {
   /* Only what needs a person shows, as a small chip among the tools at the top right: new orders waiting behind an opened
      earlier set (a click puts the set away and brings them in), or order checks that fail (a click checks again now). The
      routine counts and countdown are not shown. */
+  /** (FOLLOWNEW, Paul 13 Nov 2026: "Why does it say 2 new orders but the rest of the app is not being updated" / "Why did my count go to 2"): this page shows, read from the cloud, the open run another computer holds (no run of its own, no set opened on purpose) */
+  function followsRun() { try { if (B.run || !Recall.on()) return false; const rc = Recall.state() || {}; if (rc.setId || !rc.runId) return false; const fid = window.CharmNestRunFollow && window.CharmNestRunFollow.state().runId; return rc.runId === fid || (B.openRuns || []).some(x => x && x.runId === rc.runId); } catch (_) { return false; } }
   function paint() {
     if (streaming()) Sandbox.render();   // the sandbox pill keeps its simulated time
     for(const node of document.querySelectorAll('[data-new-order],.newArrival')){node.removeAttribute('data-new-order');node.classList.remove('newArrival');}
+    if (followsRun() && state.inbox) delete state.inbox;   // (FOLLOWNEW, Paul 13 Nov 2026: "Why does it say 2 new orders but the rest of the app is not being updated" / "Why did my count go to 2")
     const inbox = Recall.on() && state.inbox?.length ? state.inbox.length : 0, failed = !inbox && !!state.error && S.settings.pollOrders !== "off";
     let chip = document.getElementById("ordersChip");
     if (!inbox && !failed) { if (chip) chip.remove(); return; }
@@ -28373,7 +28376,10 @@ const Arrivals = window.Arrivals = (() => {
       state.unread = unread.map(o => String(o.receiptId));
       if (unread.length) agent({ bridge: true }, "warn", `${unread.length} of ${res.total} order(s) could not be read from Etsy (${state.unread.slice(0, 6).join(", ")}${unread.length > 6 ? "…" : ""}) — read again at the next check; the other ${res.hydrated} came in now`);
       const picked = Orders.applyPullRule((res.orders || []).filter(o => o.hydrated));
-      if (Recall.on()) { await record(picked, stamp()); state.inbox = picked; }
+      // (FOLLOWNEW, Paul 13 Nov 2026: "Why does it say 2 new orders but the rest of the app is not being updated" / "Why did my count go to 2"): a computer that shows the OPEN run another computer holds (read from the cloud) never parks new orders behind a button: the computer that holds the run takes them into
+      //  the run, and they reach this one from the cloud (charm-nest-run-follow.js). The button put the run away, so the page showed the 2 new orders alone until the cloud filled it again
+      if (followsRun()) { await record(picked, stamp()); delete state.inbox; setTimeout(() => { try { window.CharmNestRunFollow && window.CharmNestRunFollow.now("arrivals"); } catch (_) {} }, 3000); }
+      else if (Recall.on()) { await record(picked, stamp()); state.inbox = picked; }
       else await merge(picked, res.openIds);
       state.error = null; kept = null;
       processPending().catch(e=>{state.error=e.message;save();paint();});
