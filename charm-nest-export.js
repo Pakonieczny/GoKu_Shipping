@@ -85,11 +85,13 @@
   }
   function leaves(parsed) {
     const seen = new Set(), out = [];
-    function visit(s, parent) {
+    // (LASERSTAR, Paul 12 Nov 2026: "the layers of the engraving, the blue hatching and the red engraving lines are not saved in the file as layers under each individual charm"): every path keeps
+    //  the charm it belongs to, the sheet's top-level placed form ("4229616128  GOLD_7478  1/2"), so the DXF can put its cut, engraving and hatching on that charm's own layers
+    function visit(s, parent, owner) {
       if (seen.has(s)) return; seen.add(s);
-      const layer = s.layer || parent || 'Artwork';
-      if (s.kind === 'xobj' && s.children?.length) s.children.forEach(k => visit(k,layer));
-      else if (s.kind === 'path') out.push(...clipPath({...s, layer}));
+      const layer = s.layer || parent || 'Artwork', own = owner !== undefined ? owner : (s.kind === 'xobj' && s.layer ? s.layer : null);
+      if (s.kind === 'xobj' && s.children?.length) s.children.forEach(k => visit(k,layer,own));
+      else if (s.kind === 'path') out.push(...clipPath(own ? {...s, layer, charm: own} : {...s, layer}));
       else if (s.kind === 'clip' || s.kind === 'noop') return;
       else if (s.kind === 'xobj' && !s.children?.length && !s.bbox) return;   // (an empty form draws nothing)
       else throw new Error(`Cannot export ${s.kind === 'xobj' ? 'a picture (raster image)' : s.kind} on ${layer} to vector DXF. Outline text and trace or remove raster artwork first.`);
@@ -103,6 +105,7 @@
     const drop=new Set(),extra=[];
     for(const charm of groups.charms) {
       const before=charm.members.slice(),result=pdf().integrateRings(charm);
+      { const owner=charm.members.map(m=>m.charm).find(Boolean); if(owner)for(const m of charm.members)if(!m.charm)m.charm=owner; }   // (LASERSTAR: a hoop welded on stays its charm's)
       for(const m of charm.members)if(pdf().isCutSilhouetteFill(charm,m))m.cutSilhouette=m===charm.outline?'outline':'twin';
       if(result.left.length)throw new Error('A hoop could not join its charm: '+result.left.join('; '));
       if(!result.welded)continue;
@@ -307,69 +310,78 @@
   // blocks, layouts and dictionaries with their original ownership handles.
   // Dynamic handles start at 0x1000, above every reserved scaffold handle.
   const DXF_SCAFFOLD = "0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC1018\r\n9\r\n$ACADMAINTVER\r\n70\r\n0\r\n9\r\n$DWGCODEPAGE\r\n3\r\nANSI_1252\r\n9\r\n$INSBASE\r\n10\r\n0.0\r\n20\r\n0.0\r\n30\r\n0.0\r\n9\r\n$EXTMIN\r\n10\r\n{{MINX}}\r\n20\r\n{{MINY}}\r\n30\r\n0\r\n9\r\n$EXTMAX\r\n10\r\n{{MAXX}}\r\n20\r\n{{MAXY}}\r\n30\r\n0\r\n9\r\n$LIMMIN\r\n10\r\n0.0\r\n20\r\n0.0\r\n9\r\n$LIMMAX\r\n10\r\n420.0\r\n20\r\n297.0\r\n9\r\n$ORTHOMODE\r\n70\r\n0\r\n9\r\n$REGENMODE\r\n70\r\n1\r\n9\r\n$FILLMODE\r\n70\r\n1\r\n9\r\n$LTSCALE\r\n40\r\n1.0\r\n9\r\n$CLAYER\r\n8\r\n0\r\n9\r\n$CELTYPE\r\n6\r\nByLayer\r\n9\r\n$CECOLOR\r\n62\r\n256\r\n9\r\n$LUNITS\r\n70\r\n2\r\n9\r\n$LUPREC\r\n70\r\n4\r\n9\r\n$HANDSEED\r\n5\r\n{{HANDSEED}}\r\n9\r\n$TILEMODE\r\n70\r\n1\r\n9\r\n$MEASUREMENT\r\n70\r\n1\r\n9\r\n$INSUNITS\r\n70\r\n4\r\n9\r\n$PSTYLEMODE\r\n290\r\n1\r\n0\r\nENDSEC\r\n0\r\nSECTION\r\n2\r\nCLASSES\r\n0\r\nCLASS\r\n1\r\nACDBDICTIONARYWDFLT\r\n2\r\nAcDbDictionaryWithDefault\r\n3\r\nObjectDBX Classes\r\n90\r\n0\r\n91\r\n0\r\n280\r\n0\r\n281\r\n0\r\n0\r\nCLASS\r\n1\r\nSUN\r\n2\r\nAcDbSun\r\n3\r\nSCENEOE\r\n90\r\n1153\r\n91\r\n0\r\n280\r\n0\r\n281\r\n0\r\n0\r\nCLASS\r\n1\r\nVISUALSTYLE\r\n2\r\nAcDbVisualStyle\r\n3\r\nObjectDBX Classes\r\n90\r\n4095\r\n91\r\n0\r\n280\r\n0\r\n281\r\n0\r\n0\r\nCLASS\r\n1\r\nMATERIAL\r\n2\r\nAcDbMaterial\r\n3\r\nObjectDBX Classes\r\n90\r\n1153\r\n91\r\n0\r\n280\r\n0\r\n281\r\n0\r\n0\r\nCLASS\r\n1\r\nSCALE\r\n2\r\nAcDbScale\r\n3\r\nObjectDBX Classes\r\n90\r\n1153\r\n91\r\n0\r\n280\r\n0\r\n281\r\n0\r\n0\r\nCLASS\r\n1\r\nTABLESTYLE\r\n2\r\nAcDbTableStyle\r\n3\r\nObjectDBX Classes\r\n90\r\n4095\r\n91\r\n0\r\n280\r\n0\r\n281\r\n0\r\n0\r\nCLASS\r\n1\r\nMLEADERSTYLE\r\n2\r\nAcDbMLeaderStyle\r\n3\r\nACDB_MLEADERSTYLE_CLASS\r\n90\r\n4095\r\n91\r\n0\r\n280\r\n0\r\n281\r\n0\r\n0\r\nCLASS\r\n1\r\nDICTIONARYVAR\r\n2\r\nAcDbDictionaryVar\r\n3\r\nObjectDBX Classes\r\n90\r\n0\r\n91\r\n0\r\n280\r\n0\r\n281\r\n0\r\n0\r\nCLASS\r\n1\r\nCELLSTYLEMAP\r\n2\r\nAcDbCellStyleMap\r\n3\r\nObjectDBX Classes\r\n90\r\n1152\r\n91\r\n0\r\n280\r\n0\r\n281\r\n0\r\n0\r\nCLASS\r\n1\r\nMENTALRAYRENDERSETTINGS\r\n2\r\nAcDbMentalRayRenderSettings\r\n3\r\nSCENEOE\r\n90\r\n1024\r\n91\r\n0\r\n280\r\n0\r\n281\r\n0\r\n0\r\nCLASS\r\n1\r\nACDBDETAILVIEWSTYLE\r\n2\r\nAcDbDetailViewStyle\r\n3\r\nObjectDBX Classes\r\n90\r\n1025\r\n91\r\n0\r\n280\r\n0\r\n281\r\n0\r\n0\r\nCLASS\r\n1\r\nACDBSECTIONVIEWSTYLE\r\n2\r\nAcDbSectionViewStyle\r\n3\r\nObjectDBX Classes\r\n90\r\n1025\r\n91\r\n0\r\n280\r\n0\r\n281\r\n0\r\n0\r\nCLASS\r\n1\r\nRASTERVARIABLES\r\n2\r\nAcDbRasterVariables\r\n3\r\nISM\r\n90\r\n0\r\n91\r\n0\r\n280\r\n0\r\n281\r\n0\r\n0\r\nCLASS\r\n1\r\nLAYOUT\r\n2\r\nAcDbLayout\r\n3\r\nObjectDBX Classes\r\n90\r\n0\r\n91\r\n0\r\n280\r\n0\r\n281\r\n0\r\n0\r\nCLASS\r\n1\r\nACDBPLACEHOLDER\r\n2\r\nAcDbPlaceHolder\r\n3\r\nObjectDBX Classes\r\n90\r\n0\r\n91\r\n0\r\n280\r\n0\r\n281\r\n0\r\n0\r\nENDSEC\r\n0\r\nSECTION\r\n2\r\nTABLES\r\n0\r\nTABLE\r\n2\r\nVPORT\r\n5\r\n8\r\n330\r\n0\r\n100\r\nAcDbSymbolTable\r\n70\r\n1\r\n0\r\nVPORT\r\n5\r\n23\r\n330\r\n8\r\n100\r\nAcDbSymbolTableRecord\r\n100\r\nAcDbViewportTableRecord\r\n2\r\n*Active\r\n70\r\n0\r\n10\r\n0.0\r\n20\r\n0.0\r\n11\r\n1.0\r\n21\r\n1.0\r\n12\r\n{{CENTERX}}\r\n22\r\n{{CENTERY}}\r\n13\r\n0.0\r\n23\r\n0.0\r\n14\r\n0.5\r\n24\r\n0.5\r\n15\r\n0.5\r\n25\r\n0.5\r\n16\r\n0.0\r\n26\r\n0.0\r\n36\r\n1.0\r\n17\r\n0.0\r\n27\r\n0.0\r\n37\r\n0.0\r\n40\r\n{{VIEWHEIGHT}}\r\n41\r\n{{ASPECT}}\r\n42\r\n50.0\r\n43\r\n0.0\r\n44\r\n0.0\r\n50\r\n0.0\r\n51\r\n0.0\r\n71\r\n0\r\n72\r\n1000\r\n73\r\n1\r\n74\r\n3\r\n75\r\n0\r\n76\r\n0\r\n77\r\n0\r\n78\r\n0\r\n281\r\n0\r\n65\r\n0\r\n146\r\n0.0\r\n0\r\nENDTAB\r\n0\r\nTABLE\r\n2\r\nLTYPE\r\n5\r\n2\r\n330\r\n0\r\n100\r\nAcDbSymbolTable\r\n70\r\n3\r\n0\r\nLTYPE\r\n5\r\n24\r\n330\r\n2\r\n100\r\nAcDbSymbolTableRecord\r\n100\r\nAcDbLinetypeTableRecord\r\n2\r\nByBlock\r\n70\r\n0\r\n3\r\n\r\n72\r\n65\r\n73\r\n0\r\n40\r\n0.0\r\n0\r\nLTYPE\r\n5\r\n25\r\n330\r\n2\r\n100\r\nAcDbSymbolTableRecord\r\n100\r\nAcDbLinetypeTableRecord\r\n2\r\nByLayer\r\n70\r\n0\r\n3\r\n\r\n72\r\n65\r\n73\r\n0\r\n40\r\n0.0\r\n0\r\nLTYPE\r\n5\r\n26\r\n330\r\n2\r\n100\r\nAcDbSymbolTableRecord\r\n100\r\nAcDbLinetypeTableRecord\r\n2\r\nContinuous\r\n70\r\n0\r\n3\r\n\r\n72\r\n65\r\n73\r\n0\r\n40\r\n0.0\r\n0\r\nENDTAB\r\n0\r\nTABLE\r\n2\r\nLAYER\r\n5\r\n1\r\n330\r\n0\r\n100\r\nAcDbSymbolTable\r\n70\r\n{{LAYER_COUNT}}\r\n0\r\nLAYER\r\n5\r\n27\r\n330\r\n1\r\n100\r\nAcDbSymbolTableRecord\r\n100\r\nAcDbLayerTableRecord\r\n2\r\n0\r\n70\r\n0\r\n62\r\n7\r\n6\r\nContinuous\r\n370\r\n-3\r\n390\r\n13\r\n0\r\nLAYER\r\n5\r\n28\r\n330\r\n1\r\n100\r\nAcDbSymbolTableRecord\r\n100\r\nAcDbLayerTableRecord\r\n2\r\nDefpoints\r\n70\r\n0\r\n62\r\n7\r\n6\r\nContinuous\r\n290\r\n0\r\n370\r\n-3\r\n390\r\n13\r\n{{LAYERS}}0\r\nENDTAB\r\n0\r\nTABLE\r\n2\r\nSTYLE\r\n5\r\n5\r\n330\r\n0\r\n100\r\nAcDbSymbolTable\r\n70\r\n1\r\n0\r\nSTYLE\r\n5\r\n29\r\n330\r\n5\r\n100\r\nAcDbSymbolTableRecord\r\n100\r\nAcDbTextStyleTableRecord\r\n2\r\nStandard\r\n70\r\n0\r\n40\r\n0.0\r\n41\r\n1.0\r\n50\r\n0.0\r\n71\r\n0\r\n42\r\n2.5\r\n3\r\ntxt\r\n4\r\n\r\n0\r\nENDTAB\r\n0\r\nTABLE\r\n2\r\nVIEW\r\n5\r\n7\r\n330\r\n0\r\n100\r\nAcDbSymbolTable\r\n70\r\n0\r\n0\r\nENDTAB\r\n0\r\nTABLE\r\n2\r\nUCS\r\n5\r\n6\r\n330\r\n0\r\n100\r\nAcDbSymbolTable\r\n70\r\n0\r\n0\r\nENDTAB\r\n0\r\nTABLE\r\n2\r\nAPPID\r\n5\r\n3\r\n330\r\n0\r\n100\r\nAcDbSymbolTable\r\n70\r\n4\r\n0\r\nAPPID\r\n5\r\n2A\r\n330\r\n3\r\n100\r\nAcDbSymbolTableRecord\r\n100\r\nAcDbRegAppTableRecord\r\n2\r\nACAD\r\n70\r\n0\r\n0\r\nAPPID\r\n5\r\n2F\r\n330\r\n3\r\n100\r\nAcDbSymbolTableRecord\r\n100\r\nAcDbRegAppTableRecord\r\n2\r\nBRITES\r\n70\r\n0\r\n0\r\nAPPID\r\n5\r\n32\r\n330\r\n3\r\n100\r\nAcDbSymbolTableRecord\r\n100\r\nAcDbRegAppTableRecord\r\n2\r\nHATCHBACKGROUNDCOLOR\r\n70\r\n0\r\n0\r\nAPPID\r\n5\r\n33\r\n330\r\n3\r\n100\r\nAcDbSymbolTableRecord\r\n100\r\nAcDbRegAppTableRecord\r\n2\r\nEZDXF\r\n70\r\n0\r\n0\r\nENDTAB\r\n0\r\nTABLE\r\n2\r\nDIMSTYLE\r\n5\r\n4\r\n330\r\n0\r\n100\r\nAcDbSymbolTable\r\n70\r\n1\r\n100\r\nAcDbDimStyleTable\r\n0\r\nDIMSTYLE\r\n105\r\n2B\r\n330\r\n4\r\n100\r\nAcDbSymbolTableRecord\r\n100\r\nAcDbDimStyleTableRecord\r\n2\r\nStandard\r\n70\r\n0\r\n3\r\n\r\n4\r\n\r\n40\r\n1.0\r\n41\r\n2.5\r\n42\r\n0.625\r\n43\r\n3.75\r\n44\r\n1.25\r\n45\r\n0.0\r\n46\r\n0.0\r\n47\r\n0.0\r\n48\r\n0.0\r\n140\r\n2.5\r\n141\r\n2.5\r\n142\r\n0.0\r\n143\r\n0.03937007874\r\n144\r\n1.0\r\n145\r\n0.0\r\n146\r\n1.0\r\n147\r\n0.625\r\n148\r\n0.0\r\n71\r\n0\r\n72\r\n0\r\n73\r\n0\r\n74\r\n0\r\n75\r\n0\r\n76\r\n0\r\n77\r\n1\r\n78\r\n8\r\n79\r\n3\r\n170\r\n0\r\n171\r\n3\r\n172\r\n1\r\n173\r\n0\r\n174\r\n0\r\n175\r\n0\r\n176\r\n0\r\n177\r\n0\r\n178\r\n0\r\n179\r\n2\r\n271\r\n2\r\n272\r\n2\r\n273\r\n2\r\n274\r\n3\r\n275\r\n0\r\n276\r\n0\r\n277\r\n2\r\n278\r\n44\r\n279\r\n0\r\n280\r\n0\r\n281\r\n0\r\n282\r\n0\r\n283\r\n0\r\n284\r\n8\r\n285\r\n0\r\n286\r\n0\r\n288\r\n0\r\n289\r\n3\r\n371\r\n-2\r\n372\r\n-2\r\n0\r\nENDTAB\r\n0\r\nTABLE\r\n2\r\nBLOCK_RECORD\r\n5\r\n9\r\n330\r\n0\r\n100\r\nAcDbSymbolTable\r\n70\r\n2\r\n0\r\nBLOCK_RECORD\r\n5\r\n17\r\n330\r\n9\r\n100\r\nAcDbSymbolTableRecord\r\n100\r\nAcDbBlockTableRecord\r\n2\r\n*Model_Space\r\n340\r\n1A\r\n0\r\nBLOCK_RECORD\r\n5\r\n1B\r\n330\r\n9\r\n100\r\nAcDbSymbolTableRecord\r\n100\r\nAcDbBlockTableRecord\r\n2\r\n*Paper_Space\r\n340\r\n1E\r\n0\r\nENDTAB\r\n0\r\nENDSEC\r\n0\r\nSECTION\r\n2\r\nBLOCKS\r\n0\r\nBLOCK\r\n5\r\n18\r\n330\r\n17\r\n100\r\nAcDbEntity\r\n8\r\n0\r\n100\r\nAcDbBlockBegin\r\n2\r\n*Model_Space\r\n70\r\n0\r\n10\r\n0.0\r\n20\r\n0.0\r\n30\r\n0.0\r\n3\r\n*Model_Space\r\n1\r\n\r\n0\r\nENDBLK\r\n5\r\n19\r\n330\r\n17\r\n100\r\nAcDbEntity\r\n8\r\n0\r\n100\r\nAcDbBlockEnd\r\n0\r\nBLOCK\r\n5\r\n1C\r\n330\r\n1B\r\n100\r\nAcDbEntity\r\n8\r\n0\r\n100\r\nAcDbBlockBegin\r\n2\r\n*Paper_Space\r\n70\r\n0\r\n10\r\n0.0\r\n20\r\n0.0\r\n30\r\n0.0\r\n3\r\n*Paper_Space\r\n1\r\n\r\n0\r\nENDBLK\r\n5\r\n1D\r\n330\r\n1B\r\n100\r\nAcDbEntity\r\n8\r\n0\r\n100\r\nAcDbBlockEnd\r\n0\r\nENDSEC\r\n0\r\nSECTION\r\n2\r\nENTITIES\r\n{{ENTITIES}}0\r\nENDSEC\r\n0\r\nSECTION\r\n2\r\nOBJECTS\r\n0\r\nDICTIONARY\r\n5\r\nA\r\n330\r\n0\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n3\r\nACAD_COLOR\r\n350\r\nB\r\n3\r\nACAD_GROUP\r\n350\r\nC\r\n3\r\nACAD_LAYOUT\r\n350\r\nD\r\n3\r\nACAD_MATERIAL\r\n350\r\nE\r\n3\r\nACAD_MLEADERSTYLE\r\n350\r\nF\r\n3\r\nACAD_MLINESTYLE\r\n350\r\n10\r\n3\r\nACAD_PLOTSETTINGS\r\n350\r\n11\r\n3\r\nACAD_PLOTSTYLENAME\r\n350\r\n12\r\n3\r\nACAD_SCALELIST\r\n350\r\n14\r\n3\r\nACAD_TABLESTYLE\r\n350\r\n15\r\n3\r\nACAD_VISUALSTYLE\r\n350\r\n16\r\n3\r\nEZDXF_META\r\n350\r\n2D\r\n0\r\nDICTIONARY\r\n5\r\nB\r\n330\r\nA\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n0\r\nDICTIONARY\r\n5\r\nC\r\n330\r\nA\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n0\r\nDICTIONARY\r\n5\r\nD\r\n330\r\nA\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n3\r\nModel\r\n350\r\n1A\r\n3\r\nLayout1\r\n350\r\n1E\r\n0\r\nDICTIONARY\r\n5\r\nE\r\n330\r\nA\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n3\r\nByBlock\r\n350\r\n1F\r\n3\r\nByLayer\r\n350\r\n20\r\n3\r\nGlobal\r\n350\r\n21\r\n0\r\nDICTIONARY\r\n5\r\nF\r\n330\r\nA\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n3\r\nStandard\r\n350\r\n2C\r\n0\r\nDICTIONARY\r\n5\r\n10\r\n330\r\nA\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n3\r\nStandard\r\n350\r\n22\r\n0\r\nDICTIONARY\r\n5\r\n11\r\n330\r\nA\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n0\r\nACDBDICTIONARYWDFLT\r\n5\r\n12\r\n330\r\nA\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n3\r\nNormal\r\n350\r\n13\r\n100\r\nAcDbDictionaryWithDefault\r\n340\r\n13\r\n0\r\nACDBPLACEHOLDER\r\n5\r\n13\r\n330\r\n12\r\n0\r\nDICTIONARY\r\n5\r\n14\r\n330\r\nA\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n0\r\nDICTIONARY\r\n5\r\n15\r\n330\r\nA\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n0\r\nDICTIONARY\r\n5\r\n16\r\n330\r\nA\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n0\r\nLAYOUT\r\n5\r\n1A\r\n330\r\nD\r\n100\r\nAcDbPlotSettings\r\n1\r\n\r\n4\r\nA3\r\n6\r\n\r\n40\r\n7.5\r\n41\r\n20.0\r\n42\r\n7.5\r\n43\r\n20.0\r\n44\r\n420.0\r\n45\r\n297.0\r\n46\r\n0.0\r\n47\r\n0.0\r\n48\r\n0.0\r\n49\r\n0.0\r\n140\r\n0.0\r\n141\r\n0.0\r\n142\r\n1.0\r\n143\r\n1.0\r\n70\r\n1024\r\n72\r\n1\r\n73\r\n0\r\n74\r\n5\r\n7\r\n\r\n75\r\n16\r\n76\r\n0\r\n77\r\n2\r\n78\r\n300\r\n147\r\n1.0\r\n148\r\n0.0\r\n149\r\n0.0\r\n100\r\nAcDbLayout\r\n1\r\nModel\r\n70\r\n1\r\n71\r\n0\r\n10\r\n0.0\r\n20\r\n0.0\r\n11\r\n420.0\r\n21\r\n297.0\r\n12\r\n0.0\r\n22\r\n0.0\r\n32\r\n0.0\r\n14\r\n{{MINX}}\r\n24\r\n{{MINY}}\r\n34\r\n0\r\n15\r\n{{MAXX}}\r\n25\r\n{{MAXY}}\r\n35\r\n0\r\n146\r\n0.0\r\n13\r\n0.0\r\n23\r\n0.0\r\n33\r\n0.0\r\n16\r\n1.0\r\n26\r\n0.0\r\n36\r\n0.0\r\n17\r\n0.0\r\n27\r\n1.0\r\n37\r\n0.0\r\n76\r\n1\r\n330\r\n17\r\n0\r\nLAYOUT\r\n5\r\n1E\r\n330\r\nD\r\n100\r\nAcDbPlotSettings\r\n1\r\n\r\n4\r\nA3\r\n6\r\n\r\n40\r\n7.5\r\n41\r\n20.0\r\n42\r\n7.5\r\n43\r\n20.0\r\n44\r\n420.0\r\n45\r\n297.0\r\n46\r\n0.0\r\n47\r\n0.0\r\n48\r\n0.0\r\n49\r\n0.0\r\n140\r\n0.0\r\n141\r\n0.0\r\n142\r\n1.0\r\n143\r\n1.0\r\n70\r\n0\r\n72\r\n1\r\n73\r\n0\r\n74\r\n5\r\n7\r\n\r\n75\r\n16\r\n76\r\n0\r\n77\r\n2\r\n78\r\n300\r\n147\r\n1.0\r\n148\r\n0.0\r\n149\r\n0.0\r\n100\r\nAcDbLayout\r\n1\r\nLayout1\r\n70\r\n1\r\n71\r\n1\r\n10\r\n0.0\r\n20\r\n0.0\r\n11\r\n420.0\r\n21\r\n297.0\r\n12\r\n0.0\r\n22\r\n0.0\r\n32\r\n0.0\r\n14\r\n1e+20\r\n24\r\n1e+20\r\n34\r\n1e+20\r\n15\r\n-1e+20\r\n25\r\n-1e+20\r\n35\r\n-1e+20\r\n146\r\n0.0\r\n13\r\n0.0\r\n23\r\n0.0\r\n33\r\n0.0\r\n16\r\n1.0\r\n26\r\n0.0\r\n36\r\n0.0\r\n17\r\n0.0\r\n27\r\n1.0\r\n37\r\n0.0\r\n76\r\n1\r\n330\r\n1B\r\n0\r\nMATERIAL\r\n5\r\n1F\r\n102\r\n{ACAD_REACTORS\r\n330\r\nE\r\n102\r\n}\r\n330\r\nE\r\n100\r\nAcDbMaterial\r\n1\r\nByBlock\r\n2\r\n\r\n70\r\n0\r\n40\r\n1.0\r\n71\r\n1\r\n41\r\n1.0\r\n91\r\n-1023410177\r\n42\r\n1.0\r\n72\r\n1\r\n3\r\n\r\n73\r\n1\r\n74\r\n1\r\n75\r\n1\r\n44\r\n0.5\r\n73\r\n0\r\n45\r\n1.0\r\n46\r\n1.0\r\n77\r\n1\r\n4\r\n\r\n78\r\n1\r\n79\r\n1\r\n170\r\n1\r\n48\r\n1.0\r\n171\r\n1\r\n6\r\n\r\n172\r\n1\r\n173\r\n1\r\n174\r\n1\r\n140\r\n1.0\r\n141\r\n1.0\r\n175\r\n1\r\n7\r\n\r\n176\r\n1\r\n177\r\n1\r\n178\r\n1\r\n143\r\n1.0\r\n179\r\n1\r\n8\r\n\r\n270\r\n1\r\n271\r\n1\r\n272\r\n1\r\n145\r\n1.0\r\n146\r\n1.0\r\n273\r\n1\r\n9\r\n\r\n274\r\n1\r\n275\r\n1\r\n276\r\n1\r\n42\r\n1.0\r\n72\r\n1\r\n3\r\n\r\n73\r\n1\r\n74\r\n1\r\n75\r\n1\r\n94\r\n63\r\n0\r\nMATERIAL\r\n5\r\n20\r\n102\r\n{ACAD_REACTORS\r\n330\r\nE\r\n102\r\n}\r\n330\r\nE\r\n100\r\nAcDbMaterial\r\n1\r\nByLayer\r\n2\r\n\r\n70\r\n0\r\n40\r\n1.0\r\n71\r\n1\r\n41\r\n1.0\r\n91\r\n-1023410177\r\n42\r\n1.0\r\n72\r\n1\r\n3\r\n\r\n73\r\n1\r\n74\r\n1\r\n75\r\n1\r\n44\r\n0.5\r\n73\r\n0\r\n45\r\n1.0\r\n46\r\n1.0\r\n77\r\n1\r\n4\r\n\r\n78\r\n1\r\n79\r\n1\r\n170\r\n1\r\n48\r\n1.0\r\n171\r\n1\r\n6\r\n\r\n172\r\n1\r\n173\r\n1\r\n174\r\n1\r\n140\r\n1.0\r\n141\r\n1.0\r\n175\r\n1\r\n7\r\n\r\n176\r\n1\r\n177\r\n1\r\n178\r\n1\r\n143\r\n1.0\r\n179\r\n1\r\n8\r\n\r\n270\r\n1\r\n271\r\n1\r\n272\r\n1\r\n145\r\n1.0\r\n146\r\n1.0\r\n273\r\n1\r\n9\r\n\r\n274\r\n1\r\n275\r\n1\r\n276\r\n1\r\n42\r\n1.0\r\n72\r\n1\r\n3\r\n\r\n73\r\n1\r\n74\r\n1\r\n75\r\n1\r\n94\r\n63\r\n0\r\nMATERIAL\r\n5\r\n21\r\n102\r\n{ACAD_REACTORS\r\n330\r\nE\r\n102\r\n}\r\n330\r\nE\r\n100\r\nAcDbMaterial\r\n1\r\nGlobal\r\n2\r\n\r\n70\r\n0\r\n40\r\n1.0\r\n71\r\n1\r\n41\r\n1.0\r\n91\r\n-1023410177\r\n42\r\n1.0\r\n72\r\n1\r\n3\r\n\r\n73\r\n1\r\n74\r\n1\r\n75\r\n1\r\n44\r\n0.5\r\n73\r\n0\r\n45\r\n1.0\r\n46\r\n1.0\r\n77\r\n1\r\n4\r\n\r\n78\r\n1\r\n79\r\n1\r\n170\r\n1\r\n48\r\n1.0\r\n171\r\n1\r\n6\r\n\r\n172\r\n1\r\n173\r\n1\r\n174\r\n1\r\n140\r\n1.0\r\n141\r\n1.0\r\n175\r\n1\r\n7\r\n\r\n176\r\n1\r\n177\r\n1\r\n178\r\n1\r\n143\r\n1.0\r\n179\r\n1\r\n8\r\n\r\n270\r\n1\r\n271\r\n1\r\n272\r\n1\r\n145\r\n1.0\r\n146\r\n1.0\r\n273\r\n1\r\n9\r\n\r\n274\r\n1\r\n275\r\n1\r\n276\r\n1\r\n42\r\n1.0\r\n72\r\n1\r\n3\r\n\r\n73\r\n1\r\n74\r\n1\r\n75\r\n1\r\n94\r\n63\r\n0\r\nMLINESTYLE\r\n5\r\n22\r\n102\r\n{ACAD_REACTORS\r\n330\r\n10\r\n102\r\n}\r\n330\r\n10\r\n100\r\nAcDbMlineStyle\r\n2\r\nStandard\r\n70\r\n0\r\n3\r\n\r\n62\r\n256\r\n51\r\n90.0\r\n52\r\n90.0\r\n71\r\n2\r\n49\r\n0.5\r\n62\r\n256\r\n6\r\nBYLAYER\r\n49\r\n-0.5\r\n62\r\n256\r\n6\r\nBYLAYER\r\n0\r\nMLEADERSTYLE\r\n5\r\n2C\r\n102\r\n{ACAD_REACTORS\r\n330\r\nF\r\n102\r\n}\r\n330\r\nF\r\n100\r\nAcDbMLeaderStyle\r\n179\r\n2\r\n170\r\n2\r\n171\r\n1\r\n172\r\n0\r\n90\r\n2\r\n40\r\n0.0\r\n41\r\n0.0\r\n173\r\n1\r\n91\r\n-1056964608\r\n92\r\n-2\r\n290\r\n1\r\n42\r\n2.0\r\n291\r\n1\r\n43\r\n8.0\r\n3\r\nStandard\r\n44\r\n4.0\r\n300\r\n\r\n342\r\n29\r\n174\r\n1\r\n175\r\n1\r\n176\r\n0\r\n178\r\n1\r\n93\r\n-1056964608\r\n45\r\n4.0\r\n292\r\n0\r\n297\r\n0\r\n46\r\n4.0\r\n94\r\n-1056964608\r\n47\r\n1.0\r\n49\r\n1.0\r\n140\r\n1.0\r\n294\r\n1\r\n141\r\n0.0\r\n177\r\n0\r\n142\r\n1.0\r\n295\r\n0\r\n296\r\n0\r\n143\r\n3.75\r\n271\r\n0\r\n272\r\n9\r\n273\r\n9\r\n0\r\nDICTIONARY\r\n5\r\n2D\r\n330\r\nA\r\n100\r\nAcDbDictionary\r\n280\r\n1\r\n281\r\n1\r\n3\r\nCREATED_BY_EZDXF\r\n350\r\n2E\r\n3\r\nWRITTEN_BY_EZDXF\r\n350\r\n34\r\n0\r\nDICTIONARYVAR\r\n5\r\n2E\r\n330\r\n2D\r\n100\r\nDictionaryVariables\r\n280\r\n0\r\n1\r\n1.4.4 @ 2026-09-20T16:35:49.480756+00:00\r\n0\r\nDICTIONARYVAR\r\n5\r\n34\r\n330\r\n2D\r\n100\r\nDictionaryVariables\r\n280\r\n0\r\n1\r\n1.4.4 @ 2026-09-20T16:35:49.481535+00:00\r\n0\r\nENDSEC\r\n0\r\nEOF\r\n";
-  /** A back's engraving layer on a sheet ("BACK <poolId>[ Left|Right] / ENGRAVE"), and the hatching blue (charm-nest-geom.js hatchBlue). */
+  /* LASERSTAR (Paul, 12 Nov 2026, the LaserStar FiberStar software read our DXF with "most of the hatching missing", red engraving missing, and outlines in pink, red and black mixed up):
+     the DXF is written for laser software, which reads lines and polylines and colour numbers, not AutoCAD's fills:
+       · no HATCH entity: a filled area is its closed outline (LWPOLYLINE) plus the hatch itself as straight LINEs across it (holes left clear), every `hatchMm` (0.05 mm; window.CN_DXF_HATCH_MM)
+       · one colour per job, as a colour number only (no RGB beside it to disagree): CUT 7 (black), ENGRAVE 1 (red), HATCH 5 (blue); reference layers keep their own (SHEET, CUT OUTLINE, ROSE SEPARATION CUT)
+       · every charm's lines on its OWN layers: "<charm> - CUT", "<charm> - ENGRAVE", "<charm> - HATCH" (a back or a front laid above the sheet: "BACK <poolId> - ENGRAVE" ...), each layer the colour of its job
+       · no line widths and no extended data: a polyline is its centre line */
   const BACK_ENGRAVE = /^BACK \S+(?: (?:Left|Right))? \/ ENGRAVE$/, blueRGB = c => !!c && c.length >= 3 && c[2] >= 0.5 && c[2] - Math.max(c[0], c[1]) >= 0.4;
-  function dxf(paths, declaredLayers=[]) {
+  const REF_LAYER = /^SHEET(?: |$)|CUT OUTLINE|^ROSE SEPARATION CUT$/i, FACE_OWNER = /^((?:BACK|FRONT) \S+(?: (?:Left|Right))?) \/ /;
+  const ROLE_ACI = {CUT:7, ENGRAVE:1, HATCH:5};
+  const grey = c => !c || Math.max(c[0],c[1],c[2]) - Math.min(c[0],c[1],c[2]) <= 0.15;
+  function dxf(paths, declaredLayers=[], opts={}) {
+    const hatchMm=Math.max(0.005,+(opts.hatchMm||root.CN_DXF_HATCH_MM||0.05)), step=hatchMm/MM;   // (paths are in points: MM is mm per point)
     const colors=[[0,0,0],[255,0,0],[255,255,0],[0,255,0],[0,255,255],[0,0,255],[255,0,255],[0,0,0],[128,128,128],[192,192,192]];
     const rgb=v=>(v||[0,0,0]).map(n=>Math.max(0,Math.min(255,Math.round(n*255))));
-    const trueColor=c=>(c[0]<<16)+(c[1]<<8)+c[2];
     const aci=c=>{let best=7,score=Infinity;for(let i=1;i<colors.length;i++){let d=c.reduce((n,v,k)=>n+(v-colors[i][k])**2,0);if(d<score){best=i;score=d;}}return best;};
     const ascii=s=>String(s).replace(/[^\x20-\x7e]/g,c=>'\\U+'+c.charCodeAt(0).toString(16).toUpperCase().padStart(4,'0'));
     const names=new Map(),used=new Set(['0','defpoints']);
-    const layer=s=>{if(!names.has(s)){let n=ascii(s.replace(/[<>/\\":;?*|=]/g,'_')).slice(0,180)||'Artwork',i=2,base=n;while(used.has(n.toLowerCase()))n=base+'_'+i++;used.add(n.toLowerCase());names.set(s,n);}return names.get(s);};
-    const entities=[];const layerColors=new Map();
-    for(const name of declaredLayers)layerColors.set(layer(name),[0,0,0]);
+    const layer=s=>{if(!names.has(s)){let n=ascii(s.replace(/[<>/\\":;?*|=]/g,'_')).replace(/\s+/g,' ').trim().slice(0,180)||'Artwork',i=2,base=n;while(used.has(n.toLowerCase()))n=base+'_'+i++;used.add(n.toLowerCase());names.set(s,n);}return names.get(s);};
+    const entities=[],layerAci=new Map();
+    /** The layer and colour of a path's lines: its charm's layer for this job, or a reference layer as it is. */
+    const target=(path,role,refColor)=>{
+      const lay=path.layer||'Artwork';
+      if(REF_LAYER.test(lay)){const name=layer(lay),c=aci(rgb(refColor));if(!layerAci.has(name))layerAci.set(name,c);return {name,c};}
+      const fo=FACE_OWNER.exec(lay),owner=path.charm||(fo&&fo[1])||null;
+      const name=layer(owner?owner+' - '+role:role),c=ROLE_ACI[role];if(!layerAci.has(name))layerAci.set(name,c);return {name,c};
+    };
+    /** A filled area: its outline (closed polylines, holes too) and the hatch lines across it, even-odd so a hole stays clear. */
+    const fillArea=(loops,t)=>{
+      const polys=loops.map(l=>l.points).filter(p=>p.length>=3);if(!polys.length)return;
+      for(const p of polys)entities.push({type:'LWPOLYLINE',points:p,closed:true,layer:t.name,c:t.c});
+      let y0=Infinity,y1=-Infinity;for(const p of polys)for(const q of p){if(q[1]<y0)y0=q[1];if(q[1]>y1)y1=q[1];}
+      const edges=[];for(const p of polys)for(let i=0;i<p.length;i++){const a=p[i],b=p[(i+1)%p.length];if(a[1]!==b[1])edges.push(a[1]<b[1]?[a,b]:[b,a]);}
+      for(let y=y0+step/2;y<y1;y+=step){
+        const xs=[];for(const [a,b] of edges)if(y>=a[1]&&y<b[1])xs.push(a[0]+(y-a[1])*(b[0]-a[0])/(b[1]-a[1]));
+        xs.sort((m,n)=>m-n);for(let i=0;i+1<xs.length;i+=2)if(xs[i+1]-xs[i]>1e-6)entities.push({type:'LINE',a:[xs[i],y],b:[xs[i+1],y],layer:t.name,c:t.c});
+      }
+    };
+    for(const name of declaredLayers){const n=layer(name);if(!layerAci.has(n))layerAci.set(n,7);}   // (the sheet's own layer names stay listed, as before)
     for(const path of paths) {
-      const name=layer(path.layer||'Artwork');
-      // A charm's cut silhouette drawn as a FILL (productionPaths marks it) is a cut line: one closed polyline on its layer,
-      // never a solid hatch that the laser would take for engraving and that leaves the charm with no cut at all. Its filled
-      // twin beside a stroked outline adds nothing: that outline already cuts the line.
+      // A charm's cut silhouette drawn as a FILL (productionPaths marks it) is a cut line: one closed polyline, never a hatch. Its filled twin beside a stroked outline adds nothing.
       const cutFill=!!path.cutSilhouette && path.fill && !path.stroke;
       if(cutFill && path.cutSilhouette==='twin')continue;
-      // Black line art the grouping read as hatching (charm-nest-pdf.js "black LINE ART is blue hatching") is a blue HATCH of the area its line covers, never a hairline polyline.
-      // (BLUEBACK, Paul, 12 Nov 2026: a blue line on a back's ENGRAVE layer, the black line art an older back file drew there and compose turned blue, is hatching too: the blue area it covers)
+      // Black line art read as hatching (charm-nest-pdf.js), and a blue line on a back's ENGRAVE layer (BLUEBACK): the blue area the line covers, hatched
       if((path.hatchLine && path.hatchBlue || BACK_ENGRAVE.test(path.layer||'') && blueRGB(path.strokeRGB)) && path.stroke && !path.fill) {
-        const loops=vector().filled({subpaths:pdf().lineAreaOf(path),paintOp:'f*'});
-        if(loops.length){const color=rgb([0,0,1]);entities.push({type:'HATCH',loops,layer:name,color,fill:true});if(!layerColors.has(name))layerColors.set(name,color);}
+        fillArea(vector().filled({subpaths:pdf().lineAreaOf(path),paintOp:'f*'}),target(path,'HATCH',[0,0,1]));
         continue;
       }
       if(path.fill && !cutFill) {
-        const loops=vector().filled(path);
-        if(loops.length) {const color=rgb(path.hatchBlue?[0,0,1]:path.fillRGB);entities.push({type:'HATCH',loops,layer:name,color,fill:true});if(!layerColors.has(name))layerColors.set(name,color);}
+        // blue (and black or grey) filled art is hatching; any other colour is filled engraving, hatched in its own colour job
+        const role=path.hatchBlue||blueRGB(path.fillRGB)||grey(path.fillRGB)?'HATCH':'ENGRAVE';
+        fillArea(vector().filled(path),target(path,role,path.fillRGB));
       }
-      if(path.stroke || cutFill)for(const sub of path.subpaths||[]) {
-        const f=flatten(sub);if(f.points.length<2)continue;
-        const color=rgb(cutFill?path.fillRGB:path.strokeRGB);if(!layerColors.has(name))layerColors.set(name,color);
-        entities.push({...f,closed:cutFill?true:f.closed,type:'LWPOLYLINE',layer:name,color,width:Math.max(0,cutFill?Math.min(+path.lwPt||0,.25):+path.lwPt||0)*MM,fill:false});
+      if(path.stroke || cutFill) {
+        const c=cutFill?path.fillRGB:path.strokeRGB, role=cutFill||grey(c)?'CUT':blueRGB(c)?'HATCH':'ENGRAVE', t=target(path,role,c);
+        for(const sub of path.subpaths||[]){const f=flatten(sub);if(f.points.length<2)continue;entities.push({type:'LWPOLYLINE',points:f.points,closed:cutFill?true:f.closed,layer:t.name,c:t.c});}
       }
     }
     let text='',handle=0x1000;const add=(...pairs)=>{for(let i=0;i<pairs.length;i+=2)text+=pairs[i]+'\r\n'+pairs[i+1]+'\r\n';};
-    for(const [name,c] of layerColors)add(0,'LAYER',5,(handle++).toString(16).toUpperCase(),330,'1',100,'AcDbSymbolTableRecord',100,'AcDbLayerTableRecord',2,name,70,0,62,aci(c),420,trueColor(c),6,'CONTINUOUS',370,-3,390,'13',347,'21');
+    for(const [name,c] of layerAci)add(0,'LAYER',5,(handle++).toString(16).toUpperCase(),330,'1',100,'AcDbSymbolTableRecord',100,'AcDbLayerTableRecord',2,name,70,0,62,c,6,'CONTINUOUS',370,-3,390,'13',347,'21');
     const layerText=text; text='';
     let bounds=null;
-    const point = p => {
-      const x=+(p[0]*MM).toFixed(7),y=+(p[1]*MM).toFixed(7);
-      if(!Number.isFinite(x)||!Number.isFinite(y))throw new Error('DXF contains a non-finite coordinate.');
-      add(10,x,20,y);bounds=union(bounds,[x,y,x,y]);
-    };
+    const xy=p=>{const x=+(p[0]*MM).toFixed(5),y=+(p[1]*MM).toFixed(5);if(!Number.isFinite(x)||!Number.isFinite(y))throw new Error('DXF contains a non-finite coordinate.');bounds=union(bounds,[x,y,x,y]);return [x,y];};
     for(const ent of entities) {
-      add(0,ent.type,5,(handle++).toString(16).toUpperCase(),330,'17',100,'AcDbEntity',8,ent.layer,62,aci(ent.color),420,trueColor(ent.color));
-      if(ent.type==='HATCH') {
-        add(100,'AcDbHatch',10,0,20,0,30,0,210,0,220,0,230,1,2,'SOLID',70,1,71,0,91,ent.loops.length);
-        for(const loop of ent.loops) {
-          add(92,loop.hole?2:3,72,0,73,1,93,loop.points.length);
-          loop.points.forEach(point);add(97,0);
-        }
-        add(75,0,76,1,98,0,1001,'BRITES',1000,'SOLID_FILL');
-      } else {
-        add(100,'AcDbPolyline',90,ent.points.length,70,ent.closed?1:0,43,+ent.width.toFixed(7));
-        ent.points.forEach(point);add(1001,'BRITES',1000,'STROKE');
-      }
+      add(0,ent.type,5,(handle++).toString(16).toUpperCase(),330,'17',100,'AcDbEntity',8,ent.layer,62,ent.c);
+      if(ent.type==='LINE'){const a=xy(ent.a),b=xy(ent.b);add(100,'AcDbLine',10,a[0],20,a[1],30,0,11,b[0],21,b[1],31,0);}
+      else {add(100,'AcDbPolyline',90,ent.points.length,70,ent.closed?1:0,43,0);for(const p of ent.points){const q=xy(p);add(10,q[0],20,q[1]);}}
     }
     const [minX,minY,maxX,maxY]=bounds||[0,0,100,50],w=Math.max(1,maxX-minX),h=Math.max(1,maxY-minY);
-    const values={LAYERS:layerText,ENTITIES:text,LAYER_COUNT:layerColors.size+2,HANDSEED:handle.toString(16).toUpperCase(),MINX:minX,MINY:minY,MAXX:maxX,MAXY:maxY,CENTERX:(minX+maxX)/2,CENTERY:(minY+maxY)/2,VIEWHEIGHT:h*1.1,ASPECT:w/h};
+    const values={LAYERS:layerText,ENTITIES:text,LAYER_COUNT:layerAci.size+2,HANDSEED:handle.toString(16).toUpperCase(),MINX:minX,MINY:minY,MAXX:maxX,MAXY:maxY,CENTERX:(minX+maxX)/2,CENTERY:(minY+maxY)/2,VIEWHEIGHT:h*1.1,ASPECT:w/h};
     text=DXF_SCAFFOLD.replace(/\{\{(\w+)\}\}/g,(_,key)=>values[key]);
-    return {text,entityCount:entities.length,layers:[...names.entries()],colors:[...new Set(entities.map(e=>trueColor(e.color)))]};
+    const aciRgb={1:[255,0,0],5:[0,0,255],7:[0,0,0],8:[128,128,128]};
+    return {text,entityCount:entities.length,layers:[...names.entries()],colors:[...new Set(entities.map(e=>{const c=aciRgb[e.c]||colors[e.c]||[0,0,0];return (c[0]<<16)+(c[1]<<8)+c[2];}))],hatchMm};
   }
   function layerNames(parsed) {
     const L=lib();return [...new Set(parsed.doc.context.enumerateIndirectObjects().filter(([,o])=>o instanceof L.PDFDict&&o.get(L.PDFName.of('Type'))?.toString()==='/OCG').map(([,o])=>o.get(L.PDFName.of('Name'))?.decodeText?.()).filter(Boolean))];
