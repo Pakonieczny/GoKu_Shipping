@@ -9280,11 +9280,13 @@ try {
   function reload(){location.reload();}
   function show(){if(bar)return;bar=document.createElement("div");bar.setAttribute("data-cn-newver","");
     bar.style.cssText="position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:2147483000;background:#1d4ed8;color:#fff;font:600 14px system-ui,sans-serif;padding:10px 14px;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.35);display:flex;gap:12px;align-items:center";
-    bar.innerHTML='<span>A new version of the sorter is out. It reloads by itself after 2 minutes without use.</span><button type="button" style="font:700 13px system-ui,sans-serif;border:0;border-radius:7px;padding:6px 12px;background:#fff;color:#1d4ed8;cursor:pointer">Reload now</button>';
+    bar.innerHTML='<span>A new version of the sorter is out. Press Reload now when you are ready (a computer without a run open reloads by itself after 2 minutes without use).</span><button type="button" style="font:700 13px system-ui,sans-serif;border:0;border-radius:7px;padding:6px 12px;background:#fff;color:#1d4ed8;cursor:pointer">Reload now</button>';
     bar.querySelector("button").addEventListener("click",reload);(document.body||document.documentElement).appendChild(bar);}
   function check(){tag().then(function(t){if(!t)return;if(base===null){base=t;return;}if(t===base)return;seen=true;show();
-    if((document.hidden||Date.now()-last>=IDLE)&&okToAuto())reload();});}
-  setInterval(function(){if(seen){if((document.hidden||Date.now()-last>=IDLE)&&okToAuto())reload();return;}if(!document.hidden||Date.now()%300000<60000)check();},60000);
+    if(!runOpen()&&(document.hidden||Date.now()-last>=IDLE)&&okToAuto())reload();});}
+  // (NORELOADRUN, Paul 13 Nov 2026, the run stopped on Etsy's 429: a computer with a run open is never reloaded by itself; every reload re-checks the run's orders with Etsy. It shows the bar only)
+  function runOpen(){try{return !!(window.B&&window.B.run);}catch(_){return false;}}
+  setInterval(function(){if(seen){if(!runOpen()&&(document.hidden||Date.now()-last>=IDLE)&&okToAuto())reload();return;}if(!document.hidden||Date.now()%300000<60000)check();},60000);
   document.addEventListener("visibilitychange",function(){if(!document.hidden)check();});addEventListener("focus",check);
   check();
   window.CNNewVersion={check:check,state:function(){return {base:base,seen:seen,idleMs:Date.now()-last};}};
