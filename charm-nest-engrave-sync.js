@@ -165,7 +165,7 @@
           const keepState = rj.state, keepApproved = { approvedAt: rj.approvedAt, approvedBy: rj.approvedBy };
           j.keepPlace = plain(rj.place); if (j.keepPlace) j.keepPlace.fontKey = j.fontKey || j.keepPlace.fontKey;
           // (LIGHTLOAD, Paul 13 Nov 2026: "THE GRID": the page froze for over 45 s at every load while every piece was refitted and every outline read at once): at the start of the page a piece is not refitted here (its fields are in place); it is outlined and fitted when it is opened (watchOpen)
-          if (why === "start" && !onScreenKey(l.key)) { j.fit = null; j.view = null; j.mask = null; continue; }
+          if (why === "start" && !onScreenKey(l.key)) { if (!sameFit(j)) { j.fit = null; j.view = null; j.mask = null; } continue; }   // (NOFALLBACK, Paul 13 Nov 2026: "Look at the thumbnails" / "remove these fallbacks, make it work"): a fit this page holds that is the cloud's placement is kept; any other is fitted again in the background (fitMissing)
           j.fit = null; j.view = null; j.mask = null; j.state = "ready";
           await outline(j);   // (FITFIRST, Paul 13 Nov 2026: "the bottom options below the grid are not working" / "the grid seems to ALWAYS update after 1-2 minutes"): the charm's outline is read FIRST: a fit made without it failed in silence, the words had no place, the controls under the grid nothing to act on
           try { await E().fitJob(j); } catch (e) { console.warn("[engrave-sync] fit", l.key, e); }
@@ -209,7 +209,7 @@
     if (seed.length) { st.seeded = true; await send(seed); }
     safe(() => S().schedule());
     safe(() => E().render()); safe(() => O().render());
-    setTimeout(prewarm, 4000);   // (LIGHTLOAD, Paul 13 Nov 2026: "THE GRID": the page froze for over 45 s at every load while every piece was refitted and every outline read at once): no bulk refit at start; outlines are read slowly in the background, one every 1.2 s
+    setTimeout(() => fitMissing(() => setTimeout(prewarm, 1000)), 1500);   // (NOFALLBACK, Paul 13 Nov 2026: "Look at the thumbnails" / "remove these fallbacks, make it work"): every piece with words gets its piece and is fitted in the background, newest first, one at a time; then outlines are read; (LIGHTLOAD, Paul 13 Nov 2026: "THE GRID": the page froze for over 45 s at every load while every piece was refitted and every outline read at once): no bulk refit at start; outlines are read slowly in the background, one every 1.2 s
   }
   /* (GRIDNOW, Paul 13 Nov 2026: "It still shows up without the grid for several seconds"): every piece waiting in Design & Engrave has its charm's outline read in the background, one at a time while the page is idle, so a card opened later draws its grid at once */
   /** The charm outline of a job's piece on this page (its sheet's charm, else its preview, read now when this page has neither). */
@@ -217,8 +217,17 @@
   async function outline(j) { const P = root.Pool, pid = j && (j.copies || [])[0], line = j && j.row && (j.row.parentRow || j.row); if (!P || !pid || !line) return; if (safe(() => P.charmOf(pid) || P.previewCharmOf(pid), null)) return; try { await P.preview(line); } catch (_) {} }
   /** (FITFIRST, Paul 13 Nov 2026: "the bottom options below the grid are not working" / "the grid seems to ALWAYS update after 1-2 minutes"): a job with words and no fit (fitted before its outline was here, or never) is fitted now, at the place the cloud says; its state stays. -> true when it has a fit */
   const FITTING = new Set();
+  /** (NOFALLBACK, Paul 13 Nov 2026: "Look at the thumbnails" / "remove these fallbacks, make it work"): the fit a job holds is the cloud's placement (same words, same centre and size) */
+  function sameFit(j) { const f = j && j.fit, k = j && j.keepPlace; if (!f || !k || !Array.isArray(f.centre) || !Array.isArray(k.centre)) return false; return (f.lines || []).join("\n") === (k.lines || j.lines || []).join("\n") && Math.abs(f.centre[0] - k.centre[0]) < 0.05 && Math.abs(f.centre[1] - k.centre[1]) < 0.05 && Math.abs((+f.size || 0) - (+k.size || 0)) < 0.02; }
+  /** (NOFALLBACK, Paul 13 Nov 2026: "Look at the thumbnails" / "remove these fallbacks, make it work"): a piece not on a sheet yet carries the ids its piece WILL get (Pool.previewIds, the way the computer that made the job did, ENGPRE); a job that arrived here without them is given them, its preview made when this page has none */
+  async function ensureCopies(j) {
+    if (!j || (j.copies || []).length) return; const P = root.Pool, line = j.row && (j.row.parentRow || j.row); if (!P || typeof P.previewIds !== "function" || !line || (line.poolIds || []).length) return;
+    let ids = safe(() => P.previewIds(line), []) || []; if (!ids.length) { try { await P.preview(line); } catch (_) {} ids = safe(() => P.previewIds(line), []) || []; } if (!ids.length) return;
+    const m = /^D(\d+)$/.exec(String(j.slot || "")), pick = j.slot ? (m ? [ids[Math.min(+m[1] - 1, ids.length - 1)]] : []) : ids.slice(); if (pick.length) { j.copies = pick; j.pre = true; }
+  }
   async function fitOne(j) {
-    if (!j || j.fit || FITTING.has(j.key) || !["review", "approved", "ready"].includes(j.state) || !(j.lineInput || j.lines || []).length) return !!(j && j.fit);
+    if (j && !j.fit && (j.lineInput || j.lines || []).length) await ensureCopies(j);
+    if (!j || j.fit || FITTING.has(j.key) || !["review", "approved", "ready", "written"].includes(j.state) || !(j.lineInput || j.lines || []).length) return !!(j && j.fit);
     const line = j.row && (j.row.parentRow || j.row); if (!line) return false;
     FITTING.add(j.key); TAKING.add(line.key);
     const keep = { state: j.state, approvedAt: j.approvedAt, approvedBy: j.approvedBy };
@@ -238,10 +247,11 @@
     setInterval(() => { safe(() => { const c = root.document && root.document.querySelector(".rvItem.full"), j = c && c._job; if (!j) return; const pid = (j.copies || [])[0]; const needOutline = pid && !safe(() => root.Pool.charmOf(pid) || root.Pool.previewCharmOf(pid), null); if (j.fit && !needOutline) return; if (FITTING.has(j.key)) return; (j.fit ? outline(j) : fitOne(j)).then(() => safe(() => E().render())).catch(() => {}); }); }, 600);
   }
   /** Every other job with words and no fit, a few at a time while the page is idle */
-  function fitMissing() {
-    const todo = safe(() => [...E().items().values()].filter(j => !j.fit && ["review", "approved", "ready"].includes(j.state) && (j.lineInput || j.lines || []).length), []);
+  function fitMissing(done) {
+    const rid = j => String((j.row && (j.row.parentRow || j.row) && (j.row.parentRow || j.row).order && (j.row.parentRow || j.row).order.receiptId) || "");
+    const todo = safe(() => [...E().items().values()].filter(j => !j.fit && ["review", "approved", "ready", "written"].includes(j.state) && (j.lineInput || j.lines || []).length).sort((a, b) => rid(b).localeCompare(rid(a))), []);   // (newest first, as the list shows them)
     const idle = f => (typeof root.requestIdleCallback === "function" ? root.requestIdleCallback(f, { timeout: 1500 }) : setTimeout(f, 40));
-    let n = 0; const step = () => { const j = todo.shift(); if (!j) { if (n) safe(() => E().render()); return; } fitOne(j).then(ok => { if (ok) n++; }).catch(() => {}).then(() => idle(step)); };
+    let n = 0; const step = () => { const j = todo.shift(); if (!j) { if (n) safe(() => E().render()); if (typeof done === "function") safe(done); return; } fitOne(j).then(ok => { if (ok) { n++; safe(() => root.CharmNestMadeThumb && root.CharmNestMadeThumb.changed("fit", [(j.copies || [])[0]].filter(Boolean))); if (n % 8 === 0) safe(() => E().render()); } }).catch(() => {}).then(() => setTimeout(() => idle(step), 40)); };
     idle(step);
   }
   function prewarm() {
