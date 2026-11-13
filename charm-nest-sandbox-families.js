@@ -41,6 +41,7 @@
     fs("Charm_Nest_Release", "release records"),
     fs("Charm_Pool", "pool rows"),
     fs("Charm_Pool_Back", "back pool rows"),
+    fs("Charm_Nest_Engrave", "engraving work shared by every computer"),   // (ENGRSYNC, Paul 13 Nov 2026: charmNestLibrary.js op_engraveSyncPut)
     fs("Charm_Pool_Art", "piece artwork edits"),   // (ART EDIT, Paul 27 Oct 2026: one piece's own changes to its master artwork, charmNestLibrary.js op_artPut)
     fs("Charm_Designs", "design library", { subs: ["versions"] }),   // (DESIGNS, Paul 28 Oct 2026: every version of every charm saved in the Charm Editor, charmNestLibrary.js op_designPut; its count is Sandbox_Order_Rev/_designs, its pictures and big faces charmnest/sandbox/designs/, both wiped with their families below)
     fs("Charm_Nest_Arrivals", "arrival records"),

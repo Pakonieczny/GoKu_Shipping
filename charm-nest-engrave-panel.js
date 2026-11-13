@@ -189,6 +189,7 @@
   function gateOf(vm, d, key) {
     const c = COMMITS.get(key), dirty = dirtyOf(vm, d, key);
     if (c && sameStage(d, c.stage) && (RUNNING.has(key) || PENDING.has(key))) return { st: 'ok', dirty };   // (the press of exactly this stage is being kept, or waits its turn: "Approved ✓"; data-dirty still says the jobs do not hold it yet)
+    if (d.choice === 'none') return { st: 'approve', dirty };   // (NONEALWAYS, Paul 13 Nov 2026: "I cannot approve the option of none, why the fuck are you blocking me ... I should be able to approve any one I want"): None is approved whatever state the piece is in (being read, placed, approved before)
     const empty = emptyFaces(vm, d);
     if (dirty) {
       if (empty.length) return { st: 'need', faces: empty, dirty };
