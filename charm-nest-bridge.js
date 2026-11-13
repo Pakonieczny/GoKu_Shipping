@@ -29187,7 +29187,10 @@ async function bootBridge() {
     const open = runs.filter(x => !["complete", "abandoned"].includes(x.status));
     if (open.length) { B.openRuns = open; agent({ bridge: true }, "DS", `${open.length} open run(s) on record — offered on the run banner`); RunCtl.renderBanner(); }
     const last = runs.find(x => x.lines > 0);
-    if (last && !B.run && !B.orders.rows.length && !Recall.on()) Recall.open({ runId: last.runId, quiet: true }).catch(() => {});
+    // (FOLLOWOPEN, Paul 13 Nov 2026: "you completely broke the design and engrave tab" / "Why would you put this button in there that resets all the orders"): while a run is OPEN on another computer, this computer follows it from the cloud (charm-nest-run-follow.js: every line, its state, new orders, lines taken out) and keeps its own
+    //  tabs. It is never opened here as an earlier set: that view shows only the run's saved sheets (Design & Engrave held 7 pieces of 229) and parks new orders behind a button
+    if (open.length && !B.run) { try { window.CharmNestRunFollow && window.CharmNestRunFollow.now("boot"); } catch (_) {} }
+    else if (last && !B.run && !B.orders.rows.length && !Recall.on()) Recall.open({ runId: last.runId, quiet: true }).catch(() => {});
     // (CLOUDLINES, Paul 13 Nov 2026: the other computer showed only the 7 newest orders until its data was deleted: its saved copy held fewer of the run's lines than the cloud. The run is read
     //  from the cloud, as on a clean computer. A set opened on purpose (its own orders only) is left as it is)
     else if (last && !B.run && B.orders.rows.length < +last.lines && !(Recall.on() && Recall.state().setId)) { agent({ bridge: true }, "cloud", `This computer's saved copy showed ${B.orders.rows.length} order line(s); the run holds ${last.lines}: reading it from the cloud`); Recall.open({ runId: last.runId, quiet: true }).catch(() => {}); }
