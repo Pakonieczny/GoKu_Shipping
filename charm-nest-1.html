@@ -6587,7 +6587,11 @@ async function finishNest(sh, { result, error }) {
         try { render = await renderCheck(sh, aiBytes, xf.specBase, st, new Map(xf.specBase.placements.map(p => [p.layerName, p.layerSig])), areas); } catch (e) { render = { ok: false, error: e.message }; }
       }
     } catch (e) { log(sh, "exact overlap check could not run: " + e.message); sh.exactOverlap = { at: Date.now(), ok: false, error: String(e.message || e) }; }
-    sh.verification = { geom, render, ok: geom.ok && !!(render && render.ok) && !(sh.exactOverlap && sh.exactOverlap.ok === false), minGapPt: geom.minGapPt, minEdgePt: geom.minEdgePt, exact: sh.exactOverlap || null };
+    // (OVNOHOLD, Paul 12 Nov 2026: "just because there's an overlap that should never prevent a sheet from being added to a set, never": an overlap left after every fix is a warning on the
+    //  sheet, never a hold. Only an error, a charm outside the sheet or in a corner, an empty layer or a moved protected placement flags it)
+    const overlapLeft = !(geom.ok && render && render.ok) && onlyOverlapLeft(render, geom), exactLeft = !!(sh.exactOverlap && sh.exactOverlap.ok === false && !sh.exactOverlap.error);
+    sh.verification = { geom, render, ok: (geom.ok && !!(render && render.ok)) || overlapLeft, overlapLeft: overlapLeft || exactLeft, minGapPt: geom.minGapPt, minEdgePt: geom.minEdgePt, exact: sh.exactOverlap || null };
+    if (overlapLeft || exactLeft) agent({ metal: sh.metal }, "warn", `${(window.CharmNestSheetName && CharmNestSheetName.name(sh)) || sh.sheetId}: an overlap is left (${exactLeft ? sh.exactOverlap.pairs.map(p => p.a + " ↔ " + p.b + " " + p.mm2 + " mm²").join("; ") : (geom.overlapPx || render.overlapPx) + " px"}); it does not hold the sheet`);
     // (MCFREE, Paul 20 Oct 2026: charms a person placed by hand where they overlap, or run past the sheet's margin (Manual Control's own check, CNManual.conflicts), flag the
     //  sheet as its verifier does, whatever the pixels say: it joins no set, gets no green line and goes to no laser until they are moved clear)
     try { const hand = window.CNManual && typeof CNManual.conflicts === "function" ? CNManual.conflicts(sh, { placed: true }).n : 0; if (hand) Object.assign(sh.verification, { ok: false, handOverlap: hand }); } catch (_) {}
@@ -6595,9 +6599,10 @@ async function finishNest(sh, { result, error }) {
       const allow = (+S.settings.clearancePt || 0) < 0 ? fmt.mm(-S.settings.clearancePt) + " stroke share" : "0";
       const pairs = geom.overlappingPairs.map(p => p.map(id => (byId.get(id) || {}).name || id).join("↔")).join("; ");
       const renderMsg = render && !render.ok ? " · render: " + (render.error || (render.overlapPx + " px overlap, " + render.outsidePx + " px outside" + (render.cornerPx ? ", " + render.cornerPx + " px in a corner keep-out" : ""))) : "";
-      agent({ metal: sh.metal }, sh.verification.ok ? "verify" : "warn", sh.verification.ok
+      const clean = sh.verification.ok && !sh.verification.overlapLeft;
+      agent({ metal: sh.metal }, clean ? "verify" : "warn", clean
         ? "Verified twice: geometry at " + geom.res + " px/pt and the written file re-rendered layer by layer — no overlap beyond the allowed " + allow + ", nothing outside the sheet or in its corners"
-        : "Verification flagged: " + (geom.error ? "geometry check did not run: " + geom.error : geom.overlapPx ? geom.overlapPx + " px overlap (" + pairs + ")" : "") + (geom.cornerPx ? ` · ${(geom.cornerIds || []).length || 1} charm${(geom.cornerIds || []).length === 1 ? "" : "s"} in a sheet corner's ${fmt.mm(cornerPtSetting(sh))} keep-out (${(geom.cornerIds || []).map(id => (byId.get(id) || {}).name || id).join(", ")})` : "") + renderMsg + (sh.verification.handOverlap ? ` · ${sh.verification.handOverlap} charms placed by hand overlap or run past the sheet's margin (Manual Control)` : ""));
+        : (sh.verification.ok ? "Overlap left, it does not hold the sheet: " : "Verification flagged: ") + (geom.error ? "geometry check did not run: " + geom.error : geom.overlapPx ? geom.overlapPx + " px overlap (" + pairs + ")" : "") + (geom.cornerPx ? ` · ${(geom.cornerIds || []).length || 1} charm${(geom.cornerIds || []).length === 1 ? "" : "s"} in a sheet corner's ${fmt.mm(cornerPtSetting(sh))} keep-out (${(geom.cornerIds || []).map(id => (byId.get(id) || {}).name || id).join(", ")})` : "") + renderMsg + (sh.verification.handOverlap ? ` · ${sh.verification.handOverlap} charms placed by hand overlap or run past the sheet's margin (Manual Control)` : ""));
     }
     // (CUSTOMPOOL, Paul 28 Oct 2026: "You need to ensure the sanctity of the designed charm": the file of a sheet holding a custom design sent at its exact size is read back first; a piece
     //  written at another size or with other parts than its design's hash stops the save, loudly: charm-nest-custom-pool.js checkWritten)
@@ -6726,8 +6731,11 @@ async function fixOverlaps(sh, o) {
    This check reads the written file itself: every charm's cut outline (charm-nest-export.js productionPaths, the same lines the .ai and the .dxf carry), and every pair of charms whose
    outlines share ANY area (over EXACT_EPS_MM2) is an overlap, whatever the clearance. The fix (SHRINKBOTH): both charms shrink together about their own centres, 0.5 % at a time, never past
    2.5 % in all (OVF_MIN_SCALE); when that cannot clear it, the smaller movable one is nudged straight away from the other (up to 1 mm), never into a third charm or past the inset. The file
-   is written again and read again, at most three rounds; what is still left flags the sheet (sh.exactOverlap.ok false: verification fails, it joins no set and goes to no laser). */
-const EXACT_EPS_MM2 = 0.0005, EXACT_MM = 25.4 / 72;
+   is written again and read again, at most three rounds. (MORESHRINK, Paul 12 Nov 2026: "just shrink them a little more") when that cannot clear it, both shrink a little more, up to 6 % in all,
+   each moved up to 1 mm away from the other. What is still left is a warning on the sheet (sh.exactOverlap.ok false), never a hold: it still joins its set (OVNOHOLD). */
+/** (OVNOHOLD) the two checks flag nothing but overlap: no error, nothing outside the sheet or in a corner, no empty layer, nothing removed or protected moved. */
+const onlyOverlapLeft = (r, g) => !!r && !!g && !r.error && !g.error && !r.outsidePx && !r.cornerPx && !(r.emptyLayers || []).length && !g.outsidePx && !g.cornerPx && !g.removedPx && !g.protectedMoved;
+const EXACT_EPS_MM2 = 0.0005, EXACT_MM = 25.4 / 72, EXACT_MORE_SCALE = 0.94;
 async function exactOverlaps(aiBytes, st) {
   const V = window.CharmNestVector, E = window.CharmNestExport, P = window.CharmNestPDF;
   if (!V || !E || !P || !aiBytes) return null;
@@ -6812,6 +6820,23 @@ async function exactFix(sh, o) {
           }
         }
       }
+      // 3 · (MORESHRINK) both shrink a little more, up to 6 % in all, each moved up to 1 mm apart along the line between them (±30°)
+      if (!got) {
+        const more = p => may(p) ? Math.max(0, 1 - EXACT_MORE_SCALE / (p.fixScale || 1)) : 0;
+        const [ax, ay] = piv(A), [bx, by] = piv(B), base = Math.atan2(ay - by, ax - bx), step = 0.1 / EXACT_MM;
+        more: for (let k = 1; k <= 12; k++) {
+          const s = 1 - 0.005 * k, sa = Math.max(1 - more(A), s), sb = Math.max(1 - more(B), s);
+          for (let t = 0; t <= 6; t++) {
+            const th = base + (t % 2 ? 1 : -1) * Math.ceil(t / 2) * Math.PI / 18, vx = Math.cos(th), vy = Math.sin(th);
+            for (let da = 0; da <= 10; da++) for (let db = 0; db <= 10; db++) {
+              const dA = locked.has(A.id) ? 0 : da * step, dB = locked.has(B.id) ? 0 : db * step;
+              const ma = exactMoved(sa0, sa, ax, ay, vx * dA, vy * dA), mb = exactMoved(sb0, sb, bx, by, -vx * dB, -vy * dB);
+              if (exactShared(ma, mb) <= EXACT_EPS_MM2 && inside(ma) && inside(mb) && clearOfOthers(ma, pr.b) && clearOfOthers(mb, pr.a)) { got = [{ p: A, s: sa, dx: vx * dA, dy: vy * dA, shape: ma }, { p: B, s: sb, dx: -vx * dB, dy: -vy * dB, shape: mb }]; break more; }
+            }
+          }
+          if (sa === 1 - more(A) && sb === 1 - more(B)) break;
+        }
+      }
       if (!got) continue;
       for (const g of got) { touched.add(g.p.layerName); cur.set(g.p.layerName, g.shape); if (g.s < 1 || g.dx || g.dy) planned.push(g); }
     }
@@ -6834,7 +6859,7 @@ async function exactFix(sh, o) {
   if (!ex) return null;
   sh.exactOverlap = { at: Date.now(), ok: !ex.pairs.length, pairs: ex.pairs.slice(0, 20), fixes };
   if (fixes.length) { const w = fixes.map(f => `${f.name} ${f.shrinkPct ? f.shrinkPct + "% smaller" : ""}${f.shrinkPct && f.movedMm ? ", " : ""}${f.movedMm ? "moved " + f.movedMm + " mm" : ""}`).join("; "); log(sh, `exact overlap check: cleared by ${w}`); agent({ metal: sh.metal }, ex.pairs.length ? "warn" : "ok", `Overlap (exact cut lines): ${w}${ex.pairs.length ? ` · still overlapping: ${ex.pairs.map(p => p.a + " ↔ " + p.b).join("; ")}` : ""}`); }
-  else if (ex.pairs.length) agent({ metal: sh.metal }, "warn", `Overlap (exact cut lines) not cleared within 2.5 % or 1 mm: ${ex.pairs.map(p => `${p.a} ↔ ${p.b} ${p.mm2} mm²`).join("; ")}`);
+  else if (ex.pairs.length) agent({ metal: sh.metal }, "warn", `Overlap (exact cut lines) not cleared within 6 % or 1 mm (it does not hold the sheet): ${ex.pairs.map(p => `${p.a} ↔ ${p.b} ${p.mm2} mm²`).join("; ")}`);
   return { aiBytes, labelledBytes, specBase, changed };
 }
 /** One footprint from the render's area ({X0, Y0, bw, bh, core}) and the geometry check's mask ({x0, y0, w, h, bits}), page pixels; either may be missing. */
