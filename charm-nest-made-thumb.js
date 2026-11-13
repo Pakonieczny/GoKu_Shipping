@@ -35,7 +35,7 @@
   if (root) root.CharmNestMadeThumb = api;
 })(typeof self !== 'undefined' ? self : typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
-  const V = 5;                                   // the drawing's own version (sent with the picture, kept on the pool row's made.v: MADEV): 2 FACES (named, a hairline), 3 BIGTHUMB, 4 BOXFIX (drawn to the list's fixed box); a picture of an older drawing is drawn again and sent, paced
+  const V = 6;   // 6 FRONTART (the front of a piece not on a sheet drawn with its own art, not the back's bare outline)                                   // the drawing's own version (sent with the picture, kept on the pool row's made.v: MADEV): 2 FACES (named, a hairline), 3 BIGTHUMB, 4 BOXFIX (drawn to the list's fixed box); a picture of an older drawing is drawn again and sent, paced
   const TILE = 288, MARGIN = 0.02;               // a list box is drawn at least TILE device px high (BOXFIX: the cloud's picture: a 4:3 box, 384 x 288), each face with a 2 % margin
   const DEBOUNCE = 1500, MAX_WAIT = 6000, PACE = 1500, SWEEP = 120, REFRESH = 200;
   const MAX_PIECES = 4, INK = '#1c1a17', METAL = '#f1ece1', RULE = '#d6cfc2';
@@ -118,8 +118,14 @@
   const frameOf = (poolId, t) => safe(() => {
     const E = EP(); if (t.job) return E.frameFor({ job: t.job, face: t.face });
     const F = E.frameFor({ row: { poolIds: [poolId] }, face: t.face }); if (F && F.box) return F;
-    const pj = jobsOf(poolId), j = pj.front || pj.back; return j ? E.frameFor({ job: j, face: t.face }) : F;
+    // (FRONTART, Paul 13 Nov 2026: "Why is the front engraving not showing up in the thumbnails"): a job's frame is always ITS face (frameFor reads the face from the job), so the back's job asked for the front gave the back's bare outline: the front was drawn blank on every
+    //  piece not on a sheet. The face is framed from the piece's own charm (its preview), never from another face; a piece whose charm is not here yet has its preview made and the boxes look again
+    const pj = jobsOf(poolId), j = pj.front || pj.back, line = j && j.row && (j.row.parentRow || j.row);
+    const G = line ? E.frameFor({ row: { poolIds: [poolId], spec: line.spec }, face: t.face }) : null; if (G && G.box && G.face === t.face) return G;
+    if (line && root.Pool && typeof root.Pool.preview === 'function' && !ASKED.has(poolId)) { ASKED.add(poolId); Promise.resolve().then(() => root.Pool.preview(line)).catch(() => {}).then(() => retrySoon()); }
+    return null;
   }, null);
+  const ASKED = new Set();
   /* BLUEBACK (Paul, 12 Nov 2026: "all back engraving ... needs to be blue, the same blue we already have an option for in the editor ... including all the vector thumbnails of back engraving
      everywhere"): a BACK's words in the Charm Editor's hatch blue (CharmNestBacks.INK); a front's keep INK. (The back's added parts come blue from the frame: charm-nest-engrave-preview.js backInked.) */
   const BACK_INK = () => (root && root.CharmNestBacks && root.CharmNestBacks.INK) || '#1a5fc4';

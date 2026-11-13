@@ -261,7 +261,7 @@
   function charmFor(o) {
     const Pl = root && root.Pool; if (!Pl || typeof Pl.charmOf !== 'function') return null;
     const id = pieceIdOf(o);
-    try { return id ? Pl.charmOf(id) || null : null; } catch (_) { return null; }
+    try { return id ? Pl.charmOf(id) || (typeof Pl.previewCharmOf === 'function' ? Pl.previewCharmOf(id) : null) || null : null; } catch (_) { return null; }   // (FRONTART, Paul 13 Nov 2026: "Why is the front engraving not showing up in the thumbnails"): a piece not on a sheet yet is drawn from its preview charm (its own art), as the work area draws it
   }
   /** The charm of a line that has NO pool item yet (held, waiting, never nested: Paul, 13 Oct, a held disc whose Back box showed the front art): the design's own master drawing, read the way the nester reads it
    *  (Pool.masterCharm: one source per file, shared with everything else, cached by the page). One read per file, started by the first box that needs it; every box waiting for it paints again when it is
