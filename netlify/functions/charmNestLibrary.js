@@ -3396,7 +3396,7 @@ const runLibrarySig = d => JSON.stringify(d ? [d.liveLines && Array.isArray(d.li
 async function op_runPut(b) {
   const r = b.run || {}; const id = str(r.runId, 80); if (!isId(id)) return { error: "bad run id" };
   const doc = Object.assign({}, r, { runId: id, updatedAt: FV.serverTimestamp() }); delete doc.liveLines;
-  const parts = r.lines && typeof r.lines === "object" && !Array.isArray(r.lines) ? liveParts(id, r.lines) : null;
+  let parts = r.lines && typeof r.lines === "object" && !Array.isArray(r.lines) ? liveParts(id, r.lines) : null;
   if (parts && parts.some(p => p.bytes > 1000000)) return { error: "a piece of this run is too large to save" };
   if (parts) { delete doc.lines; doc.liveLines = { ids: parts.map(p => p.id), lines: parts.reduce((n, p) => n + p.lines, 0), bytes: parts.reduce((n, p) => n + p.bytes, 0) }; }
   const plain = Object.assign({}, doc, { updatedAt: 0 }), bytes = Buffer.byteLength(JSON.stringify(plain)), entries = OrderRules.indexEntries(plain);   // measured without the server's time mark
@@ -3407,6 +3407,14 @@ async function op_runPut(b) {
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : null, put = Object.assign({}, doc);
     put.createdAt = old ? (old.createdAt || FV.serverTimestamp()) : FV.serverTimestamp();
     const had = old && old.liveLines && Array.isArray(old.liveLines.ids) ? old.liveLines.ids : [];
+    // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer": an order line changed on any computer (taken off, held, cancelled) is written to the cloud run by that computer): a line another computer changed (its stamp _lp) after the copy this save was made from keeps that change
+    if (parts && old && old.lineEditAt && had.length) {
+      const docs = await Promise.all(had.map(x => tx.get(col(RUN_LIVE).doc(x)))), stored = {};
+      for (const d of docs) if (d.exists) { try { Object.assign(stored, JSON.parse(d.data().json || "{}")); } catch (_) { /* unreadable: nothing kept from it */ } }
+      const merged = Object.assign({}, r.lines); let kept = 0;
+      for (const [k, l] of Object.entries(stored)) { const lp = l && l._lp; if (!lp || !merged[k]) continue; const inLp = merged[k]._lp; if (!inLp || (+inLp.at || 0) < (+lp.at || 0)) { merged[k] = l; kept++; } }
+      if (kept) { parts = liveParts(id, merged); put.liveLines = { ids: parts.map(p => p.id), lines: parts.reduce((n, p) => n + p.lines, 0), bytes: parts.reduce((n, p) => n + p.bytes, 0) }; }
+    }
     if (parts) {
       // a part is named by its content: one the record already lists is there as it is
       const keep = new Set(put.liveLines.ids), have = new Set(had);
@@ -3446,6 +3454,44 @@ async function op_runArchive(b) {
   }
   const batch = db.batch(); for (const [ref, doc] of docs) batch.set(ref, doc); await batch.commit();
   return { ok: true, parts: docs.length, lines: docs.reduce((n, [, d]) => n + d.lines, 0) };
+}
+/* ── (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer": an order line changed on any computer (taken off, held, cancelled) is written to the cloud run by that computer) ──
+   runLinesPatch { runId, lines: { lineKey: { state, poolIds, reason, hold, heldAt, holdSeen, wait, frontAt, engrave } }, dev, by }: in ONE transaction the run's live lines are read,
+   the named lines get those fields (a line the run no longer holds is left alone) and a stamp _lp { at, dev, by }, and the record notes lineEditAt. A whole save of the run (runPut)
+   made from a copy older than a line's stamp keeps that line as the stamp left it (see op_runPut), so one computer's change is never undone by another's older copy. */
+const LINE_PATCH_FIELDS = ["state", "poolIds", "reason", "hold", "heldAt", "holdSeen", "wait", "frontAt", "engrave"];
+async function op_runLinesPatch(b) {
+  const id = str(b.runId, 80); if (!isId(id)) return { error: "bad run id" };
+  const set = b.lines && typeof b.lines === "object" && !Array.isArray(b.lines) ? b.lines : null;
+  const keys = set ? Object.keys(set).filter(k => /^[\w\-]{3,80}$/.test(k)).slice(0, 300) : [];
+  if (!keys.length) return { error: "no lines to change" };
+  const at = Date.now(), dev = str(b.dev, 40) || "", by = str(b.by, 80) || "", ref = col(RUNS).doc(id);
+  let applied = [];
+  const refused = await db.runTransaction(async tx => {
+    const ex = await tx.get(ref); if (!ex.exists) return { error: "that run is not in the cloud", status: 404 };
+    const old = ex.data(), had = old.liveLines && Array.isArray(old.liveLines.ids) ? old.liveLines.ids : [];
+    let lines = {};
+    if (had.length) { const docs = await Promise.all(had.map(x => tx.get(col(RUN_LIVE).doc(x)))); if (docs.some(d => !d.exists)) throw new Error("the run was saved while its lines were read: try again"); for (const d of docs) Object.assign(lines, JSON.parse(d.data().json || "{}")); }
+    else lines = Object.assign({}, old.lines || {});
+    applied = [];
+    for (const k of keys) {
+      const cur = lines[k]; if (!cur || typeof cur !== "object") continue;
+      const patch = set[k] && typeof set[k] === "object" ? set[k] : {}, next = Object.assign({}, cur);
+      for (const f of LINE_PATCH_FIELDS) if (Object.prototype.hasOwnProperty.call(patch, f)) next[f] = patch[f];
+      next._lp = { at, dev, by }; lines[k] = next; applied.push(k);
+    }
+    if (!applied.length) return null;
+    const parts = liveParts(id, lines);
+    if (parts.some(p => p.bytes > 1000000)) return { error: "a piece of this run is too large to save" };
+    const keep = new Set(parts.map(p => p.id)), have = new Set(had);
+    for (const p of parts) if (!have.has(p.id)) tx.set(col(RUN_LIVE).doc(p.id), { runId: id, json: p.json, bytes: p.bytes, lines: p.lines, seq: p.seq, createdAt: FV.serverTimestamp() });
+    for (const x of had) if (!keep.has(x)) tx.delete(col(RUN_LIVE).doc(x));
+    tx.set(ref, { liveLines: { ids: parts.map(p => p.id), lines: parts.reduce((n, p) => n + p.lines, 0), bytes: parts.reduce((n, p) => n + p.bytes, 0) }, lines: FV.delete(), lineEditAt: at, updatedAt: FV.serverTimestamp() }, { merge: true });
+    return null;
+  });
+  if (refused) return refused;
+  if (applied.length) revTouch(b, ["r:" + id]);
+  return { ok: true, runId: id, applied, at };
 }
 async function op_runGet(b) {
   const id = str(b.runId, 80); if (!isId(id)) return { error: "bad run id" };
@@ -5002,6 +5048,7 @@ NO_GEN_BUMP.add("customPieceList");   // CUSTOMPOOL (Paul, 28 Oct 2026): a desig
 async function op_artPrepoolList() { const s = await col(ART).doc("_prepool").get(); const ids = s.exists && s.data() && s.data().ids && typeof s.data().ids === "object" ? s.data().ids : {}; return { ids }; }
 Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList, artPrepoolList: op_artPrepoolList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList"); NO_GEN_BUMP.add("artPrepoolList");
 Object.assign(OPS, { traceSrcPut: op_traceSrcPut, traceSrcGet: op_traceSrcGet }); NO_GEN_BUMP.add("traceSrcPut"); NO_GEN_BUMP.add("traceSrcGet");   // TRACESRC (28 Oct 2026): the picture a traced image was made from, in Storage by its own hash (op_traceSrcPut above); no pool row, sheet or Library record is written
+OPS.runLinesPatch = op_runLinesPatch;   // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer": an order line changed on any computer (taken off, held, cancelled) is written to the cloud run by that computer)
 OPS.engraveSyncPut = op_engraveSyncPut; OPS.engraveSyncGet = op_engraveSyncGet; NO_GEN_BUMP.add("engraveSyncPut"); NO_GEN_BUMP.add("engraveSyncGet");   // ENGRSYNC (13 Nov 2026): a line's engraving work shared by every computer (op_engraveSyncPut above)
 OPS.madeThumbPut = op_madeThumbPut;   // THUMBSYNC (28 Oct 2026): a piece's picture as it will be made, kept on its pool row (op_madeThumbPut above); it writes a pool row, so the placement counter moves
 /* DESIGN LOG (Paul, 28 Oct 2026: "I need to know when employees are commissioning custom pieces, especially when they don't belong to an order"): designLog {records} keeps one
