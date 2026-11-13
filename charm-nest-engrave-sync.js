@@ -43,6 +43,8 @@
   const SIGS = new Map();      // line key -> the signature of what this page last sent or took (a change is one that differs)
   const LOCAL_AT = new Map();  // line key -> when this page last saw it change by itself (a press here)
   const TAKING = new Set();    // line keys being put on the page now (their changes are not sends)
+  const WAITING = new Map();   // line key -> a cloud record whose line was not on this page yet
+  async function retryWaiting() { if (!WAITING.size) return 0; const lines = linesNow(); let n = 0; for (const [k, l] of [...WAITING]) { if (!lines.has(k)) continue; WAITING.delete(k); if (await take(l, "keys")) n++; } if (n) { safe(() => E().render()); safe(() => O().render()); } return n; }
   const RAISED = new Set();    // line keys the cloud says are ones to engrave: kept raised here across every re-reading of the order (Orders.interpretAll reads the spec again)
   const raise = line => { if (line && line.spec && !line.spec.engraveCandidate) { line.spec.engraveCandidate = true; line.spec.engraveRaised = true; } };
   let timer = 0, firstAt = 0;
@@ -89,6 +91,7 @@
   }
   async function sweep() {
     timer = 0; firstAt = 0;
+    try { await retryWaiting(); } catch (_) {}
     if (st.busy) { changed(); return; }
     const out = [];
     for (const [key, line] of linesNow()) {
@@ -126,7 +129,8 @@
   }
   /** One line the cloud holds put on this page, when it is another's newer work. -> true when it was taken. */
   async function take(l, why) {
-    const all = linesNow(), line = all.get(l.key); if (!line || !l.rec) return false;
+    const all = linesNow(), line = all.get(l.key); if (!l.rec) return false;
+    if (!line) { WAITING.set(l.key, l); return false; }   // (NEWLINES, Paul 13 Nov 2026: "What about future orders?"): the line has not reached this computer yet: taken when it does (retryWaiting)
     const mine = l.dev && l.dev === dev(), localAt = LOCAL_AT.get(l.key) || 0;
     if (Date.now() - localAt < OWN_HOLD) return false;   // (a press made here a moment ago: it is sent, and wins)
     const sigNow = sigOf(line); if (l.sig && sigNow === l.sig) { SIGS.set(l.key, sigNow); return false; }
