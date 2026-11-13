@@ -27730,10 +27730,10 @@ const Session = window.Session = (() => {
     if (WORKSPACE_SANDBOX && d.streamId && window.Sandbox && Sandbox.restoredStream) { try { Sandbox.restoredStream(d.streamId); } catch (_) {} }
     // the sheets cut short while nesting, whose best-layout records restore reads (and a reload before the next checkpoint reads again)
     const cutShort = cutShortIn((d.sheets || []).flatMap(g => g.pages || []));
+    let cloud = null;   // (CLOUDLINES: the run's record in the cloud, read below; it is the authority on which order lines the run holds)
     try {
       // A purged/abandoned cloud run must never be resurrected by an old browser checkpoint.
       if (d.run && S.cloud.ok) {
-        let cloud;
         try { cloud = await api("charmNestLibrary", { op: "runGet", runId: d.run.runId }, { quiet: true }); }
         catch (e) { d.run.saveError = "Cloud check unavailable: " + e.message; }
         if (cloud?.run?.status === "abandoned" || cloud?.run?.status === "complete" && d.run.status !== "complete" || cloud && !cloud.run && d.run.cloudSavedAt && !d.run.saveError) { sweepBest(new Set()); return false; }
@@ -27770,6 +27770,15 @@ const Session = window.Session = (() => {
       S.sources = d.sources || []; S.poolSources = d.poolSources || {}; S.unassigned = d.unassigned || [];
       B.carry = d.carry;
       B.run = d.run; B.orders = d.orders; B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
+      /* (CLOUDLINES, Paul 13 Nov 2026: "Why is the other computer only showing seven orders ... I had to go and delete all the data on the computer again for it to actually show me all the
+         orders"): this computer's checkpoint is a copy, never the authority. The run's lines the cloud holds and this copy lacks (taken on another computer, or a copy saved while this one held
+         only the newest arrivals) are added from the cloud record, as a clean computer reads them; nothing this computer holds is dropped or changed. */
+      try {
+        const cl = cloud && cloud.run && B.run && cloud.run.runId === B.run.runId ? cloud.run.lines || {} : null; let added = 0;
+        if (cl) { const lines = B.run.lines || (B.run.lines = {}); for (const [k, l] of Object.entries(cl)) { if (!lines[k]) lines[k] = l; if (B.orders.byKey.has(k)) continue; const row = Orders.rowFromRecord(k, l); B.orders.rows.push(row); B.orders.byKey.set(k, row); added++; }
+          if (Array.isArray(cloud.run.orders)) B.run.orders = [...new Set([...(B.run.orders || []).map(String), ...cloud.run.orders.map(String)])]; }
+        if (added) { Orders.interpretAll(); agent({ run: B.run.runId }, "cloud", `${added} order line${added === 1 ? "" : "s"} of the run were missing from this computer's saved copy: read from the cloud`); }
+      } catch (e) { console.warn("restore: cloud lines", e && e.message); }
       // the lines of orders the run is done with come back from their rows (left out of the checkpoint, runCopy)
       if (B.run?.linesFromRows) { const lines = B.run.lines || (B.run.lines = {}); for (const k of B.run.linesFromRows) { const row = B.orders.byKey.get(k); if (row) lines[k] = Orders.lineRecord(row)[1]; } delete B.run.linesFromRows; }
       B.pool.rows = d.pools || new Map(); B.sets = d.sets || new Map(); B.customDesigns = d.customDesigns || {}; B.cleared = d.cleared || {};
@@ -29135,12 +29144,16 @@ async function bootBridge() {
      one line at the top saying so and a Done that puts it down. An open run is offered for resume as before. */
   // (offered when the cloud answers: a page opened while it was offline offered nothing for the rest of the session)
   let offered = false;
-  const offerRuns = () => { if (offered || recovered || recoveryFailed || !S.cloud.ok || B.run) return; offered = true; api("charmNestLibrary", { op: "runList", limit: 10 }).then(r => {
+  // (CLOUDLINES: a computer that restored its own copy WITHOUT a run of its own is asked too: its copy is no authority on the run's orders)
+  const offerRuns = () => { if (offered || recoveryFailed || !S.cloud.ok || B.run) return; offered = true; api("charmNestLibrary", { op: "runList", limit: 10 }).then(r => {
     const runs = r.runs || [];
     const open = runs.filter(x => !["complete", "abandoned"].includes(x.status));
     if (open.length) { B.openRuns = open; agent({ bridge: true }, "DS", `${open.length} open run(s) on record — offered on the run banner`); RunCtl.renderBanner(); }
     const last = runs.find(x => x.lines > 0);
     if (last && !B.run && !B.orders.rows.length && !Recall.on()) Recall.open({ runId: last.runId, quiet: true }).catch(() => {});
+    // (CLOUDLINES, Paul 13 Nov 2026: the other computer showed only the 7 newest orders until its data was deleted: its saved copy held fewer of the run's lines than the cloud. The run is read
+    //  from the cloud, as on a clean computer. A set opened on purpose (its own orders only) is left as it is)
+    else if (last && !B.run && B.orders.rows.length < +last.lines && !(Recall.on() && Recall.state().setId)) { agent({ bridge: true }, "cloud", `This computer's saved copy showed ${B.orders.rows.length} order line(s); the run holds ${last.lines}: reading it from the cloud`); Recall.open({ runId: last.runId, quiet: true }).catch(() => {}); }
   }).catch(() => { offered = false; }); };
   offerRuns();
   /* The cloud back after a page load, a sleep or an outage it was offline for (the page's cloudRecovered): what the boot
