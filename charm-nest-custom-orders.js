@@ -79,8 +79,12 @@
     if (!loading && Date.now() - loadedAt > REFRESH_MS) load().catch(() => {});
     const all = pools(), sig = version + '|' + all.length + '|' + all.reduce((n, p) => n + num(p.updatedAt) + (p.sheetId ? 1 : 0), 0) + '|' + tryDo(() => root.Orders.rows().length, 0) + '|' + tryDo(() => sheetsNow().reduce((n, s) => n + (s.placements || []).length, 0), 0);
     if (memo && memo.sig === sig) return memo.rows;
+    // (OWNLINE, Paul 12 Nov 2026, order 4226949346: "This monogram order also has a duplicate Custom order as part of the order"): a piece of an order's OWN Etsy line made from a
+    //  custom design (a custom monogram, its pool row custom: true) is that line's piece, already listed by the pull's row; it is never a second "Custom charm" line of the order
+    const pulled = tryDo(() => root.Orders.rows(), []) || [], ownKeys = new Set(), ownPools = new Set();
+    for (const r of pulled) { if (!r || r.custom) continue; if (r.key) ownKeys.add(String(r.key)); for (const id of r.poolIds || []) ownPools.add(String(id)); }
     const by = new Map();
-    for (const p of all) { const k = String(p.lineKey || `${p.orderId}_${p.transactionId || ''}`); if (!by.has(k)) by.set(k, []); by.get(k).push(p); }
+    for (const p of all) { if (!p.orderless && (ownPools.has(String(p.poolId)) || (p.lineKey && ownKeys.has(String(p.lineKey))))) continue; const k = String(p.lineKey || `${p.orderId}_${p.transactionId || ''}`); if (!by.has(k)) by.set(k, []); by.get(k).push(p); }
     const out = [...by.values()].map(rowOf).sort((a, b) => num(b.arrivedAt) - num(a.arrivedAt));
     memo = { sig, rows: out };
     return out;
