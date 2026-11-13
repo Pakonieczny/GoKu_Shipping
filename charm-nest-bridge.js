@@ -10049,7 +10049,7 @@ const Engrave = window.Engrave = (() => {
       if (res && res.ok) for (const f of ["front", "back"]) { const pc = places[f]; if (!Array.isArray(pc) || pc.length < 2 || !pc.every(Number.isFinite)) continue; const nj = jobsOf(line).find(j => !had.has(j.key) && faceOf(j) === f && (!slot0 || (j.slot || null) === slot0)); if (nj) nj._placeAt = [pc[0], pc[1]]; }
       if (res && res.ok && jobsOf(line).some(j => !had.has(j.key))) prepareLate(line).catch(() => {});
       // (NONEPLAIN 2: None approved: the piece is a regular order now, said once, plainly; the tab moves on as after any Approve: the piece is in no list any more)
-      if (res && res.ok && patch && patch.mode === "none" && (res.none || []).length) { toast(`Order ${line.order.receiptId} · no engraving · now a regular order`, "ok", 6000); try { render(); Orders.render(); } catch (_) {} }
+      if (res && res.ok && patch && patch.mode === "none" && (res.none || []).length) { toast(`Order ${line.order.receiptId} · no engraving · now a regular order`, "ok", 6000); setTimeout(() => { try { render(); Orders.render(); } catch (_) {} }, 2700); }   // (NONESTAMP, Paul 13 Nov 2026: "I didn't see the seal and stamp animation on the computer where I pressed approve": the card stays until the CUT PLAIN stamp has come down on it (at most 2.5 s), then the piece moves on)
       return res;
     } finally { setupBusy.delete(line.key); }   // (a face job THIS Save made is read and fitted now, beside everything else; a Save that made none touches nothing more than it did)
   }
