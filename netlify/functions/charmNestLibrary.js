@@ -73,7 +73,7 @@ const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(R
    picks the charm) is written to the SHARED store in the sandbox too, read back, and never reaches Reset or Purge. The sandbox and production
    read the same links. An answer the sandbox kept before that (its own copy) is still read, the later write of the two standing for a key. ── */
 let PREFIX = "";
-const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Remnants", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Pool_Art", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
+const SANDBOXED = new Set(["Charm_Nest_Engrave", "Charm_Nest_Rose_Stock", "Charm_Nest_Remnants", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Pool_Art", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
 const FV = admin.firestore.FieldValue;
 
@@ -2993,6 +2993,44 @@ async function op_madeThumbPut(b) {
   delete out.was;
   return out;
 }
+/* ── ENGRSYNC (Paul, 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer"): the engraving WORK of an order line, shared by every computer. Until now the person's
+   engraving decisions lived in the computer that made them (its workspace, IndexedDB): the Front / Back / Both / None choice, the words and their reading, the font, the place, turn and size,
+   an approval not yet written as a back file. Another computer showed its own stale copy. Now the page that changes a line's engraving sends the line's whole engraving state here (once the
+   presses stop), and every other computer learns of it from the changes feed (p:<order>) and reads it (engraveSyncGet), so all computers show and continue the same work.
+     engraveSyncPut { lines: [{ key: the line key "<receipt>_<transaction>", rec: { v, override, engrave, jobs: [...] } (plain JSON, at most ENGR_MAX), sig }], by, dev }
+       → { ok, lines: [{ key, at }] }   one document per line (Charm_Nest_Engrave/<key>, Sandbox_ in the sandbox), written whole; the newest write wins (at = server time)
+     engraveSyncGet { orders: [receipt ids] (at most 600) } | { keys: [line keys] } | { since: ms (the lines written after it, at most 500) }   → { lines: [{ key, order, rec, at, by, dev, sig }] }
+   No placement counter moves (nothing a placement reads is written); the feed names p:<order>, which every page's placement feed already follows. ── */
+const ENGR = "Charm_Nest_Engrave", ENGR_MAX = 400000, ENGR_LINE = /^\d{4,30}_[\w\-]{1,80}$/;
+async function op_engraveSyncPut(b) {
+  const list = Array.isArray(b.lines) ? b.lines.slice(0, 40) : [], dev = MADE_DEV.test(String(b.dev || "")) ? String(b.dev) : null, by = str(b.by, 80).trim() || null;
+  const out = [], named = [], batch = db.batch();
+  for (const l of list) {
+    const key = str(l && l.key, 120); if (!ENGR_LINE.test(key)) { out.push({ key, error: "bad line key" }); continue; }
+    let json = ""; try { json = JSON.stringify(l.rec == null ? null : l.rec); } catch (_) { json = ""; }
+    if (!json || json === "null" || json.length > ENGR_MAX) { out.push({ key, error: `a line's engraving is plain JSON of at most ${ENGR_MAX / 1000} KB` }); continue; }
+    const at = Date.now();
+    batch.set(col(ENGR).doc(key), { key, order: key.split("_")[0], rec: json, at, by, dev, sig: str(l.sig, 60) || null, updatedAt: FV.serverTimestamp() });
+    named.push(key); out.push({ key, at });
+  }
+  if (named.length) { feedOrders(b, [named]); await batch.commit(); }
+  return { ok: true, lines: out };
+}
+async function op_engraveSyncGet(b) {
+  const docs = [];
+  if (Array.isArray(b.keys) && b.keys.length) {
+    const keys = [...new Set(b.keys.map(k => str(k, 120)).filter(k => ENGR_LINE.test(k)))].slice(0, 500);
+    for (let i = 0; i < keys.length; i += 100) { const snaps = await db.getAll(...keys.slice(i, i + 100).map(k => col(ENGR).doc(k))); for (const s of snaps) if (s.exists) docs.push(s.data()); }
+  } else if (b.since != null && !Array.isArray(b.orders)) {
+    const qs = await col(ENGR).where("at", ">", Math.max(0, num(b.since))).orderBy("at").limit(500).get(); qs.forEach(d => docs.push(d.data()));   // (what was written since: the feed's net, one read per line changed)
+  } else {
+    const orders = [...new Set((Array.isArray(b.orders) ? b.orders : []).map(x => String(x == null ? "" : x)).filter(x => /^\d{4,30}$/.test(x)))].slice(0, 600);
+    for (let i = 0; i < orders.length; i += 30) { const qs = await col(ENGR).where("order", "in", orders.slice(i, i + 30)).get(); qs.forEach(d => docs.push(d.data())); }
+  }
+  const lines = [];
+  for (const d of docs) { let rec = null; try { rec = JSON.parse(d.rec); } catch (_) { rec = null; } if (rec) lines.push({ key: d.key, order: d.order, rec, at: num(d.at), by: d.by || null, dev: d.dev || null, sig: d.sig || null }); }
+  return { lines };
+}
 /* ── TRACESRC (Paul, 28 Oct 2026: "When I Press Image Trace on an existing already vectorized image, it does not open the actual chosen image"). The picture a traced image
    was made from, kept in Storage so that Re-trace opens it on any computer (charm-nest-ce-image.js; it used to be kept only in the browser that traced it, IndexedDB):
      traceSrcPut { key, ext, data (base64, or a data URL), name?, w0?, h0? }  → { ok, key, ext, had, file: { path, url, name, size, w, h } }
@@ -4958,6 +4996,7 @@ NO_GEN_BUMP.add("customPieceList");   // CUSTOMPOOL (Paul, 28 Oct 2026): a desig
 async function op_artPrepoolList() { const s = await col(ART).doc("_prepool").get(); const ids = s.exists && s.data() && s.data().ids && typeof s.data().ids === "object" ? s.data().ids : {}; return { ids }; }
 Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList, artPrepoolList: op_artPrepoolList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList"); NO_GEN_BUMP.add("artPrepoolList");
 Object.assign(OPS, { traceSrcPut: op_traceSrcPut, traceSrcGet: op_traceSrcGet }); NO_GEN_BUMP.add("traceSrcPut"); NO_GEN_BUMP.add("traceSrcGet");   // TRACESRC (28 Oct 2026): the picture a traced image was made from, in Storage by its own hash (op_traceSrcPut above); no pool row, sheet or Library record is written
+OPS.engraveSyncPut = op_engraveSyncPut; OPS.engraveSyncGet = op_engraveSyncGet; NO_GEN_BUMP.add("engraveSyncPut"); NO_GEN_BUMP.add("engraveSyncGet");   // ENGRSYNC (13 Nov 2026): a line's engraving work shared by every computer (op_engraveSyncPut above)
 OPS.madeThumbPut = op_madeThumbPut;   // THUMBSYNC (28 Oct 2026): a piece's picture as it will be made, kept on its pool row (op_madeThumbPut above); it writes a pool row, so the placement counter moves
 /* DESIGN LOG (Paul, 28 Oct 2026: "I need to know when employees are commissioning custom pieces, especially when they don't belong to an order"): designLog {records} keeps one
    record per custom piece sent, and per fix piece with who made the mistake (_designLog.js, Design_Log; charm-nest-design-log.js sends them). One write per record, no read; nothing a placement answer is made from. */
