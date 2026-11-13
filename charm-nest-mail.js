@@ -290,7 +290,7 @@
     const now = Date.now(), l = b.link;
     if (l && l.atMs) {
       if (now - l.atMs > LINK_STALE) return { stale: true, tone: "warn", word: "Monitor stopped", text: `Nothing has confirmed the email link for ${Math.round((now - l.atMs) / 60000)} minutes: the inbox's link monitor has stopped reporting. Messages may still be going, but that cannot be confirmed.` };
-      if (l.level === "warn" || l.level === "down") return { tone: l.level, word: l.short || "Problem", text: l.problem || "The email link has a problem.", kind: l.kind || "", gap: l.gap || null };
+      if ((l.level === "warn" || l.level === "down") && l.kind !== "consistency") return { tone: l.level, word: l.short || "Problem", text: l.problem || "The email link has a problem.", kind: l.kind || "", gap: l.gap || null };
       return null;
     }
     if (now - b.first > LINK_STALE) return { stale: true, tone: "warn", word: "Monitor not running", text: "The inbox's link monitor has not reported yet, so nothing is confirming the email link works. Messages may still be going." };
@@ -309,7 +309,8 @@
     const h = M.health && now - M.health.at < 5 * 60000 ? M.health.res : null;
     if (M.link === "offline") return { tone: "down", word: "Offline", text: "This sorter cannot reach the inbox's server right now. What you write is kept, and goes as soon as it answers again." };
     const mon = monitorState();
-    const full = h && h.level !== "ok" ? { tone: h.level === "down" ? "down" : "warn", word: h.short || "Problem", text: h.problem || "", kind: h.kind || "", gap: h.gap || null } : null;
+    const full = h && h.level !== "ok" && h.kind !== "consistency" ? {   // (NOGAPNOTE 2, Paul 13 Nov 2026: "Why am I still seeing this on my computer": the missing-messages judgement still reached the light, the box and the pill through the health check)
+      tone: h.level === "down" ? "down" : "warn", word: h.short || "Problem", text: h.problem || "", kind: h.kind || "", gap: h.gap || null } : null;
     // the check itself cannot be made: that is not "all is well" (one failure is shown at once when there is nothing older to go on)
     const blind = healthErr && now - healthErrAt < 3 * 60000 && (!h || M.healthFails >= 2)
       ? { tone: "warn", word: "Can't check", text: `Can't check the email link: ${healthErr} - retrying.` } : null;
@@ -459,7 +460,7 @@
       put(LS.health, M.health);
       if (bc) try { bc.postMessage({ t: "health", h: M.health }); } catch (_) {}
     }
-    if (res.link && typeof res.link === "object") { if (!M.linkBell) M.linkBell = { first: now, link: null, at: now }; M.linkBell.link = res.link; M.linkBell.at = now; linkAlert(res.link); }
+    if (res.link && typeof res.link === "object") { const l = res.link.kind === "consistency" ? Object.assign({}, res.link, { level: "ok", gap: null }) : res.link; if (!M.linkBell) M.linkBell = { first: now, link: null, at: now }; M.linkBell.link = l; M.linkBell.at = now; linkAlert(l); }   // (NOGAPNOTE 2, Paul 13 Nov 2026: "Why am I still seeing this on my computer": the missing-messages judgement still reached the light, the box and the pill through the health check)
   }
   async function recheckNow() {
     if (!M.key || gapBusy || healthBusy) return;
