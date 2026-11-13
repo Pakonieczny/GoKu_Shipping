@@ -6576,7 +6576,11 @@ async function finishNest(sh, { result, error }) {
       if (fx) ({ aiBytes, labelledBytes, render, geom } = fx);
     }
     // (EXACTOVERLAP: the written file's own cut lines, zero overlap; what it changes is checked again by both checks)
-    try {
+    // (WHEN, Paul 12 Nov 2026: "at the end of a sheet that is full, or a rose sheet that hasn't been cut with a green line": a Gold or Silver sheet when it is full (it is about to join a set),
+    //  or one already in its set written again; a Rose Gold, 10K or 14K sheet whenever it is written before its green line is cut. A Gold or Silver sheet still filling is checked when it is full)
+    const greenLine = ["rose", "gold10k", "gold14k"].includes(sh.metal);
+    const exactDue = greenLine ? !sh.roseCutAt : (!!sh.releaseFull || !!sh._wasReleased || !!(sh.keepRelease && sh.keepRelease.full) || !!(sh.setId && !sh.draft) || (() => { try { return !!sheetFull(sh, result, items); } catch (_) { return false; } })());
+    if (exactDue) try {
       const xf = await exactFix(sh, { byId, st, result, aiBytes, labelledBytes });
       if (xf && xf.changed) {
         ({ aiBytes, labelledBytes } = xf); geom = await geomCheck(sh);
