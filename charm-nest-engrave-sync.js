@@ -165,6 +165,7 @@
           const keepState = rj.state, keepApproved = { approvedAt: rj.approvedAt, approvedBy: rj.approvedBy };
           j.keepPlace = plain(rj.place); if (j.keepPlace) j.keepPlace.fontKey = j.fontKey || j.keepPlace.fontKey;
           j.fit = null; j.view = null; j.mask = null; j.state = "ready";
+          await outline(j);   // (FITFIRST, Paul 13 Nov 2026: "the bottom options below the grid are not working" / "the grid seems to ALWAYS update after 1-2 minutes"): the charm's outline is read FIRST: a fit made without it failed in silence, the words had no place, the controls under the grid nothing to act on
           try { await E().fitJob(j); } catch (e) { console.warn("[engrave-sync] fit", l.key, e); }
           j.state = keepState; if (keepApproved.approvedAt !== undefined) Object.assign(j, keepApproved);
         } else if (!FIT_STATES.has(rj.state)) { j.fit = null; }
@@ -206,9 +207,40 @@
     if (seed.length) { st.seeded = true; await send(seed); }
     safe(() => S().schedule());
     safe(() => E().render()); safe(() => O().render());
-    prewarm();
+    prewarm(); fitMissing();
   }
   /* (GRIDNOW, Paul 13 Nov 2026: "It still shows up without the grid for several seconds"): every piece waiting in Design & Engrave has its charm's outline read in the background, one at a time while the page is idle, so a card opened later draws its grid at once */
+  /** The charm outline of a job's piece on this page (its sheet's charm, else its preview, read now when this page has neither). */
+  async function outline(j) { const P = root.Pool, pid = j && (j.copies || [])[0], line = j && j.row && (j.row.parentRow || j.row); if (!P || !pid || !line) return; if (safe(() => P.charmOf(pid) || P.previewCharmOf(pid), null)) return; try { await P.preview(line); } catch (_) {} }
+  /** (FITFIRST, Paul 13 Nov 2026: "the bottom options below the grid are not working" / "the grid seems to ALWAYS update after 1-2 minutes"): a job with words and no fit (fitted before its outline was here, or never) is fitted now, at the place the cloud says; its state stays. -> true when it has a fit */
+  const FITTING = new Set();
+  async function fitOne(j) {
+    if (!j || j.fit || FITTING.has(j.key) || !["review", "approved", "ready"].includes(j.state) || !(j.lineInput || j.lines || []).length) return !!(j && j.fit);
+    const line = j.row && (j.row.parentRow || j.row); if (!line) return false;
+    FITTING.add(j.key); TAKING.add(line.key);
+    const keep = { state: j.state, approvedAt: j.approvedAt, approvedBy: j.approvedBy };
+    try {
+      await outline(j);
+      const c = CLOUD.get(line.key), rj = c && c.rec && (c.rec.jobs || []).find(x => x.key === j.key);
+      if (rj && rj.place && !j.keepPlace) { j.keepPlace = plain(rj.place); if (j.keepPlace) j.keepPlace.fontKey = j.fontKey || j.keepPlace.fontKey; }
+      j.state = "ready"; try { await E().fitJob(j); } catch (_) {}
+    } finally {
+      j.state = keep.state; if (keep.approvedAt !== undefined) { j.approvedAt = keep.approvedAt; j.approvedBy = keep.approvedBy; }
+      FITTING.delete(j.key); setTimeout(() => { TAKING.delete(line.key); SIGS.set(line.key, sigOf(line)); }, 50);
+    }
+    return !!j.fit;
+  }
+  /** The piece open on screen is outlined and fitted at once (it does not wait for the background pass) */
+  function watchOpen() {
+    setInterval(() => { safe(() => { const c = root.document && root.document.querySelector(".rvItem.full"), j = c && c._job; if (!j) return; const pid = (j.copies || [])[0]; const needOutline = pid && !safe(() => root.Pool.charmOf(pid) || root.Pool.previewCharmOf(pid), null); if (j.fit && !needOutline) return; if (FITTING.has(j.key)) return; (j.fit ? outline(j) : fitOne(j)).then(() => safe(() => E().render())).catch(() => {}); }); }, 600);
+  }
+  /** Every other job with words and no fit, a few at a time while the page is idle */
+  function fitMissing() {
+    const todo = safe(() => [...E().items().values()].filter(j => !j.fit && ["review", "approved", "ready"].includes(j.state) && (j.lineInput || j.lines || []).length), []);
+    const idle = f => (typeof root.requestIdleCallback === "function" ? root.requestIdleCallback(f, { timeout: 1500 }) : setTimeout(f, 40));
+    let n = 0; const step = () => { const j = todo.shift(); if (!j) { if (n) safe(() => E().render()); return; } fitOne(j).then(ok => { if (ok) n++; }).catch(() => {}).then(() => idle(step)); };
+    idle(step);
+  }
   function prewarm() {
     const P = root.Pool, Eg = E(); if (!P || typeof P.preview !== "function" || !Eg || typeof Eg.items !== "function") return;
     const todo = []; const seen = new Set();
@@ -252,7 +284,7 @@
       tries++;
       const ready = !!(E() && O() && S() && root.CN && typeof root.CN.api === "function" && safe(() => O().rows().length > 0, false));
       if (!ready && tries < 120) return setTimeout(go, 1000);
-      hook(); follow();
+      hook(); follow(); watchOpen();
       for (const t of ["pointerdown", "keydown", "input"]) root.addEventListener(t, e => { if (!e || e.isTrusted !== false) lastInput = Date.now(); }, { capture: true, passive: true });
       setTimeout(() => { start().catch(e => console.warn("[engrave-sync] start", e)); }, START_DELAY);
       setInterval(() => { if (st.started && !(root.document && root.document.hidden)) pull(null, "net").catch(() => {}); }, NET_MS);
