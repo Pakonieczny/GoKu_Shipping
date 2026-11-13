@@ -133,7 +133,7 @@
   }
   /** The picture of one piece, drawn to fill a list box: o = { tile (the box's height in device px), ar (its width over its height), px (its height in css px) }. → { url (PNG data URL), w, h, faces,
    *  layout, labels, fontPx, hair, boxes } or null. Kept by signature and box. */
-  const LOCAL = new Map();
+  const LOCAL = new Map(), MISSED = new Map();
   function pictureOf(poolId, st, o) {
     st = st || stateOf(poolId); if (!st || !doc) return null;
     o = typeof o === 'number' ? { tile: o } : o && o.nodeType ? (b => (b.px ? { tile: tileFor(b.px), ar: b.ar, px: b.px } : {}))(boxOf(o)) : o || {};
@@ -141,16 +141,21 @@
     const ck = st.sig + '@' + T + 'x' + AR.toFixed(3) + '/' + Math.round(CSSPX);
     const hit = LOCAL.get(ck); if (hit) return hit;
     const P = PDF(); if (!P || !P.drawCharm || !P.pathToCanvas || !EP()) return null;
-    const parts = [];
+    const parts = []; let missed = false;
     for (const t0 of st.tiles) {
       // (MADEV: a shelved face is drawn from its copy laid out again; one that cannot be yet (its font is loading) leaves the picture to the cloud's for now, and the boxes look again shortly)
       let t = t0;
       if (t0.words && t0.words.shelved) { const j = shelvedOf(t0.job, poolId); if (!j) { retrySoon(); return null; } t = { face: t0.face, job: j, words: { view: j.view, fit: j.fit } }; }
-      const F = frameOf(poolId, t); if (!F || !F.box) continue;
+      const F = frameOf(poolId, t); if (!F || !F.box) { missed = true; continue; }   // (FACESALL: noted, see below)
       const w = F.box[2] - F.box[0], h = F.box[3] - F.box[1], pad = Math.max(w, h) * MARGIN;
       parts.push({ t, F, pad, fw: w + 2 * pad, fh: h + 2 * pad });   // (the face with its margin, in points)
     }
     if (!parts.length) return null;
+    /* FACESALL (Paul, 12 Nov 2026: "How come the bottom 2 orders are not showing the back in front as the one on the top is showing correctly"): a face that cannot be framed YET (its charm's drawing
+       not loaded on this computer) left the picture with the back alone, and that picture was kept here by its signature and sent to the cloud for every computer. A picture short of a face is not
+       made: the boxes look again shortly; only after many tries is it drawn as it can be, and then it is neither kept here nor sent */
+    let partial = false;
+    if (missed) { const n = (MISSED.get(st.sig) || 0) + 1; MISSED.set(st.sig, n); if (n <= 12) { retrySoon(); return null; } partial = true; }
     /* FACES (Paul, 28 Oct 2026: "label the back engraving with the same style of text with the black background ... larger ... side-by-side and top bottom alignment, depending on the charm shape ...
        split the image with very thin lines"): under each face (side by side) or beside it (one over the other) its name, "Front" / "Back", in the earrings' own chip (charm-nest-pair-thumb.js: the dark
        pill, light Semibold words), larger than theirs; the faces parted by one hairline, never a frame round each.
@@ -201,6 +206,7 @@
       ox += fws[i] + gap; oy0 += fhs[i] + gap;
     }
     const out = { url: cv.toDataURL('image/png'), w: cv.width, h: cv.height, faces: parts.map(p => p.t.face), layout: n < 2 ? 'one' : col ? 'column' : 'row', labels, fontPx, fontCss: fontPx / dpx, hair, boxes };
+    if (partial) { out.partial = true; return out; }   // (FACESALL: never kept, never sent)
     LOCAL.set(ck, out); while (LOCAL.size > 400) LOCAL.delete(LOCAL.keys().next().value);
     return out;
   }
@@ -230,7 +236,7 @@
   /** Which picture a piece shows: { kind: 'local', sig, st, made } | { kind: 'cloud', made } | null. A cloud picture drawn by an older drawing than this page's never wins over this page's own. */
   function pick(poolId) {
     const st = stateOf(poolId), made = cloudOf(poolId);
-    if (st && (!made || verOf(made) < V || made.sig === st.sig || mine.has(poolId) || made.dev === dev())) return { kind: 'local', sig: st.sig, st, made };
+    if (st && (!made || verOf(made) < V || made.sig === st.sig || mine.has(poolId) || made.dev === dev() || (Array.isArray(made.faces) && made.faces.length < st.faces.length))) return { kind: 'local', sig: st.sig, st, made };   // (FACESALL: a cloud picture short of a face is not shown)
     if (made && !st && plainNow(poolId)) return null;
     if (made) return { kind: 'cloud', made };
     return null;
@@ -320,7 +326,7 @@
     const load = () => {
       if (COMPOSED.has(key)) return COMPOSED.get(key);
       const job = Promise.all(parts.map((p, i) => (!p ? null : p.kind === 'plain' ? plainUrl(shown[i], pbox) : urlOf(shown[i], p, pbox).catch(() => null))))
-        .then(urls => (urls.length === 1 && !more ? urls[0] : compose(urls, more, box))).catch(e => { COMPOSED.delete(key); throw e; });
+        .then(urls => { if (urls.some((u, i) => !u && parts[i])) COMPOSED.delete(key); return urls.length === 1 && !more ? urls[0] : compose(urls, more, box); }).catch(e => { COMPOSED.delete(key); throw e; });   // (FACESALL: a piece not drawn yet is drawn again at the next look)
       COMPOSED.set(key, job); while (COMPOSED.size > 200) COMPOSED.delete(COMPOSED.keys().next().value);
       return job;
     };
@@ -459,13 +465,13 @@
   async function send(id, st) {
     if (!host.api) return;
     const made = cloudOf(id);
-    if (st && made && made.sig === st.sig && verOf(made) >= V) { stats.skipped++; return; }
+    if (st && made && made.sig === st.sig && verOf(made) >= V && !(Array.isArray(made.faces) && made.faces.length < st.faces.length)) { stats.skipped++; return; }   // (FACESALL: one short of a face is sent again)
     if (!st && !made) { stats.skipped++; return; }
     // (PREMADE, nesting paused: a piece not pooled yet (ENGPRE) has no pool row to keep its picture on: the PNG was uploaded, refused ("this piece is not in the pool") and deleted at every edit.
     //  Nothing is sent until the piece is pooled; the sweep sends it then)
     if (!known(id)) { UNSENT.add(id); stats.skipped++; return; }
     const pic = st ? pictureOf(id, st) : null;
-    if (st && !pic) { const p = pend.get(id) || { first: Date.now(), backfill: true }; if ((p.tries = (p.tries || 0) + 1) <= 8) { p.due = Date.now() + 5000; pend.set(id, p); } stats.skipped++; return; }   // (a shelved face whose font is loading: tried again shortly)
+    if (st && (!pic || pic.partial)) { const p = pend.get(id) || { first: Date.now(), backfill: true }; if ((p.tries = (p.tries || 0) + 1) <= 8) { p.due = Date.now() + 5000; pend.set(id, p); } stats.skipped++; return; }   // (a shelved face whose font is loading: tried again shortly)
     const by = String(safe(() => host.who && host.who(), '') || '').trim() || null;
     const body = st ? { op: 'madeThumbPut', poolId: id, png: pic.url, sig: st.sig, faces: pic.faces, by, dev: dev(), v: V } : { op: 'madeThumbPut', poolId: id, clear: true, by, dev: dev() };
     const res = await host.api('charmNestLibrary', body, { quiet: true, timeoutMs: 30000 });
