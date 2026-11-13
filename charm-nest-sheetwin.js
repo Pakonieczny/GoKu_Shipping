@@ -5027,7 +5027,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return { ok: true };
   }
   const sheetRec = id => api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 }).then(r => (r && r.sheet) || null);
-  const putRec = async patch => { const r = await api("charmNestLibrary", { op: "putSheet", sheet: patch }, { quiet: true, timeoutMs: 15000 }); if (r && r.error) throw new Error(r.error); return r; };
+  const putRec = async patch => { const r = await api("charmNestLibrary", { op: "putSheet", sheet: patch }, { quiet: true, timeoutMs: 15000 }); if (r && r.error) throw new Error(r.error); try { const pg = allSheets().find(p => p.sheetId === patch.id); if (pg && r && Number.isFinite(+r.layoutRev)) pg.layoutRev = +r.layoutRev; } catch (_) {} return r; };   // (CLOUDALL C1, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer"): the sheet held here knows the revision this move wrote, so its own next save is not taken for an older copy
   const recOrders = (charms, placements) => { const by = new Map(charms.map(c => [c.id, c])); return [...new Set(placements.map(p => { const c = by.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))]; };
   const membership = r => ({ id: r.id, charms: r.charms || [], placements: r.placements || [], poolIds: r.poolIds || [], orders: r.orders || [], charmCount: (r.charms || []).length, placedCount: (r.placements || []).length, backPool: r.backPool || [] });
   /** One move saved: the cloud check, A's record without the pieces, B's record with them, the piece records, a read-back. A failure puts it all back. */

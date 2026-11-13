@@ -4014,7 +4014,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-engrave-read.js?v=20261013-sbc1-fh5-sk2"></script>
 <script src="charm-nest-engrave-piece-words.js?v=20261016-pw1-br1-ms1-bh1"></script>
 <script src="charm-nest-engrave-preview.js?v=20261012-pv1-r2th1-th2-bg1-sb2-cb1-rf2-mg1-up1-es1-bb1-fa2"></script>
-<script src="charm-nest-run-follow.js?v=20261113-rf1-nl1"></script>   <!-- RUNFOLLOW (Paul 13 Nov 2026): a computer without the run follows the cloud run's lines (held, pooled, taken out) -->
+<script src="charm-nest-run-follow.js?v=20261113-rf1-nl1"></script>
+<script src="charm-nest-cloud-sheets.js?v=20261113-cs1"></script>   <!-- CLOUDALL (Paul 13 Nov 2026): every sheet is one cloud document, changed from any computer, followed by every computer -->   <!-- RUNFOLLOW (Paul 13 Nov 2026): a computer without the run follows the cloud run's lines (held, pooled, taken out) -->
 <script src="charm-nest-engrave-sync.js?v=20261113-es1-rs2-nl1-ap1-fs1-cs1-ff1-ll1-nf1-nk1"></script>   <!-- ENGRSYNC (Paul 13 Nov 2026): every line's engraving work and every Charm Editor Save shared by every computer, live -->
 <script src="charm-nest-made-thumb.js?v=20261028-ts1-fb1-tb2-mv1-bx1-pb1-np1-gn1-bb1-fa1-fj1-fs1-fa2"></script><!-- charm-nest-made-thumb.js: every list box shows its pieces as they will be made (cut, art, Charm Editor changes, fitted words; front and back), live here and kept on the pool row for the other computers (THUMBSYNC, Paul 28 Oct 2026) -->
 <script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1-dm1-ko1-pv1"></script>
@@ -6646,7 +6647,7 @@ async function finishNest(sh, { result, error }) {
       sh.saveOwed = true; log(sh, "cloud offline: kept in this browser, saved when the cloud is back");
       if (sh.resumeWait && sh.rejects.length) resumeLater(sh); feedOn(sh); flushManualIntake(sh.metal);
     } else
-    sh.persisted = persistSheet(sh, activeCharms(sh)).then(() => { delete sh.saveOwed; if (sh.jobId === writtenJob) sh._written = written; sh.persistedDone = true; if (sh.jobId === writtenJob) { releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); } if (sh.resumeWait && sh.jobId === writtenJob && sh.rejects.length) resumeLater(sh); if (sh.jobId === writtenJob) feedOn(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { if (e && e.recordKept && sh.jobId === writtenJob) (placeWas && placeBack(sh, placeWas)); sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
+    sh.persisted = persistSheet(sh, activeCharms(sh)).then(() => { delete sh.saveOwed; if (sh.jobId === writtenJob) sh._written = written; sh.persistedDone = true; if (sh.jobId === writtenJob) { releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); } if (sh.resumeWait && sh.jobId === writtenJob && sh.rejects.length) resumeLater(sh); if (sh.jobId === writtenJob) feedOn(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { if (e && e.recordKept && sh.jobId === writtenJob) (placeWas && placeBack(sh, placeWas)); sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); if (e && e.status === 409 && e.data && e.data.conflict && window.CharmNestCloudSheets) CharmNestCloudSheets.conflict(sh); });   /* (CLOUDALL C1, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer"): a sheet changed on another computer meanwhile is read again from the cloud */
     // 6 · whatever did not fit under the ceiling goes to the next sheet of this metal, which nests on its own
     if (sh.rejects.length && sh.endedBy !== "stopped" && (sh.nestFlow !== "learned" || sh.verification.ok && ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh, false);
   } catch (e) {
@@ -7048,7 +7049,9 @@ async function persistSheet(sh, items, context) {
   // (STUCKSHEET, Paul 25 Oct 2026: 14K Draft 1 had no preview and could not be taken by hand. This first record went out with outputs: null, which the server merges
   //  in, so the picture and the .ai of the last save were wiped the moment a save began; a tab closed or a network lost before the second write below left the
   //  record "saving" with no files for good. It goes out without outputs now: the last files stand until the new ones replace them.)
-  const opened = api("charmNestLibrary", { op: "putSheet", sheet: Object.assign((({ outputs, ...r }) => r)(savedRecord(null)), { saving: true }) }, { label: "Saving sheet record" });
+  // (CLOUDALL C1, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer"): the save says which revision of the layout it was made from (layoutBase): one made from an older copy is refused by the cloud and nothing is overwritten (charm-nest-cloud-sheets.js); the answer's revision is kept
+  const layoutOf = () => (Number.isFinite(sh.layoutRev) ? { layoutBase: sh.layoutRev } : {}), learnRev = a => { if (a && Number.isFinite(+a.layoutRev) && sh.sheetId === savedId) sh.layoutRev = +a.layoutRev; return a; };
+  const opened = api("charmNestLibrary", Object.assign({ op: "putSheet", sheet: Object.assign((({ outputs, ...r }) => r)(savedRecord(null)), { saving: true }) }, layoutOf()), { label: "Saving sheet record" }).then(learnRev);
   opened.catch(() => {});
   // 2 · the files, each retried on its own; a failure is reported, never hidden
   const up = async (path, bytes, type, label) => { let err = null; for (let t = 0; t < 3; t++) { try { return await uploadBytes(path, bytes, type, label); } catch (e) { err = e; await new Promise(r => setTimeout(r, 1500 * (t + 1))); } } throw err; };
@@ -7066,7 +7069,7 @@ async function persistSheet(sh, items, context) {
   await opened.catch(e => { throw Object.assign(e instanceof Error ? e : new Error(String(e)), { recordKept: !!(e && e.answered) }); });
   sh.cloud = { ai: outputs.ai && outputs.ai.url, pdf: null, labelled: outputs.labelled && outputs.labelled.url, report: outputs.report && outputs.report.url, preview: outputs.preview && outputs.preview.url };
   // 3 · the record is complete as soon as the sheet's own files are up: the Library shows it now, not after the charm backups
-  await api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(savedRecord(outputs), { saving: false }) }, { label: "Completing sheet record" });
+  await api("charmNestLibrary", Object.assign({ op: "putSheet", sheet: Object.assign(savedRecord(outputs), { saving: false }) }, layoutOf()), { label: "Completing sheet record" }).then(learnRev);   // (CLOUDALL C1, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer")
   // a final sheet's .pdf, copied from its .ai in the bucket (a set's sheets get theirs when it is released for labels); it never fails the save
   if (outputs.ai && (sh.releaseFull || sh.intakeFinalized)) await api("charmNestLibrary", { op: "sheetPdf", id: savedId }, { label: "Saving sheet .pdf", quiet: true })
     .then(r => { const url = r && r.urls && r.urls[savedId]; if (url) { outputs.pdf = { path: outputs.ai.path.replace(/\.ai$/, ".pdf"), url }; if (sh.jobId === savedJob && sh.cloud) sh.cloud.pdf = url; } })
@@ -9221,7 +9224,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5-rp1-oh1-sc1-st1-mc9-mi9b-sh29-gl1-en2-fr1-zg1-oos1-nf1-ged1-sp1-mi1-ls1-cp1-sy1-tab1-ob1-sg2-hc1-hc2-ce1-sb1-ts1-mcl1-ipl2-ipl3-hm1-crn1-crn2-lw1-on1-tk1-rf1-ch1-bb1-hd2-sk1-mc1-hf1"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5-rp1-oh1-sc1-st1-mc9-mi9b-sh29-gl1-en2-fr1-zg1-oos1-nf1-ged1-sp1-mi1-ls1-cp1-sy1-tab1-ob1-sg2-hc1-hc2-ce1-sb1-ts1-mcl1-ipl2-ipl3-hm1-crn1-crn2-lw1-on1-tk1-rf1-ch1-bb1-hd2-sk1-mc1-hf1-ca1"></script>
 <!-- 10K / 14K: a charm dragged onto the next or previous sheet of its metal, in the sheet window's Manual Control (SheetHop; Paul, 18 Oct 2026) -->
 <script src="charm-nest-sheet-hop.js?v=20261018-hop1-hp2-mv1-mc9-mi9b-gk1-fr1-ged1-hm1"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
