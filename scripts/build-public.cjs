@@ -21,6 +21,7 @@ const assets = [
   "brites-adwords.html",
   "brites-vfx.html",
   "charm-nest-1.html",
+  "cn-check.html",
   "design-1.html",
   "design-message-1.html",
   "design-message.html",
