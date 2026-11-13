@@ -28269,8 +28269,18 @@ const Arrivals = window.Arrivals = (() => {
     const missing=!!open && current.some(row=>!["gone","committed"].includes(row.state) && !open.has(String(row.order.receiptId)));
     if(changed || missing){state.pending=true;state.revalidate=true;}
     const freshIds = await record(orders, stamp()), added = [];
+    /* NOREPULL (Paul, 13 Nov 2026: 24 orders already designed, sorted and assembled the old way were pulled in at 13:02 and put on drafts to be cut again: the Design Station's open list
+       left out its completed orders only when its own list of them was loaded, and it was not). An order is taken in as new work only when the cloud's completion record
+       (firebaseOrders dcFor, the Design Station's own ledger) says it was NOT completed; when that record cannot be read, no new order is taken in this time (the next check asks again). */
+    const askDone = [...new Set(orders.filter(o => (o.lines || []).some(l => !B.orders.byKey.has(O.lineKey(o, l)))).map(o => String(o.receiptId)))], doneIds = new Set();
+    for (let i = 0; i < askDone.length; i += 100) {
+      const part = askDone.slice(i, i + 100);
+      try { const r = await fetch(`/.netlify/functions/firebaseOrders?dcFor=${encodeURIComponent(part.join(","))}`), j = await r.json(); if (!r.ok || !j || j.success === false || !Array.isArray(j.orderNumbers)) throw new Error("HTTP " + r.status); j.orderNumbers.forEach(id => doneIds.add(String(id))); }
+      catch (e) { part.forEach(id => doneIds.add(id)); agent({ bridge: true }, "warn", `The completion record could not be read (${e.message}): ${part.length} new order(s) wait for the next check`); }
+    }
+    if (doneIds.size) agent({ bridge: true }, "DS", `${doneIds.size} open order(s) not taken in: already completed at the Design Station (or not checkable now): ${[...doneIds].slice(0, 12).join(", ")}${doneIds.size > 12 ? " …" : ""}`);
     // an order cancelled since it was picked (the Recall inbox is minutes old; AutoCancel may drop it during record) stays out
-    for (const order of orders) if (!window.Cancelled?.has?.(order.receiptId)) for (const line of order.lines || []) {
+    for (const order of orders) if (!window.Cancelled?.has?.(order.receiptId) && !doneIds.has(String(order.receiptId))) for (const line of order.lines || []) {
       const key = O.lineKey(order, line);
       if (B.orders.byKey.has(key)) continue; // Existing human decisions and pool membership belong to the existing row.
       const row = { key, order, line, arrivedAt: at(order.receiptId), spec: null, problems: [], state: "pulled", reason: null, claimedBy: null, poolIds: [], engrave: null, material: null };
