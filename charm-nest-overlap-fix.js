@@ -119,7 +119,7 @@
     const maxShrink = Math.max(0, Math.min(0.5, o.maxShrink != null ? +o.maxShrink : 0.06));
     const shrinkStep = o.shrinkStep > 0 ? +o.shrinkStep : 0.005;
     const marginPx = Math.max(0, o.marginPx != null ? o.marginPx | 0 : 1);
-    const centers = asMap(o.centers), prefer = asMap(o.prefer);
+    const centers = asMap(o.centers), prefer = asMap(o.prefer), shrinkLeft = asMap(o.shrinkLeft);   // (SHRINKBOTH: shrinkLeft, name -> how much more it may still be shrunk, its earlier rounds counted)
     const movable = o.movable == null ? null : new Set(o.movable);
     const list = [...asMap(o.areas)].filter(([, a]) => a && !a.empty && a.core && a.bw > 0 && a.bh > 0).map(([name, area], id) => ({ id, name, area }));
     if (!W || !H || !list.length) return { ok: true, fixes: [], unresolved: [], why: 'nothing to check' };
@@ -170,6 +170,7 @@
         const center = centers.get(c.name) || null;
         let prev = null;
         for (const sc of scales) {
+          if (1 - sc > leftOf(c) + 1e-9) break;   // (SHRINKBOTH: never past what this charm has left)
           const a = scaleArea(c.area, center, sc);
           if (prev && prev.X0 === a.X0 && prev.Y0 === a.Y0 && prev.bw === a.bw && prev.bh === a.bh && prev.core.every((v, i) => v === a.core[i])) continue;   // the same pixels: the same answer
           prev = a;
@@ -182,6 +183,29 @@
       return fix;
     }
 
+    /* SHRINKBOTH (Paul, 12 Nov 2026: "verify if pieces are overlapping each other, and if two pieces are found to be overlapping each other, each one of those pieces would be shrunk by up to
+       2 1/2% to ensure that the overlap is mitigated"): the two charms of an overlapping pair are shrunk TOGETHER, each about its own centre, by the same step (shrinkStep) and never past
+       maxShrink (nor past what each has left, shrinkLeft), neither moved; the smallest shrink that clears both, with the margin, wins. Both stay where they are on the grid. */
+    const leftOf = c => { const v = shrinkLeft.get(c.name); return typeof v === 'number' && isFinite(v) ? Math.max(0, Math.min(maxShrink, v)) : maxShrink; };
+    function attemptBoth(A, B, m) {
+      const cap = Math.min(leftOf(A), leftOf(B)); if (!(cap > 0)) return null;
+      const cA = centers.get(A.name) || null, cB = centers.get(B.name) || null;
+      put(A.P, 0, 0, -1); put(B.P, 0, 0, -1);
+      for (const sc of scales) {
+        if (1 - sc > cap + 1e-9) break;
+        const a = scaleArea(A.area, cA, sc), b = scaleArea(B.area, cB, sc);
+        const Pa = prep(a, 0, 0, 0), Pb = prep(b, 0, 0, 0);
+        const ax = (a.X0 || 0) + (a.bw || 0) / 2, ay = (a.Y0 || 0) + (a.bh || 0) / 2, bx = (b.X0 || 0) + (b.bw || 0) / 2, by = (b.Y0 || 0) + (b.bh || 0) / 2;
+        put(Pb, 0, 0, 1); const okA = fits(prep(a, m, ax, ay), 0, 0); put(Pb, 0, 0, -1);
+        if (!okA) continue;
+        put(Pa, 0, 0, 1); const okB = fits(prep(b, m, bx, by), 0, 0);
+        if (okB) { put(Pb, 0, 0, 1); A.P = Pa; B.P = Pb; return { scale: sc }; }
+        put(Pa, 0, 0, -1);
+      }
+      put(A.P, 0, 0, 1); put(B.P, 0, 0, 1);
+      return null;
+    }
+
     const prefOf = c => { const v = prefer.get(c.name); return typeof v === 'number' && isFinite(v) ? v : Infinity; };
     const canTouch = c => !movable || movable.has(c.name);
     const fixes = [], fixed = new Set(), failed = [];
@@ -192,7 +216,18 @@
       const cands = [A, B].filter(canTouch).sort((x, y) => prefOf(x) - prefOf(y) || x.px - y.px || x.id - y.id);
       if (!cands.length) { failed.push({ p, why: 'neither charm may be moved' }); continue; }
       let got = null, who = null, mUsed = 0;
+      // (SHRINKBOTH first: both charms of the pair, when both may be touched)
+      if (cands.length === 2) for (const m of margins) {
+        const f = attemptBoth(A, B, m);
+        if (f) {
+          fixed.add(A.id); fixed.add(B.id); mUsed = m;
+          for (const c of [A, B]) fixes.push({ name: c.name, dx: 0, dy: 0, scale: f.scale, movedPt: 0, shrinkPct: r2((1 - f.scale) * 100, 2), marginPx: m, both: true });
+          got = true; break;
+        }
+      }
+      if (got) continue;
       search: for (const m of margins) for (const shrink of [false, true]) for (const c of cands) {
+        if (shrink && !(leftOf(c) > 0)) continue;
         const f = attempt(c, m, shrink);
         if (f) { got = f; who = c; mUsed = m; break search; }
       }

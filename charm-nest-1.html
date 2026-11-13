@@ -3945,7 +3945,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="vendor/clipper-6.4.2.js?v=20261028-sw1"></script>
 <script src="charm-nest-vector.js?v=20261028-ops1-sw1"></script>
 <script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1-bd1-ovf1-ae1-im1-bm1-crn1-clp1-bb1"></script>
-<script src="charm-nest-overlap-fix.js?v=20261025-ovf1"></script>
+<script src="charm-nest-overlap-fix.js?v=20261025-ovf1-sb1"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom-vi1"></script>
 <script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2-hdr1-ms1-cost18-rh1-hp2-ro1-sc1-ss1-vis1-rs1-rel1-sg1-apx1-sw1-pf1-cw1-es1"></script>
 <script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1-hdr1-pl1-ms1-pk1-cost18-rh1-ho1-ss1-rel1-sg1-nv3-sy1-nv6-sg2-fw1-flw1-bm1"></script>
@@ -6655,6 +6655,9 @@ function renderCheck(sh, aiBytes, specBase, st, layerSigs, areas) {
    locked one or a protected Rose Gold one; the newer and smaller first) gets the nearest whole-pixel nudge that clears every
    other charm and the margin; only when none within 3 pt does, the smallest shrink about its own centre, with its nearest nudge. A whole-pixel nudge renders exactly as the shifted pixels,
    so the plan is the result; the file is written and BOTH checks run again, at most three rounds. Anything still flagged after that is flagged as before. */
+/* SHRINKBOTH (Paul, 12 Nov 2026): the check after a sheet is nested shrinks BOTH charms of an overlapping pair, each by up to 2.5 % about its own centre (charm-nest-overlap-fix.js), never more than
+   2.5 % in all for a charm; only when that cannot clear it is the nudge tried. Before: one charm of the pair, a nudge first, a shrink of up to 6 %. */
+const OVF_MIN_SCALE = 0.975;
 async function fixOverlaps(sh, o) {
   const F = window.CharmNestOverlapFix; if (!F || typeof F.plan !== "function" || sh.roseCutAt) return null;
   const { byId, st, result } = o, res = (o.render && o.render.res) || +S.settings.verifyRes || 6;
@@ -6668,7 +6671,7 @@ async function fixOverlaps(sh, o) {
   for (; round < 3 && overlapOnly(render, geom) && render.areas && render.page; round++) {
     // what each charm takes up for BOTH checks: the re-rendered ink (render.areas) united with the outline the geometry check reads (its masks), page pixels at res, y down
     const gm = await geomCheck(sh, true), gmById = new Map((gm.masks || []).map(m => [m.id, m]));
-    const byLayer = new Map(sh.placements.map(p => [p.layerName, p])), areas = new Map(), centers = new Map(), movable = new Set(), prefer = new Map();
+    const byLayer = new Map(sh.placements.map(p => [p.layerName, p])), areas = new Map(), centers = new Map(), movable = new Set(), prefer = new Map(), shrinkLeft = new Map();
     for (const p of sh.placements) {
       if (!p.layerName) continue;
       const a = render.areas.get(p.layerName), g = gmById.get(p.id), u = unionArea(a, g); if (!u) continue;
@@ -6676,8 +6679,9 @@ async function fixOverlaps(sh, o) {
       centers.set(p.layerName, { x: p.cxPt * res, y: p.cyPt * res });
       if (!locked.has(p.id) && !(window.CharmNestCustomPool && CharmNestCustomPool.isFrozen(byId.get(p.id)))) movable.add(p.layerName);   // (CUSTOMPOOL: a custom design sent at its exact size is never shrunk; the other charm of the pair moves)
       prefer.set(p.layerName, kept.has(p.id) ? 1 : 0);
+      shrinkLeft.set(p.layerName, Math.max(0, 1 - OVF_MIN_SCALE / (p.fixScale || 1)));   // (SHRINKBOTH: 2.5 % in all, whatever the rounds)
     }
-    let plan; try { plan = F.plan({ W: render.page.W, H: render.page.H, inset: render.page.inset, res, areas, centers, movable, prefer }); } catch (e) { log(sh, "overlap fix could not plan: " + e.message); break; }
+    let plan; try { plan = F.plan({ W: render.page.W, H: render.page.H, inset: render.page.inset, res, areas, centers, movable, prefer, maxShrink: 1 - OVF_MIN_SCALE, shrinkLeft }); } catch (e) { log(sh, "overlap fix could not plan: " + e.message); break; }
     if (!plan || !plan.fixes || !plan.fixes.length) { log(sh, "overlap fix: no nudge or shrink within the limits clears it" + (plan && plan.why ? ` (${plan.why})` : "")); break; }
     for (const f of plan.fixes) {
       const p = byLayer.get(f.name); if (!p) continue;
