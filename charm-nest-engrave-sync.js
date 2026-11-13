@@ -164,6 +164,8 @@
           // the same words, in the same font, at the same place: fitJob keeps a placement made for them (keepPlace), then the state it had there goes back on
           const keepState = rj.state, keepApproved = { approvedAt: rj.approvedAt, approvedBy: rj.approvedBy };
           j.keepPlace = plain(rj.place); if (j.keepPlace) j.keepPlace.fontKey = j.fontKey || j.keepPlace.fontKey;
+          // (LIGHTLOAD, Paul 13 Nov 2026: "THE GRID": the page froze for over 45 s at every load while every piece was refitted and every outline read at once): at the start of the page a piece is not refitted here (its fields are in place); it is outlined and fitted when it is opened (watchOpen)
+          if (why === "start" && !onScreenKey(l.key)) { j.fit = null; j.view = null; j.mask = null; continue; }
           j.fit = null; j.view = null; j.mask = null; j.state = "ready";
           await outline(j);   // (FITFIRST, Paul 13 Nov 2026: "the bottom options below the grid are not working" / "the grid seems to ALWAYS update after 1-2 minutes"): the charm's outline is read FIRST: a fit made without it failed in silence, the words had no place, the controls under the grid nothing to act on
           try { await E().fitJob(j); } catch (e) { console.warn("[engrave-sync] fit", l.key, e); }
@@ -207,10 +209,11 @@
     if (seed.length) { st.seeded = true; await send(seed); }
     safe(() => S().schedule());
     safe(() => E().render()); safe(() => O().render());
-    prewarm(); fitMissing();
+    setTimeout(prewarm, 4000);   // (LIGHTLOAD, Paul 13 Nov 2026: "THE GRID": the page froze for over 45 s at every load while every piece was refitted and every outline read at once): no bulk refit at start; outlines are read slowly in the background, one every 1.2 s
   }
   /* (GRIDNOW, Paul 13 Nov 2026: "It still shows up without the grid for several seconds"): every piece waiting in Design & Engrave has its charm's outline read in the background, one at a time while the page is idle, so a card opened later draws its grid at once */
   /** The charm outline of a job's piece on this page (its sheet's charm, else its preview, read now when this page has neither). */
+  const onScreenKey = k => safe(() => { for (const c of root.document.querySelectorAll(".rvItem.full")) { const j = c._job, r = j && j.row && (j.row.parentRow || j.row); if (r && r.key === k) return true; } return false; }, false);
   async function outline(j) { const P = root.Pool, pid = j && (j.copies || [])[0], line = j && j.row && (j.row.parentRow || j.row); if (!P || !pid || !line) return; if (safe(() => P.charmOf(pid) || P.previewCharmOf(pid), null)) return; try { await P.preview(line); } catch (_) {} }
   /** (FITFIRST, Paul 13 Nov 2026: "the bottom options below the grid are not working" / "the grid seems to ALWAYS update after 1-2 minutes"): a job with words and no fit (fitted before its outline was here, or never) is fitted now, at the place the cloud says; its state stays. -> true when it has a fit */
   const FITTING = new Set();
@@ -246,7 +249,7 @@
     const todo = []; const seen = new Set();
     for (const j of safe(() => [...Eg.items().values()], [])) { const pid = (j && j.copies || [])[0], line = j && j.row && (j.row.parentRow || j.row); if (!pid || !line || seen.has(line.key) || ["approved", "written"].includes(j.state)) continue; if (safe(() => P.charmOf(pid) || P.previewCharmOf(pid), null)) continue; seen.add(line.key); todo.push(line); }
     const idle = f => (typeof root.requestIdleCallback === "function" ? root.requestIdleCallback(f, { timeout: 2000 }) : setTimeout(f, 60));
-    const step = () => { const line = todo.shift(); if (!line) return; Promise.resolve().then(() => P.preview(line)).catch(() => {}).then(() => idle(step)); };
+    const step = () => { const line = todo.shift(); if (!line) return; Promise.resolve().then(() => P.preview(line)).catch(() => {}).then(() => setTimeout(() => idle(step), 1200)); };
     idle(step);
   }
 
