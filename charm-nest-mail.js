@@ -383,8 +383,12 @@
   }
   function warnHtml(st) {
     if (st.tone !== "warn" && st.tone !== "down") return "";
-    return `<span>${E(st.text)}</span> <button type="button" class="lnk" data-health>Details</button>`;
+    // (PUTAWAY2, Paul 12 Nov 2026: "why the fuck am I seeing this goddamn message again and I can't even turn it off": the message that did not go out is cleared right here, Put away,
+    //  as the Details box's own button does (link_putaway: the dead letters are put away WITHOUT sending them); Details stays for the rest)
+    const dead = st.kind === "send" && /did not go out/.test(st.text || "");
+    return `<span>${E(st.text)}</span> ${dead ? `<button type="button" class="lnk" data-cm-putaway${gapBusy || healthBusy ? " disabled" : ""}>Put away</button> · ` : ""}<button type="button" class="lnk" data-health>Details</button>`;
   }
+  document.addEventListener("click", e => { const b = e.target.closest("[data-cm-putaway]"); if (!b || b.disabled) return; e.preventDefault(); e.stopPropagation(); putAway(); }, true);
   /* ─── the missing-messages notice (the nightly check's open gaps; see _etsyMailLinkConsistency.js) ───
      The server sends the gap as data (which conversations by order number, how many short, where the re-read stands, last and next
      try) and this page words it in its own clock. Check now re-runs the comparison for those conversations on the server (and asks for
