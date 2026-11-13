@@ -137,6 +137,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swChip.lit{border-color:var(--gold2);box-shadow:0 0 0 3px rgba(202,168,97,.18)}
 .swChip.lit[aria-current=true]{box-shadow:0 0 0 3px rgba(202,168,97,.35)}
 .swHeadR{margin-left:auto;display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.swHeadFiles{display:inline-flex;gap:6px;align-items:center}.swHeadFiles:empty{display:none}
 .swState{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:3px 10px;font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;background:var(--paper2);color:var(--ink70)}
 .swState i{width:7px;height:7px;border-radius:50%;background:currentColor}
 .swState.ready{background:var(--sageSoft);color:#3f5b3c}
@@ -467,6 +468,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
           <button type="button" class="swManual" data-r="manual" aria-pressed="false" hidden>${ICON.hand}<span>Manual Control</span></button>
           <span class="swState" data-r="state"><i></i><span></span></span><span class="swStateSeal" data-r="stateSeal"></span>
           <button class="btn ghost sm" data-r="done" hidden>Mark completed</button>
+          <span class="swHeadFiles" data-r="headFiles"></span>
           <div class="swMenuWrap"><button class="swIcon" data-r="moreBtn" aria-haspopup="menu" aria-expanded="false" title="Files and more">${ICON.more}</button><div class="swMenu" data-r="menu" role="menu" hidden></div></div>
           <button class="swIcon" data-r="close" title="Close (Esc)" aria-label="Close">${ICON.close}</button>
         </div>
@@ -2318,6 +2320,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       (rec.outputs?.labelled?.url ? `<a class="btn ghost xs" href="${esc(rec.outputs.labelled.url)}" target="_blank" rel="noopener" title="Every charm numbered, as a PDF">Proof</a>` : "") +
       (rec.outputs?.report?.url ? `<a class="btn ghost xs" href="${esc(rec.outputs.report.url)}" target="_blank" rel="noopener" title="The nest report (JSON)">Report</a>` : "");
     E.foot.innerHTML = `<div class="row">${qr}</div><div class="row"><span class="fLabel">Files</span><span class="swFiles">${files}</span></div>`;
+    // (HEADFILES, Paul 12 Nov 2026: "How come you took away my button to download DXF and AI files here" / "They're just not fucking here": the Files row is in the All orders pane only, so with an
+    //  order open there was no .ai or .dxf to press; they are in the window's header too, in every view)
+    if (E.headFiles) E.headFiles.innerHTML = [["ai", ".ai"], ["dxf", ".dxf"]].map(([fmt2, label]) => `<button class="btn ghost sm" data-export-one="${esc(rec.id)}" data-format="${fmt2}" title="Download the sheet as ${label}">Download ${label}</button>`).join("");
     const rb = E.foot.querySelector("[data-r2=label]"); if (rb) rb.onclick = () => makeLabel(rb);
   }
   /* Make QR label (Paul, 27 Sep: "The user should also have the ability to manually generate a QR code for the sheet,
