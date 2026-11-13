@@ -44,9 +44,22 @@
   const LOCAL_AT = new Map();  // line key -> when this page last saw it change by itself (a press here)
   const TAKING = new Set();    // line keys being put on the page now (their changes are not sends)
   const WAITING = new Map();   // line key -> a cloud record whose line was not on this page yet
+  const CLOUD = new Map();     // line key -> the cloud's record as last read or written here { key, rec, sig, at }
+  /* (ANYPC, Paul 13 Nov 2026: "It doesn't matter which computer it's on"): a line ANY computer knows to be one to engrave is marked so in the cloud: the cloud's own record with raised added, nothing else of it changed, and the mark never
+     comes off. No computer is special: whichever knows it first adds it, and every computer then shows the line the same way. */
+  async function raisedPush() {
+    const out = [];
+    for (const [k, line] of linesNow()) { const c = CLOUD.get(k); if (!c || !c.rec || c.rec.raised) continue; if (!((line.spec && line.spec.engraveCandidate) || RAISED.has(k))) continue; out.push({ key: k, rec: Object.assign({}, c.rec, { raised: true }), sig: c.sig || "" }); }
+    if (!out.length) return 0;
+    for (let i = 0; i < out.length; i += BATCH) { const chunk = out.slice(i, i + BATCH); try { const res = await api({ op: "engraveSyncPut", lines: chunk, by: who(), dev: dev() }); for (const r of (res && res.lines) || []) { const x = chunk.find(c => c.key === r.key); if (x && r.at) { CLOUD.set(x.key, { key: x.key, rec: x.rec, sig: x.sig, at: r.at }); RAISED.add(x.key); st.sent++; } } } catch (_) { st.fails++; } }
+    return out.length;
+  }
   async function retryWaiting() { if (!WAITING.size) return 0; const lines = linesNow(); let n = 0; for (const [k, l] of [...WAITING]) { if (!lines.has(k)) continue; WAITING.delete(k); if (await take(l, "keys")) n++; } if (n) { safe(() => E().render()); safe(() => O().render()); } return n; }
   const RAISED = new Set();    // line keys the cloud says are ones to engrave: kept raised here across every re-reading of the order (Orders.interpretAll reads the spec again)
   const raise = line => { if (line && line.spec && !line.spec.engraveCandidate) { line.spec.engraveCandidate = true; line.spec.engraveRaised = true; } };
+  /* (ANYPC, Paul 13 Nov 2026: "It doesn't matter which computer it's on"): whether a line is one to engrave is read from the ORDER (its options, its words, its setup), so EVERY computer reads it the same, itself: the very rule the run's reading pass
+     applies (Engrave.raiseCandidate, for every pooled or written line), applied here on every computer after every reading of the orders, plus the lines the cloud says were raised. */
+  function raiseAll() { const Eg = E(); for (const [k, line] of linesNow()) { if (RAISED.has(k)) raise(line); else if (Eg && typeof Eg.raiseCandidate === "function" && ["pooled", "written", "waiting", "pulled", "held"].includes(line.state) && line.spec && !line.spec.engraveCandidate) safe(() => Eg.raiseCandidate(line)); } }
   let timer = 0, firstAt = 0;
 
   const lineOf = r => (r && r.parentRow) || r;
@@ -111,7 +124,7 @@
       for (let i = 0; i < list.length; i += BATCH) {
         const chunk = list.slice(i, i + BATCH);
         const res = await api({ op: "engraveSyncPut", lines: chunk.map(x => ({ key: x.key, rec: x.rec, sig: x.sig })), by: who(), dev: dev() });
-        for (const r of (res && res.lines) || []) { const x = chunk.find(c => c.key === r.key); if (!x) continue; if (r.at) { SIGS.set(x.key, x.sig); st.sent++; st.lastAt = Math.max(st.lastAt, r.at); } else st.fails++; }
+        for (const r of (res && res.lines) || []) { const x = chunk.find(c => c.key === r.key); if (!x) continue; if (r.at) { SIGS.set(x.key, x.sig); CLOUD.set(x.key, { key: x.key, rec: x.rec, sig: x.sig, at: r.at }); st.sent++; st.lastAt = Math.max(st.lastAt, r.at); } else st.fails++; }
       }
       st.last = { at: Date.now(), sent: list.length };
     } catch (e) { st.fails++; st.last = { at: Date.now(), error: String(e && e.message || e) }; setTimeout(changed, 15000); }
@@ -123,7 +136,7 @@
     const body = Array.isArray(orders) ? { op: "engraveSyncGet", orders: orders.slice(0, 600) } : { op: "engraveSyncGet", since: Math.max(0, st.lastAt - 5000) };
     let res; try { res = await api(body); } catch (e) { st.fails++; return 0; }
     const lines = (res && res.lines) || []; let n = 0;
-    for (const l of lines) { st.lastAt = Math.max(st.lastAt, l.at || 0); if (await take(l, why)) n++; }
+    for (const l of lines) { st.lastAt = Math.max(st.lastAt, l.at || 0); CLOUD.set(l.key, l); if (await take(l, why)) n++; }
     if (n) { safe(() => E().render()); safe(() => O().render()); }
     return n;
   }
@@ -173,7 +186,7 @@
     try {
       for (let i = 0; i < orders.length; i += 600) {
         const res = await api({ op: "engraveSyncGet", orders: orders.slice(i, i + 600) });
-        for (const l of (res && res.lines) || []) { have.add(l.key); cloudRaised.set(l.key, !!(l.rec && l.rec.raised)); st.lastAt = Math.max(st.lastAt, l.at || 0); await take(l, "start"); }
+        for (const l of (res && res.lines) || []) { have.add(l.key); CLOUD.set(l.key, l); cloudRaised.set(l.key, !!(l.rec && l.rec.raised)); st.lastAt = Math.max(st.lastAt, l.at || 0); await take(l, "start"); }
       }
     } catch (e) { st.fails++; }
     // what this page holds now is the start of what it sends; the computer with the run open seeds the cloud with every line it does not hold yet
@@ -195,7 +208,8 @@
     s.schedule = function () { try { changed(); } catch (_) {} return orig.apply(this, arguments); };
     s.__engraveSync = true;
     // (RAISEDSYNC: every re-reading of the orders keeps the lines the cloud raised as ones to engrave)
-    const Od = O(); if (Od && typeof Od.interpretAll === "function" && !Od.__engraveSyncRaise) { const oi = Od.interpretAll; Od.interpretAll = function () { const r = oi.apply(this, arguments); try { if (RAISED.size) for (const [k, line] of linesNow()) if (RAISED.has(k)) raise(line); } catch (_) {} return r; }; Od.__engraveSyncRaise = true; }
+    const Od = O(); if (Od && typeof Od.interpretAll === "function" && !Od.__engraveSyncRaise) { const oi = Od.interpretAll; Od.interpretAll = function () { const r = oi.apply(this, arguments); try { raiseAll(); } catch (_) {} return r; }; Od.__engraveSyncRaise = true; }
+    try { raiseAll(); } catch (_) {}
     return true;
   }
   function follow() {
@@ -222,9 +236,11 @@
       for (const t of ["pointerdown", "keydown", "input"]) root.addEventListener(t, e => { if (!e || e.isTrusted !== false) lastInput = Date.now(); }, { capture: true, passive: true });
       setTimeout(() => { start().catch(e => console.warn("[engrave-sync] start", e)); }, START_DELAY);
       setInterval(() => { if (st.started && !(root.document && root.document.hidden)) pull(null, "net").catch(() => {}); }, NET_MS);
+      setTimeout(() => { raisedPush().catch(() => {}); }, START_DELAY + 25000);   // (ANYPC: once the start pass and the reading have run)
+      setInterval(() => { if (st.started) raisedPush().catch(() => {}); }, 60000);
     };
     go();
   }
-  root.CharmNestEngraveSync = { state: () => Object.assign({}, st, { lines: SIGS.size }), flush: sweep, pull, sigOf: l => sigOf(lineOf(l)), _take: take };
+  root.CharmNestEngraveSync = { state: () => Object.assign({}, st, { lines: SIGS.size, cloud: CLOUD.size, raised: RAISED.size }), flush: sweep, pull, raisedPush, sigOf: l => sigOf(lineOf(l)), _take: take };
   if (root.document) { if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", boot); else boot(); }
 })(typeof self !== "undefined" ? self : this);
