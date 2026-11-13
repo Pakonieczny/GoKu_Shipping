@@ -318,7 +318,7 @@
        · no line widths and no extended data: a polyline is its centre line */
   const BACK_ENGRAVE = /^BACK \S+(?: (?:Left|Right))? \/ ENGRAVE$/, blueRGB = c => !!c && c.length >= 3 && c[2] >= 0.5 && c[2] - Math.max(c[0], c[1]) >= 0.4;
   const REF_LAYER = /^SHEET(?: |$)|CUT OUTLINE|^ROSE SEPARATION CUT$/i, FACE_OWNER = /^((?:BACK|FRONT) \S+(?: (?:Left|Right))?) \/ /;
-  const ROLE_ACI = {CUT:7, ENGRAVE:1, HATCH:5};
+  const ROLE_ACI = {CUT:7, ENGRAVE:1, HATCH:5}, JOIN_MM = 0.25;
   /* LWBOLD (Paul, 12 Nov 2026: "the black and red lines are too thin and they're barely visible"): the CUT and ENGRAVE lines carry a display line weight, 0.50 mm (DXF 370 = 50, and $LWDISPLAY on);
      it is how they are drawn on screen only, the laser still follows each line's centre (no polyline width). The hatch lines keep the default weight: they are dense already */
   const ROLE_LW = {CUT:50, ENGRAVE:50, HATCH:-3};   // (0.50 mm: Illustrator reads 0.30 mm as 0.85 pt, hardly more than its 0.71 pt default; Paul, 12 Nov: "still exactly the same")
@@ -362,10 +362,23 @@
       for(const ax of [1,0]){const ox=1-ax;
         let v0=Infinity,v1=-Infinity;for(const p of polys)for(const q of p){if(q[ax]<v0)v0=q[ax];if(q[ax]>v1)v1=q[ax];}
         const edges=[];for(const p of polys)for(let i=0;i<p.length;i++){const a=p[i],b=p[(i+1)%p.length];if(a[ax]!==b[ax])edges.push(a[ax]<b[ax]?[a,b]:[b,a]);}
+        // (ZIGZAG, Paul 12 Nov 2026: "Every single hatch line is a separate layer": Illustrator lists every DXF entity as a row of its own, so a charm's hatching was thousands of rows.
+        //  The same hatch lines, at the same places and spacing, are now joined end to end into a few continuous polylines (the laser's own "bidirectional" hatch): the line on one
+        //  pass joins the next pass where they overlap, by a short step along the area's edge (never longer than JOIN_MM); anything else starts a new polyline)
+        const point=(v,u)=>{const P=[0,0];P[ax]=v;P[ox]=u;return P;}, join=JOIN_MM/MM;
+        let open=[];   // the polylines still growing: { pts, a, b, end } (the last pass's interval and the side it ended on)
         for(let v=v0+step/2;v<v1;v+=step){
           const us=[];for(const [a,b] of edges)if(v>=a[ax]&&v<b[ax])us.push(a[ox]+(v-a[ax])*(b[ox]-a[ox])/(b[ax]-a[ax]));
-          us.sort((m,n)=>m-n);for(let i=0;i+1<us.length;i+=2)if(us[i+1]-us[i]>1e-6){const A=[0,0],B=[0,0];A[ax]=v;B[ax]=v;A[ox]=us[i];B[ox]=us[i+1];entities.push({type:'LINE',a:A,b:B,layer:t.name,c:t.c,blk:t.blk});}
+          us.sort((m,n)=>m-n);const next=[];
+          for(let i=0;i+1<us.length;i+=2){const a=us[i],b=us[i+1];if(!(b-a>1e-6))continue;
+            const k=open.findIndex(c=>Math.max(c.a,a)<Math.min(c.b,b)&&Math.abs((c.end==='b'?b:a)-(c.end==='b'?c.b:c.a))<=join);
+            if(k>=0){const c=open.splice(k,1)[0];if(c.end==='b'){c.pts.push(point(v,b),point(v,a));c.end='a';}else{c.pts.push(point(v,a),point(v,b));c.end='b';}c.a=a;c.b=b;next.push(c);}
+            else next.push({pts:[point(v,a),point(v,b)],a,b,end:'b'});
+          }
+          for(const c of open)entities.push({type:'LWPOLYLINE',points:c.pts,closed:false,layer:t.name,c:t.c,blk:t.blk});
+          open=next;
         }
+        for(const c of open)entities.push({type:'LWPOLYLINE',points:c.pts,closed:false,layer:t.name,c:t.c,blk:t.blk});
       }
     };
     for(const name of declaredLayers){const n=layer(name);if(!layerAci.has(n))layerAci.set(n,7);}   // (the sheet's own layer names stay listed, as before)
