@@ -11449,8 +11449,7 @@ const Engrave = window.Engrave = (() => {
     const s = document.createElement("style"); s.id = "egStageCss";
     s.textContent = ".rvItem .backHost>.engpNoJob,.rvItem .backHost>.noBack.engpNoJob{display:none!important}.rvItem[data-sv-own=\"0\"] .placeView>.ctl>*{visibility:hidden}"
       + ".egStagePv{display:block;box-sizing:border-box;margin:0 auto;background:#fff;border:1px solid var(--line,#e4ddd0);border-radius:10px;overflow:hidden}"
-      // (GRIDNOW, Paul 13 Nov 2026: "It still shows up without the grid for several seconds"): the box shows the grid from its first frame, while the charm's own outline is read (it is then drawn on the real 1 mm grid)
-      + ".egStagePv{position:relative}.egStagePv::after{content:\"\";position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(rgba(150,140,120,.22) 1px,transparent 1px),linear-gradient(90deg,rgba(150,140,120,.22) 1px,transparent 1px);background-size:14px 14px}"
+      // (GRIDNOW removed, Paul 13 Nov 2026: "you can tell when the charm outline is very low quality": a grid laid over the flat picture made it pass for the real work area; the real outline is read ahead instead)
       + ".backHost .egZoom button{cursor:pointer;transition:background-color .12s ease,color .12s ease,box-shadow .12s ease,transform .08s ease}"
       + "@media (hover:hover){.backHost .egZoom button:hover{background:var(--goldSoft,#f6efdc);color:var(--ink,#2a2724);box-shadow:inset 0 0 0 1px var(--gold,#a9823f)}.backHost .egZoom button[aria-pressed=true]:hover{background:var(--ink,#2a2724);color:#fff}}"
       + ".backHost .egZoom button:active{transform:translateY(1px) scale(.98)}.backHost .egZoom button:focus-visible{outline:2px solid var(--gold,#a9823f);outline-offset:2px}"
