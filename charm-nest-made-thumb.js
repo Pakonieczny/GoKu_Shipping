@@ -382,6 +382,9 @@
   /** These pieces changed on another computer (this page only heard of it): their next move is not sent from here. */
   function adopt(ids) { const until = Date.now() + 10000; for (const id of ids || []) quiet.set(String(id), until); changed('adopt', ids); }
   const isQuiet = id => { const t = quiet.get(id); if (!t) return false; if (t < Date.now()) { quiet.delete(id); return false; } return true; };
+  // (FACESEND, Paul 13 Nov 2026: "Your fixes are not landing on the other computers": a cloud picture short of a face (made before FRONTJOB: the back alone) was shown
+  //  here as this page's own (FACESALL) but never sent again, so every computer that does not hold the piece kept the cloud's back-only picture: it is drawn and sent once, paced)
+  const short = (made, st) => !!(made && st && Array.isArray(made.faces) && Array.isArray(st.faces) && made.faces.length < st.faces.length);
   function sweep() {
     sweepT = 0; IDX = null;
     const ids = new Set([...index().keys(), ...touched]); touched.clear();
@@ -394,7 +397,7 @@
         if (!sig || isQuiet(id)) continue;
         // (first seen on this page: sent only when the cloud has no picture of it while its row is held here, or the cloud's was sent from here and is older: never over another computer's)
         const made = cloudOf(id);
-        if ((!made && known(id)) || (made && verOf(made) < V) || (made && made.dev === dev() && made.sig !== sig)) want(id, true);   // (MADEV: a picture of an older drawing is drawn again by any page that can, paced)
+        if ((!made && known(id)) || (made && verOf(made) < V) || short(made, st) || (made && made.dev === dev() && made.sig !== sig)) want(id, true);   // (MADEV: a picture of an older drawing is drawn again by any page that can, paced)
         if (!first) moved.push(id);   // (a piece restored or pooled since the page began: its boxes look again)
       } else if (prev !== sig) {
         SIGS.set(id, sig); moved.push(id);
@@ -402,7 +405,7 @@
         mine.add(id); want(id, false);
       } else if (sig && !pend.has(id) && !redrawn.has(id)) {
         // (MADEV: a piece this page knows whose cloud picture is of an older drawing (one the feed brought since, or one this page saw before it could draw the piece): drawn again and sent, once, paced)
-        const made = cloudOf(id); if (made && verOf(made) < V) { redrawn.add(id); want(id, true); }
+        const made = cloudOf(id); if (made && (verOf(made) < V || short(made, st))) { redrawn.add(id); want(id, true); }
       }
     }
     first = false;
