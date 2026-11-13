@@ -319,9 +319,9 @@
   const BACK_ENGRAVE = /^BACK \S+(?: (?:Left|Right))? \/ ENGRAVE$/, blueRGB = c => !!c && c.length >= 3 && c[2] >= 0.5 && c[2] - Math.max(c[0], c[1]) >= 0.4;
   const REF_LAYER = /^SHEET(?: |$)|CUT OUTLINE|^ROSE SEPARATION CUT$/i, FACE_OWNER = /^((?:BACK|FRONT) \S+(?: (?:Left|Right))?) \/ /;
   const ROLE_ACI = {CUT:7, ENGRAVE:1, HATCH:5};
-  /* LWBOLD (Paul, 12 Nov 2026: "the black and red lines are too thin and they're barely visible"): the CUT and ENGRAVE lines carry a display line weight, 0.30 mm (DXF 370 = 30, and $LWDISPLAY on);
+  /* LWBOLD (Paul, 12 Nov 2026: "the black and red lines are too thin and they're barely visible"): the CUT and ENGRAVE lines carry a display line weight, 0.50 mm (DXF 370 = 50, and $LWDISPLAY on);
      it is how they are drawn on screen only, the laser still follows each line's centre (no polyline width). The hatch lines keep the default weight: they are dense already */
-  const ROLE_LW = {CUT:30, ENGRAVE:30, HATCH:-3};
+  const ROLE_LW = {CUT:50, ENGRAVE:50, HATCH:-3};   // (0.50 mm: Illustrator reads 0.30 mm as 0.85 pt, hardly more than its 0.71 pt default; Paul, 12 Nov: "still exactly the same")
   const grey = c => !c || Math.max(c[0],c[1],c[2]) - Math.min(c[0],c[1],c[2]) <= 0.15;
   function dxf(paths, declaredLayers=[], opts={}) {
     const hatchMm=Math.max(0.005,+(opts.hatchMm||root.CN_DXF_HATCH_MM||0.02)), step=hatchMm/MM;   // (Paul, 12 Nov 2026: "much much closer" and crosshatched: 0.02 mm, both ways)   // (paths are in points: MM is mm per point)
@@ -336,7 +336,7 @@
     /* CHARMLAYER (Paul, 12 Nov 2026: "The engraving layers are still not saved under each charm. They're still separated and segregated from the charms"; "the hatching and the engraving
        layers must be contained under the charm that has them"): a DXF layer cannot hold layers, so each charm is ONE layer, named for the charm, and under it its jobs are three named blocks,
        "<charm> - CUT" (black, colour 7), "<charm> - ENGRAVE" (red, colour 1) and "<charm> - HATCH" (blue, colour 5), each inserted once, in place (at 0,0, scale 1), on the charm's layer;
-       the lines inside a block are on layer 0 (they take the charm's layer) and carry their own colour number. A front engraving put on its charm goes under that charm (the charm whose
+       the lines inside a block are on the charm's layer too (Illustrator 2024 ignores blocks and puts each line on its own layer: tested 12 Nov) and carry their own colour number. A front engraving put on its charm goes under that charm (the charm whose
        outline holds it); a back laid above the sheet is a layer of its own with its blocks. Lines of no charm stay on a layer named for their job; SHEET and ROSE SEPARATION CUT keep theirs */
     const ownerOf=path=>{let ow=path.charm||null;{const f2=ow&&FACE_OWNER.exec(ow);if(f2)ow=f2[1];}const fo=FACE_OWNER.exec(path.layer||'');return ow||(fo&&fo[1])||null;};
     const boxOfPath=path=>{if(path.bbox&&path.bbox.every(Number.isFinite))return path.bbox;let b=null;for(const sub of path.subpaths||[])for(const o of sub)for(let i=1;i<o.length;i++)if(Array.isArray(o[i]))b=union(b,[o[i][0],o[i][1],o[i][0],o[i][1]]);return b;};
@@ -399,14 +399,14 @@
       if(ent.type==='LINE'){const a=xy(ent.a),b=xy(ent.b);add(100,'AcDbLine',10,a[0],20,a[1],30,0,11,b[0],21,b[1],31,0);}
       else {add(100,'AcDbPolyline',90,ent.points.length,70,ent.closed?1:0,43,0);for(const p of ent.points){const q=xy(p);add(10,q[0],20,q[1]);}}
     };
-    // (CHARMLAYER) each charm's jobs as named blocks: the block records, the blocks with their lines (layer 0), and one INSERT of each on the charm's layer
+    // (CHARMLAYER) each charm's jobs as named blocks: the block records, the blocks with their lines (on the charm's layer), and one INSERT of each on the charm's layer
     const bnames=new Set(['*model_space','*paper_space']),blocks=new Map();
     const bname=s=>{let n=ascii(String(s).replace(/[<>/\\":;?*|=`]/g,'_')).replace(/\s+/g,' ').trim().slice(0,240)||'Block',i=2,b=n;while(bnames.has(n.toLowerCase()))n=b+'_'+i++;bnames.add(n.toLowerCase());return n;};
     for(const ent of entities)if(ent.blk){let b=blocks.get(ent.blk);if(!b){b={name:bname(ent.blk),layer:ent.layer,ents:[]};blocks.set(ent.blk,b);}b.ents.push(ent);}
     let recText='',blockText='';
     for(const b of blocks.values()){b.rec=H();text='';add(0,'BLOCK_RECORD',5,b.rec,330,'9',100,'AcDbSymbolTableRecord',100,'AcDbBlockTableRecord',2,b.name,70,0,280,1,281,0);recText+=text;}
     for(const b of blocks.values()){text='';add(0,'BLOCK',5,H(),330,b.rec,100,'AcDbEntity',8,'0',100,'AcDbBlockBegin',2,b.name,70,0,10,0,20,0,30,0,3,b.name,1,'');
-      for(const ent of b.ents)writeEnt(ent,b.rec,'0');
+      for(const ent of b.ents)writeEnt(ent,b.rec,b.layer);   // (on the charm's own layer, never 0: Illustrator opens a block's lines onto the layer each line names, so lines on 0 all landed in one layer "0")
       add(0,'ENDBLK',5,H(),330,b.rec,100,'AcDbEntity',8,'0',100,'AcDbBlockEnd');blockText+=text;}
     text='';
     for(const ent of entities)if(!ent.blk)writeEnt(ent,'17',ent.layer);
