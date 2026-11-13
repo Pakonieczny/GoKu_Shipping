@@ -65,7 +65,9 @@
   else root.CharmNestStore = factory(root);
 })(typeof self !== 'undefined' ? self : this, function (root) {
   'use strict';
-  const SCHEMA = 1;                                      // bump when a store is added or a row's shape changes: what is kept is a copy, so an upgrade may drop it
+  const SCHEMA = 2;                                      // bump when a store is added or a row's shape changes: what is kept is a copy, so an upgrade may drop it
+  // (FRESHDATA, Paul 13 Nov 2026: "All the changes we made yesterday are not appearing on the computer here ... even when I refresh and kill the history": 2 empties every computer's kept
+  //  records once, so each reads its sheets, sets and lists fresh from the cloud; the outbox (presses not answered yet) is kept)
   const KINDS = ['sheets', 'sheetFull', 'sets', 'lists'];
   const BLOBS = ['parsed', 'bytes'];
   const day = 86400000;
