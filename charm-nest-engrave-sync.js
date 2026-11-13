@@ -43,6 +43,8 @@
   const SIGS = new Map();      // line key -> the signature of what this page last sent or took (a change is one that differs)
   const LOCAL_AT = new Map();  // line key -> when this page last saw it change by itself (a press here)
   const TAKING = new Set();    // line keys being put on the page now (their changes are not sends)
+  const RAISED = new Set();    // line keys the cloud says are ones to engrave: kept raised here across every re-reading of the order (Orders.interpretAll reads the spec again)
+  const raise = line => { if (line && line.spec && !line.spec.engraveCandidate) { line.spec.engraveCandidate = true; line.spec.engraveRaised = true; } };
   let timer = 0, firstAt = 0;
 
   const lineOf = r => (r && r.parentRow) || r;
@@ -65,14 +67,14 @@
   function lineRec(line) {
     const jobs = jobsOfLine(line);
     if (!jobs.length && !line.engravingOverride) return null;
-    return { v: 1, override: plain(line.engravingOverride || null), engrave: plain(line.engrave || null), jobs: jobs.map(jobRec) };
+    return { v: 1, override: plain(line.engravingOverride || null), engrave: plain(line.engrave || null), raised: !!((line.spec && line.spec.engraveCandidate) || RAISED.has(line.key)), jobs: jobs.map(jobRec) };   // raised: (RAISEDSYNC, Paul 13 Nov 2026, order 4222483240 SEA_59109 on another computer: None and no grid where the run computer shows Back with its grid): the line is one to engrave (the run computer's reading raises it; a computer without the run never does)
   }
   /** The signature of what a line's engraving is now ('' when it has none): two computers with the same work have the same one. Places are rounded (a refit lands within 0.01 mm). */
   function sigOf(line) {
     const jobs = jobsOfLine(line); if (!jobs.length && !line.engravingOverride) return "";
     const r2 = n => (Number.isFinite(+n) ? Math.round(+n * 100) / 100 : n);
     // (no copies: one JSON of the fields as they are, the paid reading's long answer left out; the place rounded, as a refit lands within 0.01 mm)
-    const parts = [line.engravingOverride || null];
+    const parts = [line.engravingOverride || null, !!((line.spec && line.spec.engraveCandidate) || RAISED.has(line.key))];
     for (const j of jobs) { const o = { k: j.key }; for (const f of JOB_FIELDS) if (f !== "claude" && j[f] !== undefined) o[f] = j[f]; const f = j.fit || j.writtenFit; if (f && Array.isArray(f.centre)) o.p = [r2(f.centre[0]), r2(f.centre[1]), r2(f.angle || 0), r2(f.size)]; parts.push(o); }
     let txt = ""; try { txt = JSON.stringify(parts); } catch (_) { txt = String(Date.now()); }
     return fnv(txt);
@@ -135,6 +137,7 @@
       if (rec.override !== undefined) line.engravingOverride = plain(rec.override) || undefined;
       if (rec.override === null) delete line.engravingOverride;
       if (rec.engrave) line.engrave = Object.assign(line.engrave || {}, plain(rec.engrave));
+      if (rec.raised) { RAISED.add(l.key); raise(line); }
       safe(() => E().ensureJobs(line));
       const items = safe(() => E().items(), null);
       for (const rj of rec.jobs || []) {
@@ -162,18 +165,18 @@
   async function start() {
     if (st.started) return; st.started = true;
     const lines = linesNow(), orders = [...new Set([...lines.values()].map(l => String(safe(() => l.order.receiptId, "") || l.key.split("_")[0])).filter(Boolean))];
-    let have = new Set();
+    let have = new Set(); const cloudRaised = new Map();
     try {
       for (let i = 0; i < orders.length; i += 600) {
         const res = await api({ op: "engraveSyncGet", orders: orders.slice(i, i + 600) });
-        for (const l of (res && res.lines) || []) { have.add(l.key); st.lastAt = Math.max(st.lastAt, l.at || 0); await take(l, "start"); }
+        for (const l of (res && res.lines) || []) { have.add(l.key); cloudRaised.set(l.key, !!(l.rec && l.rec.raised)); st.lastAt = Math.max(st.lastAt, l.at || 0); await take(l, "start"); }
       }
     } catch (e) { st.fails++; }
     // what this page holds now is the start of what it sends; the computer with the run open seeds the cloud with every line it does not hold yet
     const seed = [];
     for (const [key, line] of linesNow()) {
       const sig = sigOf(line); SIGS.set(key, sig);
-      if (!have.has(key) && sig && root.B && root.B.run) { const rec = lineRec(line); if (rec) seed.push({ key, rec, sig }); }
+      if (sig && root.B && root.B.run && (!have.has(key) || (!!(line.spec && line.spec.engraveCandidate) && !cloudRaised.get(key)))) { const rec = lineRec(line); if (rec) seed.push({ key, rec, sig }); }   // (and a line the cloud holds without its raised mark: sent again with it)
     }
     if (seed.length) { st.seeded = true; await send(seed); }
     safe(() => S().schedule());
@@ -187,6 +190,8 @@
     if (typeof orig !== "function") return false;
     s.schedule = function () { try { changed(); } catch (_) {} return orig.apply(this, arguments); };
     s.__engraveSync = true;
+    // (RAISEDSYNC: every re-reading of the orders keeps the lines the cloud raised as ones to engrave)
+    const Od = O(); if (Od && typeof Od.interpretAll === "function" && !Od.__engraveSyncRaise) { const oi = Od.interpretAll; Od.interpretAll = function () { const r = oi.apply(this, arguments); try { if (RAISED.size) for (const [k, line] of linesNow()) if (RAISED.has(k)) raise(line); } catch (_) {} return r; }; Od.__engraveSyncRaise = true; }
     return true;
   }
   function follow() {

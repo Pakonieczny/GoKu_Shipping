@@ -8462,7 +8462,8 @@ const Engrave = window.Engrave = (() => {
     const row = lineOf(job.row); if (!row || !row.key) return false;
     const t = charmAsked.get(row.key); if (t && Date.now() - t < 15000) return true;
     charmAsked.set(row.key, Date.now());
-    (job.pre ? early(row) : Pool.preview(row)).then(() => { if (!(Pool.charmOf(pid) || Pool.previewCharmOf(pid))) return; charmAsked.delete(row.key); if (EG.card && EG.card.isConnected && cardJobOf(job)) render(); }).catch(() => {});
+    // (RAISEDSYNC, Paul 13 Nov 2026, order 4222483240 SEA_59109 on another computer: None and no grid where the run computer shows Back with its grid): a piece marked made-before-its-sheet whose early pass makes no charm (its line is not read as an engraving here) is drawn from its preview all the same
+    (job.pre ? early(row).then(() => (Pool.charmOf(pid) || Pool.previewCharmOf(pid)) ? null : Pool.preview(row)) : Pool.preview(row)).then(() => { if (!(Pool.charmOf(pid) || Pool.previewCharmOf(pid))) return; charmAsked.delete(row.key); if (EG.card && EG.card.isConnected && cardJobOf(job)) render(); }).catch(() => {});
     return true;
   }   // (ENGPRE: a piece not on any sheet yet has the charm it WILL have, Pool.preview)
   /** ENGPRE: a job made before its piece was on a sheet (`job.pre`) and not on one now: nothing waits for the sheet, no back file is written or retried until it is. */
