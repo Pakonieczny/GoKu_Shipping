@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sorter Check</title>
+<!-- cn-check.html (CHECKPAGE, Paul 13 Nov 2026: "The other computer is still NOT updating"): what THIS computer runs of the sorter, in plain words,
+     and one button that throws away everything the sorter keeps on this computer (its kept code, and its kept copy of sheets and lists; unsent presses stay). -->
+<style>
+body{font:16px system-ui,-apple-system,Segoe UI,sans-serif;margin:0;padding:18px;background:#f6f4ef;color:#1c1a17}
+h1{font-size:22px;margin:0 0 12px}.row{background:#fff;border:1px solid #ddd5c6;border-radius:10px;padding:10px 14px;margin:8px 0;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+.k{font-weight:700;min-width:230px}.ok{color:#11733a;font-weight:700}.bad{color:#b3261e;font-weight:700}
+button{font:700 16px system-ui,sans-serif;border:0;border-radius:9px;padding:12px 18px;background:#1d4ed8;color:#fff;cursor:pointer;margin:14px 8px 0 0}
+button.alt{background:#555}code{font-size:13px;word-break:break-all}
+</style></head><body>
+<h1>Sorter check for this computer</h1>
+<div id="out">Checking…</div>
+<button id="clean">Clean this computer and open the sorter</button><button class="alt" id="again">Check again</button>
+<script>
+(async function(){
+  const out=document.getElementById('out'), rows=[];
+  const row=(k,v,good)=>rows.push(`<div class="row"><span class="k">${k}</span><span class="${good===true?'ok':good===false?'bad':''}">${v}</span></div>`);
+  const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  row('Address', esc(location.href));
+  row('Time on this computer', new Date().toString());
+  row('Browser', esc(navigator.userAgent));
+  let live='';
+  try{ const t=await (await fetch('/charm-nest-1.html',{cache:'no-store'})).text();
+    const tok=(t.match(/charm-nest-store\.js\?v=([^"]*)/)||[])[1]||'?';
+    live=tok; row('Newest sorter on the website', 'store '+esc(tok)+(t.includes('CN_SW="off"')?' · offline copy switched off':''), true);
+  }catch(e){ row('Newest sorter on the website','could not be read: '+esc(e.message||e),false); }
+  try{ const regs=navigator.serviceWorker?await navigator.serviceWorker.getRegistrations():[];
+    row('Offline copy (service worker)', regs.length? regs.map(r=>esc((r.active||r.waiting||r.installing||{}).scriptURL||'?')).join(', ')+' — STILL HERE' : 'none', regs.length===0);
+  }catch(e){ row('Offline copy (service worker)','unknown: '+esc(e.message||e)); }
+  try{ const ks=window.caches?await caches.keys():[]; row('Kept code files (caches)', ks.length? esc(ks.join(', ')) : 'none', ks.length===0); }catch(e){ row('Kept code files (caches)','unknown'); }
+  const meta=name=>new Promise(res=>{try{const rq=indexedDB.open(name);rq.onupgradeneeded=()=>{try{rq.transaction.abort();}catch(_){} res('none');};rq.onsuccess=()=>{const db=rq.result;try{const t=db.transaction('meta','readonly');const g=t.objectStore('meta').get('meta');g.onsuccess=()=>{res(g.result||'empty');db.close();};g.onerror=()=>{res('unreadable');db.close();};}catch(e){res('no meta');db.close();}};rq.onerror=()=>res('cannot open');}catch(e){res('no IndexedDB');}});
+  for(const w of ['production','sandbox']){ const m=await meta('cn-local.'+w);
+    row('Kept sheets copy ('+w+')', typeof m==='object'? 'schema '+m.schema+' · emptied '+new Date(m.at).toLocaleString() : esc(m), typeof m==='object'? m.schema>=2 : null); }
+  try{ const ls=[]; for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i); if(/sandbox|cn\.sw|world/i.test(k)) ls.push(k+' = '+String(localStorage.getItem(k)).slice(0,80));}
+    row('Sandbox / switches', ls.length? '<code>'+esc(ls.join(' | '))+'</code>' : 'none'); }catch(_){}
+  out.innerHTML=rows.join('');
+})();
+document.getElementById('again').onclick=()=>location.reload();
+document.getElementById('clean').onclick=async()=>{
+  const b=document.getElementById('clean'); b.disabled=true; b.textContent='Cleaning…';
+  try{ for(const r of (navigator.serviceWorker?await navigator.serviceWorker.getRegistrations():[])) await r.unregister(); }catch(_){}
+  try{ for(const k of (window.caches?await caches.keys():[])) await caches.delete(k); }catch(_){}
+  // the kept sheets copy: its meta record goes, so the sorter empties it and reads everything from the cloud (the outbox of unsent presses stays)
+  for(const w of ['production','sandbox']) await new Promise(res=>{try{const rq=indexedDB.open('cn-local.'+w);rq.onupgradeneeded=()=>{try{rq.transaction.abort();}catch(_){} res();};rq.onsuccess=()=>{const db=rq.result;try{const t=db.transaction('meta','readwrite');t.objectStore('meta').delete('meta');t.oncomplete=t.onerror=t.onabort=()=>{db.close();res();};}catch(_){db.close();res();}};rq.onerror=()=>res();}catch(_){res();}});
+  location.href='/charm-nest-1.html?fresh='+Date.now();
+};
+</script>
+</body></html>

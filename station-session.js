@@ -89,7 +89,8 @@
   const POLICY = {
     default: { idleMin: 10, idleMinAfter17: 10, closeAt17: "idleWindow" },      // Sorting, Assembly, Shipping, Design apps, Inbox, the Sorter app with no role or the Design role
     welding: { idleMin: 0, idleMinAfter17: 0, closeAt17: "always" },            // the Welding station (weld-1): every task, every person
-    laser: { idleMin: 60, idleMinAfter17: 30, closeAt17: "idleWindow" }         // the Laser role in the Sorter app
+    laser: { idleMin: 60, idleMinAfter17: 30, closeAt17: "idleWindow" },        // the Laser role in the Sorter app
+    design: { idleMin: 0, idleMinAfter17: 0, closeAt17: "never" }               // (DESIGNSTAY, Paul 13 Nov 2026: "Why is the design station being logged out? It should never be fucking logged out never"): no idle, no 5 pm, and at midnight a new session starts with the person still signed in
   };
   const policyOf = st => (typeof st === "string" && st !== "default" && Object.prototype.hasOwnProperty.call(POLICY, st) ? POLICY[st] : POLICY.default);
   const spanWords = m => (m % 60 === 0 ? (m / 60 === 1 ? "1 hour" : m / 60 + " hours") : m + (m === 1 ? " minute" : " minutes"));
@@ -669,6 +670,14 @@
   /** the day turned: end the session and let the page sign out (its work stays on screen) */
   function midnight() {
     const today = nyDay(), r = cur || loadRec();
+    // (DESIGNSTAY, Paul 13 Nov 2026: "Why is the design station being logged out? It should never be fucking logged out never"): a station that never signs out (closeAt17 "never") ends the day's session for the hours and starts today's, the person stays signed in
+    const p0 = person();
+    if (p0 && !p0.pending && !cfg.multi && policyOf(r && !r.ended ? stationOf(r) : stationNow()).closeAt17 === "never") {
+      if (r && !r.ended) finish(r, "midnight");
+      cur = null; clearStaleDays(today); markDay(p0.name, today); quiet = ""; seen = p0.name;
+      try { begin(p0, false); } catch (e) { warn("midnight begin failed:", e); }
+      return;
+    }
     if (r && !r.ended) finish(r, "midnight");
     cur = null;
     clearStaleDays(today);
