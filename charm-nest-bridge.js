@@ -8278,7 +8278,7 @@ const Engrave = window.Engrave = (() => {
       try {
         const bytes = await fontResource(entry.file + (entry.sha256 ? "?v=" + String(entry.sha256).slice(0, 12) : ""));
         if (bytes.byteLength < 1000 || (entry.bytes && bytes.byteLength !== entry.bytes)) throw new Error("the file is not the one the manifest lists");
-        if (entry.sha256 && await CN.sha256(new Uint8Array(bytes)) !== entry.sha256) throw new Error("font version differs from the manifest");
+        if (entry.sha256 && await sha256Hex(new Uint8Array(bytes)) !== entry.sha256) throw new Error("font version differs from the manifest");   // (EMOJINOW, Paul 13 Nov 2026: "We already have emojis why aren't you using them?": the emoji font's check called CN before the page had made it ("CN is not defined"), so on a computer that read its fonts early the emoji never loaded and every engraving with an emoji had no picture)
         const m = window.CharmNestShape.addFont(entry.id, bytes);
         rec.bytes = bytes; rec.entry = Object.assign({}, entry); rec.ok = true; SCRIPTS.failed.delete(entry.id);
         scriptSet().use(Object.assign({}, entry, { capEm: m.capHeight / m.unitsPerEm }));
@@ -8327,6 +8327,8 @@ const Engrave = window.Engrave = (() => {
     SCRIPTS.failed.clear(); SCRIPTS.manifestError = SCRIPTS.shapeError = null;
     try { for (const job of items().values()) if (job.state === "words" && job.missing && window.CharmNestText.scriptHint(job.missing.join(""))) setReady(job).catch(() => {}); } catch (_) { /* (the workspace is not up yet: nothing is held) */ }
   }
+  /** (EMOJINOW, Paul 13 Nov 2026: "We already have emojis why aren't you using them?": the emoji font's check called CN before the page had made it ("CN is not defined"), so on a computer that read its fonts early the emoji never loaded and every engraving with an emoji had no picture): the file's SHA-256 in hex, read by the browser itself (CN.sha256 does the same once CN exists) */
+  async function sha256Hex(u8) { return [...new Uint8Array(await crypto.subtle.digest("SHA-256", u8))].map(x => x.toString(16).padStart(2, "0")).join(""); }
   async function loadFonts(force) {
     // An emoji map or font that did not load (a flaky network after a wake) is tried again, at most once a minute and when
     // the network is back: every engraving with an emoji went to Review as unsupported for the rest of the session.
@@ -8342,7 +8344,7 @@ const Engrave = window.Engrave = (() => {
         const symbolReq = fontResource(SYMBOL_FILE).then(b => ({ b }), e => ({ e }));   // (asked together with the emoji font, not after it)
         const map = await fontResource("vendor/fonts/emoji-sequences.json","json","no-cache");
         const bytes = await fontResource("vendor/fonts/NotoEmoji-Regular.ttf?v="+map.fontSha256);
-        if (await CN.sha256(new Uint8Array(bytes)) !== map.fontSha256) throw new Error("Emoji font version differs from its shape map");
+        if (await sha256Hex(new Uint8Array(bytes)) !== map.fontSha256) throw new Error("Emoji font version differs from its shape map");   // (EMOJINOW, Paul 13 Nov 2026: "We already have emojis why aren't you using them?": the emoji font's check called CN before the page had made it ("CN is not defined"), so on a computer that read its fonts early the emoji never loaded and every engraving with an emoji had no picture)
         const emoji = opentype.parse(bytes);
         // The symbol font rides with the emoji font. A bad connection retries like the emoji font does; a file the site does not have (HTTP 4xx) leaves the symbols out, it never holds the emoji back.
         let symbols = null, symbolBytes = null;
@@ -29189,7 +29191,10 @@ async function bootBridge() {
     const last = runs.find(x => x.lines > 0);
     // (FOLLOWOPEN, Paul 13 Nov 2026: "you completely broke the design and engrave tab" / "Why would you put this button in there that resets all the orders"): while a run is OPEN on another computer, this computer follows it from the cloud (charm-nest-run-follow.js: every line, its state, new orders, lines taken out) and keeps its own
     //  tabs. It is never opened here as an earlier set: that view shows only the run's saved sheets (Design & Engrave held 7 pieces of 229) and parks new orders behind a button
-    if (open.length && !B.run) { try { window.CharmNestRunFollow && window.CharmNestRunFollow.now("boot"); } catch (_) {} }
+    if (open.length && !B.run) {
+      // (FOLLOWOPEN 2, Paul 13 Nov 2026: this computer's saved copy put the run back as an earlier set at every reload): a run (not a set opened on purpose) restored from that copy is let go of; the run's orders, sheets and engraving stay on the page, followed from the cloud
+      try { const rc = Recall.state(); if (rc && rc.runId && !rc.setId && open.some(x => x.runId === rc.runId)) { Object.assign(rc, { runId: null, setId: null, live: null }); B.orders.recalled = null; agent({ bridge: true }, "cloud", "Following the open run from the cloud on this computer"); Orders.render(); Engrave.render(); Review.render(); Arrivals.paint(); } } catch (_) {}
+      try { window.CharmNestRunFollow && window.CharmNestRunFollow.now("boot"); } catch (_) {} }
     else if (last && !B.run && !B.orders.rows.length && !Recall.on()) Recall.open({ runId: last.runId, quiet: true }).catch(() => {});
     // (CLOUDLINES, Paul 13 Nov 2026: the other computer showed only the 7 newest orders until its data was deleted: its saved copy held fewer of the run's lines than the cloud. The run is read
     //  from the cloud, as on a clean computer. A set opened on purpose (its own orders only) is left as it is)

@@ -251,7 +251,7 @@
     const rid = j => String((j.row && (j.row.parentRow || j.row) && (j.row.parentRow || j.row).order && (j.row.parentRow || j.row).order.receiptId) || "");
     const todo = safe(() => [...E().items().values()].filter(j => !j.fit && ["review", "approved", "ready", "written"].includes(j.state) && (j.lineInput || j.lines || []).length).sort((a, b) => rid(b).localeCompare(rid(a))), []);   // (newest first, as the list shows them)
     const idle = f => (typeof root.requestIdleCallback === "function" ? root.requestIdleCallback(f, { timeout: 1500 }) : setTimeout(f, 40));
-    let n = 0; const step = () => { const j = todo.shift(); if (!j) { if (n) safe(() => E().render()); if (typeof done === "function") safe(done); return; } fitOne(j).then(ok => { if (ok) { n++; safe(() => root.CharmNestMadeThumb && root.CharmNestMadeThumb.changed("fit", [(j.copies || [])[0]].filter(Boolean))); if (n % 8 === 0) safe(() => E().render()); } }).catch(() => {}).then(() => setTimeout(() => idle(step), 40)); };
+    let n = 0; const step = () => { const j = todo.shift(); if (!j) { if (n) safe(() => E().render()); if (typeof done === "function") safe(done); return; } fitOne(j).then(ok => { if (ok) { n++; safe(() => root.CharmNestMadeThumb && root.CharmNestMadeThumb.changed("fit", [(j.copies || [])[0]].filter(Boolean))); } /* (NOFLICKER, Paul 13 Nov 2026: "Why is the screen flickering": only the piece's own picture is drawn again, never the whole list) */ }).catch(() => {}).then(() => setTimeout(() => idle(step), 40)); };
     idle(step);
   }
   function prewarm() {
