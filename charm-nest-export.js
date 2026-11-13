@@ -89,7 +89,7 @@
     //  the charm it belongs to, the sheet's top-level placed form ("4229616128  GOLD_7478  1/2"), so the DXF can put its cut, engraving and hatching on that charm's own layers
     function visit(s, parent, owner) {
       if (seen.has(s)) return; seen.add(s);
-      const layer = s.layer || parent || 'Artwork', own = owner !== undefined ? owner : (s.kind === 'xobj' && s.layer ? s.layer : null);
+      const layer = s.layer || parent || 'Artwork', own = owner ? owner : (s.kind === 'xobj' && s.layer ? s.layer : null);   // (the first NAMED form from the top: a downloaded sheet (compose) wraps the whole sheet in one unnamed form)
       if (s.kind === 'xobj' && s.children?.length) s.children.forEach(k => visit(k,layer,own));
       else if (s.kind === 'path') out.push(...clipPath(own ? {...s, layer, charm: own} : {...s, layer}));
       else if (s.kind === 'clip' || s.kind === 'noop') return;
@@ -321,7 +321,7 @@
   const ROLE_ACI = {CUT:7, ENGRAVE:1, HATCH:5};
   const grey = c => !c || Math.max(c[0],c[1],c[2]) - Math.min(c[0],c[1],c[2]) <= 0.15;
   function dxf(paths, declaredLayers=[], opts={}) {
-    const hatchMm=Math.max(0.005,+(opts.hatchMm||root.CN_DXF_HATCH_MM||0.05)), step=hatchMm/MM;   // (paths are in points: MM is mm per point)
+    const hatchMm=Math.max(0.005,+(opts.hatchMm||root.CN_DXF_HATCH_MM||0.02)), step=hatchMm/MM;   // (Paul, 12 Nov 2026: "much much closer" and crosshatched: 0.02 mm, both ways)   // (paths are in points: MM is mm per point)
     const colors=[[0,0,0],[255,0,0],[255,255,0],[0,255,0],[0,255,255],[0,0,255],[255,0,255],[0,0,0],[128,128,128],[192,192,192]];
     const rgb=v=>(v||[0,0,0]).map(n=>Math.max(0,Math.min(255,Math.round(n*255))));
     const aci=c=>{let best=7,score=Infinity;for(let i=1;i<colors.length;i++){let d=c.reduce((n,v,k)=>n+(v-colors[i][k])**2,0);if(d<score){best=i;score=d;}}return best;};
@@ -333,18 +333,22 @@
     const target=(path,role,refColor)=>{
       const lay=path.layer||'Artwork';
       if(REF_LAYER.test(lay)){const name=layer(lay),c=aci(rgb(refColor));if(!layerAci.has(name))layerAci.set(name,c);return {name,c};}
-      const fo=FACE_OWNER.exec(lay),owner=path.charm||(fo&&fo[1])||null;
+      let ow=path.charm||null;{const f2=ow&&FACE_OWNER.exec(ow);if(f2)ow=f2[1];}
+      const fo=FACE_OWNER.exec(lay),owner=ow||(fo&&fo[1])||null;
       const name=layer(owner?owner+' - '+role:role),c=ROLE_ACI[role];if(!layerAci.has(name))layerAci.set(name,c);return {name,c};
     };
     /** A filled area: its outline (closed polylines, holes too) and the hatch lines across it, even-odd so a hole stays clear. */
     const fillArea=(loops,t)=>{
       const polys=loops.map(l=>l.points).filter(p=>p.length>=3);if(!polys.length)return;
       for(const p of polys)entities.push({type:'LWPOLYLINE',points:p,closed:true,layer:t.name,c:t.c});
-      let y0=Infinity,y1=-Infinity;for(const p of polys)for(const q of p){if(q[1]<y0)y0=q[1];if(q[1]>y1)y1=q[1];}
-      const edges=[];for(const p of polys)for(let i=0;i<p.length;i++){const a=p[i],b=p[(i+1)%p.length];if(a[1]!==b[1])edges.push(a[1]<b[1]?[a,b]:[b,a]);}
-      for(let y=y0+step/2;y<y1;y+=step){
-        const xs=[];for(const [a,b] of edges)if(y>=a[1]&&y<b[1])xs.push(a[0]+(y-a[1])*(b[0]-a[0])/(b[1]-a[1]));
-        xs.sort((m,n)=>m-n);for(let i=0;i+1<xs.length;i+=2)if(xs[i+1]-xs[i]>1e-6)entities.push({type:'LINE',a:[xs[i],y],b:[xs[i+1],y],layer:t.name,c:t.c});
+      // crosshatch: lines across (y) and lines up and down (x), every step, each clipped even-odd to the area
+      for(const ax of [1,0]){const ox=1-ax;
+        let v0=Infinity,v1=-Infinity;for(const p of polys)for(const q of p){if(q[ax]<v0)v0=q[ax];if(q[ax]>v1)v1=q[ax];}
+        const edges=[];for(const p of polys)for(let i=0;i<p.length;i++){const a=p[i],b=p[(i+1)%p.length];if(a[ax]!==b[ax])edges.push(a[ax]<b[ax]?[a,b]:[b,a]);}
+        for(let v=v0+step/2;v<v1;v+=step){
+          const us=[];for(const [a,b] of edges)if(v>=a[ax]&&v<b[ax])us.push(a[ox]+(v-a[ax])*(b[ox]-a[ox])/(b[ax]-a[ax]));
+          us.sort((m,n)=>m-n);for(let i=0;i+1<us.length;i+=2)if(us[i+1]-us[i]>1e-6){const A=[0,0],B=[0,0];A[ax]=v;B[ax]=v;A[ox]=us[i];B[ox]=us[i+1];entities.push({type:'LINE',a:A,b:B,layer:t.name,c:t.c});}
+        }
       }
     };
     for(const name of declaredLayers){const n=layer(name);if(!layerAci.has(n))layerAci.set(n,7);}   // (the sheet's own layer names stay listed, as before)
