@@ -275,7 +275,8 @@
     const now = Date.now();
     if (!M.linkBell) M.linkBell = { first: now, link: null, at: now };
     const was = M.linkBell.link;
-    M.linkBell.link = res.link && typeof res.link === "object" ? res.link : null; M.linkBell.at = now;
+    // (NOGAPNOTE, Paul 13 Nov 2026: "Remove this message I do not want to see it again"): the inbox's missing-messages judgement (kind consistency) is never shown in the sorter: no box, no pill, no alert; the link itself is still watched
+    M.linkBell.link = res.link && typeof res.link === "object" ? (res.link.kind === "consistency" ? Object.assign({}, res.link, { level: "ok", gap: null }) : res.link) : null; M.linkBell.at = now;
     // the missing-messages notice cleared without anybody pressing anything: the panel, if it is open, says so
     if (was && was.kind === "consistency" && was.level !== "ok" && M.linkBell.link && M.linkBell.link.level === "ok" && !gapBusy) gapNote = { tone: "ok", text: "All messages match.", at: now };
     linkAlert(M.linkBell.link);
@@ -550,6 +551,7 @@
     if (SANDBOX) rows.push(row("wait", "Sandbox", "What you write here stays in the sorter and never uses this link. The checks below are the real email link's."));
     rows.push(row(M.link === "offline" ? "down" : "ok", "Sorter to inbox", M.link === "offline" ? "Not answering right now; what you write is kept" : "Connected" + (M.who && M.who.name ? " as " + M.who.name : "")));
     if (h) for (const c of h.checks) {
+      if (c.id === "consistency") continue;   // (NOGAPNOTE, Paul 13 Nov 2026: "Remove this message I do not want to see it again")
       if (c.id === "consistency" && c.data && c.data.n > 0 && (c.level === "warn" || c.level === "down")) rows.push(row(c.level, c.label, c.text + " ").replace("</span></li>", ` ${gapButtons(c.data.sig).replace("data-pill-check", "data-hcheck")}</span></li>`));
       else if (c.id === "read" && c.data && c.data.reread && (c.level === "warn" || c.level === "down" || c.level === "wait")) rows.push(row(c.level, c.label, c.text + " ").replace("</span></li>", ` <button type="button" class="lnk" data-hreread${gapBusy || healthBusy ? " disabled" : ""} title="Read that conversation from Etsy again now and start the count of failed reads again">${gapBusy ? '<span class="cmSpin" aria-hidden="true"></span> Re-reading…' : "Re-read now"}</button></span></li>`));
       else if (c.id === "send" && c.data && c.data.dead > 0) rows.push(row(c.level, c.label, c.text + " ").replace("</span></li>", ` <button type="button" class="lnk" data-hputaway${gapBusy || healthBusy ? " disabled" : ""}>Put away</button></span></li>`));
