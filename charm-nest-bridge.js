@@ -10868,7 +10868,7 @@ const Engrave = window.Engrave = (() => {
   function faceViewOf(job, face) {
     /* WORKPRE (Paul, 11 Nov 2026, order 4220952355: "the grid below is still missing and the options for that are usually available to control"): a piece not on a sheet yet has no drawn charm
        (Pool.charmOf), so its face fell back to the preview's flat picture: no grid, no rulers, no controls. It is drawn on the charm it WILL have (Pool.previewCharmOf), as charmFor does. */
-    const pid = (job.copies || [])[0], drawn = pid ? Pool.charmOf(pid) : null, live = charmEditUsable(drawn) ? drawn : pid && Pool.previewCharmOf ? Pool.previewCharmOf(pid) : null; if (!charmEditUsable(live)) return null;
+    const pid = (job.copies || [])[0], drawn = pid ? Pool.charmOf(pid) : null, live = charmEditUsable(drawn) ? drawn : pid && Pool.previewCharmOf ? Pool.previewCharmOf(pid) : null; if (!charmEditUsable(live)) { try { charmBack(job); } catch (_) {} return null; }   // (GRIDALWAYS, Paul 13 Nov 2026: "The grid is still missing": the work area that needs a charm this page does not hold starts making it, and is drawn again when it is there; only one kind of card asked before)
     let got = FACE_VIEWS.get(live); if (!got) FACE_VIEWS.set(live, got = {});
     const row = job.row || {}, sp = row.spec || {}, sku = sp.designSku || (row.line && row.line.sku) || live.name, k = face + "|" + pairedUpOf(pid, live, face, sku) + "|" + (((jobsOfPiece(pid)[face] || {}).view || {}).upAngle ?? "");   // (UPRIGHT: one view per turn of the face shown: a turn of it turns this one the other way)
     if (!got[k]) got[k] = charmEditView(pid, live, face, sku);
