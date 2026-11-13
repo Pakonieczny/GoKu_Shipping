@@ -9267,6 +9267,27 @@ try {
 <script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3-pow1-sk1-sn1-dm1-eu3-pv1-nv6-hc1-hc2"></script>
 <!-- the persistent Alert for password attempts on the Charm Repo Library: the master admin's login only, a pill at the right end of the top bar until he closes it (CharmNestRepoAlerts) -->
 <script src="charm-nest-repo-alerts.js?v=20261011-ra1"></script>
+<!-- NEWVER (Paul 13 Nov 2026: "Your fixes are not landing on the other computers"): an open sorter never knew a new version was out, so a tab left
+     open on another computer kept running the old code until someone reloaded it. This asks the server for the page's version (its ETag, one HEAD
+     of this page: no Firebase) every minute and when the tab comes back; when it changes, a bar says so with Reload now, and the page reloads
+     itself once nobody has touched it for 2 minutes (or at once while the tab is hidden). At most 2 automatic reloads per 10 minutes. -->
+<script>(function(){"use strict";
+  var base=null,seen=false,last=Date.now(),bar=null,IDLE=120000,url=location.pathname||"/";
+  ["pointerdown","keydown","wheel","touchstart"].forEach(function(t){addEventListener(t,function(){last=Date.now();},{passive:true,capture:true});});
+  function tag(){return fetch(url,{method:"HEAD",cache:"no-store",credentials:"same-origin"}).then(function(r){return r.ok?(r.headers.get("etag")||r.headers.get("last-modified")||""):"";}).catch(function(){return "";});}
+  function okToAuto(){try{var k="cn.newver.reloads",a=JSON.parse(sessionStorage.getItem(k)||"[]").filter(function(t){return Date.now()-t<600000;});if(a.length>=2)return false;a.push(Date.now());sessionStorage.setItem(k,JSON.stringify(a));return true;}catch(_){return true;}}
+  function reload(){location.reload();}
+  function show(){if(bar)return;bar=document.createElement("div");bar.setAttribute("data-cn-newver","");
+    bar.style.cssText="position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:2147483000;background:#1d4ed8;color:#fff;font:600 14px system-ui,sans-serif;padding:10px 14px;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.35);display:flex;gap:12px;align-items:center";
+    bar.innerHTML='<span>A new version of the sorter is out. It reloads by itself after 2 minutes without use.</span><button type="button" style="font:700 13px system-ui,sans-serif;border:0;border-radius:7px;padding:6px 12px;background:#fff;color:#1d4ed8;cursor:pointer">Reload now</button>';
+    bar.querySelector("button").addEventListener("click",reload);(document.body||document.documentElement).appendChild(bar);}
+  function check(){tag().then(function(t){if(!t)return;if(base===null){base=t;return;}if(t===base)return;seen=true;show();
+    if((document.hidden||Date.now()-last>=IDLE)&&okToAuto())reload();});}
+  setInterval(function(){if(seen){if((document.hidden||Date.now()-last>=IDLE)&&okToAuto())reload();return;}if(!document.hidden||Date.now()%300000<60000)check();},60000);
+  document.addEventListener("visibilitychange",function(){if(!document.hidden)check();});addEventListener("focus",check);
+  check();
+  window.CNNewVersion={check:check,state:function(){return {base:base,seen:seen,idleMs:Date.now()-last};}};
+})();</script>
 <script src="charm-nest-sw.js?v=20261028-sw1"></script>   <!-- the service worker (Phase 4 of the local-first plan): started once the page is up and idle, never in the way of the boot -->
 <!-- the Employee efficiency console (charm-nest-efficiency*.js) loads on the master admin's page only: loadEfficiency, above -->
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
