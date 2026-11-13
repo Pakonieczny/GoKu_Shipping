@@ -113,7 +113,13 @@
   /* ── drawing ── */
   const canvas = (w, h) => { const c = doc.createElement('canvas'); c.width = Math.max(2, Math.round(w)); c.height = Math.max(2, Math.round(h)); return c; };
   /** The frame of one face of a piece (the Engrave card's own: CharmNestEngravePreview.frameFor). */
-  const frameOf = (poolId, t) => safe(() => EP().frameFor(t.job ? { job: t.job, face: t.face } : { row: { poolIds: [poolId] }, face: t.face }), null);
+  // (FRONTJOB, Paul 12 Nov 2026: "again orders are not showing the back in front just the back": a face with no words of its own, on a line not on a sheet yet, has no pool charm to frame it by its
+  //  pool id, so the picture was the back alone after its retries; that face is framed from the piece's own engraving job, which knows the charm and its turn)
+  const frameOf = (poolId, t) => safe(() => {
+    const E = EP(); if (t.job) return E.frameFor({ job: t.job, face: t.face });
+    const F = E.frameFor({ row: { poolIds: [poolId] }, face: t.face }); if (F && F.box) return F;
+    const pj = jobsOf(poolId), j = pj.front || pj.back; return j ? E.frameFor({ job: j, face: t.face }) : F;
+  }, null);
   /* BLUEBACK (Paul, 12 Nov 2026: "all back engraving ... needs to be blue, the same blue we already have an option for in the editor ... including all the vector thumbnails of back engraving
      everywhere"): a BACK's words in the Charm Editor's hatch blue (CharmNestBacks.INK); a front's keep INK. (The back's added parts come blue from the frame: charm-nest-engrave-preview.js backInked.) */
   const BACK_INK = () => (root && root.CharmNestBacks && root.CharmNestBacks.INK) || '#1a5fc4';
