@@ -24,7 +24,8 @@ const MIN = 60000, CLOSED_MIN = 15;     // a page with no beat for 15 minutes is
 const POLICY = Object.freeze({
   default: Object.freeze({ idleMin: 10, idleMinAfter17: 10, closeAt17: "idleWindow" }),   // Sorting, Assembly, Shipping, Design apps, Inbox, Sorter app (Admin / no role / Design role), qr, sorter
   welding: Object.freeze({ idleMin: 0, idleMinAfter17: 0, closeAt17: "always" }),         // station welding (weld-1; every task, every person)
-  laser: Object.freeze({ idleMin: 60, idleMinAfter17: 30, closeAt17: "idleWindow" })      // station laser (the Sorter app with the Laser role)
+  laser: Object.freeze({ idleMin: 60, idleMinAfter17: 30, closeAt17: "idleWindow" }),     // station laser (the Sorter app with the Laser role)
+  design: Object.freeze({ idleMin: 0, idleMinAfter17: 0, closeAt17: "never" })             // station design (DESIGNSTAY, Paul 13 Nov 2026: "Why is the design station being logged out? It should never be fucking logged out never"): never by idle or 5 pm
 });
 
 /** the station's row (a station of no row of its own, "" or a name like "constructor": `default`) */
