@@ -5673,8 +5673,26 @@ const Pool = window.Pool = (() => {
     // (and a custom line whose QR label is being printed waits for the print: CustomPrint.printing; a line being placed
     // now, by Send to Sheet or an answer, is that placement's: placing)
     const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state) && !(r.state === "held" && r.hold) && !window.Cancelled?.has?.(r.order.receiptId) && !(window.CustomPrint && CustomPrint.printing(r.key)) && !placing.has(r.key) && !(onSheets(r) && settle(r)) && due(r)).sort(O.byQueue(r => +r.order.createTs || 0));   // (an order released from hold first, then oldest first: frontAt)
-    const free = lock(rows);
-    try { return await addRows(run, rows); } finally { free(); }
+    /* NOPOOLDONE (Paul, 13 Nov 2026: 13 orders already in the run, already designed, sorted and assembled the old way, were put on sheets again at 13:03; "did you actually fix this so in
+       the future this could never ever ever be allowed to happen again"): before any line is made up and placed, the cloud's completion record (firebaseOrders dcFor, the Design Station's
+       own ledger) is asked about its order. An order completed there is never cut again: its lines are taken out of the run (gone, said why). When the record cannot be read, nothing is
+       placed this time (the next pass asks again): a piece is never put on a sheet without that answer. */
+    const own = r => !!(r.spec && (r.spec.ownDesign || r.spec.special)), askIds = [...new Set(rows.filter(r => !own(r)).map(r => String(r.order && r.order.receiptId)).filter(Boolean))], doneIds = new Set(); let unread = false;
+    for (let i = 0; i < askIds.length; i += 100) {
+      const part = askIds.slice(i, i + 100);
+      try { const r = await fetch(`/.netlify/functions/firebaseOrders?dcFor=${encodeURIComponent(part.join(","))}`), j = await r.json(); if (!r.ok || !j || j.success === false || !Array.isArray(j.orderNumbers)) throw new Error("HTTP " + r.status); j.orderNumbers.forEach(x => doneIds.add(String(x))); }
+      catch (e) { unread = true; }
+    }
+    if (unread) { agent({ pool: true }, "warn", "The Design Station's completion record could not be read: nothing is put on a sheet this time; the next pass asks again"); return 0; }
+    if (doneIds.size) {
+      const out = rows.filter(r => !own(r) && doneIds.has(String(r.order.receiptId)));   // (a custom piece made here is never judged by the station's ledger)
+      for (const r of out) { r.state = "gone"; r.reason = "completed at the Design Station (never cut again)"; r.wait = null; }
+      agent({ pool: true }, "warn", `${doneIds.size} order(s) already completed at the Design Station were not put on a sheet and left the run: ${[...doneIds].slice(0, 12).join(", ")}${doneIds.size > 12 ? " …" : ""}`);
+      try { await Orders.takeOffGone(out.filter(r => (r.poolIds || []).length), { why: "already completed at the Design Station", patch: { removedBy: "System", removedReason: "completed at the Design Station (never cut again)", removedAt: Date.now() } }); } catch (_) {}
+    }
+    const gone = new Set(doneIds.size ? rows.filter(r => !own(r) && doneIds.has(String(r.order.receiptId))) : []), keep = gone.size ? rows.filter(r => !gone.has(r)) : rows;
+    const free = lock(keep);
+    try { return await addRows(run, keep); } finally { free(); }
   }
   async function addRows(run, rows) {
     const plan = await Gate.plan(rows);
