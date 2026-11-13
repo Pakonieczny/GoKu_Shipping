@@ -1069,9 +1069,14 @@ async function op_putSheet(b) {
   for(const key of ['roseProtectedJson','roseStockId','roseRevision','rosePlanJson','rosePlanHash','roseFingerprint','roseCutAt','roseCutRevision'])delete doc[key];
   if (["gold10k","gold14k"].includes(s.metal) && s.solidIncluded === false) Object.assign(doc, {draft:true,setId:null,setSeq:null,sheetIndex:null,label:null});
   const ref = col(SHEETS).doc(s.id);
-  let overwrote = null;
+  let overwrote = null, layoutRevOut = null;
   const refused = await db.runTransaction(async tx => {
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : {};
+    // (CLOUDALL S1, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer": any computer may change a sheet; a save made from an older copy of its layout must never overwrite a newer one): the layout's own revision, layoutRev, goes up by one with every save that carries the placements. A save that says which revision it started from (layoutBase)
+    //  and finds another is refused (409, conflict) and nothing is written: that computer reads the sheet again and makes its change on what is there now. A save without layoutBase is taken as before.
+    { const carries = Object.prototype.hasOwnProperty.call(s, "placements"), lr = num(old.layoutRev) || 0;
+      if (carries && typeof b.layoutBase === "number" && Number.isFinite(b.layoutBase) && b.layoutBase !== lr) return { error: `${Placement.labelOf(old) || "Sheet " + s.id} was changed on another computer since this one read it: it is read again, nothing was overwritten`, status: 409, conflict: true, layoutRev: lr };
+      if (carries) doc.layoutRev = lr + 1; layoutRevOut = carries ? lr + 1 : lr; }
     // (OUTBOX: a patch of the sheet's own fields that no placement answer reads (PIECE_SHEET_FIELDS), its release mark or its label, moves no piece: it names no order, and
     //  the placement counter stays: only a save that carries what an order's pieces are read from names their orders)
     if (ex.exists && !old.archived && Object.keys(s).every(k => k === "id" || !PIECE_SHEET_FIELDS.includes(k))) PLACE_QUIET = true;
@@ -1170,6 +1175,7 @@ async function op_putSheet(b) {
   });
   if (refused) return refused;
   const ans = { ok: true, id: s.id };
+  if (layoutRevOut !== null) ans.layoutRev = layoutRevOut;   // (CLOUDALL S1, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer": any computer may change a sheet; a save made from an older copy of its layout must never overwrite a newer one)
   if (overwrote && overwrote.length) ans.overwrote = overwrote;
   // (OUTBOX: an answer to the outbox carries the record's revision as written, so the page's next question by revision is answered "unchanged")
   if (typeof b.mid === "string") { try { const [p] = await db.getAll(ref, { fieldMask: ["updatedAt"] }); ans.rev = revOf(p); } catch (_) {} }
