@@ -2238,6 +2238,8 @@ const Orders = window.Orders = (() => {
       agentLiveLine("Re-validating orders", `order ${rid}`, ++done, need.length);
       const rows = rowsOf().filter(r => r.order.receiptId === rid && r.state !== "committed");
       if (!d || !d.order && !d.gone) throw new Error(`Etsy returned no verifiable state for order ${rid}`);
+      // (KEEPSHIPPED, Paul 13 Nov 2026: the pieces of the orders marked shipped 3:11-3:31 PM were put back on their sheets: "Only since 3:19 PM"): an order a person put back on its sheet after Etsy closed it (the run's keepShipped list, kept with the run in the cloud) is not taken off again
+      if (d.gone && B.run && (B.run.keepShipped || []).map(String).includes(String(rid))) { agent({ bridge: true }, "DS", `${rid} is closed on Etsy (${d.reason || (d.isShipped ? "shipped" : "gone")}) but was put back on its sheet by hand: it stays`); continue; }
       if (d.gone) { gone.push(rid); for (const r of rows) { r.state = "gone"; r.reason = d && d.reason ? d.reason : (d && d.isShipped ? "shipped" : d && d.status ? d.status : "no longer open"); if (d.isShipped && !r.shippedAt) r.shippedAt = (+(d.order && d.order.updateTs) || 0) * (+(d.order && d.order.updateTs) < 1e12 ? 1000 : 1) || Date.now(); } continue; }   // (CMP1: Etsy's time of the change, the order's update time, is when it shipped: the seal of an order with no recorded shipped event is drawn from it)
       if (rows.some(row=>row.order.updateTs !== d.order.updateTs)) {
         changed.push(rid);
