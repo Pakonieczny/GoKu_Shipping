@@ -323,114 +323,114 @@
      it is how they are drawn on screen only, the laser still follows each line's centre (no polyline width). The hatch lines keep the default weight: they are dense already */
   const ROLE_LW = {CUT:50, ENGRAVE:70, HATCH:-3};   // (REDSOLID: red 0.70 mm, Paul 12 Nov: "The red lines are just much too thin" at 0.50 mm, "1 mm is too thick")   // (0.50 mm: Illustrator reads 0.30 mm as 0.85 pt, hardly more than its 0.71 pt default; Paul, 12 Nov: "still exactly the same")
   const grey = c => !c || Math.max(c[0],c[1],c[2]) - Math.min(c[0],c[1],c[2]) <= 0.15;
+  /* AIDXF (Paul, 14 Nov 2026: "It is not producing files that are acceptable to our engraving software ... I need our files when exported to match this file exactly";
+     "change whatever you have to change ... make it exactly like that export file I gave you"). The .dxf is written the way Adobe Illustrator writes one, from the file Paul gave
+     (222.dxf), which the engraving software reads perfectly:
+       · AutoCAD 2010 (AC1024), millimetres, and that file's own HEADER, CLASSES, TABLES, standard BLOCKS and OBJECTS (charm-nest-dxf-skeleton.js)
+       · every line is a true curve: a SPLINE of degree 3, one per subpath, its Bezier points as they are drawn (a straight piece is a Bezier whose handles lie on its ends); nothing is flattened
+       · every filled area is a real fill: a HATCH "SOLID" whose boundary is those same curves, with each boundary curve written before it, as Illustrator does
+       · the real colour beside the colour number (420 and 62), and the line weight (370)
+       · the working file's layers, shared by every charm: CUT, ENGRAVE, HATCH and BACK ENG (a back laid above the sheet); SHEET and ROSE SEPARATION CUT keep their own
+     This replaces LASERSTAR's polylines, hatch lines and one layer per charm (12 Nov), by Paul's word above. Which paths are cut, engraving or hatching is decided as before. */
+  const AI_LAYERS = ['Layer 1', 'Dimensions', 'ENGRAVE', 'HATCH', 'CUT', 'BACK ENGRAVING', 'LABELS', 'BACK ENG'];
+  const AI_LW = [0,5,9,13,15,18,20,25,30,35,40,50,53,60,70,80,90,100,106,120,140,158,200,211];
+  const ACI_RGB = (() => { const t = [[0,0,0],[255,0,0],[255,255,0],[0,255,0],[0,255,255],[0,0,255],[255,0,255],[255,255,255],[128,128,128],[192,192,192]];
+    const V = [255,204,153,127,76];
+    for (let n = 10; n < 250; n++) { const hue = Math.floor((n-10)/10)*15, v = V[Math.floor((n%10)/2)], odd = n%2 === 1, x = 1-Math.abs((hue/60)%2-1);
+      const [r,g,b] = hue<60?[1,x,0]:hue<120?[x,1,0]:hue<180?[0,1,x]:hue<240?[0,x,1]:hue<300?[x,0,1]:[1,0,x];
+      t.push([r,g,b].map(k => Math.round(v*(odd ? k*0.5+0.5 : k)))); }
+    for (const g of [51,91,132,173,214,255]) t.push([g,g,g]);
+    return t; })();
+  /** The colour number Illustrator writes beside a colour: the nearest of 1-255 (black is 18, as in the working file). */
+  function aciOf(c) { let best = 7, score = Infinity; for (let n = 1; n < 256; n++) { const k = ACI_RGB[n], d = (c[0]-k[0])**2 + (c[1]-k[1])**2 + (c[2]-k[2])**2; if (d < score) { best = n; score = d; } } return best; }
   function dxf(paths, declaredLayers=[], opts={}) {
-    const hatchMm=Math.max(0.005,+(opts.hatchMm||root.CN_DXF_HATCH_MM||0.02)), step=hatchMm/MM;   // (Paul, 12 Nov 2026: "much much closer" and crosshatched: 0.02 mm, both ways)   // (paths are in points: MM is mm per point)
-    const colors=[[0,0,0],[255,0,0],[255,255,0],[0,255,0],[0,255,255],[0,0,255],[255,0,255],[0,0,0],[128,128,128],[192,192,192]];
+    const hatchMm=Math.max(0.005,+(opts.hatchMm||root.CN_DXF_HATCH_MM||0.02));   // (kept in the answer for the callers that show it; no hatch lines are written any more)
     const rgb=v=>(v||[0,0,0]).map(n=>Math.max(0,Math.min(255,Math.round(n*255))));
-    const aci=c=>{let best=7,score=Infinity;for(let i=1;i<colors.length;i++){let d=c.reduce((n,v,k)=>n+(v-colors[i][k])**2,0);if(d<score){best=i;score=d;}}return best;};
     const ascii=s=>String(s).replace(/[^\x20-\x7e]/g,c=>'\\U+'+c.charCodeAt(0).toString(16).toUpperCase().padStart(4,'0'));
-    const names=new Map(),used=new Set(['0','defpoints']);
-    const layer=s=>{if(!names.has(s)){let n=ascii(s.replace(/[<>/\\":;?*|=]/g,'_')).replace(/\s+/g,' ').trim().slice(0,180)||'Artwork',i=2,base=n;while(used.has(n.toLowerCase()))n=base+'_'+i++;used.add(n.toLowerCase());names.set(s,n);}return names.get(s);};
-    const entities=[],layerAci=new Map(),layerLw=new Map();
-    /** The layer and colour of a path's lines: its charm's layer for this job, or a reference layer as it is. */
-    /* CHARMLAYER (Paul, 12 Nov 2026: "The engraving layers are still not saved under each charm. They're still separated and segregated from the charms"; "the hatching and the engraving
-       layers must be contained under the charm that has them"): a DXF layer cannot hold layers, so each charm is ONE layer, named for the charm, and under it its jobs are three named blocks,
-       "<charm> - CUT" (black, colour 7), "<charm> - ENGRAVE" (red, colour 1) and "<charm> - HATCH" (blue, colour 5), each inserted once, in place (at 0,0, scale 1), on the charm's layer;
-       the lines inside a block are on the charm's layer too (Illustrator 2024 ignores blocks and puts each line on its own layer: tested 12 Nov) and carry their own colour number. A front engraving put on its charm goes under that charm (the charm whose
-       outline holds it); a back laid above the sheet is a layer of its own with its blocks. Lines of no charm stay on a layer named for their job; SHEET and ROSE SEPARATION CUT keep theirs */
+    const names=new Map(),used=new Set(['0','defpoints']),order=[];
+    const layer=s=>{if(!names.has(s)){let n=ascii(String(s).replace(/[<>/\\":;?*|=]/g,'_')).replace(/\s+/g,' ').trim().slice(0,180)||'Artwork',i=2,base=n;while(used.has(n.toLowerCase()))n=base+'_'+i++;used.add(n.toLowerCase());names.set(s,n);order.push(n);}return names.get(s);};
+    for(const n of AI_LAYERS)layer(n);
     const ownerOf=path=>{let ow=path.charm||null;{const f2=ow&&FACE_OWNER.exec(ow);if(f2)ow=f2[1];}const fo=FACE_OWNER.exec(path.layer||'');return ow||(fo&&fo[1])||null;};
-    const boxOfPath=path=>{if(path.bbox&&path.bbox.every(Number.isFinite))return path.bbox;let b=null;for(const sub of path.subpaths||[])for(const o of sub)for(let i=1;i<o.length;i++)if(Array.isArray(o[i]))b=union(b,[o[i][0],o[i][1],o[i][0],o[i][1]]);return b;};
-    const charmBox=new Map(),faceBox=new Map();
-    for(const path of paths){const ow=ownerOf(path),b=boxOfPath(path);if(!ow||!b)continue;
-      if(/^FRONT /.test(ow))faceBox.set(ow,union(faceBox.get(ow)||null,b));
-      else if(!/^BACK /.test(ow)&&!REF_LAYER.test(path.layer||''))charmBox.set(ow,union(charmBox.get(ow)||null,b));}
-    const home=new Map();
-    for(const [ow,b] of faceBox){const cx=(b[0]+b[2])/2,cy=(b[1]+b[3])/2;let best=null,area=Infinity;
-      for(const [ch,k] of charmBox)if(cx>=k[0]&&cx<=k[2]&&cy>=k[1]&&cy<=k[3]){const a=(k[2]-k[0])*(k[3]-k[1]);if(a<area){area=a;best=ch;}}
-      if(best)home.set(ow,best);}
-    const target=(path,role,refColor)=>{
-      const lay=path.layer||'Artwork';
-      let owner=ownerOf(path);if(owner&&home.has(owner))owner=home.get(owner);
-      if(REF_LAYER.test(lay)){const face=owner&&/^(BACK|FRONT) /.test(owner),name=layer(face?owner:lay),c=aci(rgb(refColor));if(!layerAci.has(name))layerAci.set(name,face?7:c);if(!layerLw.has(name))layerLw.set(name,face?-3:30);return {name,c,lw:30,blk:face?owner+' - '+(lay.split(' / ').pop()||'REFERENCE'):null};}
-      const name=layer(owner||role),c=ROLE_ACI[role];if(!layerAci.has(name))layerAci.set(name,owner?7:c);if(!layerLw.has(name))layerLw.set(name,owner?-3:ROLE_LW[role]);return {name,c,lw:ROLE_LW[role],blk:owner?owner+' - '+role:null};
+    /** The layer of a path's job: CUT, ENGRAVE or HATCH; BACK ENG for a back laid above the sheet; a reference layer under its own name. */
+    const target=(path,role)=>{
+      const lay=path.layer||'Artwork',owner=ownerOf(path),back=!!owner&&/^BACK /.test(owner);
+      if(REF_LAYER.test(lay))return layer(lay.split(' / ').pop()||lay);
+      return layer(back?'BACK ENG':role);
     };
-    /** A filled area: its outline (closed polylines, holes too) and the hatch lines across it, even-odd so a hole stays clear. */
-    const fillArea=(loops,t)=>{
-      const polys=loops.map(l=>l.points).filter(p=>p.length>=3);if(!polys.length)return;
-      for(const p of polys)entities.push({type:'LWPOLYLINE',points:p,closed:true,layer:t.name,c:t.c,lw:t.lw,blk:t.blk});
-      // crosshatch: lines across (y) and lines up and down (x), every step, each clipped even-odd to the area
-      for(const ax of [1,0]){const ox=1-ax;
-        let v0=Infinity,v1=-Infinity;for(const p of polys)for(const q of p){if(q[ax]<v0)v0=q[ax];if(q[ax]>v1)v1=q[ax];}
-        const edges=[];for(const p of polys)for(let i=0;i<p.length;i++){const a=p[i],b=p[(i+1)%p.length];if(a[ax]!==b[ax])edges.push(a[ax]<b[ax]?[a,b]:[b,a]);}
-        // (ZIGZAG, Paul 12 Nov 2026: "Every single hatch line is a separate layer": Illustrator lists every DXF entity as a row of its own, so a charm's hatching was thousands of rows.
-        //  The same hatch lines, at the same places and spacing, are now joined end to end into a few continuous polylines (the laser's own "bidirectional" hatch): the line on one
-        //  pass joins the next pass where they overlap, by a short step along the area's edge (never longer than JOIN_MM); anything else starts a new polyline)
-        const point=(v,u)=>{const P=[0,0];P[ax]=v;P[ox]=u;return P;}, join=JOIN_MM/MM;
-        let open=[];   // the polylines still growing: { pts, a, b, end } (the last pass's interval and the side it ended on)
-        for(let v=v0+step/2;v<v1;v+=step){
-          const us=[];for(const [a,b] of edges)if(v>=a[ax]&&v<b[ax])us.push(a[ox]+(v-a[ax])*(b[ox]-a[ox])/(b[ax]-a[ax]));
-          us.sort((m,n)=>m-n);const next=[];
-          for(let i=0;i+1<us.length;i+=2){const a=us[i],b=us[i+1];if(!(b-a>1e-6))continue;
-            const k=open.findIndex(c=>Math.max(c.a,a)<Math.min(c.b,b)&&Math.abs((c.end==='b'?b:a)-(c.end==='b'?c.b:c.a))<=join);
-            if(k>=0){const c=open.splice(k,1)[0];if(c.end==='b'){c.pts.push(point(v,b),point(v,a));c.end='a';}else{c.pts.push(point(v,a),point(v,b));c.end='b';}c.a=a;c.b=b;next.push(c);}
-            else next.push({pts:[point(v,a),point(v,b)],a,b,end:'b'});
-          }
-          for(const c of open)entities.push({type:'LWPOLYLINE',points:c.pts,closed:false,layer:t.name,c:t.c,blk:t.blk});
-          open=next;
-        }
-        for(const c of open)entities.push({type:'LWPOLYLINE',points:c.pts,closed:false,layer:t.name,c:t.c,blk:t.blk});
+    /** A subpath as Bezier points: [P0, c1, c2, P1, c1, c2, P2, ...]; a straight piece has its handles on its ends. closed: it returns to its start. */
+    const bez=(sub,forceClosed)=>{
+      let pts=[],cur=null,closed=false;
+      for(const op of sub){
+        if(op[0]==='m'){if(pts.length)break;cur=op[1];pts.push(cur);}
+        else if(op[0]==='l'){if(!cur)continue;pts.push(cur,op[1],op[1]);cur=op[1];}
+        else if(op[0]==='c'){if(!cur)throw new Error('Invalid curve');pts.push(op[1],op[2],op[3]);cur=op[3];}
+        else if(op[0]==='h')closed=true;
       }
+      if(pts.length<4)return null;
+      const a=pts[0],z=pts[pts.length-1],same=Math.hypot(a[0]-z[0],a[1]-z[1])<1e-8;
+      if((closed||forceClosed)&&!same)pts.push(z,a,a);
+      return {pts,closed:closed||forceClosed||same};
     };
-    for(const name of declaredLayers){const n=layer(name);if(!layerAci.has(n))layerAci.set(n,7);}   // (the sheet's own layer names stay listed, as before)
+    const polyBez=points=>{const pts=[points[0]];for(let i=1;i<points.length;i++)pts.push(points[i-1],points[i],points[i]);pts.push(points[points.length-1],points[0],points[0]);return {pts,closed:true};};
+    const entities=[];   // { kind: 'spline', layer, b, rgb?, lw? } | { kind: 'fill', layer, loops: [b], rgb }
+    const lwOf=path=>{const mm100=(+path.lwPt>0?+path.lwPt:0.25)*MM*100;let best=AI_LW[0];for(const v of AI_LW)if(Math.abs(v-mm100)<Math.abs(best-mm100))best=v;return best;};
+    const fillOf=(loops,lay,c)=>{loops=loops.filter(Boolean);if(loops.length)entities.push({kind:'fill',layer:lay,loops,rgb:rgb(c)});};
     for(const path of paths) {
-      // A charm's cut silhouette drawn as a FILL (productionPaths marks it) is a cut line: one closed polyline, never a hatch. Its filled twin beside a stroked outline adds nothing.
+      // A charm's cut silhouette drawn as a FILL (productionPaths marks it) is a cut line: one closed curve, never a fill. Its filled twin beside a stroked outline adds nothing.
       const cutFill=!!path.cutSilhouette && path.fill && !path.stroke;
       if(cutFill && path.cutSilhouette==='twin')continue;
-      // Black line art read as hatching (charm-nest-pdf.js), and a blue line on a back's ENGRAVE layer (BLUEBACK): the blue area the line covers, hatched
+      // Black line art read as hatching (charm-nest-pdf.js), and a blue line on a back's ENGRAVE layer (BLUEBACK): the blue area the line covers, as a fill
       if((path.hatchLine && path.hatchBlue || BACK_ENGRAVE.test(path.layer||'') && blueRGB(path.strokeRGB)) && path.stroke && !path.fill) {
-        fillArea(vector().filled({subpaths:pdf().lineAreaOf(path),paintOp:'f*'}),target(path,'HATCH',[0,0,1]));
+        fillOf(vector().filled({subpaths:pdf().lineAreaOf(path),paintOp:'f*'}).map(l=>l.points&&l.points.length>=3?polyBez(l.points):null),target(path,'HATCH'),[0,0,1]);
         continue;
       }
       if(path.fill && !cutFill) {
-        // blue (and black or grey) filled art is hatching; any other colour is engraving: (REDSOLID, Paul 12 Nov 2026: "no red lines are allowed to be hatching. All red lines must be solid red lines")
-        //  a red filled area (a thick engraved line drawn as a shape) is its solid red outline, never hatched
-        const role=path.hatchBlue||blueRGB(path.fillRGB)||grey(path.fillRGB)?'HATCH':'ENGRAVE', t=target(path,role,path.fillRGB);
-        if(role==='ENGRAVE'){for(const l of vector().filled(path)){const p=l.points;if(p&&p.length>=3)entities.push({type:'LWPOLYLINE',points:p,closed:true,layer:t.name,c:t.c,lw:t.lw,blk:t.blk});}}
-        else fillArea(vector().filled(path),t);
+        // blue (and black or grey) filled art is hatching; any other colour is engraving. Either way it is the filled area Illustrator writes: its curves and a solid fill in its own colour
+        const role=path.hatchBlue||blueRGB(path.fillRGB)||grey(path.fillRGB)?'HATCH':'ENGRAVE';
+        fillOf((path.subpaths||[]).map(sub=>bez(sub,true)),target(path,role),path.hatchBlue?[0,0,1]:path.fillRGB);
       }
       if(path.stroke || cutFill) {
-        const c=cutFill?path.fillRGB:path.strokeRGB, role=cutFill||grey(c)?'CUT':blueRGB(c)?'HATCH':'ENGRAVE', t=target(path,role,c);
-        for(const sub of path.subpaths||[]){const f=flatten(sub);if(f.points.length<2)continue;entities.push({type:'LWPOLYLINE',points:f.points,closed:cutFill?true:f.closed,layer:t.name,c:t.c,lw:t.lw,blk:t.blk});}
+        const c=cutFill?path.fillRGB:path.strokeRGB, role=cutFill||grey(c)?'CUT':blueRGB(c)?'HATCH':'ENGRAVE', lay=target(path,role);
+        for(const sub of path.subpaths||[]){const b=bez(sub,cutFill);if(b)entities.push({kind:'spline',layer:lay,b,rgb:rgb(c),lw:lwOf(path)});}
       }
     }
-    let text='',handle=0x1000;const add=(...pairs)=>{for(let i=0;i<pairs.length;i+=2)text+=pairs[i]+'\r\n'+pairs[i+1]+'\r\n';};
-    for(const [name,c] of layerAci)add(0,'LAYER',5,(handle++).toString(16).toUpperCase(),330,'1',100,'AcDbSymbolTableRecord',100,'AcDbLayerTableRecord',2,name,70,0,62,c,6,'CONTINUOUS',370,layerLw.has(name)?layerLw.get(name):-3,390,'13',347,'21');
-    const layerText=text; text='';
-    let bounds=null;
-    const xy=p=>{const x=+(p[0]*MM).toFixed(5),y=+(p[1]*MM).toFixed(5);if(!Number.isFinite(x)||!Number.isFinite(y))throw new Error('DXF contains a non-finite coordinate.');bounds=union(bounds,[x,y,x,y]);return [x,y];};
+    // ── the file: Illustrator's own frame, the layers, then every curve and fill ──
+    const out=[];let handle=0x1000,count=0;
     const H=()=>(handle++).toString(16).toUpperCase();
-    const writeEnt=(ent,owner,lay)=>{
-      add(0,ent.type,5,H(),330,owner,100,'AcDbEntity',8,lay,62,ent.c);if(ent.lw>0)add(370,ent.lw);
-      if(ent.type==='LINE'){const a=xy(ent.a),b=xy(ent.b);add(100,'AcDbLine',10,a[0],20,a[1],30,0,11,b[0],21,b[1],31,0);}
-      else {add(100,'AcDbPolyline',90,ent.points.length,70,ent.closed?1:0,43,0);for(const p of ent.points){const q=xy(p);add(10,q[0],20,q[1]);}}
+    const pad=(code,v)=>{const s=String(v);return (code>=60&&code<=79)||(code>=170&&code<=179)||(code>=270&&code<=289)||(code>=370&&code<=389)?s.padStart(6):(code>=90&&code<=99)||(code>=420&&code<=429)||(code>=440&&code<=459)?s.padStart(9):s;};
+    const add=(...pairs)=>{for(let i=0;i<pairs.length;i+=2)out.push(String(pairs[i]).padStart(3),pad(+pairs[i],pairs[i+1]));};
+    const num=v=>{const n=+(v*MM).toFixed(12);if(!Number.isFinite(n))throw new Error('DXF contains a non-finite coordinate.');return Number.isInteger(n)?n.toFixed(1):String(n);};
+    const knots=b=>{const n=(b.pts.length-1)/3,k=[0,0,0,0];for(let i=1;i<n;i++)k.push(i,i,i);k.push(n,n,n,n);return k;};
+    const colours=new Set();
+    const spline=(e,owned)=>{
+      const h=H(),k=knots(e.b);count++;
+      add(0,'SPLINE',5,h,330,'70',100,'AcDbEntity',8,e.layer);
+      if(owned){const v=(e.rgb[0]<<16)+(e.rgb[1]<<8)+e.rgb[2];colours.add(v);add(62,aciOf(e.rgb),420,v,370,e.lw);}
+      add(100,'AcDbSpline',210,'0.0',220,'0.0',230,'1.0',70,e.b.closed?9:8,71,3,72,k.length,73,e.b.pts.length,74,0,42,'0.0000000001',43,'0.0000000001');
+      for(const v of k)add(40,v.toFixed(1));
+      for(const p of e.b.pts)add(10,num(p[0]),20,num(p[1]),30,'0.0');
+      return h;
     };
-    // (CHARMLAYER) each charm's jobs as named blocks: the block records, the blocks with their lines (on the charm's layer), and one INSERT of each on the charm's layer
-    const bnames=new Set(['*model_space','*paper_space']),blocks=new Map();
-    const bname=s=>{let n=ascii(String(s).replace(/[<>/\\":;?*|=`]/g,'_')).replace(/\s+/g,' ').trim().slice(0,240)||'Block',i=2,b=n;while(bnames.has(n.toLowerCase()))n=b+'_'+i++;bnames.add(n.toLowerCase());return n;};
-    for(const ent of entities)if(ent.blk){let b=blocks.get(ent.blk);if(!b){b={name:bname(ent.blk),layer:ent.layer,ents:[]};blocks.set(ent.blk,b);}b.ents.push(ent);}
-    let recText='',blockText='';
-    for(const b of blocks.values()){b.rec=H();text='';add(0,'BLOCK_RECORD',5,b.rec,330,'9',100,'AcDbSymbolTableRecord',100,'AcDbBlockTableRecord',2,b.name,70,0,280,1,281,0);recText+=text;}
-    for(const b of blocks.values()){text='';add(0,'BLOCK',5,H(),330,b.rec,100,'AcDbEntity',8,'0',100,'AcDbBlockBegin',2,b.name,70,0,10,0,20,0,30,0,3,b.name,1,'');
-      for(const ent of b.ents)writeEnt(ent,b.rec,b.layer);   // (on the charm's own layer, never 0: Illustrator opens a block's lines onto the layer each line names, so lines on 0 all landed in one layer "0")
-      add(0,'ENDBLK',5,H(),330,b.rec,100,'AcDbEntity',8,'0',100,'AcDbBlockEnd');blockText+=text;}
-    text='';
-    for(const ent of entities)if(!ent.blk)writeEnt(ent,'17',ent.layer);
-    for(const b of blocks.values())add(0,'INSERT',5,H(),330,'17',100,'AcDbEntity',8,b.layer,100,'AcDbBlockReference',2,b.name,10,0,20,0,30,0);
-    const [minX,minY,maxX,maxY]=bounds||[0,0,100,50],w=Math.max(1,maxX-minX),h=Math.max(1,maxY-minY);
-    const values={LAYERS:layerText,BLOCK_RECORDS:recText,BLOCKS:blockText,ENTITIES:text,LAYER_COUNT:layerAci.size+2,HANDSEED:handle.toString(16).toUpperCase(),MINX:minX,MINY:minY,MAXX:maxX,MAXY:maxY,CENTERX:(minX+maxX)/2,CENTERY:(minY+maxY)/2,VIEWHEIGHT:h*1.1,ASPECT:w/h};
-    text=DXF_SCAFFOLD.replace(/\{\{(\w+)\}\}/g,(_,key)=>values[key]);
-    const aciRgb={1:[255,0,0],5:[0,0,255],7:[0,0,0],8:[128,128,128]};
-    return {text,entityCount:entities.length,layers:[...names.entries()],colors:[...new Set(entities.map(e=>{const c=aciRgb[e.c]||colors[e.c]||[0,0,0];return (c[0]<<16)+(c[1]<<8)+c[2];}))],hatchMm};
+    for(const e of entities){
+      if(e.kind==='spline'){spline(e,true);continue;}
+      const hs=e.loops.map(b=>spline({layer:e.layer,b},false)),v=(e.rgb[0]<<16)+(e.rgb[1]<<8)+e.rgb[2];colours.add(v);count++;
+      add(0,'HATCH',5,H(),330,'70',100,'AcDbEntity',8,e.layer,62,aciOf(e.rgb),420,v,440,33554687,100,'AcDbHatch',10,'0.0',20,'0.0',30,'0.0',210,'0.0',220,'0.0',230,'1.0',2,'SOLID',70,1,71,1,91,e.loops.length);
+      e.loops.forEach((b,i)=>{const k=knots(b);
+        add(92,1,93,1,72,4,94,3,73,0,74,0,95,k.length,96,b.pts.length);
+        for(const q of k)add(40,q.toFixed(1));
+        for(const p of b.pts)add(10,num(p[0]),20,num(p[1]));
+        add(97,0,97,1,330,hs[i]);});
+      add(75,2,76,1,98,1,10,'0.0',20,'0.0',450,0,451,0,460,'0.0',461,'0.0',452,0,462,'0.0',453,0,470,'');
+    }
+    const entityText=out.length?out.join('\r\n')+'\r\n':'';
+    out.length=0;
+    for(const n of order)add(0,'LAYER',5,H(),330,'2',100,'AcDbSymbolTableRecord',100,'AcDbLayerTableRecord',2,n,70,0,62,7,6,'Continuous',370,0,390,'F',347,'21');
+    const layerText=out.join('\r\n')+'\r\n';
+    const sk=root.CharmNestDxfSkeleton||(typeof require==='function'?require('./charm-nest-dxf-skeleton.js'):null);
+    if(!sk)throw new Error('The DXF frame (charm-nest-dxf-skeleton.js) is not loaded.');
+    const values={LAYERS:layerText,ENTITIES:entityText,LAYER_COUNT:String(order.length+1).padStart(6),HANDSEED:handle.toString(16).toUpperCase()};
+    const text=sk.text().replace(/\{\{(\w+)\}\}/g,(_,key)=>values[key]);
+    return {text,entityCount:count,layers:[...names.entries()],colors:[...colours],hatchMm};
   }
   function layerNames(parsed) {
     const L=lib();return [...new Set(parsed.doc.context.enumerateIndirectObjects().filter(([,o])=>o instanceof L.PDFDict&&o.get(L.PDFName.of('Type'))?.toString()==='/OCG').map(([,o])=>o.get(L.PDFName.of('Name'))?.decodeText?.()).filter(Boolean))];
