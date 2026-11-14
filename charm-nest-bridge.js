@@ -28409,7 +28409,14 @@ const Arrivals = window.Arrivals = (() => {
   async function processPending({checkpoint=false}={}) {
     if (!state.pending || S.settings.runMode !== "auto" || Recall.on()) return;
     const r = B.run;
-    if (!r || ["complete", "abandoned"].includes(r.status)) { state.pending = false; save(); await RunCtl.start({ mode: "auto" }); return; }
+    if (!r || ["complete", "abandoned"].includes(r.status)) {
+      state.pending = false; save();
+      // (NOSECONDRUN, Paul 14 Nov 2026: the takeover test: a computer that had handed its run to another one started a NEW run of every open order by itself when an order arrived): while a run is open in the cloud (carried by another computer, or waiting to be resumed), this computer never starts one of its own: its new orders already went into
+      //  that run through the cloud (CharmNestRunFollow.addRows). One run at a time; a person can still start one by hand
+      { let open = false; try { open = !!((window.CharmNestRunFollow && CharmNestRunFollow.state().runId) || (B.openRuns && B.openRuns.length)); if (!open) { const lr = await api("charmNestLibrary", { op: "runList", limit: 10 }, { quiet: true }); open = ((lr && lr.runs) || []).some(x => x && x.runId && !["complete", "abandoned", "archived"].includes(x.status)); } } catch (_) { open = true; }
+        if (open) { agent({ bridge: true }, "cloud", "New orders went into the open run in the cloud: no new run is started on this computer"); return; } }
+      await RunCtl.start({ mode: "auto" }); return;
+    }
     // Never alter the data while a run is producing labels or committing, nor revive an operator-stopped run.
     if (!((r.status === "review" && r.step === "engrave") || r.status === "processed" || checkpoint && r.status === "running" && r.step === "checkpoint") || r.arrivalBusy) return;
     // A sheet nesting by hand (Re-nest, a Review decision that arranged one again) is no reason to stop the run: the new orders stay pending and go on at the next tick, when it is done
