@@ -5051,6 +5051,51 @@ html.gs-locked body > *:not(#gate){display:none!important}
     // persisted markers and renders them immediately.
     restoreRedoState();
 
+    // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): the redo markers, the hidden sets and the batch history are kept in the cloud too (ListingGen_Realtime/shared, beside
+    // the live document this console already keeps), so every computer shows the same. A change here is written a second later; a change on another
+    // computer arrives through the document's listener (one read per change, no polling) and replaces what this computer shows.
+    (function lgShared() {
+      const KEYS = ["lg1_redo_state_v1", "lg1_hidden_sets_v1", "lg1_batch_sessions"];
+      const realSet = Storage.prototype.setItem;
+      let dev = ""; try { dev = localStorage.getItem("lg1_dev") || ("d" + Math.random().toString(36).slice(2, 10)); realSet.call(localStorage, "lg1_dev", dev); } catch (_) { dev = "d" + Math.random().toString(36).slice(2, 10); }
+      let t = 0, applying = false, lastAt = 0, started = false;
+      const doc = () => (window.db ? window.db.collection("ListingGen_Realtime").doc("shared") : null);
+      function push() {
+        if (applying || !started) return;
+        clearTimeout(t);
+        t = setTimeout(async () => {
+          const d = doc(); if (!d) return;
+          const data = { at: Date.now(), dev };
+          for (const k of KEYS) { try { data[k] = localStorage.getItem(k) || ""; } catch (_) {} }
+          try { await d.set(data); lastAt = data.at; } catch (e) { console.warn("[LG shared] not saved to the cloud:", e && e.message); }
+        }, 1000);
+      }
+      Storage.prototype.setItem = function (k, v) { const r = realSet.apply(this, arguments); try { if (this === localStorage && KEYS.includes(String(k))) push(); } catch (_) {} return r; };
+      function apply(data) {
+        if (!data || data.dev === dev || !(+data.at > lastAt)) return;
+        lastAt = +data.at; applying = true;
+        try {
+          for (const k of KEYS) if (typeof data[k] === "string") { if (data[k]) realSet.call(localStorage, k, data[k]); else localStorage.removeItem(k); }
+          // the redo markers are held in memory too: replaced by the cloud's completed ones
+          let cloud = {}; try { cloud = JSON.parse(data.lg1_redo_state_v1 || "{}") || {}; } catch (_) {}
+          Object.keys(REDO_STATE).forEach(k => { if (REDO_STATE[k] && REDO_STATE[k].status === "completed" && !cloud[k]) delete REDO_STATE[k]; });
+          Object.keys(cloud).forEach(k => { if (cloud[k] && cloud[k].status === "completed" && !(REDO_STATE[k] && REDO_STATE[k].status === "running")) REDO_STATE[k] = cloud[k]; });
+          try { if (typeof updateDropdownLabels === "function") updateDropdownLabels(); } catch (_) {}
+        } finally { applying = false; }
+      }
+      function start() {
+        const d = doc(); if (!d) { setTimeout(start, 2000); return; }
+        d.get().then(snap => {
+          const data = snap && snap.exists ? snap.data() : null;
+          if (data) apply(Object.assign({}, data, { dev: data.dev === dev ? "" : data.dev }));
+          started = true;
+          if (!data) push();   // (the first computer to open the console gives what it has)
+          d.onSnapshot(sn => { try { apply(sn && sn.exists ? sn.data() : null); } catch (_) {} }, e => console.warn("[LG shared] listener:", e && e.message));
+        }).catch(e => { started = true; console.warn("[LG shared] not read:", e && e.message); });
+      }
+      setTimeout(start, 1500);
+    })();
+
     // ============================================================
     // Hidden-sets tracker — localStorage list of sets that should
     // never appear in the Review queue again. Solves "approved sets

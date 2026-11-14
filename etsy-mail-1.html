@@ -9822,10 +9822,22 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     // thread's reply box is empty. Each is kept under the person who wrote
     // it and comes back for that person only.
     const UNSENT_KEY = "em.unsent.";
+    // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): a reply that did not go is also kept in the cloud (EtsyMail_Unsent, one document per conversation and person), so it comes back in the box on
+    //  ANY computer the same person opens that conversation on; it is read only when a conversation opens with an empty box and nothing kept here (no polling)
+    const UNSENT_COLL = "EtsyMail_Unsent";
+    const unsentDocId = (threadId, who) => String(threadId + (who ? "~" + who : "")).replace(/[\/\s]/g, "_").slice(0, 300);
+    function cloudUnsent(kind, threadId, who, data) {
+      try {
+        const actor = (typeof getEmployeeName === "function" && getEmployeeName()) || "operator";
+        const body = kind === "set" ? { op: "set", coll: UNSENT_COLL, id: unsentDocId(threadId, who), data, actor } : { op: "deleteDoc", coll: UNSENT_COLL, id: unsentDocId(threadId, who), confirm: true, actor };
+        api("firestoreProxy", { method: "POST", body }).catch(() => {});
+      } catch (_) {}
+    }
     function stashUnsentText(threadId, text, by) {
       if (!threadId || !String(text || "").trim()) return;
-      const who = by == null ? emPersonKey() : String(by);
-      try { localStorage.setItem(UNSENT_KEY + threadId + (who ? "~" + who : ""), JSON.stringify({ text: String(text), atMs: Date.now(), by: who || undefined })); } catch (_) {}
+      const who = by == null ? emPersonKey() : String(by), atMs = Date.now();
+      try { localStorage.setItem(UNSENT_KEY + threadId + (who ? "~" + who : ""), JSON.stringify({ text: String(text), atMs, by: who || undefined })); } catch (_) {}
+      cloudUnsent("set", threadId, who, { threadId: String(threadId), text: String(text), atMs, by: who || null });
     }
     function takeUnsentText(threadId) {
       const me = emPersonKey();
@@ -9837,11 +9849,29 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           const v = JSON.parse(raw);
           if (v && v.by && v.by !== me) continue;   // somebody else's words stay put for them
           localStorage.removeItem(k);
+          cloudUnsent("delete", threadId, k.includes("~") ? k.slice(k.lastIndexOf("~") + 1) : "");   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud")
           // A week-old failed send is no longer what the operator meant to say.
           if (v && v.text && Date.now() - (v.atMs || 0) < 7 * 86400000) return String(v.text);
         } catch (_) {}
       }
       return "";
+    }
+    // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): nothing kept on this computer: the cloud is asked once, and the words go in the box if it is still empty and still on that conversation
+    async function restoreUnsentFromCloud(threadId) {
+      const me = emPersonKey();
+      for (const who of me ? [me, ""] : [""]) {
+        let res = null;
+        try { res = await api("firestoreProxy", { method: "GET", query: { op: "get", coll: UNSENT_COLL, id: unsentDocId(threadId, who) } }); } catch (_) { return; }
+        const d = res && res.exists && res.doc; if (!d || !d.text) continue;
+        if (d.by && d.by !== me) continue;
+        cloudUnsent("delete", threadId, who);
+        if (!(Date.now() - (+d.atMs || 0) < 7 * 86400000)) continue;
+        const deskTa = $("emDraftText"), mobTa = document.getElementById("mComposerTextarea");
+        if ((deskTa && deskTa.value.trim()) || (mobTa && mobTa.value.trim())) return;
+        try { localStorage.setItem(UNSENT_KEY + threadId + (who ? "~" + who : ""), JSON.stringify({ text: String(d.text), atMs: +d.atMs || Date.now(), by: who || undefined })); } catch (_) {}
+        restoreUnsentText(threadId);
+        return;
+      }
     }
     function restoreUnsentText(threadId) {
       const deskTa = $("emDraftText");
@@ -9849,7 +9879,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       if (!deskTa && !mobTa) return false;
       if ((deskTa && deskTa.value.trim()) || (mobTa && mobTa.value.trim())) return false;
       const text = takeUnsentText(threadId);
-      if (!text) return false;
+      if (!text) { restoreUnsentFromCloud(threadId); return false; }
       if (deskTa) { deskTa.value = text; deskTa.__emOwn = true; autoSizeDraftTextarea(deskTa); }
       if (mobTa) {
         mobTa.value = text;
@@ -21703,6 +21733,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         }));
         if (keep.length) localStorage.setItem(DESIGN_UNPOSTED_KEY, JSON.stringify(keep));
         else localStorage.removeItem(DESIGN_UNPOSTED_KEY);
+        // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): the notes still to post are kept in the cloud too, so any computer can post them (each has its dispatchId: the server posts a note once)
+        const actor = (typeof getEmployeeName === "function" && getEmployeeName()) || "operator";
+        api("firestoreProxy", { method: "POST", body: { op: "set", coll: "EtsyMail_Unsent", id: "_design_unposted", data: { notes: keep, at: Date.now() }, actor } }).catch(() => {});
       } catch (_) {}
     }
 
@@ -21831,6 +21864,16 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         designNotes.push({ threadId: x.threadId, text: x.text, dispatchId: x.dispatchId, orderId: x.orderId || null,
           why: x.why || "the page was closed before it was confirmed", at: x.at, queued: true, phase: "failed", timer: 0 });
       }
+      // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): and those another computer could not post
+      api("firestoreProxy", { method: "GET", query: { op: "get", coll: "EtsyMail_Unsent", id: "_design_unposted" } }).then(res => {
+        const list = res && res.exists && res.doc && Array.isArray(res.doc.notes) ? res.doc.notes : [];
+        let added = 0;
+        for (const x of list) {
+          if (!x || !x.threadId || !x.text || !x.dispatchId || !(Date.now() - (x.at || 0) < 3 * 86400e3) || designNotes.some(n => n.dispatchId === x.dispatchId)) continue;
+          designNotes.push({ threadId: x.threadId, text: x.text, dispatchId: x.dispatchId, orderId: x.orderId || null, why: x.why || "another computer could not post it", at: x.at, queued: true, phase: "failed", timer: 0 }); added++;
+        }
+        if (added) toast(added + (added === 1 ? " design note from another computer was" : " design notes from another computer were") + " not posted. Open the conversation and click its Design switch to try again.", 8000);
+      }).catch(() => {});
       if (designNotes.length) {
         setTimeout(() => {
           const n = designNotes.filter(x => x.phase === "failed").length;

@@ -1675,7 +1675,27 @@ function loadSettings() {
 }
 function saveSettings() {
   try { localStorage.setItem(LS.settings, JSON.stringify(SETTINGS)); } catch (_) {}
+  try { DSShared.changed(); } catch (_) { /* before DSShared is defined (the first load) */ }
 }
+/* (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): what this station keeps the same as every other computer: its behaviour switches (Labels come from Brites Manager, the repair passes, reading orders as they near the view,
+   finishing the totals) and the drafts typed in its order chat. They are kept in the Charm Sorter's shared cloud store: the sorter asks for them (shared.get), sends what another
+   computer changed (shared.set), and is told when a person here changes them (shared.changed). Its look (tile size, density, the rail, live or history, lazy pictures) stays on this computer. */
+const DS_SHARED_FIELDS = ["labelsFromSorter", "autoHeal", "autoHydrate", "bgTopUp"];
+const DSShared = (() => {
+  let applying = false, t = 0;
+  const pick = o => Object.fromEntries(DS_SHARED_FIELDS.filter(k => o && Object.prototype.hasOwnProperty.call(o, k)).map(k => [k, o[k]]));
+  const snapshot = () => ({ settings: pick(SETTINGS), chat: window.__dsChat ? window.__dsChat.read() : null });
+  function changed() { if (applying) return; clearTimeout(t); t = setTimeout(() => { try { if (typeof Bridge !== "undefined" && Bridge.active()) Bridge.emit("shared.changed", snapshot()); } catch (_) {} }, 800); }
+  function apply(a) {
+    applying = true;
+    try {
+      if (a.settings && typeof a.settings === "object") { Object.assign(SETTINGS, pick(a.settings)); saveSettings(); try { applySettings(); } catch (_) {} }
+      if (a.chat && typeof a.chat === "object" && window.__dsChat) window.__dsChat.write(a.chat);
+    } finally { applying = false; }
+    return { ok: true };
+  }
+  return { snapshot, changed, apply };
+})();
 /**
  * The order list scrolls; the sort header does not. When a classic scrollbar
  * appears it eats width from the list's content box only, so without this the
@@ -5745,10 +5765,14 @@ const BritesChat = (() => {
       if (v.trim()) all[S.rid] = v; else delete all[S.rid];
       localStorage.setItem(DRAFTS, JSON.stringify(all));
     } catch (_) {}
+    try { DSShared.changed(); } catch (_) {}   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud")
   }
   function clearDraft(rid) {
     try { const all = readDrafts(); delete all[rid]; localStorage.setItem(DRAFTS, JSON.stringify(all)); } catch (_) {}
+    try { DSShared.changed(); } catch (_) {}   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud")
   }
+  // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): the drafts as another computer left them (DSShared), into the open chat's box when nobody is typing in it
+  window.__dsChat = { read: readDrafts, write: all => { try { localStorage.setItem(DRAFTS, JSON.stringify(all || {})); if (S.rid && el.input && document.activeElement !== el.input) el.input.value = (all || {})[S.rid] || ""; } catch (_) {} } };
 
   /* ── render ───────────────────────────────────────────────────────── */
   function render() {
@@ -8080,6 +8104,9 @@ const Bridge = (() => {
   }
   /* ── commands: (args, progress, ev) => result. Names mirror the buttons an operator would press. ── */
   const CMDS = {
+    // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): this station's shared settings and chat drafts, kept in the sorter's shared cloud store (DSShared)
+    async "shared.get"() { return DSShared.snapshot(); },
+    async "shared.set"(a) { return DSShared.apply(a || {}); },
     /** The sorter narrates its own side of the run here (pull, pool, nest, fit, labels…); no cursor, no ticker, not counted. */
     async "feed.post"(a) {
       const rows = (Array.isArray(a.rows) ? a.rows : []).slice(-20).map(r => ({ t: Number(r.t) || Date.now(), kind: String(r.kind || "").slice(0, 12), text: String(r.text || "").slice(0, 220) })).filter(r => r.text);
