@@ -644,7 +644,7 @@
       let pick = null;
       for (const edge of [top, !top]) {
         for (const a of b.angles) { const v = prepareVariant(b.p, a, clr, res); if (!v) continue; const s = spot(v, edge); if (s && (!pick || s.x + v.fine.w < pick.x + pick.v.fine.w)) pick = { ...s, v, a, edge }; }
-        if (pick && (pick.x + pick.v.fine.w) / res <= front) break; pick = null;
+        if (pick && (job.longFirstForce || (pick.x + pick.v.fine.w) / res <= front)) break; pick = null;   // (longFirstForce: KEEPSEARCH's every other search lays the bars flat whatever the estimate; the least wasteful layout is kept)
       }
       if (!pick) continue;
       const { x, y, v, a } = pick; g.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y);

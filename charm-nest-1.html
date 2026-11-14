@@ -3941,7 +3941,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-operations.js?v=20261028-sw1"></script>
 <script src="charm-nest-rose.js?v=20261007-edges-gc1-gf1-sh29"></script>
 <script src="charm-nest-partial.js?v=20261007-ps4-fit75-pp1-cg1"></script>
-<script src="charm-nest-solver.js?v=20261009-unjam1-pair2-ln1-cg1-nestfront-nq1-ovf1-mi1-crn1-str1-lf1-go1-tt2"></script>
+<script src="charm-nest-solver.js?v=20261009-unjam1-pair2-ln1-cg1-nestfront-nq1-ovf1-mi1-crn1-str1-lf1-go1-tt3"></script>
 <script src="vendor/clipper-6.4.2.js?v=20261028-sw1"></script>
 <script src="charm-nest-vector.js?v=20261028-ops1-sw1"></script>
 <script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1-bd1-ovf1-ae1-im1-bm1-crn1-clp1-bb1"></script>
@@ -5780,7 +5780,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1-crn1-str1-lf1-go1-tt2");
+    const w = new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1-crn1-str1-lf1-go1-tt3");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     // (a worker file that could not be fetched, the network being away, reports an error with no words: it is named, so the sheet is not taken for one that was told nothing and the run knows to try again)
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message || "the sheet search could not start: its file could not be loaded (is the network down?)" }, idx);
@@ -5992,7 +5992,7 @@ function startNestReady(sh, context) {
     //  a search that finishes starts again in a new placing order (orderVariant: the next number, shaken by its own seed), up to KEEP_MAX finished layouts; the least wasteful one is kept (betterLayout, TIGHT)
     if (job.multiStart && job.tight) { const t = performance.now(); sh.pool.keep = { job, t0: t, next: n, done: 0, started: new Array(n).fill(t), max: 36 }; }
     if (sh.evNest && !job.careful) agentUpdate(sh.evNest, { text: `${n} parallel search${n > 1 ? "es" : ""} on seeds ${job.seed}–${job.seed + n - 1} · ${items.length} pieces · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · standard and broader-rotation searches keep oldest-first sheet membership · ceiling ${fmt.s(job.timeBudgetMs)}` });
-    workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i, exploreRotations: i % 2 === 1, ...(job.multiStart ? { orderVariant: i } : {}), useGPU: S.settings.computePipeline === "gpu" && i === n - 1 }) }));
+    workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i, exploreRotations: i % 2 === 1, ...(job.multiStart ? { orderVariant: i } : {}), ...(sh.pool.keep && i % 2 === 1 ? { longFirstForce: true } : {}), useGPU: S.settings.computePipeline === "gpu" && i === n - 1 }) }));
   };
   const launchId=sh.jobId;
   launch();
@@ -6372,7 +6372,7 @@ function onWorkerMessage(sh, m, idx) {
       if (m.result) { K.done++; if (!pool.results[idx] || CharmNestSolver.betterLayout(m.result, pool.results[idx], stockFor(sh.metal, sh), opts)) pool.results[idx] = m.result; }
       if (m.result && !pool.stopAsked && m.result.endedBy !== "stopped" && sh.status === "nesting" && K.next < K.max && now - K.t0 + pass <= (K.job.timeBudgetMs || 180000) && sh.workers?.[idx]) {
         const v = K.next++; K.started[idx] = now; pool.completed[idx] = false;
-        sh.workers[idx].postMessage({ type: "solve", jobId: sh.jobId + ":" + idx, job: Object.assign({}, K.job, { seed: K.job.seed + v, exploreRotations: v % 2 === 1, orderVariant: v, useGPU: false }) });
+        sh.workers[idx].postMessage({ type: "solve", jobId: sh.jobId + ":" + idx, job: Object.assign({}, K.job, { seed: K.job.seed + v, exploreRotations: v % 2 === 1, orderVariant: v, useGPU: false, ...(v % 2 === 1 ? { longFirstForce: true } : {}) }) });   // (LONGFIRST: every other search lays the bars flat along the edges)
         return;
       }
       pool.done++;
@@ -8973,7 +8973,7 @@ function compareGPUSpeed() {
   const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
   const job=sh?buildJob(sh):null,id=uid();
   let worker;
-  try{worker=new Worker('charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1-crn1-str1-lf1-go1-tt2');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  try{worker=new Worker('charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1-crn1-str1-lf1-go1-tt3');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
   gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
   const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
   worker.onmessage=({data:m})=>{
@@ -9120,7 +9120,7 @@ async function boot() {
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, cornerPt: cornerPtSetting, cornerClash, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
     activePage, allSheets, pagesOf, addPage, fillingPage, markMissed, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log,
     RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue, topupRoom, topupTakes, nospreadChunk, settleTopups,
-    solverWorker: () => new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1-crn1-str1-lf1-go1-tt2") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
+    solverWorker: () => new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1-crn1-str1-lf1-go1-tt3") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
   window.CharmNestOperations?.subscribe(()=>flushManualIntake());
 }
 boot();
