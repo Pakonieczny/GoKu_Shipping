@@ -15580,7 +15580,7 @@ const Sets = window.Sets = (() => {
     for (const sheet of sheets) {
       const meta=O.libraryGroup(sheet, {combineSolids:true}), key=meta.key;
       if (!groups.has(key)) groups.set(key, {...meta, runId:sheet.runId, day:sheet.day, status:meta.standalone ? "not included in a set" : meta.working ? "held for a later set" : "saved", sheets:[], materials:[], orders:{}});
-      const group=groups.get(key); group.sheets.push(sheet);
+      const group=groups.get(key); group.sheets.push(sheet); if(group.working && !group.setId && String(sheet.day || "")>String(group.day || ""))group.day=sheet.day;   // (ONECARD: a card of sheets from several days goes by its newest)
       group.materials=[...new Set([...(group.materials || []),sheet.metal])];
       group.updatedAt=Math.max(+group.updatedAt || 0,+sheet.updatedAt || 0);
       for (const id of sheet.orders || []) if (!group.orders?.[id]) (group.orders ||= {})[id]={};

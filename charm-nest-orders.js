@@ -5358,7 +5358,9 @@
     if (sheet.setId && !sheet.draft && sheet.solidIncluded !== false) return {key:"set:"+sheet.setId, name:"Set "+(sheet.setSeq || sheet.seq || ""), setId:sheet.setId, seq:sheet.setSeq || sheet.seq || null, standalone:false, working:false};
     const solid=["gold10k","gold14k"].includes(sheet.metal), scope=sheet.runId || (sheet.sources || []).map(s=>s.hash || s.name).sort().join("+") || sheet.id;
     if (solid && options.combineSolids) return {key:"solid-waiting", name:"14K / 10K Solid Waiting for Approval", setId:null, seq:null, standalone:true, working:true};
-    return {key:(solid ? "standalone:"+sheet.metal+":" : "working:")+sheet.day+":"+scope, name:solid ? "Standalone "+(sheet.metal === "gold10k" ? "10K" : "14K") : "Incomplete Sheets: Waiting to be filled!", setId:null, seq:null, standalone:solid, working:true};
+    // (ONECARD, Paul 13 Nov 2026: "why are these two Goldfield sheets separated from the other in process sheets ... They should be organized all under the In progress portion of the library"):
+    //  every Gold Filled / Sterling Silver / Rose Gold sheet still waiting to be filled is in ONE card, whatever its day; only the 10K / 14K standalones keep a card per day
+    return {key:(solid ? "standalone:"+sheet.metal+":"+sheet.day+":" : "working:")+scope, name:solid ? "Standalone "+(sheet.metal === "gold10k" ? "10K" : "14K") : "Incomplete Sheets: Waiting to be filled!", setId:null, seq:null, standalone:solid, working:true};
   }
   // Local order-number filtering: every digit narrows the same list and sheet highlights.
   /* ORDERNOTE (Paul, 11 Nov 2026: "when the no order option is chosen, then the user should be forced to leave in identifying note, and then that note will appear in place of the order number
