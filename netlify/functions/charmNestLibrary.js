@@ -666,7 +666,7 @@ const REV_CAP = 1000, REV_TOUCHED = Symbol("revTouched");   // (FEED, 28 Oct 202
    '<kind>:*' says "some of this kind, not known which" (an op that may move placements and names no order is p:*, as the placement counter moves for it);
    '*' stays "not known at all". The Library's readers ask about their own kinds only (revQuiet, localAsk): a pool row moving costs them one read more, never
    a full answer. One bumpRev per op, with every name it touched. */
-const FEED_KEY = /^(?:[strcpxomad]:(?:[\w\-]{4,80}|\*)|\*)$/;
+const FEED_KEY = /^(?:[strcpxomadg]:(?:[\w\-]{4,80}|\*)|\*)$/;   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud" / "Make Firebase and Etsy cheaper without losing any real-time function"): g:<name> a shared store (op_sharePut) or the Nest tray (g:tray)
 let FEED_TOUCHED = new Set(), PLACE_QUIET = false;   // (PLACE_QUIET, OUTBOX: this request wrote nothing a placement answer reads: a sheet's own field patch, op_putSheet)   // (names touched by code that has no request body at hand, stamp's events: emptied at every request, as DONE_TOUCH)
 const feedTouch = keys => { for (const k of keys || []) if (FEED_KEY.test(String(k))) FEED_TOUCHED.add(String(k)); };
 /** The orders of pool ids ("rid_tid_copy") and receipt ids, named p:<order> (at most 300; more is p:*). */
@@ -718,7 +718,7 @@ function revTouch(b, keys) { if (!b || typeof b !== "object") return; const t = 
    An op's one bumpRev writes the shards its names fall in, side by side; op changes reads all four in one getAll. A shard that could not be written is
    best-effort, never the person's write (feedBump): its readers are sent to their own question for that kind (<kind>:*), as a count that moved without
    its list says, or, lost altogether, at the ten-minute check. */
-const FEED_SHARDS = [{ id: "lib", kinds: ["*"] }, { id: "p", kinds: ["p"] }, { id: "o", kinds: ["o"] }, { id: "x", kinds: ["x", "m", "a"] }];
+const FEED_SHARDS = [{ id: "lib", kinds: ["*"] }, { id: "p", kinds: ["p"] }, { id: "o", kinds: ["o"] }, { id: "x", kinds: ["x", "m", "a", "g"] }];
 const SHARD_CAP = { lib: REV_CAP, p: 1000, o: 1000, x: 300 };
 const shardOf = k => (k === "*" || "strc".includes(k[0]) ? "lib" : k[0] === "p" ? "p" : k[0] === "o" ? "o" : "x");
 const shardRef = id => (id === "lib" ? revRef() : PREFIX ? db.collection(PREFIX + SB_REV_COLL).doc("_feed_" + id) : db.collection(REV).doc("feed-" + id));   // (the sandbox's in Sandbox_Order_Rev, a family its reset wipes)
@@ -3502,7 +3502,7 @@ async function op_runLinesPatch(b) {
     return null;
   });
   if (refused) return refused;
-  if (applied.length) revTouch(b, ["r:" + id]);
+  if (applied.length) { revTouch(b, ["r:" + id]); feedOrders(b, [applied]); }   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud" / "Make Firebase and Etsy cheaper without losing any real-time function"): its orders, never p:* (no pool row or sheet moved)
   return { ok: true, runId: id, applied, at };
 }
 /* ── (CLOUDALL S3, Paul 13 Nov 2026: "New orders. They join the run only on that computer" -> any computer that reads new orders writes them into the cloud run) ──
@@ -3536,7 +3536,7 @@ async function op_runLinesAdd(b) {
     return null;
   });
   if (refused) return refused;
-  if (added.length) revTouch(b, ["r:" + id]);
+  if (added.length) { revTouch(b, ["r:" + id]); feedOrders(b, [added]); }   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud" / "Make Firebase and Etsy cheaper without losing any real-time function")
   return { ok: true, runId: id, added, at };
 }
 async function op_runGet(b) {
@@ -5116,18 +5116,20 @@ OPS.activityPut = op_activityPut; OPS.activityGet = op_activityGet; NO_GEN_BUMP.
    seen for 90 s (closed, asleep, offline), or when a person there chose to take it over (take). → { ok, mine, alive, carrier } */
 async function op_runCarrier(b) {
   const runId = str(b.runId, 80), dev = str(b.dev, 60) || "", by = str(b.by, 80) || ""; if (!isId(runId) || !dev) return { error: "bad run or computer" };
-  const ref = col(RUNS).doc(runId), now = Date.now(), FRESH = 90000;
+  // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud" / "Make Firebase and Etsy cheaper without losing any real-time function"): the carrier is kept in a small document of its own (Charm_Nest_Run_Carrier/<run>): renewed every 20 s on the run record, it moved the run's revision every 20 s, and every read of the run by revision answered in full
+  const ref = col(CARRIER).doc(runId), now = Date.now(), FRESH = 90000;
   return db.runTransaction(async tx => {
-    const d = await tx.get(ref); if (!d.exists) return { error: "no such run" };
-    const c = d.data().carrier || null, alive = !!(c && c.dev && now - (num(c.at) || 0) < FRESH);
+    const d = await tx.get(ref);
+    const c = (d.exists && d.data().carrier) || null, alive = !!(c && c.dev && now - (num(c.at) || 0) < FRESH);
     if (b.check) return { ok: true, mine: !!(c && c.dev === dev), alive, carrier: c };
-    if (c && c.dev === dev) { const n = { dev, by: by || c.by || "", at: now, since: num(c.since) || now }; tx.set(ref, { carrier: n }, { merge: true }); return { ok: true, mine: true, alive: true, carrier: n }; }
+    if (c && c.dev === dev) { const n = { dev, by: by || c.by || "", at: now, since: num(c.since) || now }; tx.set(ref, { runId, carrier: n, expireAt: new Date(now + 30 * 86400000) }); return { ok: true, mine: true, alive: true, carrier: n }; }
     if (alive && !b.take) return { ok: true, mine: false, alive: true, carrier: c };
     const n = { dev, by, at: now, since: now, ...(c && c.dev ? { took: { dev: c.dev, by: c.by || "", at: num(c.at) || 0 } } : {}) };
-    tx.set(ref, { carrier: n }, { merge: true });
+    tx.set(ref, { runId, carrier: n, expireAt: new Date(now + 30 * 86400000) });
     return { ok: true, mine: true, alive: true, took: alive, carrier: n };
   });
 }
+const CARRIER = "Charm_Nest_Run_Carrier"; SANDBOXED.add(CARRIER);
 OPS.runCarrier = op_runCarrier; NO_GEN_BUMP.add("runCarrier");
 /* (CLOUDTRAY, Paul 14 Nov 2026: "You must put all this in the cloud" -> "Yes, build it"): the Nest rail's dropped files, listed for every computer. trayPut { id: the file's hash, name, path, url, state: tray | assigned | removed, metal, dev, by };
    a file claimed or removed by one computer is never put back in the tray by another that still lists it. trayList: the last three days, newest first (100 at most). */
@@ -5139,16 +5141,54 @@ async function op_trayPut(b) {
   return db.runTransaction(async tx => {
     const d = await tx.get(ref), old = d.exists ? d.data() : null;
     if (old && old.state !== "tray" && state === "tray" && old.dev !== dev) return { ok: true, kept: old.state };
+    revTouch(b, ["g:tray"]);   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud" / "Make Firebase and Etsy cheaper without losing any real-time function"): every computer reads the tray when it changed, never every 20 s
     tx.set(ref, { id, name: str(b.name, 200) || (old && old.name) || "file", path: str(b.path, 400) || (old && old.path) || "", url: str(b.url, 1500) || (old && old.url) || "", state, metal: str(b.metal, 20) || null, dev, by: str(b.by, 80) || "", at: now, expireAt: new Date(now + 14 * 86400000) }, { merge: true });
     return { ok: true, state };
   });
 }
-async function op_trayList() {
-  const q = await col(TRAY).where("at", ">", Date.now() - 3 * 86400000).orderBy("at", "desc").limit(100).get();
+async function op_trayList(b) {
+  const since = Math.max(Date.now() - 3 * 86400000, num(b && b.since) || 0);   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud" / "Make Firebase and Etsy cheaper without losing any real-time function"): what changed since the reader's last answer (one read when nothing did)
+  const q = await col(TRAY).where("at", ">", since).orderBy("at", "desc").limit(100).get();
   return { items: q.docs.map(d => { const x = d.data() || {}; return { id: x.id, name: x.name, url: x.url, path: x.path, state: x.state, metal: x.metal || null, dev: x.dev || "", by: x.by || "", at: x.at }; }) };
 }
 OPS.trayPut = op_trayPut; OPS.trayList = op_trayList; NO_GEN_BUMP.add("trayPut"); NO_GEN_BUMP.add("trayList");
-OPS.runLinesAdd = op_runLinesAdd;   // (CLOUDALL S3, Paul 13 Nov 2026: "New orders. They join the run only on that computer" -> any computer that reads new orders writes them into the cloud run)
+
+/* (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud" / "Make Firebase and Etsy cheaper without losing any real-time function"). THE SHARED STORE: what every computer keeps the same, kept in the cloud: the Sorter's settings, the stock preset, the set-aside notices, the drafts of
+   unsent messages, the lists each computer learned for itself, and the like (charm-nest-cloud-share.js). One document per store, named, each field kept with when and where it was
+   written, so two computers changing two fields never undo each other (a field: the later write wins; a removed field is kept as removed for 30 days, so every computer removes it).
+   sharePut { name, set: { field: value }, del: [field], ifAbsent?, dev, by } writes in one transaction and names g:<name> in the changes feed, so every other computer reads it at once
+   and nobody asks on a timer; shareGet { names } reads them (one read each). Values are kept as JSON text (a list of lists is not a Firestore value). Nothing here moves a placement. */
+const SHARE = "Charm_Nest_Shared"; SANDBOXED.add(SHARE);
+const shareName = v => { const s = str(v, 80); return s && /^[\w\-]{4,80}$/.test(s) ? s : null; };
+async function op_shareGet(b) {
+  const names = [...new Set((Array.isArray(b.names) ? b.names : []).map(shareName).filter(Boolean))].slice(0, 60); if (!names.length) return { items: {} };
+  const docs = await db.getAll(...names.map(n => col(SHARE).doc(n))), items = {};
+  docs.forEach((d, i) => { const x = d.exists ? d.data() || {} : null; items[names[i]] = x ? { f: x.f || {}, at: num(x.at) || 0, n: num(x.n) || 0 } : null; });
+  return { items };
+}
+async function op_sharePut(b) {
+  const name = shareName(b.name); if (!name) return { error: "bad store name" };
+  const set = b.set && typeof b.set === "object" && !Array.isArray(b.set) ? b.set : {}, del = Array.isArray(b.del) ? b.del.map(k => String(k)).filter(k => k && k.length <= 300) : [];
+  const fields = Object.keys(set).filter(k => k && k.length <= 300).slice(0, 2000); if (!fields.length && !del.length) return { error: "nothing to write" };
+  const dev = str(b.dev, 60) || "", by = str(b.by, 80) || "", ref = col(SHARE).doc(name);
+  let wrote = [];
+  const out = await db.runTransaction(async tx => {
+    const d = await tx.get(ref), old = d.exists ? d.data() || {} : {}, f = Object.assign({}, old.f || {}), now = Date.now(), cut = now - 30 * 86400000;
+    wrote = [];
+    for (const k of fields) { if (b.ifAbsent && f[k] && !f[k].x) continue; let j; try { j = JSON.stringify(set[k] === undefined ? null : set[k]); } catch (_) { continue; } if (j.length > 400000) return { error: `${name}: ${k} is too large to share` }; f[k] = { j, at: now, dev, by }; wrote.push(k); }
+    for (const k of del) { if (!f[k] || f[k].x) continue; f[k] = { x: 1, at: now, dev, by }; wrote.push(k); }
+    for (const [k, v] of Object.entries(f)) if (v && v.x && num(v.at) < cut) delete f[k];   // (a field removed a month ago is forgotten)
+    if (!wrote.length) return { ok: true, at: num(old.at) || 0, n: num(old.n) || 0, wrote: [] };
+    if (Buffer.byteLength(JSON.stringify(f)) > 950000) return { error: `${name} is too large to share as one store` };
+    const n = (num(old.n) || 0) + 1; tx.set(ref, { name, f, at: now, n });
+    return { ok: true, at: now, n, wrote };
+  });
+  if (out && out.ok && wrote.length) revTouch(b, ["g:" + name]);
+  return out;
+}
+OPS.shareGet = op_shareGet; OPS.sharePut = op_sharePut; NO_GEN_BUMP.add("shareGet"); NO_GEN_BUMP.add("sharePut");
+OPS.runLinesAdd = op_runLinesAdd; NO_GEN_BUMP.add("runLinesAdd"); NO_GEN_BUMP.add("runLinesPatch");   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud" / "Make Firebase and Etsy cheaper without losing any real-time function"): lines of the run only: no pool row, no sheet (every computer re-read every piece on screen for each)
+   // (CLOUDALL S3, Paul 13 Nov 2026: "New orders. They join the run only on that computer" -> any computer that reads new orders writes them into the cloud run)
 OPS.runLinesPatch = op_runLinesPatch;   // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer": an order line changed on any computer (taken off, held, cancelled) is written to the cloud run by that computer)
 OPS.engraveSyncPut = op_engraveSyncPut; OPS.engraveSyncGet = op_engraveSyncGet; NO_GEN_BUMP.add("engraveSyncPut"); NO_GEN_BUMP.add("engraveSyncGet");   // ENGRSYNC (13 Nov 2026): a line's engraving work shared by every computer (op_engraveSyncPut above)
 OPS.madeThumbPut = op_madeThumbPut;   // THUMBSYNC (28 Oct 2026): a piece's picture as it will be made, kept on its pool row (op_madeThumbPut above); it writes a pool row, so the placement counter moves
