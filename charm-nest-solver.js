@@ -826,6 +826,8 @@
     const withEnvelope = layout => layout && layout.rec ? { ...layout, envelopePt2: envelopePt2(layout.rec) } : layout;
     // Every published best carries its envelope, so parallel workers compare alike.
     if (roseAxis && cb.onBest) { const publish = cb.onBest; cb = { ...cb, onBest: (layout, info) => publish(fitLine && layout && best?.rec && layout.placements?.length === best.rec.length ? { ...layout, envelopePt2: envelopePt2(best.rec) } : layout, info) }; }
+    // (TIGHT, Paul 14 Nov 2026: 10K, 14K and Rose Gold: every published layout carries its dead space, so the page keeps the one that wastes least)
+    if (job.tight && cb.onBest) { const publish = cb.onBest; cb = { ...cb, onBest: (layout, info) => publish(layout && best?.grids?.fine && layout.placements?.length === best.placements?.length ? { ...layout, deadPt2: deadSpacePt2(best.grids.fine, best.placements, fineRes) } : layout, info) }; }
     let fitLine = false, fitNow = false;
     const stripAxis = FW >= FH ? "x" : "y";
     let stripWeight = 4;
@@ -2433,6 +2435,7 @@
       }
     }
     if (best && best.rec && fitLine) best.envelopePt2 = envelopePt2(best.rec);
+    if (job.tight && best?.grids?.fine) best.deadPt2 = deadSpacePt2(best.grids.fine, best.placements, fineRes);
     if (best && best.grids) delete best.grids;
     if (best && best.rec) delete best.rec;
     if (!best) best = { placements: [], rejects: prepared.map(p => p.id), density: 0, trial: -1, usablePt2: usableCellsFine / (fineRes * fineRes), freePt2: usableCellsFine / (fineRes * fineRes), placedPt2: 0, pocket: pocketPt(baseCoarse, coarseRes) };
@@ -2695,6 +2698,22 @@
     return out;
   }
 
+  /** (TIGHT, Paul 14 Nov 2026) Dead space of a layout, pt²: free cells of the sheet no SLIVER_MM disc can reach, the gaps
+   *  between charms and along the plate's edge included (the grid marks the edge band as occupied). Open stock is not dead. */
+  const deadMemo = new WeakMap();
+  function deadSpacePt2(fine, placements, fineRes) {
+    const hit = placements && deadMemo.get(placements); if (hit && hit.fine === fine) return hit.v;
+    const W = fine.W, H = fine.H, n = W * H, res = fineRes || fine.fineRes || 2, occ = new Uint8Array(n);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) occ[y * W + x] = fine.get(x, y);
+    const out = sliverCells(occ, W, H, Math.round(3 * SLIVER_MM * (res * 72 / 25.4) / 2), new Int32Array(n), new Int32Array(n), new Uint8Array(n));
+    let c = 0; for (let i = 0; i < n; i++) c += out[i];
+    const v = c / (res * res); if (placements) deadMemo.set(placements, { fine, v }); return v;
+  }
+  /** Stock a layout takes, pt²: the strip a straight cut frees, or for a Rose Gold sheet the area up to the next green line. */
+  function stockPt2(l, sheet, reachFirst) {
+    if (!reachFirst && Number.isFinite(l.envelopePt2)) return l.envelopePt2;
+    return stripFraction(l.placements, sheet) * sheet.wPt * sheet.hPt;
+  }
   /** Fraction consumed before a straight cut frees a full-width/height offcut.
    * Compare identical counts by usable leftover stock, not tiny raster-area gains. */
   function stripFraction(pl, sheet) {
@@ -2707,9 +2726,17 @@
     }
     return Math.min(x1 / sheet.wPt, (sheet.wPt - x0) / sheet.wPt, y1 / sheet.hPt, (sheet.hPt - y0) / sheet.hPt);
   }
+  const TIGHT_STOCK = .015, TIGHT_DEAD = .001;   // of the sheet's area: stock within 1.5 % counts as equal; dead space must differ by 0.1 % to decide
   function betterLayout(candidate, incumbent, sheet, o = {}) {
     if (!incumbent) return true;
     if (candidate.placements.length !== incumbent.placements.length) return candidate.placements.length > incumbent.placements.length;
+    // (TIGHT, Paul 14 Nov 2026: "some of the nesting is actually better on the first and second try ... then it chooses the worst one": 10K, 14K and Rose Gold
+    //  are judged by the space they waste. A layout taking clearly less stock still wins (GOLDOPT); within TIGHT_STOCK of the sheet, less dead space wins)
+    if (o.tight && Number.isFinite(candidate.deadPt2) && Number.isFinite(incumbent.deadPt2) && sheet?.wPt && sheet?.hPt) {
+      const area = sheet.wPt * sheet.hPt, sa = stockPt2(candidate, sheet, o.reachFirst), sb = stockPt2(incumbent, sheet, o.reachFirst);
+      if (Number.isFinite(sa) && Number.isFinite(sb) && Math.abs(sa - sb) > TIGHT_STOCK * area) return sa < sb;
+      if (Math.abs(candidate.deadPt2 - incumbent.deadPt2) > TIGHT_DEAD * area) return candidate.deadPt2 < incumbent.deadPt2;
+    }
     // (GOLDOPT, Paul 12 Nov 2026: 10K / 14K solid gold: of two complete layouts the one that uses less stock wins, the shorter strip; the grade decides only a tie)
     if (o.reachFirst) { const ra = stripFraction(candidate.placements, sheet), rb = stripFraction(incumbent.placements, sheet); if (Math.abs(ra - rb) > 1e-4) return ra < rb; }
     // A careful append is judged by the space its charms leave unusable, not by how short the strip stays (that
@@ -3194,6 +3221,6 @@
     const overlap = off ? null : grid.overlap(v.fine.pm, x0, y0, 1e9);
     return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
   }
-  const solverAPI = { CORNER_DEFAULT_PT, cornerLegPt, cornerTriangles, boxInCorner, sliverCells, SLIVER_MM, FIT_WEIGHTS, AROUND_MM, search, solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, withWriteShrink, shrinkUnion, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine, PROBES, SMALL_PROBES, probeVariants, smallProbeVariants, bitsFromBase64, pairFields, linkGroups, pairingOf, laidOutline, MATE_CAP_MM };
+  const solverAPI = { CORNER_DEFAULT_PT, cornerLegPt, cornerTriangles, boxInCorner, sliverCells, SLIVER_MM, FIT_WEIGHTS, AROUND_MM, search, solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, withWriteShrink, shrinkUnion, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, deadSpacePt2, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine, PROBES, SMALL_PROBES, probeVariants, smallProbeVariants, bitsFromBase64, pairFields, linkGroups, pairingOf, laidOutline, MATE_CAP_MM };
   return solverAPI;
 });
