@@ -636,6 +636,8 @@
     const band = Math.round((+job.longFirstBandMm || 8) * MMPT * res), seated = [];
     const spot = (v, top) => {   // leftmost, then nearest the edge, within `band` of it
       const ys = []; if (top) for (let y = 0; y <= Math.min(g.H - v.fine.h, band); y++) ys.push(y); else for (let y = g.H - v.fine.h; y >= Math.max(0, g.H - v.fine.h - band); y--) ys.push(y);
+      // (FLUSH, Paul 14 Nov 2026: "put the bar against the side of the sheet"): with longFirstForce the bar sits flush on the edge, the row nearest it where it fits, then leftmost there
+      if (job.longFirstForce) { for (const y of ys) for (let x = 0; x + v.fine.w <= g.W; x++) if (g.fits(v.fine.pm, x, y)) return { x, y }; return null; }
       for (let x = 0; x + v.fine.w <= g.W; x++) for (const y of ys) if (g.fits(v.fine.pm, x, y)) return { x, y };
       return null;
     };
@@ -644,7 +646,8 @@
       let pick = null;
       for (const edge of [top, !top]) {
         for (const a of b.angles) { const v = prepareVariant(b.p, a, clr, res); if (!v) continue; const s = spot(v, edge); if (s && (!pick || s.x + v.fine.w < pick.x + pick.v.fine.w)) pick = { ...s, v, a, edge }; }
-        if (pick && (job.longFirstForce || (pick.x + pick.v.fine.w) / res <= front)) break; pick = null;   // (longFirstForce: KEEPSEARCH's every other search lays the bars flat whatever the estimate; the least wasteful layout is kept)
+        if (job.longFirstForce) continue;   // (FLUSH: both edges are tried; the one whose bar ends first is taken)
+        if (pick && (pick.x + pick.v.fine.w) / res <= front) break; pick = null;   // (longFirstForce: KEEPSEARCH's every other search lays the bars flat whatever the estimate; the least wasteful layout is kept)
       }
       if (!pick) continue;
       const { x, y, v, a } = pick; g.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y);
