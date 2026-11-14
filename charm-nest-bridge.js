@@ -28457,10 +28457,30 @@ const Arrivals = window.Arrivals = (() => {
     }
     finally { r.arrivalBusy = false; RunCtl.poke(); Session.schedule(); window.CN?.flushManualIntake?.(); }
   }
+  /* (ONECHECK, Paul 14 Nov 2026: "Build the first row only for now" -> one new-order check for the whole shop instead of one per computer): while a run is open in the cloud, Etsy is asked for new orders by ONE computer: the one carrying the run (it takes them into the run), or, when none carries it, whichever
+     holds the shop's lease (charmNestLibrary arrivalsLease). The new orders reach every other computer through the cloud run, as before; those computers still read the maps, the
+     designs, the cancels and the set-aside work on their own timer, only the Etsy call is left out. With no run open every computer checks, as it always did. */
+  let leaseSaid = "";
+  const runOpenHere = () => !!(B.run && B.run.runId && !["complete", "abandoned"].includes(B.run.status));
+  const runOpenAnywhere = () => runOpenHere() || !!(window.CharmNestRunFollow && CharmNestRunFollow.state && CharmNestRunFollow.state().runId) || !!(B.openRuns && B.openRuns.length);
+  async function leaseOther() {
+    if (streaming() || !runOpenAnywhere() || !(S.cloud && S.cloud.ok)) return null;
+    let r = null; try { r = await api("charmNestLibrary", { op: "arrivalsLease", dev: (window.CharmNestRunFollow && CharmNestRunFollow.dev()) || "", by: String(B.employee || "").trim(), carrier: runOpenHere() }, { quiet: true }); } catch (_) { return null; }   // (no answer: this computer checks, as before)
+    if (!r || !r.ok || r.mine) { leaseSaid = ""; return null; }
+    return r.holder || {};
+  }
   async function check() {
     if (busy || paused || S.settings.pollOrders === "off" || window.Sandbox?.held?.()) return;   // (a cleaned sandbox waits for Start)
     busy = true; paint(); const began = Date.now(), gen = epoch;
     try {
+      { const other = await leaseOther();
+        if (other) {
+          await Promise.all([Orders.loadMaps(false, 0), Master.load({ quiet: true, ttl: 0 }), window.Cancelled && Cancelled.load(), window.AutoCancel && AutoCancel.poll().catch(() => null)]);
+          const who = other.by || "another computer";
+          if (leaseSaid !== (other.dev || who)) { leaseSaid = other.dev || who; agent({ bridge: true }, "DS", `New orders are checked on Etsy by ${who} for the whole shop: they reach this computer through the cloud run`); }
+          state.error = null; state.lastCheck = Date.now(); kept = null;
+          return;
+        } }
       await DesignLink.ensure();
       if (!DesignLink.etsyBudgetOk("new orders")) throw new Error("Etsy hourly cap reached");
       // the stream's next simulated ten minutes of orders become listable, and the station sweeps for them (no reuse window)
