@@ -5145,6 +5145,9 @@ const Pool = window.Pool = (() => {
   async function ensureBase(src, piece, rec) {
     if (!sidedPiece(piece)) return (rec && await soloBase(src, rec)) || src.charms[0];   // (`rec`, the piece's stored record, may say it is ONE body of the design: soloBase)
     await splitBodies(src);
+    // (TAKEOVERSAFE2, Paul 14 Nov 2026: "Yes, fix resume first"): an ear of a pair of TWO designs (a Tennis Ball Left, a Tennis Racket Right) is cut from its own design's one body, body 0, as the pool cuts it (ear2 above); its records keep the pair's numbering (the Right is body 1),
+    //  so a sheet rebuilt from the cloud on another computer left that ear out and was nested again from scratch
+    if (+piece.bodyIndex > 0 && !src.bodies && (src.charms || []).length === 1 && !wholeBody(src, +piece.bodyIndex)) piece = Object.assign({}, piece, { bodyIndex: 0 });
     const i = +piece.bodyIndex, whole = wholeBody(src, i);
     if (!whole || piece.mirror !== true || (src.mirrors && src.mirrors[i])) return baseFor(src, piece);
     return once(src, "mirror" + i, async () => {
@@ -16569,13 +16572,16 @@ const RunCtl = window.RunCtl = (() => {
         if (!rc || !rc.poolId) continue;
         if (!Orders.rows().some(row => row.poolIds.includes(rc.poolId))) continue;
         const pool = B.pool.rows.get(rc.poolId) || (await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
-        const entry = Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry) continue;
-        const src = await Pool.masterCharm(entry, pool.size);
+        // (TAKEOVERSAFE2, Paul 14 Nov 2026: "Yes, fix resume first"): a custom design is in no master file: it is rebuilt from its own file, the one its sheet was cut from (the sheet record's sources, as the back editor reads it); it was left out, and its sheet nested again from scratch
+        const own = pool.custom || rc.custom ? (d.sources || []).find(s => s && (s.id === rc.sourceId || s.name === rc.sourceName)) : null;
+        const entry = own ? null : Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry && !(own && (own.url || own.path))) continue;
+        const src = entry ? await Pool.masterCharm(entry, pool.size) : await Pool.masterCharm({ sku: rc.sku || pool.sku, aiPath: own.path || own.url, aiUrl: own.url }, null);
         // a piece of a mismatched pair is cut from its own body, never from both (the pool row says which; the sheet's record says so too)
         const piece = CharmNestPoolPieces.cleanFields(pool).side ? pool : CharmNestPoolPieces.cleanFields(rc).side ? rc : null, base = await Pool.ensureBase(src, piece, rc.hash ? rc : pool).catch(() => null);
         if (!base) { agent({ metal: d.metal }, "warn", `${pool.orderId} · ${pool.sku}: its ${piece.side === "L" ? "left" : "right"} body is no longer in the design — that piece is not put back`); continue; }
         const charm = typeof CharmNestArtEdit !== "undefined" ? await CharmNestArtEdit.piece(Pool.cloneCharm(base, `${src.id}:${rc.poolId}`), rc.poolId, pool) : Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); /* (ART EDIT: the piece's own artwork edit, when its pool row names one: charm-nest-art-edit.js) */ charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (piece) Object.assign(charm, CharmNestPoolPieces.fieldsOf(piece));
         // (Manual Control: a piece a person moved, turned or resized by hand keeps that, its pin and its size, from its record)
+        if (own) charm.custom = true;   // (TAKEOVERSAFE2, Paul 14 Nov 2026: "Yes, fix resume first")
         const man = window.CNManual && CNManual.fromRecord ? CNManual.fromRecord(rc) : null; if (man) { charm.manual = man; if (man.size) charm.pinned.size = man.size; }
         if (!pg.charms.some(c => c.poolId === rc.poolId)) pg.charms.push(charm);
         pg.placements = pg.placements.filter(x => x.id !== charm.id).concat([{ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: man && man.size ? +((typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) * man.size).toFixed(5) : (typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) }]);
@@ -27512,13 +27518,16 @@ const Recall = window.Recall = (() => {
       for (const { p, c: rc } of placedOfRecord(d)) {   // (DUPID: the charm the record's poolIds names, as the restore above)
         if (!rc || !rc.poolId) continue;
         const pool = B.pool.rows.get(rc.poolId) || ((await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools || {})[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
-        const entry = Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry) continue;
-        const src = await Pool.masterCharm(entry, pool.size);
+        // (TAKEOVERSAFE2, Paul 14 Nov 2026: "Yes, fix resume first"): a custom design is in no master file: it is rebuilt from its own file, the one its sheet was cut from (the sheet record's sources, as the back editor reads it); it was left out, and its sheet nested again from scratch
+        const own = pool.custom || rc.custom ? (d.sources || []).find(s => s && (s.id === rc.sourceId || s.name === rc.sourceName)) : null;
+        const entry = own ? null : Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry && !(own && (own.url || own.path))) continue;
+        const src = entry ? await Pool.masterCharm(entry, pool.size) : await Pool.masterCharm({ sku: rc.sku || pool.sku, aiPath: own.path || own.url, aiUrl: own.url }, null);
         // a piece of a mismatched pair is cut from its own body, never from both (the pool row says which; the sheet's record says so too)
         const piece = CharmNestPoolPieces.cleanFields(pool).side ? pool : CharmNestPoolPieces.cleanFields(rc).side ? rc : null, base = await Pool.ensureBase(src, piece, rc.hash ? rc : pool).catch(() => null);
         if (!base) { agent({ metal: d.metal }, "warn", `${pool.orderId} · ${pool.sku}: its ${piece.side === "L" ? "left" : "right"} body is no longer in the design — that piece is not put back`); continue; }
         const charm = typeof CharmNestArtEdit !== "undefined" ? await CharmNestArtEdit.piece(Pool.cloneCharm(base, `${src.id}:${rc.poolId}`), rc.poolId, pool) : Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); /* (ART EDIT: the piece's own artwork edit, when its pool row names one: charm-nest-art-edit.js) */ charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (piece) Object.assign(charm, CharmNestPoolPieces.fieldsOf(piece));
         // (Manual Control: a piece a person moved, turned or resized by hand keeps that, its pin and its size, from its record)
+        if (own) charm.custom = true;   // (TAKEOVERSAFE2, Paul 14 Nov 2026: "Yes, fix resume first")
         const man = window.CNManual && CNManual.fromRecord ? CNManual.fromRecord(rc) : null; if (man) { charm.manual = man; if (man.size) charm.pinned.size = man.size; }
         pg.charms.push(charm);
         pg.placements.push({ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: man && man.size ? +((typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) * man.size).toFixed(5) : (typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) });
