@@ -3225,8 +3225,22 @@ function renderedReceiptIds() {
 }
 
 /** Probe the given receipts (default: whatever is rendered) for messages. */
+/* (COSTDS, Paul 14 Nov 2026: "Do this as well" -> Design Station's hidden message checks): the rows are asked about only while the list is on screen. Inside the sorter the station's frame is usually not displayed, and every
+   rendered row was still asked about (one Firestore read each) every half hour by a page nobody saw. The ask waits; the moment the list shows (the frame displayed,
+   the tab shown) it is made, so a row never shows without its flag. An ask for named receipts (ids) is made as before. */
+let __msgProbeWaiting = false, __msgProbeWatch = null;
+const queueShown = () => { const w = $("#queueWrap"); return !!w && !document.hidden && !!w.clientHeight && !(typeof w.getClientRects === "function" && !w.getClientRects().length); };
+function watchQueueShown() {
+  if (__msgProbeWatch) return;
+  const kick = () => { if (__msgProbeWaiting && queueShown()) { __msgProbeWaiting = false; refreshMessageFlags(); } };
+  __msgProbeWatch = { kick };
+  document.addEventListener("visibilitychange", kick);
+  try { const w = $("#queueWrap"); if (w && typeof ResizeObserver === "function") new ResizeObserver(kick).observe(w); } catch (_) {}
+  window.addEventListener("resize", kick);
+}
 async function refreshMessageFlags(ids) {
   if (!db) return;                                   // no Firestore, no badge
+  if (!Array.isArray(ids) && !queueShown()) { __msgProbeWaiting = true; watchQueueShown(); return; }   // (COSTDS, Paul 14 Nov 2026: "Do this as well" -> Design Station's hidden message checks)
   const list = (Array.isArray(ids) ? ids.map(String) : renderedReceiptIds())
     .filter(rid => rid && !msgProbed.has(rid));
   if (!list.length || __msgProbeRunning) return;
