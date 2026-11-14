@@ -16565,7 +16565,10 @@ const RunCtl = window.RunCtl = (() => {
     const ls = await api("charmNestLibrary", { op: "listSheets", limit: 500, runId: rec.runId }, { all: "sheets" });
     const owedFiles = [];   // (OWEDFILES: the sheets whose record still owes its files)
 
-    for (const slim of ls.sheets || []) {
+    // (PAGEORDER, Paul 14 Nov 2026: a 14K piece went onto a new Draft 3 while Draft 2 had room): the Library lists a run's sheets newest-updated first, and each restored sheet
+    //  became the next page in that order, so the last page (the "newest sheet" every intake and overflow looks at) was the oldest one. The sheets are restored oldest first
+    const startedOf = x => +x.cardStartedAt || +(x.createdAt && (x.createdAt._seconds || x.createdAt.seconds)) * 1000 || Date.parse(x.createdAt) || 0;
+    for (const slim of (ls.sheets || []).slice().sort((a, b) => startedOf(a) - startedOf(b))) {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: slim.id })).sheet; if (!d) continue;
       const prim = S.sheets[d.metal]; let pg = prim.pages.find(p => p.sheetId === d.id) || (prim.pages[0].charms.length ? addPage(d.metal, { fresh: true }) : prim.pages[0]);   // (ONEFILL: a restored sheet is its own page)
       const set = d.draft ? null : bySet.get(d.setId);
