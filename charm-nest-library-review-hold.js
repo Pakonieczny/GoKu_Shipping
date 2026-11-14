@@ -114,6 +114,9 @@
      has one button for all, a sheet already in Laser cutting) says it here, directly under its small rail. The note goes when the hold does. */
   function decorate(card) {
     if (!card || !card.querySelectorAll) return;
+    // (NOHELDLINE, Paul 13 Nov 2026: "Remove this text from the UI from all sets of sheets"): no note under a held sheet's rail in the Library; one drawn before goes
+    for (const n of card.querySelectorAll('.rvhNote')) n.remove();
+    return;
     wire();
     const keep = new Set();
     for (const box of card.querySelectorAll('.flowBox')) {

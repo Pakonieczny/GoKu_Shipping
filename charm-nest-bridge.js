@@ -14742,7 +14742,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   // the grey line when orders sent to the Review tab hold these sheets (Paul, 12 Oct: "exactly what order is holding it back"): the words are LibraryReviewHold's; hold: the orders, blocker: the first held sheet
   function holdCase(ids){
     let h=null;try{h=window.LibraryReviewHold?.why?.(ids);}catch(e){console.warn('Review hold',e);}
-    return h && h.text?{why:h.text,hold:h.rids,blocker:h.sheetId}:null;
+    return h && h.text?{why:h.text,quiet:true,hold:h.rids,blocker:h.sheetId}:null;   // (NOHELDLINE, Paul 13 Nov 2026: "Remove this text from the UI from all sets of sheets"): the sheet or set stays held back (its Approve stays grey) but the "Held by order … in Review" line is not drawn
   }
   function approveCase(recs){
     recs=recs.filter(Boolean);if(!recs.length)return null;
