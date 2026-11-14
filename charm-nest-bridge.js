@@ -14771,7 +14771,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       // (SETFIX A, Paul 17 Oct 2026: a set that breaks the owner's rules is blocked here, never dead-ended: its grey line says what to press, and the press is offered right beside it, `fix`)
       const fix=gate.blockers[0]?.rule==='setBreaks' && gate.rules?.remedy && gate.rules.remedy.kind!=='backs' && window.SetRepair?.fix?gate.rules.remedy:null;   // (a back engraving to approve has no press here: the line says it)
       if(gate.ready){const n=R.softNote?R.softNote(st,recs.map(projected)):null;return n?{why:'',set:true,note:n.text,blocker:n.sheetId}:{why:'',set:true};}   // (LASERNOTE: green, with what is still to come)
-      return {why:gate.reason,set:true,blocker:gate.blockers[0]?.sheetId || '',...(fix?{fix}:{})};
+      return {why:gate.reason,set:true,blocker:gate.blockers[0]?.sheetId || '',...(fix?{fix}:{}),...(!fix && gate.blockers[0]?.step==='engraving'?{quiet:true}:{})};   // (NOENGLINE, Paul 13 Nov 2026: "Remove this text from the sets of sheets": a set waiting on its engravings keeps its Approve grey with no line, as a lone sheet does: its rails' step and '!' say it)
     }
     // (audit, 25 Oct 2026: a set of ONE sheet is still a set: uncommitted, it needs a completed GF and a completed SS sheet (R1), so its Approve is grey with the set's line; it was the sheet's own test only)
     if(ids.length===1){const g=R.setGate(st,recs.map(projected));if(g.rules?.applies && !g.rules.ok)return {why:g.reason,set:true,blocker:''};}
@@ -15656,7 +15656,7 @@ const Sets = window.Sets = (() => {
   /** (Paul, 27 Oct 2026: "Completed 10K / 14K Gold Sheets only need an user approval and no Green Cut line is needed because the sheet is completed so there is nothing to cut away") A waiting 10K / 14K
    *  sheet whose layout leaves no room for another charm (RoseStock.full, the test its own Cut Sheet button reads: a full sheet has none): its approval is all it needs. The Library row's own full mark
    *  where the sheet is not open on this page. */
-  const goldFull = (pg, row) => { try { if (pg && window.RoseStock && typeof RoseStock.full === "function") return !!RoseStock.full(pg); } catch (_) { /* the row says */ } return !!(row && row.releaseFull); };
+  const goldFull = (pg, row) => { if (row && row.releaseFull) return true; try { if (pg && window.RoseStock && typeof RoseStock.full === "function") return !!RoseStock.full(pg); } catch (_) { /* the row says */ } return false; };   // (GOLDLIVE, Paul 13 Nov 2026: the cloud record's release mark first: a copy of the sheet on another computer read it "not full")
   const goldManual = (s, pg, row) => !!s && (s.metal === "gold10k" || s.metal === "gold14k") && !s.laserDone && !(pg && (pg.roseCutAt || +pg.laserDoneAt > 0)) && !(row && (row.roseCutAt || +row.laserDoneAt > 0));
   /* (Paul, 26 Oct 2026: "a given 10 K or 14 K gold sheet should be added to a given Set of Sheets where it shares charms with from a given multi-charm order. However the 10k and 14k sheets should stay
      greyed-out inside the Set of Sheets until a user approves and adds a Green Cut line for either/both of the 10k / 14k gold sheets in question.") The 10K / 14K sheets a set waits for (cardinalWait
