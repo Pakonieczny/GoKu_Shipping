@@ -29303,7 +29303,10 @@ async function bootBridge() {
   });
   // the Design Station frame mounts on first visit to its tab; Auto mode mounts it now
   // (not in a sandbox that was cleaned: it waits for Start, which starts Auto's run as it does here)
-  if (!recovered && !recoveryFailed && S.settings.runMode === "auto" && !Sandbox.held()) { setTimeout(() => { if (!B.openRuns?.length && !Recall.on() && !B.run) RunCtl.setMode("auto"); }, 1500); }
+  if (!recovered && !recoveryFailed && S.settings.runMode === "auto" && !Sandbox.held()) { setTimeout(async () => { if (B.openRuns?.length || Recall.on() || B.run) return;
+      // (NOBOOTRUN, Paul 14 Nov 2026: the takeover test: a computer reloaded with no run of its own started a NEW run by itself 1.5 s after loading, before the cloud's list of open runs had come back): the cloud is asked first; Auto starts a run here only when no run is open
+      try { const lr = await api("charmNestLibrary", { op: "runList", limit: 10 }, { quiet: true }); if (((lr && lr.runs) || []).some(x => x && x.runId && !["complete", "abandoned", "archived"].includes(x.status))) { agent({ bridge: true }, "cloud", "A run is open in the cloud: Auto starts no new run on this computer"); return; } } catch (_) { return; }
+      if (B.openRuns?.length || Recall.on() || B.run) return; RunCtl.setMode("auto"); }, 1500); }
   document.addEventListener("keydown", e => { if (e.altKey && e.key === "r") { e.preventDefault(); setMode("review"); } });
   agent({ bridge: true }, "DS", `Bridge ready · station ${DesignLink.origin()} · ${S.settings.runMode} mode`);
 }
