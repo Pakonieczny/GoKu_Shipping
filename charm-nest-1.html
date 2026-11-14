@@ -5988,6 +5988,9 @@ function startNestReady(sh, context) {
     const n = job.multiStart ? Math.max(parallelCount(job.angles.length), job.multiStart) : parallelCount(job.angles.length);
     const workers = ensureWorkers(sh, n);
     sh.pool = { n, done: 0, results: [], trials: new Array(n).fill(0), winner: null };
+    // (KEEPSEARCH, Paul 14 Nov 2026: "Why is the system finding good solutions and then scrapping them?" -> "Yes, do it"): a 10K, 14K or Rose Gold fresh nest keeps searching while its time lasts:
+    //  a search that finishes starts again in a new placing order (orderVariant: the next number, shaken by its own seed), up to KEEP_MAX finished layouts; the least wasteful one is kept (betterLayout, TIGHT)
+    if (job.multiStart && job.tight) { const t = performance.now(); sh.pool.keep = { job, t0: t, next: n, done: 0, started: new Array(n).fill(t), max: 36 }; }
     if (sh.evNest && !job.careful) agentUpdate(sh.evNest, { text: `${n} parallel search${n > 1 ? "es" : ""} on seeds ${job.seed}–${job.seed + n - 1} · ${items.length} pieces · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · standard and broader-rotation searches keep oldest-first sheet membership · ceiling ${fmt.s(job.timeBudgetMs)}` });
     workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i, exploreRotations: i % 2 === 1, ...(job.multiStart ? { orderVariant: i } : {}), useGPU: S.settings.computePipeline === "gpu" && i === n - 1 }) }));
   };
@@ -6253,7 +6256,7 @@ async function startAINest(sh, items) {
     params: { seed: 0, angles: [...new Set(sh.placements.map(p => p.angle))], clearancePt: clearance, insetPt: inset, fineRes: 2, coarseRes: 0.5, engine: "claude", rounds }
   } });
 }
-function stopNest(sh) { if (sh.status !== "nesting") return; sh.stage = "Stopping after this piece…"; renderCard(sh); if (sh.nestFlow !== "learned" && !sh.roseProtected && !sh.appendOnly && (S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.endedBy="stopped"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); if(window.RunCtl)RunCtl.onSheetDone(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else (sh.workers || []).forEach((w, i) => w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i })); }
+function stopNest(sh) { if (sh.status !== "nesting") return; if (sh.pool) sh.pool.stopAsked = true; sh.stage = "Stopping after this piece…"; renderCard(sh); if (sh.nestFlow !== "learned" && !sh.roseProtected && !sh.appendOnly && (S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.endedBy="stopped"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); if(window.RunCtl)RunCtl.onSheetDone(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else (sh.workers || []).forEach((w, i) => w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i })); }
 // One replacement gate for live updates, final worker messages and server polls.
 // Layout snapshots never share mutable placements with a trial or the exporter.
 function acceptBestLayout(sh, candidate, meta = {}) {
@@ -6310,6 +6313,12 @@ function onWorkerMessage(sh, m, idx) {
   // The careful append reports the spot it is grading: the charm is drawn there, turning and moving, while it searches.
   if (m.type === "probe") {
     if (idx !== leader) return;
+    // (KEEPSEARCH: only finished layouts are drawn while the searches run; the line under the card says how far they are)
+    if (pool.keep) {
+      const t = performance.now();
+      if (!sh._probeStageAt || t - sh._probeStageAt > 500) { sh._probeStageAt = t; const k = pool.keep; sh.stage = `Searching · ${k.done} finished layout${k.done === 1 ? "" : "s"} so far${sh.best ? ` · best ${sh.best.placements.length}/${items.length} placed` : ""} · ${Math.max(0, Math.round(((k.job.timeBudgetMs || 180000) - (t - k.t0)) / 1000))} s left`; renderProgress(sh); }
+      return;
+    }
     const pr = m.probe;
     // a lifted charm leaves the sheet again: its order has a charm that fits nowhere, or a second pass starts over
     if (pr.stage === "place") { sh.probePlaced = (sh.probePlaced || []).filter(g => g.id !== pr.id).concat(pr); sh.probe = null; }
@@ -6356,7 +6365,18 @@ function onWorkerMessage(sh, m, idx) {
     if(m.result)updateSearchMetrics(sh,idx,{...m.result.metrics,layouts:m.result.trials||0});
     pool.completed ||= []; pool.completed[idx] = true;
     if (m.result) acceptBestLayout(sh, m.result, { worker: idx, trial: m.result.trial });
-    pool.done++; pool.results[idx] = m.result;
+    const K = pool.keep;
+    if (K) {
+      // (KEEPSEARCH) the worker keeps the best of its own layouts; while time is left (this pass fits again in what remains) it starts once more in the next placing order
+      const opts = { reachFirst: ["gold10k", "gold14k"].includes(sh.metal), tight: true }, now = performance.now(), pass = now - (K.started[idx] || K.t0);
+      if (m.result) { K.done++; if (!pool.results[idx] || CharmNestSolver.betterLayout(m.result, pool.results[idx], stockFor(sh.metal, sh), opts)) pool.results[idx] = m.result; }
+      if (m.result && !pool.stopAsked && m.result.endedBy !== "stopped" && sh.status === "nesting" && K.next < K.max && now - K.t0 + pass <= (K.job.timeBudgetMs || 180000) && sh.workers?.[idx]) {
+        const v = K.next++; K.started[idx] = now; pool.completed[idx] = false;
+        sh.workers[idx].postMessage({ type: "solve", jobId: sh.jobId + ":" + idx, job: Object.assign({}, K.job, { seed: K.job.seed + v, exploreRotations: v % 2 === 1, orderVariant: v, useGPU: false }) });
+        return;
+      }
+      pool.done++;
+    } else { pool.done++; pool.results[idx] = m.result; }
     if (sh.nestFlow === "learned" && idx === 0 && m.result && ["plateau", "budget", "model-unavailable"].includes(m.result.endedBy)) {
       // The measured no-gain window governs both routes, including a challenger making only cosmetic improvements.
       sh.workers[1]?.postMessage({ type: "stop", jobId: sh.jobId + ":1" });
