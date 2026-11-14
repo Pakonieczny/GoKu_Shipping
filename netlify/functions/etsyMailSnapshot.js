@@ -245,6 +245,9 @@ function scrapeProblem(body, messages, ctx) {
   if (body.session && body.session.etsyLoggedIn === false) return "Etsy signed the extension out";
   const real = messages.filter(Boolean);
   if (!real.length) {
+    // (OFFERONLY, Paul 14 Nov 2026: "Yes, fix it"): a conversation that holds only an offer and order lines has no typed message: the helper (v0.9.51) says so (eventOnly: the reply box,
+    //  the buyer and an offer / order line are on the page), and that is a good, complete read with nothing to store, never a failed one
+    if (d.eventOnly === true) return null;
     const why = Array.isArray(d.domMissReasons) && d.domMissReasons[0];
     return why ? String(why).slice(0, 120) : "No messages read from the conversation page";
   }
