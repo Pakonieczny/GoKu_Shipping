@@ -16395,7 +16395,7 @@ const RunCtl = window.RunCtl = (() => {
   // (ONEFILL: on its own, every 4 s, in the tab carrying the run; nothing is read or written by the look itself: the sheet they move to is saved by its own nest, and a reload while paused gathers again)
   let gathering = false;
   function gatherNow() {
-    const r = B.run; if (gathering || !r || ["complete", "abandoned"].includes(r.status) || r.arrivalBusy || settling === r || !claimed.has(r.runId)) return;   // (only the tab carrying the run)
+    const r = B.run; if (gathering || !r || ["complete", "abandoned"].includes(r.status) || r.arrivalBusy || settling === r || !claimed.has(r.runId) || B.resuming) return;   // (only the tab carrying the run)   (TAKEOVERSAFE, Paul 14 Nov 2026: "A real run takeover between computers ... test them"): and never while the run is being rebuilt here (a half-restored run gathered a piece onto a second sheet)
     try { if (window.CharmNestOperations && typeof CharmNestOperations.busy === "function" && CharmNestOperations.busy("production:" + r.runId)) return; } catch (_) { /* looked at again */ }
     gathering = true;
     try {
@@ -16498,6 +16498,10 @@ const RunCtl = window.RunCtl = (() => {
         if (!old || +old.updateTs !== +row.order.updateTs) continue;
         for (const key of ["state", "poolIds", "reason", "hold", "wait", "engrave", "materialOverride", "sizeOverride", "blockOverride", "skuOverride", "releaseHold", "releaseAnyway", "engravingOverride", "changePending", "repoolChanged"]) if (old[key] != null) row[key] = old[key];
       }
+      // (TAKEOVERSAFE, Paul 14 Nov 2026: "A real run takeover between computers ... test them"): the run's lines of orders Etsy has closed (shipped orders put back on their sheets by hand: run.keepShipped) are not pulled, as only open orders are; they come back from the
+      //  run's own saved lines, so their pieces are put back on their sheets and no line is dropped from the run when it is saved here
+      { let back = 0; for (const [k, l] of Object.entries(savedLines)) { if (B.orders.byKey.has(k) || !l) continue; const row = Orders.rowFromRecord(k, l); if (!row) continue; B.orders.rows.push(row); B.orders.byKey.set(k, row); back++; }
+        if (back) agent({ run: runId }, "cloud", `${back} line${back === 1 ? "" : "s"} of orders closed on Etsy came back from the run's saved lines`); }
       Orders.interpretAll();
       await restoreRunSheets(rec);
       if(pendingStop)preservePendingSheets(rec);
@@ -16586,11 +16590,13 @@ const RunCtl = window.RunCtl = (() => {
       for (const b of pg.backPool) { const row = Orders.rows().find(x => x.poolIds.includes(b.poolId)); if (row) { const j = Engrave.jobForRecord(row, b); j.backSaving = false; j.state = "written"; j.text = b.text; j.lines = b.lines || String(b.text).split("\n"); j.approvedBy = b.approvedBy; j.approvedAt = b.approvedAt; j.backs.push(b); j.row.engrave = { needed: true, state: "written", approved: true, text: b.text, approvedBy:b.approvedBy,approvedAt:b.approvedAt,seals:CNEngravingSeals.merge(j,b) };CNEngravingSeals.keep(j); } }
       // Cloud-only recovery has file links, not the editable output bytes. A working
       // sheet must be rebuilt and verified before it can acquire set membership.
-      if (pg.draft || pg.placements.length !== (d.placements || []).length) {
+      // (TAKEOVERSAFE, Paul 14 Nov 2026: "A real run takeover between computers ... test them"): a draft whose every placement came back from its record keeps its layout, its pins and its approved engravings (it was nested again from scratch at every takeover);
+      //  only a sheet that is missing placements is rebuilt
+      if (pg.placements.length !== (d.placements || []).length) {
         for (const c of pg.charms) if (!c.manual) c.pinned = null;   // (a piece placed by hand, Manual Control, stays where the person put it)
         sheetDirty(pg);
         for (const j of Engrave.items().values()) if (j.copies.some(id => (d.poolIds || []).includes(id))) {
-          j.state = "ready"; j.backs = []; j.row.engrave.state = "ready"; j.row.engrave.approved = false;
+          j.state = "ready"; j.backs = []; if (j.row && j.row.engrave) { j.row.engrave.state = "ready"; j.row.engrave.approved = false; }   // (TAKEOVERSAFE, Paul 14 Nov 2026: "A real run takeover between computers ... test them"): a line with no engraving record of its own stopped the whole takeover here
         }
       }
     }
