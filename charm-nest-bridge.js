@@ -5250,7 +5250,13 @@ const Pool = window.Pool = (() => {
     if (!run || typeof Orders === "undefined") return 0;
     const fill = m => (typeof fillingPage === "function" ? fillingPage(m) : null);
     const rows = Orders.rows().filter(r => r.state === "waiting" && r.wait && r.wait.kind === "pair");
-    const due = rows.filter(r => { const w = pairWaits.get(r.key); return !w || !pagesOf(w.metal).includes(w.page) || fill(w.metal) !== w.page; });
+    // (PAIRCLOUD, Paul 13 Nov 2026: "are they saved in a cloud ... it doesn't matter which computer engages with them" -> "Yes, please do that"): the sheet a line waits for is its line record's
+    //  wait.sheetId, saved with the run's lines in the cloud, so any computer that carries the run reads the same queue; the page's own memory (pairWaits) is only for a sheet not saved yet
+    const due = rows.filter(r => {
+      const w = pairWaits.get(r.key), metal = r.wait.material || (w && w.metal), f = metal ? fill(metal) : null, sid = r.wait.sheetId || (w && w.page && w.page.sheetId) || null;
+      if (sid) return !f || f.sheetId !== sid;
+      return !w || !pagesOf(w.metal).includes(w.page) || f !== w.page;
+    });
     if (!due.length) return 0;
     for (const r of due) { pairWaits.delete(r.key); r.state = "pulled"; r.wait = null; r.reason = null; }
     try { agent({ pool: true }, "nest", `${due.length} order line${due.length === 1 ? "" : "s"} that waited for the sheet still filling now go${due.length === 1 ? "es" : ""} on the next sheet`); } catch (_) { /* a note only */ }
