@@ -61,7 +61,9 @@ const BACKOFF = [20 * MIN, HOUR, 3 * HOUR, 6 * HOUR];   // the wait after the 1s
 const TRIES_PER_DAY = 6, MANUAL_GAP_MS = 10 * MIN, MANUAL_PER_DAY = 3, TICK_EVERY_MS = 4 * MIN;
 const SETTLE_READS = 3;   // finished re-reads in a row that stored nothing: the gap is settled (see the header)
 const THREADS = "EtsyMail_Threads", JOBS = "EtsyMail_Jobs", CFG = "EtsyMail_Config", DOC = "linkConsistency";
-const THREAD_FIELDS = ["messageCount", "lastInboundAt", "updatedAt", "status", "etsyConversationUrl", "etsyOrderId", "gmailThreadId", "readComplete", "readIncomplete"];
+const THREAD_FIELDS = ["messageCount", "lastInboundAt", "updatedAt", "status", "etsyConversationUrl", "etsyConversationId", "etsyOrderId", "gmailThreadId", "readComplete", "readIncomplete"];
+// (CONVURL, Paul 14 Nov 2026): the address a conversation is re-read at: its own Etsy conversation address; one stored with another page's address (the helper's tab had moved on) is read at the address made from its number
+const convUrlOf = t => { const u = String((t && t.etsyConversationUrl) || ""); if (/etsy\.com\/(messages|your\/conversations)\/\d+/.test(u)) return u; const id = t && t.etsyConversationId ? String(t.etsyConversationId) : ""; return /^\d+$/.test(id) ? `https://www.etsy.com/messages/${id}` : u; };
 
 const ms = v => (v == null ? 0 : typeof v.toMillis === "function" ? v.toMillis() : typeof v === "object" && typeof v.ms === "number" ? v.ms : typeof v === "number" ? v : 0);
 /** 02:00-05:00 in New York is 06:00-09:00 UTC in summer and 07:00-10:00 in winter: 07:00-09:00 UTC is inside the window all year. */
@@ -133,14 +135,14 @@ async function queueReread(db, id, g, now) {
 
 const newGap = (t, v, now) => ({
   o: orderOf(t), k: v.kind, c: v.claimed == null ? -1 : v.claimed, s: v.stored, li: v.lastIn || 0, sn: v.newest || 0, same: 0, why: "",
-  url: !!t.etsyConversationUrl, u: t.etsyConversationUrl || "", gt: t.gmailThreadId || "",
+  url: !!convUrlOf(t), u: convUrlOf(t), gt: t.gmailThreadId || "",
   firstAtMs: now, checkedAtMs: now, tries: 0, reads: 0, lastTryAtMs: 0, nextTryAtMs: 0, jobId: "", seenJob: "", pend: false,
   day: "", dayTries: 0, manualDay: "", manualN: 0
 });
 /** What a fresh look at the conversation says about its gap (the numbers, the order number, whether it can be re-read). */
 const refreshGap = (g, t, v, now) => Object.assign(g, {
   k: v.kind, c: v.claimed == null ? -1 : v.claimed, s: v.stored, li: v.lastIn || 0, sn: v.newest || 0, o: orderOf(t) || g.o || "",
-  url: !!t.etsyConversationUrl, u: t.etsyConversationUrl || g.u || "", checkedAtMs: now
+  url: !!(convUrlOf(t) || g.u), u: convUrlOf(t) || g.u || "", checkedAtMs: now
 });
 
 /**
@@ -272,7 +274,7 @@ async function run(db, now, prev) {
   const t0 = Date.now();
   const proven0 = pruneProven(prev && prev.proven, now);
   const snap = await db.collection(THREADS).orderBy("updatedAt", "desc").limit(WINDOW)
-    .select("messageCount", "lastInboundAt", "updatedAt", "status", "etsyConversationUrl", "gmailThreadId", "etsyOrderId").get();
+    .select("messageCount", "lastInboundAt", "updatedAt", "status", "etsyConversationUrl", "etsyConversationId", "gmailThreadId", "etsyOrderId").get();
   const rows = snap.docs.map(d => ({ id: d.id, t: d.data() || {} }));
   const out = { atMs: now, checked: 0, mismatched: 0, skippedFresh: 0, partial: false, repairQueued: 0, kinds: {}, samples: [] };
   let next = 0;
@@ -460,7 +462,7 @@ async function readRecover(db, opts = {}) {
       try {
         await db.collection(JOBS).doc(jobId).create({
           jobId, jobType: "scrape", status: "queued", threadId: tid,
-          payload: { etsyConversationUrl: t.etsyConversationUrl, source: "readRecover", gmailMessageId: null, gmailThreadId: t.gmailThreadId || null, rescrape: true, fullRead: true, reason: "page_read_failed" },
+          payload: { etsyConversationUrl: convUrlOf(t), source: "readRecover", gmailMessageId: null, gmailThreadId: t.gmailThreadId || null, rescrape: true, fullRead: true, reason: "page_read_failed" },
           attempts: 0, claimedBy: null, claimedAt: null, lastError: null, lastHeartbeatAt: null, result: null,
           createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp()
         });

@@ -383,7 +383,7 @@ exports.handler = async (event) => {
 
   const {
     etsyConversationId,
-    etsyConversationUrl,
+    etsyConversationUrl: pageUrl,
     threadDomHash,
     scrapedAt,
     participants = [],
@@ -394,6 +394,9 @@ exports.handler = async (event) => {
     // and odd thread types (no related order) may omit it.
     conversationHeading = null
   } = body;
+  // (CONVURL, Paul 14 Nov 2026: a conversation was stored with Etsy's advertising page as its address, because the helper's tab had moved on when it reported; it was then never read again):
+  //  only a conversation's own address is kept; any other page's is replaced by the conversation's address made from its number
+  const etsyConversationUrl = /etsy\.com\/(messages|your\/conversations)\/\d+/.test(String(pageUrl || "")) ? pageUrl : (etsyConversationId ? `https://www.etsy.com/messages/${String(etsyConversationId)}` : (pageUrl || null));
 
   if (!etsyConversationId) return bad("Missing etsyConversationId");
   if (!Array.isArray(messages)) return bad("messages must be an array");
