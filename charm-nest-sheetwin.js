@@ -4276,7 +4276,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       try { localStorage.removeItem("cn.autoCancel.v1:sandbox"); } catch (_) {}
       if (typeof WORKSPACE_SANDBOX !== "undefined" && WORKSPACE_SANDBOX) { st = read(); queue.clear(); for (const m of document.querySelectorAll(".mNote")) if (m.close && /^Order \d+ (was|is) cancelled/.test(m.textContent)) m.close(); if (window.RunCtl) RunCtl.renderBanner(); }
     }
-    return { start, started: () => !!tick, poll, kick, idle: () => working || Promise.resolve(), notices, pillHtml, ack, forget, mine, resetSandbox, step, state: () => read() };
+    return { start, started: () => !!tick, poll, kick, idle: () => working || Promise.resolve(), notices, pillHtml, ack, forget, mine, resetSandbox, step, state: () => read(), reload: () => { st = read(); } };   // (reload: (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"))
   })();
 
   /* ── the freed room: which orders fit it, found with the nest's own collision grid, oldest order first ── */

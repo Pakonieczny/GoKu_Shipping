@@ -46,9 +46,11 @@
       catch (_) { st.fails++; }
     }
   }
+  let cursor = 0;   // (CLOUDSHARE, Paul 14 Nov 2026: "Make Firebase and Etsy cheaper without losing any real-time function"): the newest change already read; each read asks only what changed after it (one read when nothing did)
   async function look() {
-    let r = null; try { r = await api({ op: "trayList" }); } catch (_) { st.fails++; return; }
+    let r = null; try { r = await api({ op: "trayList", since: cursor ? cursor - 2000 : 0 }); } catch (_) { st.fails++; return; }
     const me = dev(), list = (r && r.items) || []; st.last = { at: Date.now(), n: list.length };
+    for (const it of list) if (+it.at > cursor) cursor = +it.at;
     const byHash = new Map(sources().filter(s => s && s.hash).map(s => [s.hash, s]));
     for (const it of list) {
       const here = byHash.get(it.id);
@@ -80,7 +82,12 @@
     let tries = 0;
     const go = () => { tries++; if (!(root.CN && typeof root.CN.api === "function" && typeof root.CN.intake === "function" && S()) && tries < 180) return setTimeout(go, 1000);
       setInterval(() => { announce().catch(() => {}); }, 5000);
-      setInterval(() => { if (!(root.document && root.document.hidden)) look().catch(() => {}); }, 20000);
+      // (CLOUDSHARE, Paul 14 Nov 2026: "Make Firebase and Etsy cheaper without losing any real-time function"): the tray is read when the changes feed says it changed (g:tray, written by every trayPut), not every 20 s on every tab: a file dropped on another computer
+      //  arrives within about a second; a read every ten minutes is the net, and every 20 s only while the feed is not live
+      const F = root.CNSync;
+      if (F && typeof F.follow === "function") F.follow({ name: "cloud-tray", kinds: "g", wild: "g", active: () => true, wants: k => k === "g:tray", read: () => { look().catch(() => {}); } });
+      let lastNet = Date.now();
+      setInterval(() => { if (root.document && root.document.hidden) return; const live = !!(F && F.live && F.live()); if (!live || Date.now() - lastNet > 600000) { lastNet = Date.now(); look().catch(() => {}); } }, 20000);
       setTimeout(() => look().catch(() => {}), 6000); };
     go();
   }

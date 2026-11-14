@@ -2333,6 +2333,7 @@
     // for the engraving card's Customer tab dot: a new reply, or a message that did not go
     tabNews: rid => { const b = badgeState(String(rid)); return b ? { unread: !!b.unread, bad: !!b.bad } : null; },
     openConversation, connect, connected: () => !!M.key, wipeSandbox,
+    reloadDrafts: () => { const fresh = get(LS.drafts, {}); for (const k of Object.keys(drafts)) if (!fresh[k]) delete drafts[k]; Object.assign(drafts, fresh); },   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): drafts written on another computer
     _state: M
   };
 })();

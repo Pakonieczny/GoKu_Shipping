@@ -23333,6 +23333,7 @@ const TeamMail = window.TeamMail = (() => {
 
   return { wipe, draftOf, setDraft, syncDraft, queue, pending, drop, retry, flush, read, isNew, markSeen, mark, slot, stamp, auto, thread, load, html, drawKey,
     onThread: f => { tsubs.add(f); return () => tsubs.delete(f); }, onDraft: f => { dsubs.add(f); return () => dsubs.delete(f); },
+    draftsArrived: rids => (rids || []).forEach(rid => dsubs.forEach(f => { try { f(String(rid)); } catch (_) {} })),   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): drafts written on another computer, into every box of the order nobody is typing in
     ok: () => T.ok, error: () => T.err, waiting: rid => pending(rid).filter(x => !x.error).length, on: f => { T.subs.add(f); return () => T.subs.delete(f); } };
 })();
 

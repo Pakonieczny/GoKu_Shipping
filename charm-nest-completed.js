@@ -268,5 +268,7 @@
   load(); hook();
   // (order-timeline.js is loaded before this file; should a page load it later, it is hooked on first use)
   if (!root.OrderTimeline) doc.addEventListener('DOMContentLoaded', hook, { once: true });
-  root.CNCompleted = { world, factOfRow, factOfEvents, learn, note, has, of, list, count, forget, onChange, eventOf, seal, stamp, select, renderInto, hook, SHIP_TYPES };
+  // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): the list as another computer changed it (the shared store wrote this browser's copy): read again, its listeners told
+  function reload(rids) { store = null; load(); for (const rid of rids || []) for (const f of listeners) { try { f(String(rid), store.get(String(rid))); } catch (_) {} } }
+  root.CNCompleted = { reload, world, factOfRow, factOfEvents, learn, note, has, of, list, count, forget, onChange, eventOf, seal, stamp, select, renderInto, hook, SHIP_TYPES };
 })(typeof self !== 'undefined' ? self : this);

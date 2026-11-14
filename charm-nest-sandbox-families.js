@@ -38,6 +38,9 @@
     fs("Charm_Nest_Runs", "runs"),
     fs("Charm_Nest_Run_Lines", "run lines"),
     fs("Charm_Nest_Run_Live", "live run parts"),
+    fs("Charm_Nest_Run_Carrier", "which computer carries a run"),   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud" / "Make Firebase and Etsy cheaper without losing any real-time function")
+    fs("Charm_Nest_Shared", "stores every computer shares (settings, notices, drafts, lists)"),   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud" / "Make Firebase and Etsy cheaper without losing any real-time function")
+    fs("Charm_Nest_Tray", "the Nest tray's dropped files"),   // (CLOUDTRAY)
     fs("Charm_Nest_Release", "release records"),
     fs("Charm_Pool", "pool rows"),
     fs("Charm_Pool_Back", "back pool rows"),

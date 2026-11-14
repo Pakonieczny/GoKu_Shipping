@@ -166,5 +166,7 @@
 
   load(); hook();
   if (!root.OrderTimeline && doc) doc.addEventListener('DOMContentLoaded', hook, { once: true });
-  root.CNFlow = { STAGES, AT, lineRank, orderRank, count, learnEvents, learned, learnedCount, onChange, world, hook };
+  // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud")
+  function reload(rids) { store = null; load(); for (const rid of rids || []) for (const f of listeners) { try { f(String(rid), store.get(String(rid))); } catch (_) {} } }
+  root.CNFlow = { reload, STAGES, AT, lineRank, orderRank, count, learnEvents, learned, learnedCount, onChange, world, hook };
 })(typeof self !== 'undefined' ? self : this);
