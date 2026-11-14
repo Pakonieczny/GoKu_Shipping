@@ -342,7 +342,7 @@ const root = path.join(__dirname, '../..');
       return { p, pinned: c.pinned, by: c.manual && c.manual.by, n: CNManual.conflicts(sid).n, ok: sh.verification && sh.verification.ok, card: sh.el ? sh.el.innerText.replace(/\s+/g, ' ') : '', gate, n5: sh.placements.length }; }, [cD, S0.id]);
     assert(Math.abs(f8.p.cxPt - poseD.cxPt) < 1e-6 && Math.abs(f8.p.cyPt - poseD.cyPt) < 1e-6, 'D written exactly where it was put, over E: ' + JSON.stringify(f8.p));
     assert.equal(f8.n5, 5, 'no charm lifted off the sheet'); assert.equal(f8.by, 'Tester');
-    assert.equal(f8.n, 2, 'CNManual.conflicts: 2 charms overlap'); assert.equal(f8.ok, false, "the sheet's own verifier flags it");
+    assert.equal(f8.n, 2, 'CNManual.conflicts: 2 charms overlap'); assert.equal(f8.ok, true, "the sheet's check is not failed by a hand-placed overlap (NOHOLD, Paul 14 Nov 2026: \"Let it through\")");
     assert.match(f8.card, /2 charms overlap/, "the sheet's card in the Nest tab says so: " + f8.card.slice(0, 300));
     // (NOHOLD, Paul 14 Nov 2026: "the user is already informed by the red charm overlap, there's no need to enforce"): the Sets gate no longer names the overlap as its reason
     assert.doesNotMatch(String(f8.gate), /charms overlap/, 'the Sets gate does not hold a set for the overlap itself: ' + f8.gate);
