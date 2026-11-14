@@ -628,8 +628,11 @@
     const bars = job.pieces.filter(p => !locked.has(p.id) && !p.pinned && !p.hold).map(flatOf).filter(Boolean).sort((a, b) => b.L - a.L);
     if (!bars.length) return out;
     const inset = job.sheet.insetPt == null ? 1.5 : +job.sheet.insetPt, usableH = job.sheet.hPt - 2 * inset;
-    const area = job.pieces.reduce((n, p) => n + (+p.areaPt2 || 0), 0), front = inset + area / Math.max(1, usableH * (job.maxFill > 0 && job.maxFill < 1 ? job.maxFill : .8));
     const g = makeSheetGrid({ ...job.sheet, fixedPieces: base.map(pl => ({ piece: job.pieces.find(c => c.id === pl.id), placement: pl })) }, clr, res);
+    /* (LONGFIRST on a cut sheet, Paul 14 Nov 2026: "why don't you put the bar along the edge so it doesn't have to put this weird gap": RG Sheet 1's 30 mm bar stood upright because the block's
+       front was counted from the sheet's left edge, as if the part cut away and the saved charms were free: it is counted from where the free material starts, each row's first free cell, on average) */
+    let startPt = inset; { let sum = 0, rows = 0; for (let y = 0; y < g.H; y++) { let x = 0; while (x < g.W && g.get(x, y)) x++; if (x < g.W) { sum += x; rows++; } } if (rows) startPt = Math.max(inset, sum / rows / res); }
+    const area = job.pieces.filter(p => !locked.has(p.id)).reduce((n, p) => n + (+p.areaPt2 || 0), 0), front = startPt + area / Math.max(1, usableH * (job.maxFill > 0 && job.maxFill < 1 ? job.maxFill : .8));
     const band = Math.round((+job.longFirstBandMm || 8) * MMPT * res), seated = [];
     const spot = (v, top) => {   // leftmost, then nearest the edge, within `band` of it
       const ys = []; if (top) for (let y = 0; y <= Math.min(g.H - v.fine.h, band); y++) ys.push(y); else for (let y = g.H - v.fine.h; y >= Math.max(0, g.H - v.fine.h - band); y--) ys.push(y);
