@@ -5130,6 +5130,19 @@ async function op_runCarrier(b) {
   });
 }
 const CARRIER = "Charm_Nest_Run_Carrier"; SANDBOXED.add(CARRIER);
+/* (ONECHECK, Paul 14 Nov 2026: "Build the first row only for now" -> one new-order check for the whole shop instead of one per computer). While a run is open, ONE computer asks Etsy for new orders (they reach every other computer through the cloud run); every computer asked it on its own timer.
+   arrivalsLease { dev, by, carrier }: the computer that holds the lease keeps it (renewed at each of its checks); the computer that carries the run takes it; another computer takes it
+   when nobody has held it for 25 minutes (closed, asleep, offline: two and a half checks missed). One small document per world. → { ok, mine, holder: { dev, by, at } } */
+async function op_arrivalsLease(b) {
+  const dev = str(b.dev, 60) || "", by = str(b.by, 80) || ""; if (!dev) return { error: "no computer" };
+  const ref = col(CARRIER).doc("_arrivals"), now = Date.now(), FRESH = 25 * 60000;
+  return db.runTransaction(async tx => {
+    const d = await tx.get(ref), h = (d.exists && d.data().lease) || null, alive = !!(h && h.dev && now - (num(h.at) || 0) < FRESH);
+    if (h && h.dev === dev || b.carrier === true || !alive) { const n = { dev, by: by || (h && h.dev === dev ? h.by || "" : ""), at: now }; tx.set(ref, { lease: n, expireAt: new Date(now + 30 * 86400000) }); return { ok: true, mine: true, holder: n }; }
+    return { ok: true, mine: false, holder: h };
+  });
+}
+OPS.arrivalsLease = op_arrivalsLease; NO_GEN_BUMP.add("arrivalsLease");
 OPS.runCarrier = op_runCarrier; NO_GEN_BUMP.add("runCarrier");
 /* (CLOUDTRAY, Paul 14 Nov 2026: "You must put all this in the cloud" -> "Yes, build it"): the Nest rail's dropped files, listed for every computer. trayPut { id: the file's hash, name, path, url, state: tray | assigned | removed, metal, dev, by };
    a file claimed or removed by one computer is never put back in the tray by another that still lists it. trayList: the last three days, newest first (100 at most). */
