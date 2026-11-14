@@ -195,6 +195,7 @@ const assets = [
   "charm-nest-cloud-sheets.js",
   "charm-nest-cloud-activity.js",
   "charm-nest-cloud-tray.js",
+  "charm-nest-cloud-share.js",
   "charm-nest-pic-busy.js",
   "charm-nest-engrave-said.js",
   "charm-nest-engrave-read.js",
