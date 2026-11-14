@@ -5090,6 +5090,23 @@ NO_GEN_BUMP.add("customPieceList");   // CUSTOMPOOL (Paul, 28 Oct 2026): a desig
 async function op_artPrepoolList() { const s = await col(ART).doc("_prepool").get(); const ids = s.exists && s.data() && s.data().ids && typeof s.data().ids === "object" ? s.data().ids : {}; return { ids }; }
 Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList, artPrepoolList: op_artPrepoolList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList"); NO_GEN_BUMP.add("artPrepoolList");
 Object.assign(OPS, { traceSrcPut: op_traceSrcPut, traceSrcGet: op_traceSrcGet }); NO_GEN_BUMP.add("traceSrcPut"); NO_GEN_BUMP.add("traceSrcGet");   // TRACESRC (28 Oct 2026): the picture a traced image was made from, in Storage by its own hash (op_traceSrcPut above); no pool row, sheet or Library record is written
+/* ── (CLOUDALL S4, Paul 13 Nov 2026: "Small lists ... the activity log" -> every computer's activity lines are kept in the cloud and every computer shows them) ──
+   activityPut { rows: [{ t, kind, text }], dev, by }: one document per batch (at most 60 lines), kept three days. activityGet { since }: the batches written after since (at most six hours
+   back, 60 batches), oldest first. Neither writes anything a placement answer is made from (NO_GEN_BUMP). */
+const ACTIVITY = "Charm_Nest_Activity"; SANDBOXED.add(ACTIVITY);
+async function op_activityPut(b) {
+  const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 60).map(r => ({ t: num(r && r.t) || Date.now(), kind: str(r && r.kind, 30) || "", text: str(r && r.text, 300) || "" })).filter(r => r.text);
+  if (!rows.length) return { ok: true, n: 0 };
+  const at = Date.now();
+  await col(ACTIVITY).add({ at, dev: str(b.dev, 40) || "", by: str(b.by, 80) || "", rows: JSON.stringify(rows), expireAt: new Date(at + 3 * 86400000) });
+  return { ok: true, n: rows.length, at };
+}
+async function op_activityGet(b) {
+  const since = Math.max(num(b.since) || 0, Date.now() - 6 * 3600000);
+  const q = await col(ACTIVITY).where("at", ">", since).orderBy("at").limit(60).get();
+  return { batches: q.docs.map(d => { const x = d.data() || {}; let rows = []; try { rows = JSON.parse(x.rows || "[]"); } catch (_) { rows = []; } return { at: x.at, dev: x.dev || "", by: x.by || "", rows }; }), checkedAt: Date.now() };
+}
+OPS.activityPut = op_activityPut; OPS.activityGet = op_activityGet; NO_GEN_BUMP.add("activityPut"); NO_GEN_BUMP.add("activityGet");
 OPS.runLinesAdd = op_runLinesAdd;   // (CLOUDALL S3, Paul 13 Nov 2026: "New orders. They join the run only on that computer" -> any computer that reads new orders writes them into the cloud run)
 OPS.runLinesPatch = op_runLinesPatch;   // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer": an order line changed on any computer (taken off, held, cancelled) is written to the cloud run by that computer)
 OPS.engraveSyncPut = op_engraveSyncPut; OPS.engraveSyncGet = op_engraveSyncGet; NO_GEN_BUMP.add("engraveSyncPut"); NO_GEN_BUMP.add("engraveSyncGet");   // ENGRSYNC (13 Nov 2026): a line's engraving work shared by every computer (op_engraveSyncPut above)
