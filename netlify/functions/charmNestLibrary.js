@@ -3128,13 +3128,16 @@ async function op_setAllocate(b) {
     if (!prior.exists || prior.data().runId !== runId || !(prior.data().committedAt || (Array.isArray(prior.data().sheetIds) && prior.data().sheetIds.length))) return { error: "the set this one follows is not a committed set of the run" };
   }
   const key = (group ? `${runId}|${group}` : runId) + (after ? `|after:${after}` : "");
-  if (runId) { const ex = await col(SETS).where("key", "==", key).limit(1).get(); if (!ex.empty) { const d = ex.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; }
+  // (NEXTSETFRESH, Paul 13 Nov 2026: "Why is GF and SS draft One sheets still not part of a set": the cloud handed back Set-4 as the set after Set-5, because Set-5 had reused the record of the day's first set and the answer remembered for that record was Set-4): a set remembered for this ask that already holds sheets, is committed or was superseded is never handed back as the NEXT set (the page refuses it and no set can form): a fresh number is given
+  const used = d => !!(d && (d.committedAt || (Array.isArray(d.sheetIds) && d.sheetIds.length) || /^superseded/.test(String(d.status || ""))));
+  let usedUp = false;
+  if (runId) { const ex = await col(SETS).where("key", "==", key).limit(10).get(); const keep = after ? ex.docs.map(x => x.data()).find(d => !used(d)) : (ex.empty ? null : ex.docs[0].data()); if (keep) { const d = keep; return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; } if (after && !ex.empty) usedUp = true;
     if (!group && !after) { const ex2 = await col(SETS).where("runId", "==", runId).limit(1).get(); if (!ex2.empty) { const d = ex2.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; } } }
   const res = await db.runTransaction(async t => {
     const allocation = runId ? col(COUNTERS).doc("allocation-" + require("crypto").createHash("sha256").update(key).digest("hex").slice(0, 40)) : null;
     // (audit, 25 Oct 2026: the set already allocated for this key keeps ITS day: a second ask past midnight answered the new day with the old set's id, so the page named its folder and files for the wrong day.
     //  An allocation written before it stored the day reads it from the set id, set-YYYY-MM-DD-n)
-    if (allocation) { const prior = await t.get(allocation); if (prior.exists) { const d = prior.data(), m = /^set-(\d{4}-\d{2}-\d{2})-/.exec(String(d.setId || "")); return { setId: d.setId, seq: d.seq, day: d.day || (m ? m[1] : day), existing: true }; } }
+    if (allocation && !usedUp) { const prior = await t.get(allocation); if (prior.exists) { const d = prior.data(), m = /^set-(\d{4}-\d{2}-\d{2})-/.exec(String(d.setId || "")); return { setId: d.setId, seq: d.seq, day: d.day || (m ? m[1] : day), existing: true }; } }   // (NEXTSETFRESH: a used answer is replaced below)
     const cref = col(COUNTERS).doc(day); const cs = await t.get(cref);
     const seq = (cs.exists ? num(cs.data().seq) : 0) + 1;
     // A rose-only attempt must not consume an odd number just to make itself eligible.
