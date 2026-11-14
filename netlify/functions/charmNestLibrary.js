@@ -5129,6 +5129,25 @@ async function op_runCarrier(b) {
   });
 }
 OPS.runCarrier = op_runCarrier; NO_GEN_BUMP.add("runCarrier");
+/* (CLOUDTRAY, Paul 14 Nov 2026: "You must put all this in the cloud" -> "Yes, build it"): the Nest rail's dropped files, listed for every computer. trayPut { id: the file's hash, name, path, url, state: tray | assigned | removed, metal, dev, by };
+   a file claimed or removed by one computer is never put back in the tray by another that still lists it. trayList: the last three days, newest first (100 at most). */
+const TRAY = "Charm_Nest_Tray"; SANDBOXED.add(TRAY);
+async function op_trayPut(b) {
+  const id = str(b.id, 64); if (!/^[0-9a-f]{16,64}$/.test(id || "")) return { error: "bad tray id" };
+  const state = ["tray", "assigned", "removed"].includes(b.state) ? b.state : null; if (!state) return { error: "bad tray state" };
+  const ref = col(TRAY).doc(id), now = Date.now(), dev = str(b.dev, 60) || "";
+  return db.runTransaction(async tx => {
+    const d = await tx.get(ref), old = d.exists ? d.data() : null;
+    if (old && old.state !== "tray" && state === "tray" && old.dev !== dev) return { ok: true, kept: old.state };
+    tx.set(ref, { id, name: str(b.name, 200) || (old && old.name) || "file", path: str(b.path, 400) || (old && old.path) || "", url: str(b.url, 1500) || (old && old.url) || "", state, metal: str(b.metal, 20) || null, dev, by: str(b.by, 80) || "", at: now, expireAt: new Date(now + 14 * 86400000) }, { merge: true });
+    return { ok: true, state };
+  });
+}
+async function op_trayList() {
+  const q = await col(TRAY).where("at", ">", Date.now() - 3 * 86400000).orderBy("at", "desc").limit(100).get();
+  return { items: q.docs.map(d => { const x = d.data() || {}; return { id: x.id, name: x.name, url: x.url, path: x.path, state: x.state, metal: x.metal || null, dev: x.dev || "", by: x.by || "", at: x.at }; }) };
+}
+OPS.trayPut = op_trayPut; OPS.trayList = op_trayList; NO_GEN_BUMP.add("trayPut"); NO_GEN_BUMP.add("trayList");
 OPS.runLinesAdd = op_runLinesAdd;   // (CLOUDALL S3, Paul 13 Nov 2026: "New orders. They join the run only on that computer" -> any computer that reads new orders writes them into the cloud run)
 OPS.runLinesPatch = op_runLinesPatch;   // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer": an order line changed on any computer (taken off, held, cancelled) is written to the cloud run by that computer)
 OPS.engraveSyncPut = op_engraveSyncPut; OPS.engraveSyncGet = op_engraveSyncGet; NO_GEN_BUMP.add("engraveSyncPut"); NO_GEN_BUMP.add("engraveSyncGet");   // ENGRSYNC (13 Nov 2026): a line's engraving work shared by every computer (op_engraveSyncPut above)
