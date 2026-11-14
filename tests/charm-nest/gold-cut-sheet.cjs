@@ -147,12 +147,12 @@ const shape = (id, x, y, w, h) => ({ id, paths: [[[x, y], [x + w, y], [x + w, y 
     const p = await api.rosePlan({ sheetId, metal: 'rose', stockId, revision: claim.stock.revision, fingerprint: RoseStock.fingerprint(doc), shapesJson: JSON.stringify(shapes), allowanceMm: .2, cut: true });
     return api.roseRecordCut({ sheetId, metal: 'rose', stockId, revision: claim.stock.revision, planHash: p.planHash, by: 'Charm Nest (automatic)', via, device: 'charm-nest-1' });
   };
-  await assert.rejects(() => backsCut('rsheet-person', 'library'), /Complete every item/, 'a person\'s Cut Sheet press waits for the back engraving');
+  // (CUTFREE, Paul 12 Nov 2026: "Nothing can prevent a sheet from being cut with the green cut line"): a person's press and the automatic cut both go ahead with a back engraving still open,
+  //  and with a production check (the QR label) not done; those hold the set's Approve for laser cutting, never the green line
+  assert.equal(!!(await backsCut('rsheet-person', 'library')).cut, true, 'a person\'s Cut Sheet press goes ahead with the back engraving still open');
   assert.equal(!!(await backsCut('rsheet-auto', 'auto')).cut, true, 'the automatic cut goes ahead with the back engraving still open');
-  assert(store.get('Charm_Nest_Sheets/rsheet-auto').roseCutAt > 0 && !store.get('Charm_Nest_Sheets/rsheet-person').roseCutAt, 'only the automatic one is cut');
-  // (Paul, 26 Oct 2026) an automatic cut that is refused says WHY, in the shop's words, for the sheet's card (Gate.autoCut: autoCutWait); every check but the backs stands
-  await assert.rejects(() => backsCut('rsheet-auto-noqr', 'auto', { label: null }), /^Error: Not cut yet: its QR label is not made$/, 'the automatic cut names what it waits for');
-  assert(!store.get('Charm_Nest_Sheets/rsheet-auto-noqr').roseCutAt, 'and nothing is cut');
+  assert(store.get('Charm_Nest_Sheets/rsheet-auto').roseCutAt > 0 && store.get('Charm_Nest_Sheets/rsheet-person').roseCutAt > 0, 'both are cut');
+  assert.equal(!!(await backsCut('rsheet-auto-noqr', 'auto', { label: null })).cut, true, 'the automatic cut is not held for the QR label');
   // (Paul, 26 Oct 2026, later the same day: "adjust the logic for the 10K and 14 K gold sheets so that they don't get automatically approved and the green cut lines do not get automatically engaged")
   // the automatic cut is Rose Gold's only: refused for a 10K / 14K sheet, ready or not, whatever metal the request names (the sheet's own metal decides); a person's press of the same ready sheet is cut
   const karatCut = async (sheetId, metal, via, asked) => {

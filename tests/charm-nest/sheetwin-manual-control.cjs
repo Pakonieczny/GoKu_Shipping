@@ -344,7 +344,8 @@ const root = path.join(__dirname, '../..');
     assert.equal(f8.n5, 5, 'no charm lifted off the sheet'); assert.equal(f8.by, 'Tester');
     assert.equal(f8.n, 2, 'CNManual.conflicts: 2 charms overlap'); assert.equal(f8.ok, false, "the sheet's own verifier flags it");
     assert.match(f8.card, /2 charms overlap/, "the sheet's card in the Nest tab says so: " + f8.card.slice(0, 300));
-    assert.match(String(f8.gate), /2 charms overlap/, 'the Sets gate holds a set with it: ' + f8.gate);
+    // (NOHOLD, Paul 14 Nov 2026: "the user is already informed by the red charm overlap, there's no need to enforce"): the Sets gate no longer names the overlap as its reason
+    assert.doesNotMatch(String(f8.gate), /charms overlap/, 'the Sets gate does not hold a set for the overlap itself: ' + f8.gate);
     const r8 = st.doc(SHEETS, S0.id).placements.find(z => z.id === cD); assert(Math.abs(r8.cxPt - poseD.cxPt) < .01 && Math.abs(r8.cyPt - poseD.cyPt) < .01, 'the record holds D over E');
     await openSheet(S0.id);
     w = await until(async () => { const v = await warn(); return /2 charms overlap/.test(v) ? v : null; }, 8000, 'the stage note on the saved sheet');
