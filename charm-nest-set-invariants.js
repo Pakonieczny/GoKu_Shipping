@@ -255,7 +255,9 @@
           } else if (GOLD_FAMILY.includes(cls)) {
             const gaps = goldGaps(r);
             if (gaps.length) { if (!partners.some(x => x.set === st.id && x.sheet === id && x.kind === 'notReady')) { partners.push({ set: st.id, setName: st.name, sheet: id, name: C.name(id), kind: 'notReady', because, with: withNames, reasons: gaps }); row.partners++; } }
-            else add('cardinal', st, mine.concat(id), `${C.name(id)} is not in any set but shares ${orderWords(because)} with ${and(withNames)} in ${st.name}, and nothing stops it joining (its green line is cut and its back engraving is approved): add it to ${st.name}`, { outside: id, orders: because });
+            // (GOLDWAIT, Paul 13 Nov 2026: "why is there an error under the set?" -> "Yes, fix it"): a Rose Gold / 10K / 14K sheet that shares an order with this set and is ready joins it by a person's
+            //  Approve on its tile (Paul, 26 Oct 2026): until then the set WAITS for that press, said as a plain waiting line, never a red rule break with "Rebuild this set correctly"
+            else if (!partners.some(x => x.set === st.id && x.sheet === id && x.kind === 'notReady')) { partners.push({ set: st.id, setName: st.name, sheet: id, name: C.name(id), kind: 'notReady', because, with: withNames, reasons: [`it waits for your Approve to join ${st.name} (a ${WORD[cls]} sheet joins a set by a person's press)`] }); row.partners++; }
           }
         }
       }
