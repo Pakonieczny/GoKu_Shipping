@@ -5605,7 +5605,7 @@ const Pool = window.Pool = (() => {
     // (RGC1: a line whose pieces wait for the open layout's green line is not on a sheet yet: it stays waiting, said on its line, and is placed again once that line is cut, greenResume)
     if (waited && waited === byMetal.size) { row.material = sp.material; delete row.poolTry; delete row.poolError; return; }
     for (const p of pools) if (!on.has(p.poolId) || !B.pool.rows.has(p.poolId)) B.pool.rows.set(p.poolId, saved.has(p.poolId) ? Object.assign({}, p, saved.get(p.poolId)) : p);
-    row.poolIds = pools.map(p => p.poolId); row.state = "pooled"; row.material = sp.material; row.reason = null; delete row.poolTry; delete row.poolError;
+    row.poolIds = pools.map(p => p.poolId); row.state = pools.length ? "pooled" : "pulled"; row.material = sp.material; row.reason = null; delete row.poolTry; delete row.poolError;   // (NOPIECEPOOLED, Paul 13 Nov 2026: "Fix both" -> a released line was left "pooled" with no piece and on no sheet, so it would never be placed)
     if (on.size) { agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: ${on.size === pools.length ? "already on a sheet" : `${on.size} of ${pools.length} pieces already on a sheet`} — not placed again`); if (on.size === pools.length) { settle(row); return; } }
     agent({ metal: sp.material, pool: true }, "POOL", prep.custom ? `${row.order.receiptId} · custom designs: ${[...byMetal].map(([m, l]) => `${l.length} → ${labelOf(m)}`).join(", ")}` : `${row.order.receiptId} · ${sp.designSku}${sp.quantity > 1 ? " ×" + sp.quantity : ""} → ${labelOf(sp.material)} (${row.engrave && row.engrave.needed ? "engrave" : "plain"})`);
   }
@@ -5865,7 +5865,8 @@ const Pool = window.Pool = (() => {
   /** Such a line goes back to where its pieces are: committed, written into a set, or pooled on a sheet still filling. */
   function settle(row) {
     const recs = (row.poolIds || []).map(id => B.pool.rows.get(id) || {});
-    row.state = recs.length && recs.every(p => p.state === "committed") ? "committed" : recs.length && recs.every(p => p.sheetId) ? "written" : "pooled";
+    // (NOPIECEPOOLED, Paul 13 Nov 2026: "Fix both" -> a released line was left "pooled" with no piece and on no sheet, so it would never be placed): a line with no piece is never "pooled": it goes back in line, so the next pass places it or queues it
+    row.state = !recs.length ? "pulled" : recs.every(p => p.state === "committed") ? "committed" : recs.every(p => p.sheetId) ? "written" : "pooled";
     row.reason = null; return true;
   }
   /* ── pieces of a pair (charm-nest-pool-pieces.js): the page's one reading of a piece, old records included ── */
@@ -16295,6 +16296,30 @@ const RunCtl = window.RunCtl = (() => {
      gatherFilling ran only at Resume, so drafts opened while the run went on stayed. It now also runs on its own every few seconds (live): a colour with two sheets still filling is
      gathered onto its first as soon as none of that colour's sheets is busy or held for a moment (nesting, saving, the sheet window, a hold or a move, an intake). With nesting
      running the first sheet is nested at once; paused, its pieces wait on it. Sheets a pair repair opened (_ownLine) and sheets with their own label are left alone. */
+  /** (ONEDRAFT, Paul 13 Nov 2026) These orders leave sheet p and wait in the queue for the next draft of metal m: their pieces come off p, their lines wait on sheet t (wait.sheetId, kept with the run's lines
+   *  in the cloud: PAIRCLOUD), their piece records are set aside. false, and nothing changes, when an order cannot be split cleanly (a line with a piece on another sheet, a piece with no line). */
+  function queueOut(p, out, t, m, r) {
+    const oidOf = c => String(c && c.order != null ? c.order : "").split("/")[0], want = new Set(out.map(String));
+    const charms = p.charms.filter(c => want.has(oidOf(c))), ids = new Set(charms.map(c => c.poolId).filter(Boolean));
+    if (!charms.length || charms.some(c => !c.poolId)) return false;
+    const rows = Orders.rows().filter(x => want.has(String(x.order.receiptId)) && (x.poolIds || []).some(id => ids.has(id)));
+    if (rows.some(x => (x.poolIds || []).some(id => !ids.has(id))) || [...ids].some(id => !rows.some(x => (x.poolIds || []).includes(id)))) return false;
+    const cids = new Set(charms.map(c => c.id));
+    p.charms = p.charms.filter(c => !cids.has(c.id)); p.placements = (p.placements || []).filter(q => !cids.has(q.id)); p.rejects = (p.rejects || []).filter(id => !cids.has(id));
+    if (Array.isArray(p.feedWait)) p.feedWait = p.feedWait.filter(id => !cids.has(id)); if (p.backPool) p.backPool = p.backPool.filter(b => !ids.has(b.poolId));
+    const name = window.CharmNestSheetName ? CharmNestSheetName.short(t) : "Sheet " + t.page, other = m === "gold" ? "Sterling Silver" : "Gold Filled";
+    for (const x of rows) {
+      x.poolIds = [];
+      try { for (const j of Engrave.jobsOf(x)) { j.copies = (j.copies || []).filter(id => !ids.has(id)); if (!j.copies.length) { Engrave.items().delete(j.key); Review.remove("eng:" + j.key); } } } catch (_) { /* made again when it is placed */ }
+      x.state = "waiting"; x.hold = null; x.wait = { kind: "pair", material: m, sheetId: t.sheetId || null, page: t.page || null };
+      x.reason = `waits for ${name} to fill, then goes on the next ${labelOf(m)} sheet (it shares an order with another ${other} sheet; one ${labelOf(m)} sheet is filled at a time)`;
+    }
+    for (const id of ids) B.pool.rows.delete(id);
+    try { Promise.resolve(Pool.update([...ids], { state: "abandoned", sheetId: null, setId: null })).catch(e => console.warn("[ONEDRAFT] pieces", e)); } catch (e) { console.warn("[ONEDRAFT] pieces", e); }
+    try { if (window.CharmNestRunFollow && CharmNestRunFollow.patchRows) Promise.resolve(CharmNestRunFollow.patchRows(rows)).catch(() => {}); } catch (_) { /* written with the run's next save */ }
+    agent({ metal: m, run: r.runId }, "nest", `${labelOf(m)}: order${out.length === 1 ? "" : "s"} ${out.join(", ")} wait${out.length === 1 ? "s" : ""} in the queue for the next ${labelOf(m)} draft (one Gold Filled sheet and one Sterling Silver sheet share an order), so ${name} is the one ${labelOf(m)} sheet filling`);
+    return true;
+  }
   function gatherFilling(r, o = {}) {
     const LN = window.LiveNest, rank = c => (typeof orderRank === "function" ? orderRank(c) : 0), done = [];
     if (S.settings && S.settings.onesheet === "off" && o.live) return done;
@@ -16314,7 +16339,16 @@ const RunCtl = window.RunCtl = (() => {
       const oid = c => String(c && c.order != null ? c.order : "").split("/")[0], taken = [], ids = new Set();
       for (const p of cands) {
         const mine = new Set(p.charms.map(oid).filter(Boolean)), all2 = [...ids, ...mine], skip = new Set([...taken, p].flatMap(q => q.charms));
-        if (LN && typeof LN.pairFits === "function" && all2.length && !LN.pairFits(all[0], all2, r, { skip })) continue;
+        if (LN && typeof LN.pairFits === "function" && all2.length && !LN.pairFits(all[0], all2, r, { skip })) {
+          // (ONEDRAFT, Paul 13 Nov 2026: "it can never be allowed to have two partial sheets for GF and SS"; "certain orders must be held in the queue for the next empty available draft so that these
+          //  rules can be maintained"; "Fix both"): the orders of this sheet that keep the pairing rule with the first sheet are gathered onto it, oldest first; each order that does not leaves this
+          //  sheet and waits in the queue for the next draft (queueOut). A sheet with an order it cannot split cleanly is left as it was, as before
+          const firstOf = new Map(); for (const c of p.charms) { const k = oid(c); if (!k) continue; const v = rank(c); if (!firstOf.has(k) || v < firstOf.get(k)) firstOf.set(k, v); }
+          const keep = [], out = [];
+          for (const k of [...firstOf.keys()].sort((a, b) => firstOf.get(a) - firstOf.get(b))) { if (LN.pairFits(all[0], [...ids, ...keep, k], r, { skip })) keep.push(k); else out.push(k); }
+          if (!out.length || !queueOut(p, out, all[0], m, r)) continue;
+          taken.push(p); for (const k of keep) ids.add(k); continue;
+        }
         taken.push(p); for (const k of mine) ids.add(k);
       }
       const pages = [all[0], ...taken]; if (pages.length < 2) continue;
