@@ -1233,14 +1233,10 @@ const Passcode = (() => {
    match when "solid" describes that karat in the SAME source string.
    Therefore "14k Gold", "10k Gold" and "14k Gold Filled" are not
    solid-gold pieces; they continue through the normal rose/silver/gold rules.
-   ONE EXCEPTION, Paul's (13 Nov 2026): the selection "14K GOLD + ENGRAVE",
-   exactly, is 14K solid gold ("SOLID" does not fit the Etsy option).
 
    Precedence: 14k solid → 10k solid → rose → silver → gold.                 */
 const METALS = [
-  /* (14KENGRAVE, Paul 13 Nov 2026, order 4223725716: "any piece that has the 14K GOLD + ENGRAVE selection to be interpreted as solid gold for all orders": the shop's option says
-     "14K GOLD + ENGRAVE" because "SOLID" does not fit Etsy's option length; that one selection, exactly, is 14K solid gold. Every other "14k Gold" still needs "solid" beside it.) */
-  { key:"14k",    label:"14K",    short:"14", match:[/\b14\s*k(?:t|arat)?\s*(?:solid(?:\s+gold)?|gold\s+solid)\b/, /\bsolid(?:\s+gold)?\s*14\s*k(?:t|arat)?\b/, /^14\s*k\s+gold\s*\+\s*engrave$/] },
+  { key:"14k",    label:"14K",    short:"14", match:[/\b14\s*k(?:t|arat)?\s*(?:solid(?:\s+gold)?|gold\s+solid)\b/, /\bsolid(?:\s+gold)?\s*14\s*k(?:t|arat)?\b/] },
   { key:"10k",    label:"10K",    short:"10", match:[/\b10\s*k(?:t|arat)?\s*(?:solid(?:\s+gold)?|gold\s+solid)\b/, /\bsolid(?:\s+gold)?\s*10\s*k(?:t|arat)?\b/] },
   { key:"rose",   label:"Rose",   short:"R",  match:[/rose/] },
   { key:"silver", label:"Silver", short:"S",  match:[/silv(?:er|r)/, /sterling/] },
