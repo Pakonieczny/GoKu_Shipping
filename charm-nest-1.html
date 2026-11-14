@@ -5985,12 +5985,14 @@ function startNestReady(sh, context) {
     // (GOLDLOCK, Paul 12 Nov 2026: 14K Draft 1 and 2 were flagged "Verification flagged": a sheet with pieces held where they are (lockedPlacements: a moved-in order, the saved layout; protectedRose) is
     //  nested the single way it always was: the side-by-side searches are for a fresh nest only, where nothing is held)
     if (job.multiStart && (job.lockedPlacements?.length || job.protectedRose)) delete job.multiStart;
-    const n = job.multiStart ? Math.max(parallelCount(job.angles.length), job.multiStart) : parallelCount(job.angles.length);
+    // (SMALLSEARCH, Paul 14 Nov 2026: a 3-piece sheet ran six searches for a minute): a sheet of few pieces runs no more searches side by side than it has pieces
+    if (job.multiStart && job.tight) job.multiStart = Math.max(1, Math.min(job.multiStart, items.length));
+    const n = job.multiStart ? (job.tight ? job.multiStart : Math.max(parallelCount(job.angles.length), job.multiStart)) : parallelCount(job.angles.length);
     const workers = ensureWorkers(sh, n);
     sh.pool = { n, done: 0, results: [], trials: new Array(n).fill(0), winner: null };
     // (KEEPSEARCH, Paul 14 Nov 2026: "Why is the system finding good solutions and then scrapping them?" -> "Yes, do it"): a 10K, 14K or Rose Gold fresh nest keeps searching while its time lasts:
     //  a search that finishes starts again in a new placing order (orderVariant: the next number, shaken by its own seed), up to KEEP_MAX finished layouts; the least wasteful one is kept (betterLayout, TIGHT)
-    if (job.multiStart && job.tight) { const t = performance.now(); sh.pool.keep = { job, t0: t, next: n, done: 0, started: new Array(n).fill(t), max: 36 }; }
+    if (job.multiStart && job.tight) { const t = performance.now(); sh.pool.keep = { job, t0: t, next: n, done: 0, started: new Array(n).fill(t), max: Math.min(36, Math.max(n, 2 * items.length)) }; }   // (SMALLSEARCH: at most two finished layouts per piece)
     if (sh.evNest && !job.careful) agentUpdate(sh.evNest, { text: `${n} parallel search${n > 1 ? "es" : ""} on seeds ${job.seed}–${job.seed + n - 1} · ${items.length} pieces · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · standard and broader-rotation searches keep oldest-first sheet membership · ceiling ${fmt.s(job.timeBudgetMs)}` });
     workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i, exploreRotations: i % 2 === 1, ...(job.multiStart ? { orderVariant: i } : {}), ...(sh.pool.keep && i % 2 === 1 ? { longFirstForce: true } : {}), useGPU: S.settings.computePipeline === "gpu" && i === n - 1 }) }));
   };

@@ -14060,8 +14060,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       if (view.searching && smartS.searchPending) texts.push("Searching all mail…");
       for (const tx of texts) lines.push(`<div class="${cls}" role="status">${spin}<span>${esc(tx)}</span></div>`);
       const err = smartViewError(view);
-      const link = window.__emLinkProblem;
-      if (link) lines.push(`<div class="${cls} is-error" role="alert"><span>Email link: ${esc(link.word)}. ${esc(link.text)}</span></div>`);
+      // (NOLINKLINE, Paul 14 Nov 2026: "Please remove this message. It is not needed here"): the email link's long notice is no longer written above the list; the link light and its Details say it
       if (err) {
         lines.push(`<div class="${cls} is-error" role="alert"><span>Can't reach the inbox: ${esc(err)} - retrying.</span>` +
                    `<button type="button" data-smart-retry="1">Retry</button></div>`);
