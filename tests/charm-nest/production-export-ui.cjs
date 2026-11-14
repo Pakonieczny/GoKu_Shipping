@@ -21,7 +21,7 @@ require('../../charm-nest-export-ui.js');
  CN.api=async (fn,b)=>({sheet:structuredClone(records[b.id])});
  await ProductionExports.run(['one'],'dxf');
  assert.equal(downloads.length,1,notices.join('\n'));
- assert.match(new TextDecoder().decode(downloads[0].data),/LWPOLYLINE/);
+ assert.match(new TextDecoder().decode(downloads[0].data),/\r\nSPLINE\r\n/);   // (AIDXF, Paul 14 Nov 2026: true curves, as Illustrator writes them)
  assert(reads.every(u=>u.startsWith('/.netlify/functions/charmNestAsset?url=')),'every saved export uses the same-origin asset route');
  assert.equal(downloads[0].name,'same-name.dxf');
  await ProductionExports.run(['one','two','one'],'ai');

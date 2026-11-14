@@ -24,7 +24,7 @@ async function vector(name,w,h,ops){const L=PDFLib,d=await L.PDFDocument.create(
  const parsed=await CharmNestPDF.parseSource(made.ai,'combined');const paths=E.leaves(parsed);
  assert(paths.some(p=>p.layer.startsWith('BACK order_transaction_1')));
  assert(paths.some(p=>p.strokeRGB?.[0]===1));assert(paths.some(p=>p.fillRGB?.[2]===1));
- const result=E.dxf(paths);assert(result.text.includes('$INSUNITS\r\n70\r\n4'));assert(result.colors.includes(0xff0000));assert(result.colors.includes(0x0000ff));
+ const result=E.dxf(paths);assert(/\$INSUNITS\r\n\s*70\r\n\s*4\r\n/.test(result.text));assert(result.text.includes('AC1024')&&/\r\nSPLINE\r\n/.test(result.text),'written as Illustrator writes it: AutoCAD 2010, true curves (AIDXF, Paul 14 Nov 2026)');assert(result.colors.includes(0xff0000));assert(result.colors.includes(0x0000ff));
  fs.writeFileSync('/tmp/production-test.dxf',result.text);fs.writeFileSync('/tmp/production-test.ai',made.ai);
  assert.equal((await E.compose(front,sheet,[])).heightPt,120,'no backs means no added export margin');
  await assert.rejects(()=>E.compose(front,{...sheet,placements:[]},[{poolId:charm.poolId,bytes:back}]),/no matching/);
