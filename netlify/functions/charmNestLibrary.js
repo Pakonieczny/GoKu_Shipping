@@ -3412,7 +3412,15 @@ async function op_runPut(b) {
       const docs = await Promise.all(had.map(x => tx.get(col(RUN_LIVE).doc(x)))), stored = {};
       for (const d of docs) if (d.exists) { try { Object.assign(stored, JSON.parse(d.data().json || "{}")); } catch (_) { /* unreadable: nothing kept from it */ } }
       const merged = Object.assign({}, r.lines); let kept = 0;
-      for (const [k, l] of Object.entries(stored)) { const lp = l && l._lp; if (!lp || !merged[k]) continue; const inLp = merged[k]._lp; if (!inLp || (+inLp.at || 0) < (+lp.at || 0)) { merged[k] = l; kept++; } }
+      // (CLOUDALL S3, Paul 13 Nov 2026: "New orders. They join the run only on that computer" -> any computer that reads new orders writes them into the cloud run): a line another computer ADDED stays until a save that held it (addedTaken) leaves it out; a save that never held it cannot drop it
+      const taken = Object.assign({}, old.addedTaken || {}); let takenMoved = false;
+      for (const [k, l] of Object.entries(stored)) {
+        const lp = l && l._lp; if (!lp) continue;
+        if (!merged[k]) { if (lp.added && !taken[k]) { merged[k] = l; kept++; if (l.orderId != null && l.orderId !== "" && Array.isArray(put.orders) && !put.orders.map(String).includes(String(l.orderId))) put.orders = put.orders.concat([l.orderId]); } continue; }
+        if (lp.added && !taken[k]) { taken[k] = +lp.at || 1; takenMoved = true; }
+        const inLp = merged[k]._lp; if (!inLp || (+inLp.at || 0) < (+lp.at || 0)) { merged[k] = l; kept++; }
+      }
+      if (takenMoved) put.addedTaken = taken;
       if (kept) { parts = liveParts(id, merged); put.liveLines = { ids: parts.map(p => p.id), lines: parts.reduce((n, p) => n + p.lines, 0), bytes: parts.reduce((n, p) => n + p.bytes, 0) }; }
     }
     if (parts) {
@@ -3492,6 +3500,40 @@ async function op_runLinesPatch(b) {
   if (refused) return refused;
   if (applied.length) revTouch(b, ["r:" + id]);
   return { ok: true, runId: id, applied, at };
+}
+/* ── (CLOUDALL S3, Paul 13 Nov 2026: "New orders. They join the run only on that computer" -> any computer that reads new orders writes them into the cloud run) ──
+   runLinesAdd { runId, lines: { lineKey: line }, dev, by }: in ONE transaction the lines the run does not hold yet are added to its live lines, stamped _lp { at, dev, by, added: true },
+   their orders join run.orders, and lineEditAt is noted. A line the run already holds is left as it is (two computers that read the same order add it once). */
+async function op_runLinesAdd(b) {
+  const id = str(b.runId, 80); if (!isId(id)) return { error: "bad run id" };
+  const add = b.lines && typeof b.lines === "object" && !Array.isArray(b.lines) ? b.lines : null;
+  const keys = add ? Object.keys(add).filter(k => /^[\w\-]{3,80}$/.test(k) && add[k] && typeof add[k] === "object").slice(0, 300) : [];
+  if (!keys.length) return { error: "no lines to add" };
+  const at = Date.now(), dev = str(b.dev, 40) || "", by = str(b.by, 80) || "", ref = col(RUNS).doc(id);
+  let added = [];
+  const refused = await db.runTransaction(async tx => {
+    const ex = await tx.get(ref); if (!ex.exists) return { error: "that run is not in the cloud", status: 404 };
+    const old = ex.data(); if (["complete", "abandoned"].includes(old.status)) return { error: "that run is finished", status: 409 };
+    const had = old.liveLines && Array.isArray(old.liveLines.ids) ? old.liveLines.ids : [];
+    let lines = {};
+    if (had.length) { const docs = await Promise.all(had.map(x => tx.get(col(RUN_LIVE).doc(x)))); if (docs.some(d => !d.exists)) throw new Error("the run was saved while its lines were read: try again"); for (const d of docs) Object.assign(lines, JSON.parse(d.data().json || "{}")); }
+    else lines = Object.assign({}, old.lines || {});
+    added = [];
+    for (const k of keys) { if (lines[k]) continue; const l = Object.assign({}, add[k]); delete l._lp; l._lp = { at, dev, by, added: true }; lines[k] = l; added.push(k); }
+    if (!added.length) return null;
+    const parts = liveParts(id, lines);
+    if (parts.some(p => p.bytes > 1000000)) return { error: "a piece of this run is too large to save" };
+    const keep = new Set(parts.map(p => p.id)), have = new Set(had);
+    for (const p of parts) if (!have.has(p.id)) tx.set(col(RUN_LIVE).doc(p.id), { runId: id, json: p.json, bytes: p.bytes, lines: p.lines, seq: p.seq, createdAt: FV.serverTimestamp() });
+    for (const x of had) if (!keep.has(x)) tx.delete(col(RUN_LIVE).doc(x));
+    const orders = Array.isArray(old.orders) ? old.orders.slice() : [], seen = new Set(orders.map(String));
+    for (const k of added) { const o = lines[k].orderId; if (o != null && o !== "" && !seen.has(String(o))) { orders.push(o); seen.add(String(o)); } }
+    tx.set(ref, { liveLines: { ids: parts.map(p => p.id), lines: parts.reduce((n, p) => n + p.lines, 0), bytes: parts.reduce((n, p) => n + p.bytes, 0) }, lines: FV.delete(), orders, lineEditAt: at, updatedAt: FV.serverTimestamp() }, { merge: true });
+    return null;
+  });
+  if (refused) return refused;
+  if (added.length) revTouch(b, ["r:" + id]);
+  return { ok: true, runId: id, added, at };
 }
 async function op_runGet(b) {
   const id = str(b.runId, 80); if (!isId(id)) return { error: "bad run id" };
@@ -5048,6 +5090,7 @@ NO_GEN_BUMP.add("customPieceList");   // CUSTOMPOOL (Paul, 28 Oct 2026): a desig
 async function op_artPrepoolList() { const s = await col(ART).doc("_prepool").get(); const ids = s.exists && s.data() && s.data().ids && typeof s.data().ids === "object" ? s.data().ids : {}; return { ids }; }
 Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList, artPrepoolList: op_artPrepoolList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList"); NO_GEN_BUMP.add("artPrepoolList");
 Object.assign(OPS, { traceSrcPut: op_traceSrcPut, traceSrcGet: op_traceSrcGet }); NO_GEN_BUMP.add("traceSrcPut"); NO_GEN_BUMP.add("traceSrcGet");   // TRACESRC (28 Oct 2026): the picture a traced image was made from, in Storage by its own hash (op_traceSrcPut above); no pool row, sheet or Library record is written
+OPS.runLinesAdd = op_runLinesAdd;   // (CLOUDALL S3, Paul 13 Nov 2026: "New orders. They join the run only on that computer" -> any computer that reads new orders writes them into the cloud run)
 OPS.runLinesPatch = op_runLinesPatch;   // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer": an order line changed on any computer (taken off, held, cancelled) is written to the cloud run by that computer)
 OPS.engraveSyncPut = op_engraveSyncPut; OPS.engraveSyncGet = op_engraveSyncGet; NO_GEN_BUMP.add("engraveSyncPut"); NO_GEN_BUMP.add("engraveSyncGet");   // ENGRSYNC (13 Nov 2026): a line's engraving work shared by every computer (op_engraveSyncPut above)
 OPS.madeThumbPut = op_madeThumbPut;   // THUMBSYNC (28 Oct 2026): a piece's picture as it will be made, kept on its pool row (op_madeThumbPut above); it writes a pool row, so the placement counter moves
