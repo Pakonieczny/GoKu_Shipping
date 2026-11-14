@@ -323,7 +323,8 @@
   const sigOf = st => st.tone + "|" + st.word + "|" + st.text + (st.gap ? "|" + JSON.stringify(st.gap.items) : "");   // (the notice's own numbers count too)
   const linkSig = () => { const st = M.key ? lightState() : null; return st ? sigOf(st) : ""; };
   /** The light's problem (amber or red) as the top-bar envelope shows it, or null. */
-  const linkProblem = () => { if (!M.key) return null; const st = lightState(); return st.tone === "warn" || st.tone === "down" ? st : null; };
+  // (MAILONLY, Paul 14 Nov 2026: "These messages only belong in the Etsy email application"): the envelope and its menu no longer carry the email link's problem
+  const linkProblem = () => null;
   /* An alert Paul will see: ONE red notice per incident, only after the trouble has lasted 5 minutes (a blip says nothing).
      It is the same notice from then on: each new judgement of the monitor (every 5 minutes) changes its words in place, so
      "last checked 13 min ago" becomes "18 min ago" rather than a second notice; it gets a ding and a desktop notification
@@ -347,6 +348,9 @@
     const x = el.querySelector && el.querySelector(".c"); if (x) x.addEventListener("click", closed);
   }
   function linkAlert(l) {
+    // (MAILONLY, Paul 14 Nov 2026: "I don't wanna see these messages here. These messages only belong in the Etsy email application"): the sorter raises no notice, ding or
+    //  desktop notification about the email link; the inbox does
+    return;
     if (!l || !M.key) return;
     const told = get(LS.linkTold, null) || {}, now = Date.now();
     if (l.level === "warn" || l.level === "down") {
@@ -598,14 +602,16 @@
   /** One place to write: its light and its sentence, redrawn only when they changed (a redrawn button loses focus). */
   function paintLight(el, owner, cls, st) {
     st = st || lightState();
-    const light = M.key ? lightHtml(st) : "", warn = M.key ? warnHtml(st) : "";
+    // (MAILONLY, Paul 14 Nov 2026: the email link's problems are said in the inbox only): no red or amber light and no sentence above the box here; the calm lights stay
+    const quiet = st.tone === "warn" || st.tone === "down";
+    const light = M.key && !quiet ? lightHtml(st) : "", warn = "";
     if (el.live.dataset.v !== light) {
       el.live.dataset.v = light; el.live.innerHTML = light;
       if (healthBox && healthBox.owner === owner) el.live.querySelectorAll("[data-health]").forEach(b => b.setAttribute("aria-expanded", "true"));
     }
     if (el.warn.dataset.v !== warn) { el.warn.dataset.v = warn; el.warn.innerHTML = warn; }
     el.live.hidden = !light; el.warn.hidden = !warn; el.warn.className = cls + " " + st.tone;
-    if (el.foot) el.foot.hidden = !light;
+    if (el.foot) el.foot.hidden = !M.key;
   }
   function paintLights() {
     const st = lightState(); lastLinkSig = M.key ? sigOf(st) : "";
