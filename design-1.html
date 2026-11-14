@@ -1224,11 +1224,17 @@ const FN = window.location.origin + "/.netlify/functions";
    match when "solid" describes that karat in the SAME source string.
    Therefore "14k Gold", "10k Gold" and "14k Gold Filled" are not
    solid-gold pieces; they continue through the normal rose/silver/gold rules.
+   EXCEPTION, Paul's (13 Nov 2026): the selections "14K Gold + Engrave" and
+   "10K Gold + Engrave", exactly, are 14K / 10K solid gold ("SOLID" does not
+   fit the Etsy option).
 
    Precedence: 14k solid → 10k solid → rose → silver → gold.                 */
 const METALS = [
-  { key:"14k",    label:"14K",    short:"14", match:[/\b14\s*k(?:t|arat)?\s*(?:solid(?:\s+gold)?|gold\s+solid)\b/, /\bsolid(?:\s+gold)?\s*14\s*k(?:t|arat)?\b/] },
-  { key:"10k",    label:"10K",    short:"10", match:[/\b10\s*k(?:t|arat)?\s*(?:solid(?:\s+gold)?|gold\s+solid)\b/, /\bsolid(?:\s+gold)?\s*10\s*k(?:t|arat)?\b/] },
+  /* (GOLDENGRAVE, Paul 13 Nov 2026, order 4223725716: the shop's options "14K GOLD + ENGRAVE" and "10K GOLD + ENGRAVE" leave out "SOLID" only because it does not fit Etsy's option length:
+     "put the rule back for anything that says must be treated as Solid Gold": "14K Gold + Engrave" is 14K solid gold, "10K Gold + Engrave" is 10K solid gold, exactly those selections.
+     Every other "14k Gold" / "10k Gold" still needs "solid" beside it.) */
+  { key:"14k",    label:"14K",    short:"14", match:[/\b14\s*k(?:t|arat)?\s*(?:solid(?:\s+gold)?|gold\s+solid)\b/, /\bsolid(?:\s+gold)?\s*14\s*k(?:t|arat)?\b/, /^14\s*k\s+gold\s*\+\s*engrave$/] },
+  { key:"10k",    label:"10K",    short:"10", match:[/\b10\s*k(?:t|arat)?\s*(?:solid(?:\s+gold)?|gold\s+solid)\b/, /\bsolid(?:\s+gold)?\s*10\s*k(?:t|arat)?\b/, /^10\s*k\s+gold\s*\+\s*engrave$/] },
   { key:"rose",   label:"Rose",   short:"R",  match:[/rose/] },
   { key:"silver", label:"Silver", short:"S",  match:[/silv(?:er|r)/, /sterling/] },
   { key:"gold",   label:"Gold",   short:"G",  match:[/gold/, /yellow/] },
