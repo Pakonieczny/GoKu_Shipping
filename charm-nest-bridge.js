@@ -6716,7 +6716,9 @@ const Gate = window.Gate = (() => {
     const prot = p.roseCutAt && p.roseProtected && Array.isArray(p.roseProtected.placements) ? new Set(p.roseProtected.placements.map(q => q.id)) : null;
     const ids = prot || new Set((p.placements || []).map(q => q.id));
     const orders = [...new Set((p.charms || []).filter(c => !c.excluded && ids.has(c.id)).map(orderOfCharm).filter(Boolean))];
-    return orders.filter(o => allSheets().some(q => q !== p && !q.recalled && (q.charms || []).some(c => !c.excluded && orderOfCharm(c) === o) && !(String(q.setId || "") === home && !q.draft)));
+    // (RGDRAFT, Paul 14 Nov 2026: "fix the rose gold sheet rules that you already know that you made up" / "you add the butterfly to the existing pieces that are not linked and then add the green cut line"): an order is of another set only when a piece of it is on a sheet IN another set. A piece on a draft (a 14K or 10K draft waiting for approval, a Gold Filled or
+    //  Sterling Silver draft) is in no set: it never made its Rose Gold piece "another set's" (Paul's words were "orders that belong to other sheets"; "or a draft" was added when it was coded)
+    return orders.filter(o => allSheets().some(q => q !== p && !q.recalled && (q.charms || []).some(c => !c.excluded && orderOfCharm(c) === o) && !!q.setId && !q.draft && String(q.setId) !== home));
   }
   function rgClearStep(run, p, home, stName) {
     const SW = window.SheetWin; if (!SW || typeof SW.takeOffOrder !== "function") return false;
@@ -6747,12 +6749,21 @@ const Gate = window.Gate = (() => {
     return true;
   }
   /** The orders RGCLEAR took off a Rose Gold sheet are released once that sheet's cut is recorded (or it is gone): they nest past its green line, for their own set. */
+  /* (RGDRAFT, Paul 14 Nov 2026: "fix the rose gold sheet rules that you already know that you made up" / "you add the butterfly to the existing pieces that are not linked and then add the green cut line"): an order held off a Rose Gold sheet is still "another set's" only while its sheet would hold orders of two different sets: the sets of the order's other pieces and the sets of the
+     sheet's other orders' pieces, counting only sheets that are in a set. One set or none: the order goes back on the sheet, and the sheet joins that set and is cut there */
+  function rgStillForeign(o, p) {
+    const setsOf = rid => new Set(allSheets().filter(q => q !== p && !q.recalled && !!q.setId && !q.draft && (q.charms || []).some(c => !c.excluded && orderOfCharm(c) === rid)).map(q => String(q.setId)));
+    const all = new Set(setsOf(o));
+    for (const r of new Set((p.charms || []).filter(c => !c.excluded).map(orderOfCharm).filter(Boolean))) for (const sid of setsOf(r)) all.add(sid);
+    if (p.setId && !p.draft) all.add(String(p.setId));
+    return all.size > 1;
+  }
   function rgClearRelease(run) {
     const held = run && run.rgClearHeld, HU = window.HoldUI; if (!held || !HU || typeof HU.release !== "function") return;
     for (const [o, x] of Object.entries(held)) {
       if (!x || x.releasing) continue;
       const p = allSheets().find(q => q.sheetId === x.sheetId);
-      if (p && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled && Date.now() - (+x.at || 0) < 6 * 3600000) continue;   // (it waits for the cut; never held more than 6 hours by this)
+      if (p && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled && Date.now() - (+x.at || 0) < 6 * 3600000 && rgStillForeign(o, p)) continue;   // (it waits for the cut; never held more than 6 hours by this)   (RGDRAFT, Paul 14 Nov 2026: "fix the rose gold sheet rules that you already know that you made up" / "you add the butterfly to the existing pieces that are not linked and then add the green cut line"): released at once when nothing ties its sheet to two sets
       x.releasing = true;
       Promise.resolve(HU.release(o)).then(r => { if (r && r.ok) { delete held[o]; try { agent({ run: run.runId, metal: "rose" }, "ok", `Order ${o}: released after the green line cut; it nests past the line`); } catch (_) {} try { if (window.RunCtl && RunCtl.save) RunCtl.save(run); } catch (_) {} } else x.releasing = false; })
         .catch(() => { x.releasing = false; });
