@@ -6007,7 +6007,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       render = await Pd.verifyRendered(ai, { wPt: stock.wPt, hPt: stock.hPt, insetPt: 0, res: +S.settings.verifyRes || 6, erodePt: clr < 0 ? Math.round(-clr / 2 * 2) / 2 : 0, corners: typeof cornerTris === "function" ? tryDo(() => cornerTris(sh, stock)) || [] : [], layerSigs: new Map(base.placements.map(p => [p.layerName, p.layerSig])) });
     } catch (e) { render = { ok: false, error: String((e && e.message) || e) }; }
     const hand = (tryDo(() => mcSheetClash(sh)) || []).length;
-    sh.verification = { ok: !!(render && render.ok) && !hand, render: render && { ok: !!render.ok, overlapPx: render.overlapPx || 0, outsidePx: render.outsidePx || 0, ...(render.error ? { error: render.error } : {}) }, geom: { ok: !hand, by: "manual" }, ...(hand ? { handOverlap: hand } : {}), minGapPt: rec.verification ? rec.verification.minGapPt : null, minEdgePt: rec.verification ? rec.verification.minEdgePt : null };
+    // (NOHOLD, Paul 14 Nov 2026: "Let it through": an overlap, hand-placed or left in the written file, is noted and shown red and no longer fails the sheet's check; a charm outside the sheet, or a file that could not be checked, still does)
+    const onlyOverlap = !!render && !render.ok && !render.error && !(render.outsidePx > 0) && render.overlapPx > 0;
+    sh.verification = { ok: !!(render && (render.ok || onlyOverlap)), render: render && { ok: !!render.ok, overlapPx: render.overlapPx || 0, outsidePx: render.outsidePx || 0, ...(render.error ? { error: render.error } : {}) }, geom: { ok: !hand, by: "manual" }, ...(hand ? { handOverlap: hand } : {}), minGapPt: rec.verification ? rec.verification.minGapPt : null, minEdgePt: rec.verification ? rec.verification.minEdgePt : null };
     sh.outputs = { report: null };
     let report = null;
     try {
