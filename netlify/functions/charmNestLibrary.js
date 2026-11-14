@@ -3433,6 +3433,7 @@ async function op_runPut(b) {
       for (const x of had) if (!keep.has(x)) tx.delete(col(RUN_LIVE).doc(x));
       if (b.merge) put.lines = FV.delete();
     } else if (!b.merge && had.length) put.liveLines = old.liveLines;   // a whole record sent without its lines keeps those it had
+    delete put.carrier; if (!b.merge && old && old.carrier) put.carrier = old.carrier;   // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"): which computer carries the run is runCarrier's alone; a save of the run never changes it
     const after = b.merge ? Object.assign({}, old || {}, put) : Object.assign({}, put); if (parts) delete after.lines;   // (shallow: a merged map read as changed when it is not, never the other way)
     read = !old || runLibrarySig(old) !== runLibrarySig(after);
     tx.set(ref, put, { merge: !!b.merge });
@@ -5110,6 +5111,24 @@ async function op_activityGet(b) {
   return { batches: q.docs.map(d => { const x = d.data() || {}; let rows = []; try { rows = JSON.parse(x.rows || "[]"); } catch (_) { rows = []; } return { at: x.at, dev: x.dev || "", by: x.by || "", rows }; }), checkedAt: Date.now() };
 }
 OPS.activityPut = op_activityPut; OPS.activityGet = op_activityGet; NO_GEN_BUMP.add("activityPut"); NO_GEN_BUMP.add("activityGet");
+/* (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"). The run is carried by ONE computer at a time, any computer: the run record's `carrier` { dev, by, at, since } says which, renewed by that computer every 20 s.
+   runCarrier { runId, dev, by, take?, check? }: check only reads; the carrier itself renews it; another computer becomes the carrier when nobody carries it or the carrier has not been
+   seen for 90 s (closed, asleep, offline), or when a person there chose to take it over (take). → { ok, mine, alive, carrier } */
+async function op_runCarrier(b) {
+  const runId = str(b.runId, 80), dev = str(b.dev, 60) || "", by = str(b.by, 80) || ""; if (!isId(runId) || !dev) return { error: "bad run or computer" };
+  const ref = col(RUNS).doc(runId), now = Date.now(), FRESH = 90000;
+  return db.runTransaction(async tx => {
+    const d = await tx.get(ref); if (!d.exists) return { error: "no such run" };
+    const c = d.data().carrier || null, alive = !!(c && c.dev && now - (num(c.at) || 0) < FRESH);
+    if (b.check) return { ok: true, mine: !!(c && c.dev === dev), alive, carrier: c };
+    if (c && c.dev === dev) { const n = { dev, by: by || c.by || "", at: now, since: num(c.since) || now }; tx.set(ref, { carrier: n }, { merge: true }); return { ok: true, mine: true, alive: true, carrier: n }; }
+    if (alive && !b.take) return { ok: true, mine: false, alive: true, carrier: c };
+    const n = { dev, by, at: now, since: now, ...(c && c.dev ? { took: { dev: c.dev, by: c.by || "", at: num(c.at) || 0 } } : {}) };
+    tx.set(ref, { carrier: n }, { merge: true });
+    return { ok: true, mine: true, alive: true, took: alive, carrier: n };
+  });
+}
+OPS.runCarrier = op_runCarrier; NO_GEN_BUMP.add("runCarrier");
 OPS.runLinesAdd = op_runLinesAdd;   // (CLOUDALL S3, Paul 13 Nov 2026: "New orders. They join the run only on that computer" -> any computer that reads new orders writes them into the cloud run)
 OPS.runLinesPatch = op_runLinesPatch;   // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer": an order line changed on any computer (taken off, held, cancelled) is written to the cloud run by that computer)
 OPS.engraveSyncPut = op_engraveSyncPut; OPS.engraveSyncGet = op_engraveSyncGet; NO_GEN_BUMP.add("engraveSyncPut"); NO_GEN_BUMP.add("engraveSyncGet");   // ENGRSYNC (13 Nov 2026): a line's engraving work shared by every computer (op_engraveSyncPut above)
