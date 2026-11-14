@@ -219,6 +219,7 @@ const assets = [
   "charm-nest-monogram-seals.js",
   "charm-nest-order-seals.js",
   "charm-nest-activity.css",
+  "charm-nest-dxf-skeleton.js",
   "charm-nest-export.js",
   "charm-nest-export-ui.js",
   "charm-nest-library.js",
