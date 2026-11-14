@@ -193,6 +193,7 @@ const assets = [
   "charm-nest-engrave-sync.js",
   "charm-nest-run-follow.js",
   "charm-nest-cloud-sheets.js",
+  "charm-nest-cloud-activity.js",
   "charm-nest-pic-busy.js",
   "charm-nest-engrave-said.js",
   "charm-nest-engrave-read.js",
