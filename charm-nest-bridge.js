@@ -28385,7 +28385,9 @@ const Arrivals = window.Arrivals = (() => {
       //  the run, and they reach this one from the cloud (charm-nest-run-follow.js). The button put the run away, so the page showed the 2 new orders alone until the cloud filled it again
       if (followsRun()) { await record(picked, stamp()); delete state.inbox; setTimeout(() => { try { window.CharmNestRunFollow && window.CharmNestRunFollow.now("arrivals"); } catch (_) {} }, 3000); }
       else if (Recall.on()) { await record(picked, stamp()); state.inbox = picked; }
-      else await merge(picked, res.openIds);
+      else { const had = new Set(B.orders.byKey.keys()); await merge(picked, res.openIds);
+        // (CLOUDALL S3, Paul 13 Nov 2026: "New orders. They join the run only on that computer" -> any computer that reads new orders writes them into the cloud run): a computer whose page does not run the run writes the orders it took in straight into the cloud run
+        if (!B.run && window.CharmNestRunFollow && CharmNestRunFollow.addRows) { const fresh = Orders.rows().filter(r => !had.has(r.key)); if (fresh.length) CharmNestRunFollow.addRows(fresh).catch(e => agent({ bridge: true }, "warn", `New orders were not written to the cloud run yet (${e.message}): they are tried again at the next check`)); } }
       state.error = null; kept = null;
       processPending().catch(e=>{state.error=e.message;save();paint();});
     } catch (e) { if (gen === epoch) state.error = e.message; }

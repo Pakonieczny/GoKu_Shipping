@@ -87,6 +87,10 @@
         if (gone.length) safe(() => { for (const j of root.Engrave.jobsOf(row)) { j.copies = (j.copies || []).filter(id => !gone.includes(id)); if (!j.copies.length) { root.Engrave.items().delete(j.key); if (root.Review) root.Review.remove("eng:" + j.key); } } });
         row._lp = lp; n++;
       }
+      // (CLOUDALL S3, Paul 13 Nov 2026: "New orders. They join the run only on that computer" -> any computer that reads new orders writes them into the cloud run): the order lines another computer ADDED to the cloud run come into this page's run and go on as its own new orders (placed at the run's next intake)
+      let added = 0; const newRids = new Set();
+      for (const [k, l] of Object.entries(cr.lines)) { const lp = l && l._lp; if (!lp || !lp.added || lp.dev === me || B.orders.byKey.has(k)) continue; const row = safe(() => O.rowFromRecord(k, l), null); if (!row) continue; row._lp = lp; B.orders.rows.push(row); B.orders.byKey.set(k, row); added++; newRids.add(String(l.orderId || k.split("_")[0])); }
+      if (added) { run.orders = [...new Set((run.orders || []).map(String).concat([...newRids]))]; safe(() => O.interpretAll()); safe(() => { const a = root.Arrivals && root.Arrivals.state && root.Arrivals.state(); if (a) a.pending = true; }); safe(() => root.Arrivals.processPending().catch(() => {})); n += added; st.addedFromOthers = (st.addedFromOthers || 0) + added; }
       st.appliedAt = +cr.lineEditAt; st.applied = (st.applied || 0) + n; st.last = { at: Date.now(), why, fromOthers: n };
       if (n) { safe(() => root.Review && root.Review.syncOrderItems()); safe(() => O.render()); safe(() => root.Engrave && root.Engrave.render()); safe(() => root.Session && root.Session.schedule()); }
       return st;
@@ -108,6 +112,20 @@
     st.patched = (st.patched || 0) + ((res && res.applied) || []).length;
     return res;
   }
+  /** (CLOUDALL S3, Paul 13 Nov 2026: "New orders. They join the run only on that computer" -> any computer that reads new orders writes them into the cloud run): this computer took in these new order lines; they are written into the cloud run (runLinesAdd) so the run places them whichever computer works it */
+  async function addRows(rows) {
+    rows = (rows || []).filter(r => r && r.key && !r.parentRow); if (!rows.length) return null;
+    if (holdsRun()) return null;   // (this page's own run takes them in and saves them)
+    const runId = st.runId || await openRunId(); if (!runId) return null;
+    const O = root.Orders; if (!O || typeof O.lineRecord !== "function") return null;
+    const lines = {}; for (const r of rows) { const rec = safe(() => O.lineRecord(r), null); if (rec && rec[1]) lines[r.key] = rec[1]; }
+    if (!Object.keys(lines).length) return null;
+    let res = null, err = null;
+    for (let t = 0; t < 4; t++) { try { res = await api({ op: "runLinesAdd", runId, lines, dev: dev(), by: who() }); err = null; break; } catch (e) { err = e; await new Promise(r => setTimeout(r, 1500 * (t + 1))); } }
+    if (err) throw err;
+    st.added = (st.added || 0) + ((res && res.added) || []).length;
+    return res;
+  }
   function follow() {
     const Y = root.CNSync; if (!Y || typeof Y.follow !== "function") return;
     Y.follow({ name: "run-follow", kinds: "r", active: () => true, wants: k => k === "r:*" || !st.runId || k === "r:" + st.runId, read: why => now(why) });
@@ -124,6 +142,6 @@
     };
     go();
   }
-  root.CharmNestRunFollow = { state: () => Object.assign({}, st), now, patchRows, applyOthers, dev };
+  root.CharmNestRunFollow = { state: () => Object.assign({}, st), now, patchRows, applyOthers, addRows, dev };
   if (root.document) { if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", boot); else boot(); }
 })(typeof self !== "undefined" ? self : this);
