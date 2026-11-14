@@ -15086,7 +15086,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
        window drawing, that was a third of a second and more before the request could leave (an IntersectionObserver now keeps them, a new card is still measured once). A read
        for a person's own write asks for the cards the loop's last read asked for (the person is working on a card that is in view; the loop's next read looks again). */
     let {ids,setIds}=(local && live.view && live.view.ids.length && Date.now()-live.viewAt<10000)?live.view:(live.view=shown(),live.viewAt=Date.now(),live.view);
-    if(live.offWant && live.offWant.size){const off=[...live.offWant];live.offWant.clear();ids=[...new Set(ids.concat(off.filter(k=>k[0]==='s').map(k=>k.slice(2)).filter(id=>records.has(id))))];setIds=[...new Set(setIds.concat(off.filter(k=>k[0]==='t').map(k=>k.slice(2))))];}   // (OFFSCREEN, Paul 14 Nov 2026: "Yes, items 3–6")
+    if(live.offWant && live.offWant.size){const off=[...live.offWant];live.offWant.clear();ids=[...new Set(ids.concat(off.filter(k=>k[0]==='s').map(k=>k.slice(2))))];setIds=[...new Set(setIds.concat(off.filter(k=>k[0]==='t').map(k=>k.slice(2))))];}   // (OFFSCREEN, Paul 14 Nov 2026: "Yes, items 3–6")
     if(!local && sync && sync.dirty()){live.inResume=true;try{sync.resume();}finally{live.inResume=false;}}   // (FEED: named while the Library was not on screen: read now it is)
     const feedWant=live.feedWant;live.feedWant=false;
     if(!local && !feedWant && synced() && live.revs && ids.every(id=>records.has(id) && Object.prototype.hasOwnProperty.call(live.revs,'s:'+id)) && setIds.every(id=>Object.prototype.hasOwnProperty.call(live.revs,'t:'+id)) && Date.now()-live.verifiedAt<NET){live.looks=(live.looks || 0)+1;live.end=Date.now();scheduleNext();return;}   // (FEED: every card in view read, nothing named since: a look, no call)
@@ -15208,7 +15208,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       wants:k=>{if(!live.revs || Object.prototype.hasOwnProperty.call(live.revs,k))return true;
         // (OFFSCREEN, Paul 14 Nov 2026: "Yes, items 3–6"): a sheet or set of a card OFF screen that another computer changed was never read: the Library kept its old section (In progress, Laser cutting), set and cut mark
         //  until the card was scrolled to. It is read once, with the next read (readLive): one read, and only for what the feed names as written
-        const id=String(k).slice(2);if((k[0]==='s' && records.has(id)) || (k[0]==='t' && sets.has(id))){(live.offWant || (live.offWant=new Set())).add(k);return true;}return false;},
+        const id=String(k).slice(2);if(k[0]==='s' || k[0]==='t'){const cards=[...document.querySelectorAll('[data-laser-card]')];if(k[0]==='s'?cards.some(x=>(x._laserSheets || []).includes(id) || [...x.querySelectorAll('[data-laser-sheet]')].some(n=>n.dataset.laserSheet===id)):cards.some(x=>x._laserSet && x._laserSet.setId===id)){(live.offWant || (live.offWant=new Set())).add(k);return true;}}return false;},   // (a card the Library shows, read or not)
       read:why=>{if(!liveOn())return;if(why==='verify' || why==='reset')live.verifiedAt=0;live.feedWant=true;if(live.inResume)return;if(why==='wrote'){live.fresh=true;live.heard=Date.now();readSoon(true);}else readSoon(false);}});   // (wrote: another tab of this computer wrote it: read now, as its own write would)
   };
   feedFollow();
