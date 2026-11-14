@@ -308,7 +308,35 @@ function evaluate(ev, now) {
   const worst = checks.slice().sort((a, b) => RANK[b.level] - RANK[a.level] || a.pri - b.pri)[0];
   const level = worst && RANK[worst.level] ? worst.level : "ok";
   const problem = level !== "ok";
+  /* ONEALARM (Paul, 14 Nov 2026: "one alarm per way to fix it ... if the user clicks the alarm it will automatically open the offending conversation and tell the user how to correct it"):
+     the problems as a short list, one item per thing a person can fix: { k (which check), t (the conversation to open, when it is about one), title (a few words), fix (one short line) }.
+     A reply that did not go out is one item per reply; a conversation that may be missing messages is one item per conversation; a page that will not read names its conversation. */
+  const alarms = [];
+  const isBad = c => c && (c.level === "warn" || c.level === "down");
+  const first = t => { const x = clean(String(t || "").split(/(?<=[.!?])\s/)[0], 140); return x; };
+  for (const c of checks.slice().sort((a, b) => RANK[b.level] - RANK[a.level] || a.pri - b.pri)) {
+    if (!isBad(c)) continue;
+    const dead = c.id === "send" && q && Array.isArray(q.dead) && nDead > 0 ? q.dead : null;
+    if (dead && dead.length) {
+      for (const d of dead.slice(0, 10)) {
+        const blocked = /blocked|spam/i.test(String(d.plain || ""));
+        alarms.push({ k: "send", t: d.threadId || null, q: d.sendId || null, title: "Reply not sent", level: c.level,
+          fix: blocked ? "This buyer is blocked on Etsy (reported as spam). Press Not spam on Etsy, then Retry here, or put the reply away."
+                       : "Etsy did not take this reply. Press Retry on it, send it by hand on Etsy, or put it away." });
+      }
+    } else if (c.id === "consistency" && cs && cs.gaps && typeof cs.gaps === "object") {
+      const open = Object.entries(cs.gaps).filter(([, g2]) => g2 && g2.url !== false).sort((a, b) => (a[1].firstAtMs || 0) - (b[1].firstAtMs || 0)).slice(0, 10);
+      for (const [id] of open) alarms.push({ k: "gap", t: id, title: "Messages may be missing", level: c.level, fix: "Compare this conversation with Etsy. If nothing is missing, press Matches Etsy." });
+      if (!open.length) alarms.push({ k: "gap", t: null, title: "Messages may be missing", level: c.level, fix: first(c.text) });
+    } else if (c.id === "read" && c.data && c.data.thread) {
+      alarms.push({ k: "read", t: c.data.thread, title: c.short || "Etsy page not read", level: c.level,
+        fix: c.data.reread ? "Etsy's page for this conversation did not read. Press Re-read now. If it fails again, reload the Etsy helper in Chrome." : "Sign in to Etsy in the browser that has the Etsy helper." });
+    } else {
+      alarms.push({ k: c.id, t: null, title: c.short || c.label, level: c.level, fix: first(c.text) });
+    }
+  }
   return {
+    alarms,
     at: now, level, short: problem ? worst.short : "", problem: problem ? worst.text : "",
     // which check the sentence is about, and its data (the open gaps: the sorter shows the conversation, the last and next try, and Dismiss)
     kind: problem ? worst.id : "", gap: problem && worst.id === "consistency" ? worst.data : null,
@@ -357,7 +385,7 @@ function nextDoc(prev, res, now) {
   const downSinceMs = bad ? (wasBad ? prev.downSinceMs : now) : 0;
   return {
     atMs: now, level: res.level, short: res.short, problem: res.problem, kind: res.kind || "", gap: res.gap || null,
-    checks: res.checks, downSinceMs, incidentId: bad ? String(downSinceMs) : "",
+    checks: res.checks, alarms: Array.isArray(res.alarms) ? res.alarms : [], downSinceMs, incidentId: bad ? String(downSinceMs) : "",
     worstSinceMs: bad ? (wasBad && prev.level === res.level ? (prev.worstSinceMs || downSinceMs) : now) : 0
   };
 }
