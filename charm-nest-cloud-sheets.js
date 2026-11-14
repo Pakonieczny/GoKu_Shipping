@@ -45,6 +45,17 @@
       try { await api({ op: "putSheet", sheet: { id: p.sheetId, working: k ? { status: k, dev: devId(), by: whoAmI(), at: Date.now() } : null } }); st.announced = (st.announced || 0) + 1; } catch (_) { WORK.set(p.sheetId, had); } } }
     finally { announcing = false; }
   }
+  /* (CLOUDMARKS, Paul 14 Nov 2026: "You must put all this in the cloud"): a sheet's set marks, when it joined its set (joinedAt), whether a person put it there (joinedBy) and the set it was taken out of (leftSet), were kept only in the
+     workspace of the computer carrying the run. They are written to the sheet's cloud record whenever they change, by that computer only (a following computer's copy may be older),
+     and every computer that builds the sheet from the cloud takes them from it (ensureLive below, the run's restore in charm-nest-bridge.js). A sheet with nothing on it is never written. */
+  const MARKS = new Map(); let marking = false;
+  async function marks() {
+    const run = safe(() => root.B && root.B.run, null); if (marking || !run || !run.runId) return; marking = true;
+    try { for (const p of pages()) { if (!p || !p.sheetId || p.recalled || p.runId !== run.runId || !(p.charms || []).length || !(p.persistedDone === true || p.layoutRev != null)) continue;
+        const m = { joinedAt: +p.joinedAt || null, joinedBy: p.joinedBy || null, leftSet: p.leftSet || null }, sig = JSON.stringify(m); if (MARKS.get(p.sheetId) === sig) continue;
+        try { await api({ op: "putSheet", sheet: Object.assign({ id: p.sheetId }, m) }); MARKS.set(p.sheetId, sig); st.marks = (st.marks || 0) + 1; } catch (_) { /* tried again at the next look */ } } }
+    finally { marking = false; }
+  }
   const lockOf = rec => { const w = rec && rec.working; return w && w.status && w.dev && w.dev !== devId() && Date.now() - (+w.at || 0) < 15 * 60000 ? w : null; };
 
   /** The revision of every sheet this page holds as a live sheet whose copy is the cloud's. Run once a page is up; a page that differs keeps saving as before. */
@@ -86,6 +97,7 @@
       p = addPage(rec.metal, { fresh: true });
       Object.assign(p, { status: "complete", sheetId: rec.id, runId: rec.runId || null, setId: rec.setId || null, seq: rec.setSeq || rec.seq || null, setDay: rec.day || null, sheetIndex: rec.sheetIndex == null ? null : rec.sheetIndex,
         fileBase: rec.fileBase || null, cardStartedAt: rec.cardStartedAt || rec.createdAt || null, draft: !!rec.draft, releaseFull: !!rec.releaseFull, label: rec.label || null, roseCutAt: rec.roseCutAt || null, laserDoneAt: rec.laserDoneAt || null,
+        ...(+rec.joinedAt ? { joinedAt: +rec.joinedAt } : {}), ...(rec.joinedBy ? { joinedBy: rec.joinedBy } : {}), ...(rec.leftSet ? { leftSet: rec.leftSet } : {}),   // (CLOUDMARKS, Paul 14 Nov 2026: "You must put all this in the cloud")
         charms: [], placements: [], rejects: [], dirty: false, problem: null });
     }
     await reload(p, "opened here to be changed");
@@ -126,10 +138,11 @@
       if (Y && typeof Y.follow === "function") Y.follow({ name: "cloud-sheets", kinds: "s", wild: "", wants: k => !!pageOf(String(k).slice(2)), read: (why, keys) => changed(keys) });
       setTimeout(() => { learn().catch(e => console.warn("[cloud-sheets] learn", e)); }, 15000);
       setInterval(() => { if (!(root.document && root.document.hidden)) learn().catch(() => {}); }, 300000);
-      setInterval(() => { announce().catch(() => {}); }, 4000);   // (CLOUDALL C6, Paul 13 Nov 2026: "Sheets that haven't been saved yet ... exist only on the computer doing it")
+      setInterval(() => { announce().catch(() => {}); }, 4000);
+      setInterval(() => { marks().catch(() => {}); }, 15000);   // (CLOUDMARKS, Paul 14 Nov 2026: "You must put all this in the cloud")   // (CLOUDALL C6, Paul 13 Nov 2026: "Sheets that haven't been saved yet ... exist only on the computer doing it")
     };
     go();
   }
-  root.CharmNestCloudSheets = { state: () => Object.assign({}, st, { differs: st.differs.slice() }), reload, ensureLive, learn, revOf, conflict, announce, lockOf, _changed: changed };
+  root.CharmNestCloudSheets = { state: () => Object.assign({}, st, { differs: st.differs.slice() }), reload, ensureLive, learn, revOf, conflict, announce, lockOf, marks, _changed: changed };
   if (root.document) { if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", boot); else boot(); }
 })(typeof self !== "undefined" ? self : this);
