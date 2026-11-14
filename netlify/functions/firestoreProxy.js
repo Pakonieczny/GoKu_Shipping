@@ -41,6 +41,7 @@ const CORS = {
 // Only these collections + their subcollections can be read/written through this proxy.
 // Extend as new mail-system collections come online.
 const CALLABLE_COLLS = new Set([
+  "EtsyMail_Unsent",   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): replies that did not go and design notes not posted yet, kept for every computer
   "EtsyMail_Threads",
   "EtsyMail_Customers",
   "EtsyMail_Orders",
@@ -107,6 +108,7 @@ const OWNER_WRITE_COLLS = new Set([
 // EtsyMail_Drafts  — operator may persist composer attachment lists; the
 //   full draft lifecycle is managed by etsyMailDraftReply / etsyMailDraftSend.
 const OPERATOR_WRITE_COLLS = new Set([
+  "EtsyMail_Unsent",   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud")
   "EtsyMail_SalesContext",
   "EtsyMail_Threads",
   "EtsyMail_Drafts"
