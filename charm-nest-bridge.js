@@ -15905,6 +15905,21 @@ const Sets = window.Sets = (() => {
 
 /* ═══ 23 · RunCtl — the two halves, the record, resume, stop, Auto/Manual ═══ */
 const RunCtl = window.RunCtl = (() => {
+  /* (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"): the computer that carries the run says so in the cloud (runCarrier, renewed every 20 s); a computer whose run was taken over by another one reloads and follows it;
+     Resume on a computer while another, alive, carries the run asks the person first; a computer coming back with its saved copy of a run another computer carries now follows it. */
+  const carrierDev = () => { try { return window.CharmNestRunFollow && typeof CharmNestRunFollow.dev === "function" ? CharmNestRunFollow.dev() : ""; } catch (_) { return ""; } };
+  async function carrier(runId, o = {}) { const dev = carrierDev(); if (!dev || !runId) return null; return api("charmNestLibrary", Object.assign({ op: "runCarrier", runId, dev, by: String((B && B.employee) || "").trim() }, o), { quiet: true }); }
+  let carrierLost = false;
+  async function carrierBeat() {
+    const r = B.run; if (!r || !r.runId || carrierLost || !(S.cloud && S.cloud.ok)) return;
+    let res = null; try { res = await carrier(r.runId); } catch (_) { return; }
+    if (!res || !res.ok || res.mine || r !== B.run) return;
+    carrierLost = true; const who = (res.carrier && res.carrier.by) || "another computer";
+    try { agent({ run: r.runId }, "warn", `This run is now carried by ${who} on another computer: this page reloads and follows it from the cloud`); } catch (_) {}
+    try { toast(`This run is now carried by ${who} on another computer: this page reloads to follow it`, "bad", 8000); } catch (_) {}
+    window.__runHandedOver = true; setTimeout(() => { try { location.reload(); } catch (_) {} }, 2500);
+  }
+  if (typeof setInterval === "function" && typeof window !== "undefined" && !window.__carrierTimer) window.__carrierTimer = setInterval(() => { carrierBeat().catch(() => {}); }, 20000);
   /* A run used to halt after five of its own steps and ask, with a button named after the source code, whether to do
      the next one. Nobody could answer that question usefully, and nothing was gained by asking it: a run that has been
      started is a run that should finish. Processing continues past pending sheets, review and engraving decisions.
@@ -16024,7 +16039,7 @@ const RunCtl = window.RunCtl = (() => {
     if (B.run && ["running", "review", "paused", "processed", "stopped"].includes(B.run.status)) { toast("A run is already open — resume, finish, or abandon it before starting another", "bad"); return B.run; }
     if (B.run) await save(B.run);
     if ((B.run || Recall.on()) && clearRunState()===false) return B.run;
-    const r = newRun(opts.mode); Gate.state().solidIncluded = {}; B.run = r; claimRun(r.runId);
+    const r = newRun(opts.mode); Gate.state().solidIncluded = {}; B.run = r; claimRun(r.runId); carrier(r.runId).catch(() => {});   // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access")
     agent({ run: r.runId }, "DS", `Run ${r.runId} started (${r.mode} mode)`);
     try { await saveSoft(r); } catch (e) { stop(e.message, "Fix the cause and press Resume."); throw e; }   // (a run that cannot start says so and waits for Resume, it is not left running)
     renderBanner();
@@ -16462,6 +16477,13 @@ const RunCtl = window.RunCtl = (() => {
     if (rec.lineArchive) { const la = rec.lineArchive; rec.lineArchive = { parts: +la.parts || 0, at: la.at || null, base: { lines: +la.lines || 0, committed: +la.committed || 0, held: +la.held || 0, sheets: +la.sheets || 0 } }; }
     if (rec.status === "processed") { rec.step = "engrave"; rec.processingComplete = false; }
     const pendingStop=reviewStop(rec);
+    { let c = null; try { c = await carrier(runId); } catch (_) { c = null; }   // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access")
+      if (c && c.ok && !c.mine && c.alive) {
+        const who = (c.carrier && c.carrier.by) || "another computer", ago = c.carrier && c.carrier.at ? Math.max(0, Math.round((Date.now() - c.carrier.at) / 1000)) : 0;
+        if (!confirm(`This run is being carried by ${who} on another computer (seen ${ago} s ago).\n\nTake it over on this computer? That computer stops carrying it and follows it.`)) return;
+        try { c = await carrier(runId, { take: true }); } catch (_) { c = null; }
+        if (!c || !c.mine) { toast("The run could not be taken over: try again", "bad", 7000); return; }
+      } }
     if (!await holdsRun(runId)) { toast("Another Brites Manager tab is carrying on with this run — close that tab to take it over here", "bad", 8000); return; }
     B.run = rec; rec.status = "running"; rec.stoppedBy = null; rec.fix = null;
     agent({ run: runId }, "DS", `Resuming ${runId} at step ${rec.step}`);
@@ -16715,6 +16737,7 @@ const RunCtl = window.RunCtl = (() => {
     try {
       if (globalThis.navigator?.onLine === false) throw new Error("the network is down");
       if (!await claimRun(r.runId)) throw new Error("another sorter tab is carrying on with this run");
+      { const c = await carrier(r.runId).catch(() => null); if (c && c.ok && !c.mine && c.alive) throw new Error(`${(c.carrier && c.carrier.by) || "another computer"} carries this run on another computer`); }   // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access")
       await api("charmNestLibrary", { op: "ping", calibration: false }, { quiet: true });
       await DesignLink.ensure();
       if (!autoResumable(r)) return false;
@@ -16889,7 +16912,7 @@ const RunCtl = window.RunCtl = (() => {
     const open = rev ? `\n\n${rev} review item${rev === 1 ? " still waits" : "s still wait"} for a decision.` : "";
     if (confirm(`Give up run ${r.runId.slice(-8)}?${lost}${open}\n\nThe sheets and files already saved are kept.`)) clearRunState(()=>releaseRun(r),{drop:'released'});
   }
-  return { bannerPieces, stepDetail, optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, backgroundSettled, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner: bannerNow, renderModeBtn, clearRunState, run, autoResume, holdsRun, takeOverWhenFree, stopKind: stopKindOf };
+  return { bannerPieces, stepDetail, optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, backgroundSettled, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner: bannerNow, renderModeBtn, clearRunState, run, autoResume, holdsRun, takeOverWhenFree, stopKind: stopKindOf , carrier};
 })();
 
 /* ═══ 23c · Custom Orders' QR sticker — the sorting station's own label, printed the sorting station's way ═══════════
@@ -27843,6 +27866,8 @@ const Session = window.Session = (() => {
       S.sources = d.sources || []; S.poolSources = d.poolSources || {}; S.unassigned = d.unassigned || [];
       B.carry = d.carry;
       B.run = d.run; B.orders = d.orders; B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
+      // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"): the run this computer carried before it closed, carried meanwhile by another computer that is alive, is not taken back: this page follows it from the cloud
+      try { if (B.run && B.run.runId && S.cloud && S.cloud.ok && window.RunCtl && RunCtl.carrier) { const c = await RunCtl.carrier(B.run.runId, { check: true }); if (c && c.ok && !c.mine && c.alive) { agent({ bridge: true }, "cloud", `${B.run.runId} is carried by ${(c.carrier && c.carrier.by) || "another computer"} on another computer: this computer follows it`); B.run = null; } } } catch (_) { /* the heartbeat looks again in 20 s */ }
       /* (CLOUDLINES, Paul 13 Nov 2026: "Why is the other computer only showing seven orders ... I had to go and delete all the data on the computer again for it to actually show me all the
          orders"): this computer's checkpoint is a copy, never the authority. The run's lines the cloud holds and this copy lacks (taken on another computer, or a copy saved while this one held
          only the newest arrivals) are added from the cloud record, as a clean computer reads them; nothing this computer holds is dropped or changed. */
@@ -29169,7 +29194,7 @@ async function bootBridge() {
   // The Design Station guards unload in three places; the sorter guarded it nowhere. A reload mid-run loses every
   // engraving approval not yet written to a back file and every review decision made that shift.
   window.addEventListener("beforeunload", e => {
-    const r = B.run; if (!r) return;
+    const r = B.run; if (!r || window.__runHandedOver) return;   // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"): a page whose run another computer took over reloads without asking
     const live = ["running", "review", "paused"].includes(r.status);
     // a stopped run is the likeliest moment for a reload and holds the most unwritten work — but only nag when there is some
     const unwritten = r.status === "stopped" && ([...Engrave.items().values()].filter(j => ["approved", "words", "review"].includes(j.state) && !(j.backs && j.backs.length) && (j.state === "approved" || j.decision || j.nudged || j.edited)).length || Review.count());
