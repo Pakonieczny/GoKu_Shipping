@@ -1314,6 +1314,7 @@ const DesignLink = window.DesignLink = (() => {
     // ONE signed-in person (Paul, 18 Oct 2026): the station's own stored name (st.employee) is no longer adopted here; the station is told
     // who is signed in to the sorter instead, before anything else is asked of it, so what it records is under that person
     S_.sentEmployee = undefined; await sendEmployee();
+    try { window.CharmNestCloudShare && CharmNestCloudShare.stationUp(st); } catch (_) {}   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): the station takes the shared settings and chat drafts (or gives its own, the first time)
     S_.veil && S_.veil.classList.add("hidden"); Dock.layout();
     agent({ bridge: true }, "DS", `Session ${S_.nonce.slice(0, 4)} open on ${st.bench} · ${st.counts.open} open orders (${st.counts.hydrated} read) · ${st.selection.length} selected · Etsy ${st.etsy.signedIn ? "signed in" : "NOT signed in"}${st.releasedFromPreviousSession && st.releasedFromPreviousSession.length ? ` · released ${st.releasedFromPreviousSession.length} lock(s) from a previous session` : ""}`);
     if (!st.etsy.signedIn) toast("The Design Station is not signed in to Etsy — press Connect Etsy", "bad", 8000);
@@ -1407,6 +1408,7 @@ const DesignLink = window.DesignLink = (() => {
     else if (d.type === "ui.modal") agent({ bridge: true }, "DS", d.open ? `Station opened item ${d.transactionId} of order ${d.receiptId}` : "Station closed its dialog");
     else if (d.type === "error") agent({ bridge: true }, "warn", `Station reported: ${d.command} — ${d.error}`);
     else if (d.type === "etsy.alarm") { etsyReadout(d); }
+    else if (d.type === "shared.changed") { try { window.CharmNestCloudShare && CharmNestCloudShare.fromStation(d); } catch (_) {} }   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): the station's shared settings or chat drafts, changed by a person there
     // a person pressed Print labels or Generate QR at the station with nobody signed in here: the Account panel opens (the one sign-in), and the
     // name goes to the station as it is set (B.employee); someone signed in already: the station is told again (Paul, 18 Oct 2026)
     else if (d.type === "employee.need") { if (employeeName()) { S_.sentEmployee = undefined; sendEmployee(); } else { try { if (window.CNAccount && typeof CNAccount.open === "function") CNAccount.open(); else NameBar.open({ kind: "ask", why: "The Design Station records its work under your name." }); } catch (_) {} } }
@@ -17610,7 +17612,7 @@ const CustomSheet = window.CustomSheet = (() => {
   const metalOf = k => METALS.find(m => m.key === k) || null;
   const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
   const safe = s => String(s || "design").replace(/[^\w.\-]+/g, "_").slice(0, 60);
-  function changed() { ver++; try { Session.schedule(); } catch (_) {} redraw(); }
+  function changed() { ver++; try { Session.schedule(); } catch (_) {} redraw(); try { window.CharmNestCloudShare && CharmNestCloudShare.customChanged && CharmNestCloudShare.customChanged(); } catch (_) {} }   // (customChanged: (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): the designs dropped here and not sent yet, shared with every computer)
   function redraw() { try { Review.render(); } catch (_) {} try { if (window.OrderWin?.isOpen?.()) OrderWin.paint(); } catch (_) {} if (D.dlg && D.dlg.open) paint(); }
   /** The line keys of every card sent, to the card they went with (read by interpretAll and preparePool). */
   function index() {
@@ -19443,7 +19445,7 @@ const CustomSheet = window.CustomSheet = (() => {
     }, delay || 0);
     return true;
   }
-  return { add, remove, send, prepare, sentOf, decisionOf, sending, recover, load, hydrate, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, sheetStamps, sheetSealsHtml, sentButtonHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
+  return { touched: () => { ver++; redraw(); }, add, remove, send, prepare, sentOf, decisionOf, sending, recover, load, hydrate, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, sheetStamps, sheetSealsHtml, sentButtonHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════

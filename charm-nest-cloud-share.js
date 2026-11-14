@@ -36,7 +36,8 @@
   const STORES = [
     { name: "sorter-settings", key: () => "cn.settings", noSandbox: true,
       fields: raw => { const o = parse(raw, {}), f = {}; for (const [k, v] of Object.entries(o || {})) if (!SETTINGS_HERE.has(k)) f[k] = v; return f; },
-      build: (f, raw) => { const o = parse(raw, {}); for (const k of Object.keys(o)) if (!SETTINGS_HERE.has(k) && !(k in f)) delete o[k]; return J(Object.assign(o, f)); },
+      // (the settings' version, v, stays with this computer's copy: a copy written without it would be taken for a very old one at the next load and its upgrades would undo the shared values)
+      build: (f, raw) => { const o = parse(raw, {}); for (const k of Object.keys(o)) if (!SETTINGS_HERE.has(k) && !(k in f)) delete o[k]; if (o.v == null) { const cur = safe(() => SO().settings.v, null); if (cur != null) o.v = cur; } return J(Object.assign(o, f)); },
       apply: changed => { const s = safe(() => SO().settings, null); if (!s) return; for (const [k, v] of Object.entries(changed)) { if (SETTINGS_HERE.has(k)) continue; if (v === undefined) delete s[k]; else s[k] = v; }
         safe(() => root.renderNestFlow && root.renderNestFlow()); safe(() => root.refreshAllCards && root.refreshAllCards()); } },
     { name: "sorter-stock", key: () => "cn.stock", noSandbox: true,
@@ -59,6 +60,15 @@
     { name: () => "flowstages-" + world(), shards: 4, key: () => "cn.flow.v1:" + world(),
       fields: raw => { const f = {}; for (const e of parse(raw, [])) if (Array.isArray(e) && e[0]) f[String(e[0])] = [e[1], e[2]]; return f; }, build: f => J(Object.entries(f).map(([rid, v]) => [rid, v[0], v[1]])),
       apply: changed => safe(() => root.CNFlow && root.CNFlow.reload && root.CNFlow.reload(Object.keys(changed))) },
+    // the designs dropped on an order's card and not sent to a sheet yet: each file is uploaded once read (the path its Send uses), and the card's designs, without their
+    // bytes, are shared; another computer shows them on the same order and reads a file from the cloud when it needs it (CustomSheet read)
+    { name: () => "customdrafts-" + world(), shards: 8, key: () => "cn.custom.shared:" + world(),
+      fields: raw => Object.assign({}, parse(raw, {})), build: f => J(f), apply: changed => customApply(changed) },
+    // the Design Station's shared switches and its order-chat drafts (another origin: it gives and takes them through the sorter, DesignLink shared.get / shared.set / shared.changed)
+    { name: () => "dsshared-" + world(), key: () => "cn.ds.shared:" + world(),
+      fields: raw => { const o = parse(raw, {}), f = {}; for (const [k, v] of Object.entries(o.settings || {})) f["s:" + k] = v; for (const [rid, t] of Object.entries(o.chat || {})) f["c:" + rid] = t; return f; },
+      build: f => { const o = { settings: {}, chat: {} }; for (const [k, v] of Object.entries(f)) { if (k.startsWith("s:")) o.settings[k.slice(2)] = v; else if (k.startsWith("c:")) o.chat[k.slice(2)] = v; } return J(o); },
+      apply: () => toStation() },
     // Manual Control's moves not saved yet, by sheet: kept here under this tab's own key (cn.mc.draft.<sheet>.<tab>), so Manual Control turned on for that sheet on ANY
     // computer puts them back (the claim still lets only one person move a sheet's charms at a time); a save drops them everywhere
     { name: () => "mcdrafts-" + world(), shards: 4, family: true,
@@ -157,6 +167,8 @@
     for (let i = 0; i < all.length; i += 50) await pull(all.slice(i, i + 50));
     for (const s of STORES) await push(s, { ifAbsent: true });   // (a field this computer has and the cloud has never had: given; one the cloud already has: taken from it above)
     for (const s of STORES) await push(s);                       // (what changed here while this page was closed or offline)
+    if (readyFn) readyFn();
+    customChanged();   // (the designs dropped here before this page knew the cloud store: shared now)
     const S = root.CNSync;
     if (S && typeof S.follow === "function") {
       S.follow({ name: "cloud-share", kinds: "g", wild: "g", active: () => true,
@@ -171,6 +183,64 @@
     const go = () => { tries++; if (!(root.CN && typeof root.CN.api === "function" && SO() && SO().settings && root.CharmNestRunFollow) && tries < 180) return setTimeout(go, 1000); setTimeout(() => start().catch(e => { st.fails++; st.last = { at: Date.now(), error: String(e && e.message || e) }; }), 2000); };
     go();
   }
-  root.CharmNestCloudShare = { state: () => Object.assign({}, st, { stores: STORES.map(nameOf) }), pull: names => pull(names || STORES.flatMap(docsOf)), push: name => { const s = STORES.find(x => nameOf(x) === name); return s ? push(s) : Promise.resolve(); } };
+  /* the designs dropped on order cards and not sent yet (CustomSheet) */
+  const CUSTOM_KEY = () => "cn.custom.shared:" + world();
+  const fileName = s => String(s || "design").replace(/[^\w.\-]+/g, "_").slice(0, 60);
+  let custT = 0, custBusy = false, applyingCustom = false;
+  function customSnapshot() {
+    const all = safe(() => root.CustomSheet.entries(), null) || {}, out = {};
+    for (const [ck, e] of Object.entries(all)) {
+      if (!e || e.sent || e.sendIntent || !Array.isArray(e.files)) continue;
+      const files = e.files.filter(F => F && F.cloud && (F.cloud.url || F.cloud.path) && F.state !== "error" && F.state !== "reading").map(F => { const { bytes, ...rest } = F; return parse(J(rest), null); }).filter(Boolean);
+      if (files.length) out[ck] = { ck, rid: e.rid, files };
+    }
+    return out;
+  }
+  function customChanged() { if (!st.started || applyingCustom) return; clearTimeout(custT); custT = setTimeout(() => customSync().catch(() => {}), 1500); }
+  async function customSync() {
+    if (custBusy) { custT = setTimeout(() => customSync().catch(() => {}), 1500); return; }
+    custBusy = true;
+    try {
+      const all = safe(() => root.CustomSheet.entries(), null) || {};
+      for (const e of Object.values(all)) {
+        if (!e || e.sent || e.sendIntent || !Array.isArray(e.files) || typeof root.uploadBytes !== "function") continue;
+        for (const F of e.files) {
+          if (F.cloud || F.state === "error" || F.state === "reading" || !F.bytes || !F.bytes.length || !F.hash) continue;
+          try { F.cloud = await root.uploadBytes(`charmnest/custom/${e.rid}/${String(F.hash || F.id).slice(0, 12)}-${fileName(String(F.name || "").replace(/\.(ai|dxf)$/i, ""))}.pdf`, F.bytes, "application/pdf", `Sharing ${F.name}`); } catch (_) { /* tried again at the next change */ }
+        }
+      }
+      const raw = J(customSnapshot());
+      if (safe(() => LS.getItem(CUSTOM_KEY()), null) !== raw) LS.setItem(CUSTOM_KEY(), raw);   // (heard by the storage hook: sent to the cloud a moment later)
+    } finally { custBusy = false; }
+  }
+  function customApply(changed) {
+    const all = safe(() => root.CustomSheet.entries(), null); if (!all) return;
+    applyingCustom = true;
+    try {
+      for (const [ck, ent] of Object.entries(changed)) {
+        const local = all[ck];
+        if (ent === undefined) { if (local && !local.sent && !local.sendIntent && (local.files || []).every(F => F.cloud)) delete all[ck]; continue; }   // (sent or cleared on the other computer)
+        if (!ent || !Array.isArray(ent.files) || (local && (local.sent || local.sendIntent))) continue;
+        const e = local || (all[ck] = { ck, rid: ent.rid, at: Date.now(), files: [], sent: null });
+        const byId = new Map(e.files.map(F => [F.id, F]));
+        for (const F of ent.files) { const mine = byId.get(F.id); if (mine) { for (const [k, v] of Object.entries(F)) if (k !== "bytes" && k !== "state") mine[k] = v; } else e.files.push(Object.assign({}, F, { bytes: null })); }
+        e.files = e.files.filter(F => ent.files.some(x => x.id === F.id) || !F.cloud);   // (a design taken off on the other computer leaves here; one dropped here and not shared yet stays)
+      }
+    } finally { applyingCustom = false; }
+    safe(() => root.CustomSheet.touched && root.CustomSheet.touched());
+  }
+  /* the Design Station (DesignLink): it is told what the shared store holds, and what a person changes there is kept here (then in the cloud) */
+  let readyFn = null; const ready = new Promise(r => { readyFn = r; });
+  const dsKey = () => "cn.ds.shared:" + world();
+  const stationCan = () => safe(() => { const s = root.DesignLink && root.DesignLink.state && root.DesignLink.state(); return !!(s && Array.isArray(s.commands) && s.commands.includes("shared.set")); }, false);
+  function toStation() { const raw = safe(() => LS.getItem(dsKey()), null); if (!raw || !root.DesignLink || !stationCan()) return; const o = parse(raw, {}); root.DesignLink.call("shared.set", { settings: o.settings || {}, chat: o.chat || {} }, { timeoutMs: 15000, quiet: true }).catch(() => {}); }
+  function fromStation(d) { const o = parse(safe(() => LS.getItem(dsKey()), null), { settings: {}, chat: {} }); if (d.settings && typeof d.settings === "object") o.settings = d.settings; if (d.chat && typeof d.chat === "object") o.chat = d.chat; LS.setItem(dsKey(), J(o)); }
+  async function stationUp(stt) {
+    if (!(stt && Array.isArray(stt.commands) && stt.commands.includes("shared.get"))) return;
+    await Promise.race([ready, new Promise(r => setTimeout(r, 30000))]);
+    if (safe(() => LS.getItem(dsKey()), null)) return toStation();
+    try { const r = await root.DesignLink.call("shared.get", {}, { timeoutMs: 15000, quiet: true }); if (r) fromStation(r); } catch (_) {}
+  }
+  root.CharmNestCloudShare = { customChanged, fromStation, stationUp, state: () => Object.assign({}, st, { stores: STORES.map(nameOf) }), pull: names => pull(names || STORES.flatMap(docsOf)), push: name => { const s = STORES.find(x => nameOf(x) === name); return s ? push(s) : Promise.resolve(); } };
   if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", boot); else boot();
 })(typeof self !== "undefined" ? self : this);

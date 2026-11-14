@@ -49,11 +49,16 @@
      workspace of the computer carrying the run. They are written to the sheet's cloud record whenever they change, by that computer only (a following computer's copy may be older),
      and every computer that builds the sheet from the cloud takes them from it (ensureLive below, the run's restore in charm-nest-bridge.js). A sheet with nothing on it is never written. */
   const MARKS = new Map(); let marking = false;
+  // (CLOUDSHARE, Paul 14 Nov 2026: "Make Firebase and Etsy cheaper without losing any real-time function"): what was last written is remembered across a reload (the run's computer rewrote every sheet's marks after each reload), and a sheet built from its cloud record starts from the marks it was read with
+  const MKEY = () => "cn.marks.sent." + (safe(() => typeof WORKSPACE_SANDBOX !== "undefined" && WORKSPACE_SANDBOX, false) ? "sandbox" : "production");
+  try { for (const [k, v] of Object.entries(JSON.parse(root.localStorage.getItem(MKEY()) || "{}"))) MARKS.set(k, v); } catch (_) {}
+  let mkT = 0; const keepMarks = () => { clearTimeout(mkT); mkT = setTimeout(() => { try { const o = {}; for (const [k, v] of [...MARKS].slice(-600)) o[k] = v; root.localStorage.setItem(MKEY(), JSON.stringify(o)); } catch (_) {} }, 1000); };
   async function marks() {
     const run = safe(() => root.B && root.B.run, null); if (marking || !run || !run.runId) return; marking = true;
     try { for (const p of pages()) { if (!p || !p.sheetId || p.recalled || p.runId !== run.runId || !(p.charms || []).length || !(p.persistedDone === true || p.layoutRev != null)) continue;
         const m = { joinedAt: +p.joinedAt || null, joinedBy: p.joinedBy || null, leftSet: p.leftSet || null }, sig = JSON.stringify(m); if (MARKS.get(p.sheetId) === sig) continue;
-        try { await api({ op: "putSheet", sheet: Object.assign({ id: p.sheetId }, m) }); MARKS.set(p.sheetId, sig); st.marks = (st.marks || 0) + 1; } catch (_) { /* tried again at the next look */ } } }
+        if (p.restored && !MARKS.has(p.sheetId)) { MARKS.set(p.sheetId, sig); keepMarks(); continue; }   // (built from its cloud record: these ARE the cloud's marks)
+        try { await api({ op: "putSheet", sheet: Object.assign({ id: p.sheetId }, m) }); MARKS.set(p.sheetId, sig); keepMarks(); st.marks = (st.marks || 0) + 1; } catch (_) { /* tried again at the next look */ } } }
     finally { marking = false; }
   }
   const lockOf = rec => { const w = rec && rec.working; return w && w.status && w.dev && w.dev !== devId() && Date.now() - (+w.at || 0) < 15 * 60000 ? w : null; };
