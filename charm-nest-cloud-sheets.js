@@ -33,6 +33,19 @@
   const near = (a, b) => { if (a === b) return true; const A = a.split(","), Bv = b.split(","); if (A.length !== Bv.length) return false; for (let i = 0; i < A.length; i++) { const x = A[i].split("@"), y = Bv[i].split("@"); if (x[0] !== y[0]) return false; for (let k = 1; k < 4; k++) if (Math.abs(+x[k] - +y[k]) > 0.05) return false; } return true; };
   const revOf = p => (p && Number.isFinite(p.layoutRev) ? p.layoutRev : null);
   const getRec = async id => { const r = await api({ op: "getSheet", id }); return (r && r.sheet) || null; };
+  /* (CLOUDALL C6, Paul 13 Nov 2026: "Sheets that haven't been saved yet ... exist only on the computer doing it"): a sheet this page is nesting, or holds changed and not nested yet, is marked on its cloud record (working: { status, dev, by, at }), cleared when it is saved; every
+     other computer sees it and does not change that sheet meanwhile (ensureLive refuses it, in words, for 15 minutes at most: a mark left by a page that closed does not lock it for good) */
+  const devId = () => safe(() => root.CharmNestRunFollow.dev(), "") || "";
+  const whoAmI = () => String(safe(() => root.B && root.B.employee, "") || "").trim();
+  const WORK = new Map(), workOf = p => (!p || !p.sheetId || p.recalled || !(p.layoutRev != null || p.persistedDone === true || (p.cloud && Object.keys(p.cloud).length)) ? "" : BUSY.includes(p.status) ? "nesting" : p.dirty ? "waiting" : "");
+  let announcing = false;
+  async function announce() {
+    if (announcing) return; announcing = true;
+    try { for (const p of pages()) { const k = workOf(p), had = WORK.has(p.sheetId) ? WORK.get(p.sheetId) : null; if (had === null && !k) { WORK.set(p.sheetId, ""); continue; } if (k === had) continue; WORK.set(p.sheetId, k);
+      try { await api({ op: "putSheet", sheet: { id: p.sheetId, working: k ? { status: k, dev: devId(), by: whoAmI(), at: Date.now() } : null } }); st.announced = (st.announced || 0) + 1; } catch (_) { WORK.set(p.sheetId, had); } } }
+    finally { announcing = false; }
+  }
+  const lockOf = rec => { const w = rec && rec.working; return w && w.status && w.dev && w.dev !== devId() && Date.now() - (+w.at || 0) < 15 * 60000 ? w : null; };
 
   /** The revision of every sheet this page holds as a live sheet whose copy is the cloud's. Run once a page is up; a page that differs keeps saving as before. */
   async function learn() {
@@ -67,6 +80,7 @@
     let p = pageOf(id);
     if (p && !p.recalled) return p;
     const rec = await getRec(id); if (!rec) throw new Error("that sheet is no longer in the cloud");
+    { const w = lockOf(rec); if (w) throw new Error(`${rec.fileBase || "This sheet"} is being ${w.status === "nesting" ? "nested" : "changed"} on another computer${w.by ? " (" + w.by + ")" : ""} right now; it can be changed here once it is saved there`); }   // (CLOUDALL C6, Paul 13 Nov 2026: "Sheets that haven't been saved yet ... exist only on the computer doing it")
     if (!p) {
       if (typeof addPage !== "function") throw new Error("the page is not ready");
       p = addPage(rec.metal, { fresh: true });
@@ -112,9 +126,10 @@
       if (Y && typeof Y.follow === "function") Y.follow({ name: "cloud-sheets", kinds: "s", wild: "", wants: k => !!pageOf(String(k).slice(2)), read: (why, keys) => changed(keys) });
       setTimeout(() => { learn().catch(e => console.warn("[cloud-sheets] learn", e)); }, 15000);
       setInterval(() => { if (!(root.document && root.document.hidden)) learn().catch(() => {}); }, 300000);
+      setInterval(() => { announce().catch(() => {}); }, 4000);   // (CLOUDALL C6, Paul 13 Nov 2026: "Sheets that haven't been saved yet ... exist only on the computer doing it")
     };
     go();
   }
-  root.CharmNestCloudSheets = { state: () => Object.assign({}, st, { differs: st.differs.slice() }), reload, ensureLive, learn, revOf, conflict, _changed: changed };
+  root.CharmNestCloudSheets = { state: () => Object.assign({}, st, { differs: st.differs.slice() }), reload, ensureLive, learn, revOf, conflict, announce, lockOf, _changed: changed };
   if (root.document) { if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", boot); else boot(); }
 })(typeof self !== "undefined" ? self : this);
