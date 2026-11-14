@@ -6919,6 +6919,7 @@ const Gate = window.Gate = (() => {
   /** The plain line a set shows while UNPAIR works on it, or waits: "" when nothing is to be done. */
   const unpairLine = setId => unpairSay.get(String(setId)) || "";
   async function unpair(run) {
+    return false;   // (NOSETPULL, Paul 13 Nov 2026: "nothing is allowed to pull a set apart ... the system must not be allowed to remove sheets from a set just because orders are being shipped ... delete it now"; "I never even allowed this to happen"): no automatic move of an order's pieces that makes a sheet leave its set
     if (unpairRunning || !run || !modern(run.runId) || !S.cloud.ok) return false;
     const SW = window.SheetWin, kit = SW && SW.holdKit; if (!kit || typeof kit.move !== "function") return false;
     let plans; try { plans = unpairPlan(run); } catch (e) { console.warn("[Gate.unpair]", e); return false; }
@@ -6958,7 +6959,8 @@ const Gate = window.Gate = (() => {
     const SRt = window.CharmNestSetRules, before = joinTick(), at = joinTick();
     if (SRt && !set.formedAt && SRt.validSet(membersOfSet(set)).ok) set.formedAt = before;      // (a set that had formed before this look, a reload: its time is not known, so it counts from now: a sheet that joins it in this look is a late joiner)
     // (a sheet being rewritten by hand in the sheet window keeps its place and gets its new label once it is written)
-    for (const sh of allSheets().filter(p => p.runId === run.runId && p.setId === set.setId && !holding(p) && !release(p, set.seq).include)) {
+    // (NOSETPULL, Paul 13 Nov 2026: "nothing is allowed to pull a set apart ... the system must not be allowed to remove sheets from a set just because orders are being shipped ... delete it now"; "I never even allowed this to happen"): a sheet is NEVER taken out of its set by the system: the rule that sent a sheet "that no longer qualifies" back to the drafts is deleted (only a person moves a sheet out of a set)
+    for (const sh of []) {
       const previous = {draft:sh.draft,setId:sh.setId,seq:sh.seq,sheetIndex:sh.sheetIndex,label:sh.label};
       if (window.CharmNestSheetName) set.sheetNos = CharmNestSheetName.raise(set.sheetNos, [sh]);   // (the number it had is retired for this set: nobody else is given it, charm-nest-sheet-name.js)
       if (window.CharmNestSheetName && CharmNestSheetName.fileTag(sh)) sh.leftFileBase = sh.fileBase;   // (the set's file name it leaves with: a later save renames it working_, and claim reads this one to give its own old number back when it returns. Diagnostic, 26 Oct 2026)
@@ -15251,7 +15253,8 @@ const Sets = window.Sets = (() => {
     // A run keeps releasing after a commit: its next dispatch set follows the newest committed one and gets a number of
     // its own, where asking again for the run's dispatch set would hand back the set already cut.
     const followed = group === "dispatch" ? (opts.follow && opts.follow.setId ? opts.follow : ofRun(runId).filter(s => s.group === "dispatch" && s.committedAt).pop() || null) : null;
-    const after = followed?.setId || null;
+    // (NOSETPULL, Paul 13 Nov 2026: "nothing is allowed to pull a set apart ... the system must not be allowed to remove sheets from a set just because orders are being shipped ... delete it now"; "I never even allowed this to happen"): a set that holds no sheet and is not committed is not followed: the run fills that set again instead of asking for a set after it (the cloud refuses that, and the run stopped)
+    const after = followed && !followed.committedAt && !(followed.sheetIds || []).length ? null : followed?.setId || null;
     // The server numbers a follow-on set only once the set it follows is recorded as committed. A commit whose record
     // did not save is saved again first: a refusal then names its cause, and every later set used to be refused.
     // A commit whose record did save is not saved again: the server checks its readiness against the run's current lines,
