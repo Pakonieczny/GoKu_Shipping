@@ -5251,6 +5251,20 @@ const Pool = window.Pool = (() => {
      Rose Gold's open layout is cut by itself once its set is complete (Gate.autoCut); 10K and 14K wait for a person's Cut Sheet press, as always. */
   const pairWaits = new Map();   // (PAIRFIX) row.key -> { page, metal, at }: the Gold Filled / Sterling Silver sheet still filling that a line waits for (memory only: after a reload the line is tried again)
   /** (PAIRFIX) The lines waiting for a Gold Filled / Sterling Silver sheet to fill go on once it no longer fills (full, in its set, held for good): placed again, onto the next sheet. */
+  /** (KEEPALL) The approved backs a queued order carried (run.parkedBacks) go onto the sheet its pieces landed on; those whose piece is not on a sheet yet stay parked. */
+  function restoreParkedBacks(run) {
+    const list = run && run.parkedBacks; if (!Array.isArray(list) || !list.length) return 0;
+    let n = 0; const left = [];
+    for (const b of list) {
+      const p = allSheets().find(q => (q.charms || []).some(c => c.poolId === b.poolId));
+      if (!p) { left.push(b); continue; }
+      p.backPool = p.backPool || [];
+      if (!p.backPool.some(x => x.poolId === b.poolId && (x.face || "") === (b.face || ""))) { p.backPool.push(b); n++; }
+    }
+    run.parkedBacks = left;
+    if (n) { try { agent({ pool: true }, "nest", `${n} approved back engraving${n === 1 ? "" : "s"} of queued orders went back on their sheets with their pieces`); } catch (_) {} try { if (window.RunCtl && RunCtl.save) RunCtl.save(run); } catch (_) {} }
+    return n;
+  }
   function pairResume(run) {
     if (!run || typeof Orders === "undefined") return 0;
     const fill = m => (typeof fillingPage === "function" ? fillingPage(m) : null);
@@ -5265,7 +5279,7 @@ const Pool = window.Pool = (() => {
     if (!due.length) return 0;
     for (const r of due) { pairWaits.delete(r.key); r.state = "pulled"; r.wait = null; r.reason = null; }
     try { agent({ pool: true }, "nest", `${due.length} order line${due.length === 1 ? "" : "s"} that waited for the sheet still filling now go${due.length === 1 ? "es" : ""} on the next sheet`); } catch (_) { /* a note only */ }
-    if (O.stepIndex(run.step) >= O.stepIndex("pool")) Promise.resolve().then(() => addAll(run)).catch(e => console.warn("[pairResume]", e && e.message));
+    if (O.stepIndex(run.step) >= O.stepIndex("pool")) Promise.resolve().then(() => addAll(run)).then(() => restoreParkedBacks(run)).catch(e => console.warn("[pairResume]", e && e.message));
     try { Orders.render(); } catch (_) { /* drawn at the next look */ }
     return due.length;
   }
@@ -5545,9 +5559,10 @@ const Pool = window.Pool = (() => {
       }
       if (!ip && lineCuts(metal) && !matePages.includes(page) && !greenFits(page, String(row.order.receiptId), run)) {   // (Decision 2: one GF and/or one SS partner sheet, in one set)
         const was = page, alt = pagesOf(metal).find(p => p !== was && !shut(p) && (!run || !p.runId || p.runId === run.runId) && greenFits(p, String(row.order.receiptId), run));
-        // (RGC1, Paul 9 Nov 2026: one physical sheet at a time. With no other open layout that keeps the rule, the line WAITS for the open layout's green line and then continues on its leftover;
-        //  a page is opened for it only when there is no open layout to wait for, or when waiting would hold a formed set)
-        if (!alt && byMetal.size === 1 && greenMustWait(was, String(row.order.receiptId), run, metal, list)) {
+        // (NOWAIT, Paul 14 Nov 2026: "the order that does not fit would automatically go to a new draft sheet and the almost full RG sheet would still attempt to fit incoming RG orders": a Rose Gold
+        //  line is never left waiting for the open layout's green line; it goes on another open layout that keeps the rule, else a new draft (greenPage), and the open layout keeps taking what fits it.
+        //  10K / 14K lines wait as before (RGC1, Paul 9 Nov 2026: one physical sheet at a time)
+        if (metal !== "rose" && !alt && byMetal.size === 1 && greenMustWait(was, String(row.order.receiptId), run, metal, list)) {
           const n = list.length, name = greenName(was);
           greenWaits.set(row.key, { page: was, metal });
           row.state = "waiting"; row.wait = { kind: "green", material: metal, sheetId: was.sheetId || null, page: was.page || null };
@@ -6259,7 +6274,7 @@ const Gate = window.Gate = (() => {
   const handOverlaps = (sh => { let n = 0; try { n = (window.CNManual && typeof CNManual.conflicts === "function" && CNManual.conflicts(sh).n) || 0; } catch (_) {} const pairs = (sh && sh.verification && sh.verification.geom && sh.verification.geom.overlappingPairs) || []; return Math.max(n, new Set([].concat(...pairs)).size); });
   function cannotJoin(p, ready) {
     const gold = goldGap(p); if (gold) return gold;
-    { const n = handOverlaps(p); if (n) return `${n} charms on it overlap (placed by hand): move them clear in Manual Control`; }   // (MCFREE)
+    // (NOHOLD, Paul 14 Nov 2026: "I don't want this rule, the user is already informed by the red charm overlap, there's no need to enforce"): charms placed by hand where they overlap are shown red, and nothing more
     if (p.endedBy === "stopped") return "its nesting was stopped";
     if (p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone)) return "it is still being nested or saved";
     if (!(p.placements || []).length) return "nothing is placed on it";
@@ -6616,7 +6631,8 @@ const Gate = window.Gate = (() => {
     for (const p of pages) delete p.handSet;      // (a drop is read by one assembly)
     run.heldSheets = pages.filter(p => p.draft).length;
     // (autoCut and unpair: after this look, never inside it: the Cut Sheet press and the sheet window's move run an assembly of their own)
-    if (!(context && context.trimming)) { await trimSurplus(run, context); Promise.resolve().then(() => { autoCut(run); unpair(run).catch(e => console.warn("[Gate.unpair]", e && e.message)); }); }
+    // (NOAUTOTRIM, Paul 14 Nov 2026: spare sheets leave a set "only manually, not automatically": trimSurplus is no longer run by itself; a person takes a sheet out by hand)
+    if (!(context && context.trimming)) { Promise.resolve().then(() => { autoCut(run); unpair(run).catch(e => console.warn("[Gate.unpair]", e && e.message)); }); }
     refreshAllCards();
     if (S.mode === "library") CN.loadLibrary().catch(e=>toast("Library refresh: "+e.message,"bad"));
   }
@@ -6763,7 +6779,7 @@ const Gate = window.Gate = (() => {
     for (const [o, x] of Object.entries(held)) {
       if (!x || x.releasing) continue;
       const p = allSheets().find(q => q.sheetId === x.sheetId);
-      if (p && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled && Date.now() - (+x.at || 0) < 6 * 3600000 && rgStillForeign(o, p)) continue;   // (it waits for the cut; never held more than 6 hours by this)   (RGDRAFT, Paul 14 Nov 2026: "fix the rose gold sheet rules that you already know that you made up" / "you add the butterfly to the existing pieces that are not linked and then add the green cut line"): released at once when nothing ties its sheet to two sets
+      if (p && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled && rgStillForeign(o, p)) continue;   // (it waits for the cut)   (NO6H, Paul 14 Nov 2026: "Definitely not!!!": no release after 6 hours; only the cut, or nothing tying its sheet to two sets, lets it go)   (RGDRAFT, Paul 14 Nov 2026: "fix the rose gold sheet rules that you already know that you made up" / "you add the butterfly to the existing pieces that are not linked and then add the green cut line"): released at once when nothing ties its sheet to two sets
       x.releasing = true;
       Promise.resolve(HU.release(o)).then(r => { if (r && r.ok) { delete held[o]; try { agent({ run: run.runId, metal: "rose" }, "ok", `Order ${o}: released after the green line cut; it nests past the line`); } catch (_) {} try { if (window.RunCtl && RunCtl.save) RunCtl.save(run); } catch (_) {} } else x.releasing = false; })
         .catch(() => { x.releasing = false; });
@@ -7552,6 +7568,22 @@ const Gate = window.Gate = (() => {
     if (p.sheetId && p.cloud) (run.intakeRecovery ||= { retire: [], backs: [] }).retire.push(p.sheetId);
     const key = p.sheetId || p.metal + "-" + p.page; delete (run.sheetHolds || {})[key]; if (run.sheets) delete run.sheets[key];
   }
+  /** (EMPTYOK, Paul 14 Nov 2026: an order alone on its sheet "can be taken off ... that's the last sheet delete it"): a sheet a take-off or a hold left with no charm leaves its set (a person's
+   *  take-out, leaveSet: the set's own rules decide what stays) and goes, as a sheet Merge sheets left empty goes: its saved record is archived at the run's next checkpoint. The run's first page
+   *  object stays as the metal's card, empty and with no record. true when it went. */
+  async function dropEmpty(sh) {
+    const run = B.run; if (!sh || activeCharms(sh).length || !run || sh.runId !== run.runId || sh.roseCutAt || +sh.laserDoneAt > 0 || sh.recalled) return false;
+    const name = pw(sh);
+    if (inSetNow(sh)) { try { await leaveSet(sh.sheetId); } catch (e) { agent({ metal: sh.metal, run: run.runId }, "warn", `${name} is empty but could not leave its set (${e && e.message}); it stays until it does`); return false; } }
+    const m = sh.metal;
+    retirePage(run, sh);
+    if (pagesOf(m).indexOf(sh) > 0) removePage(sh);
+    else { sh.charms = []; sh.placements = []; sh.rejects = []; sh.sheetId = null; sh.fileBase = null; sh.setId = null; sh.seq = null; sh.sheetIndex = null; sh.draft = false; sh.releaseFull = false; sh.label = null; sh.cloud = null; sh.persisted = null; sh.outputs = null; sh.verification = null; sh.backPool = []; sh.status = "idle"; delete sh.roseStock; delete sh.roseProtected; delete sh.rosePlan; sh._roseLoaded = false; }
+    agent({ metal: m, run: run.runId }, "nest", `${name} was left empty when its last order came off, and was removed`);
+    try { await RunCtl.save(run); } catch (_) { /* saved with the run's next save */ }
+    try { refreshAllCards(); refreshMembership(); } catch (_) { /* drawn at the next look */ }
+    return true;
+  }
   /** The card's status line while a merge runs (the page's renderProgress asks): what it does now, and for how long. */
   function mergeStage(sh) {
     const b = sh && MERGE[sh.metal]?.busy; if (!b || !sh.el) return null;
@@ -8218,7 +8250,7 @@ const Gate = window.Gate = (() => {
   }
   return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull || staysCut(sh) : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
      staysInSet, keepsPlace: sh => !!sh && !!sh.setId && !sh.draft && (committedSheet(sh) || staysInSet(sh)), followRecords, followSheet,   // (Paul, 27 Oct 2026: a sheet written again keeps its set when it may not leave it: nextSheetSeq)
-     violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, undoGoldJoin, goldWaitHome, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R, autoCut, trimSurplus, unpair, unpairPlan, unpairLine, greenHomes: run => { const V = cardinalView(run || B.run); return V ? greenHomesOf(V, run || B.run) : new Map(); } };
+     dropEmpty, violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, undoGoldJoin, goldWaitHome, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R, autoCut, trimSurplus, unpair, unpairPlan, unpairLine, greenHomes: run => { const V = cardinalView(run || B.run); return V ? greenHomesOf(V, run || B.run) : new Map(); } };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -15416,8 +15448,7 @@ const Sets = window.Sets = (() => {
   function validateRelease(set) {
     const pendingRelease = message => Object.assign(new Error(message), {releasePending:true});
     const sheets = sheetsOf(set);
-    // (MCFREE, Paul 20 Oct 2026: charms placed by hand where they overlap never reach the laser silently: the set is held, and the sheet named, until they are moved clear)
-    for (const sh of sheets) { const n = (sh => { let n = 0; try { n = (window.CNManual && typeof CNManual.conflicts === "function" && CNManual.conflicts(sh).n) || 0; } catch (_) {} const pairs = (sh && sh.verification && sh.verification.geom && sh.verification.geom.overlappingPairs) || []; return Math.max(n, new Set([].concat(...pairs)).size); })(sh); if (n) throw pendingRelease(`${sh.fileBase || "A sheet of this set"}: ${n} charms overlap (placed by hand in Manual Control). Move them clear before this set is committed or cut`); }
+    // (NOHOLD, Paul 14 Nov 2026: "there's no need to enforce"): charms placed by hand where they overlap no longer hold their set; the red on the sheet is the warning
     if (sheets.some(sh => sh.runHold)) throw pendingRelease("A sheet in this set still needs attention");
     // (SHAREDSHAPE, Paul 29 Oct 2026: a piece whose cut line changed after it was nested, and does not fit where it stands, holds its set until it is moved clear: never cut unchecked)
     { const held = sheets.find(sh => typeof cutHeld === "function" && cutHeld(sh)); if (held) { const [pid, w] = Object.entries(held.cutCheck)[0]; throw pendingRelease(`${held.fileBase || "A sheet in this set"}: the cut line of ${pid} changed${w && w.why ? ` and ${w.why}` : ""}: move it clear in Manual Control, or nest the sheet again`); } }
@@ -15677,7 +15708,8 @@ const Sets = window.Sets = (() => {
    *  sheet whose layout leaves no room for another charm (RoseStock.full, the test its own Cut Sheet button reads: a full sheet has none): its approval is all it needs. The Library row's own full mark
    *  where the sheet is not open on this page. */
   const goldFull = (pg, row) => { if (row && row.releaseFull) return true; try { if (pg && window.RoseStock && typeof RoseStock.full === "function") return !!RoseStock.full(pg); } catch (_) { /* the row says */ } return false; };   // (GOLDLIVE, Paul 13 Nov 2026: the cloud record's release mark first: a copy of the sheet on another computer read it "not full")
-  const goldManual = (s, pg, row) => !!s && (s.metal === "gold10k" || s.metal === "gold14k") && !s.laserDone && !(pg && (pg.roseCutAt || +pg.laserDoneAt > 0)) && !(row && (row.roseCutAt || +row.laserDoneAt > 0));
+  // (RGTILE, Paul 14 Nov 2026: a Rose Gold sheet a set waits for "should show up like the 14K and 10K gold sheets do right now, greyed out with an Approve button")
+  const goldManual = (s, pg, row) => !!s && (s.metal === "gold10k" || s.metal === "gold14k" || s.metal === "rose") && !s.laserDone && !(pg && (pg.roseCutAt || +pg.laserDoneAt > 0)) && !(row && (row.roseCutAt || +row.laserDoneAt > 0));
   /* (Paul, 26 Oct 2026: "a given 10 K or 14 K gold sheet should be added to a given Set of Sheets where it shares charms with from a given multi-charm order. However the 10k and 14k sheets should stay
      greyed-out inside the Set of Sheets until a user approves and adds a Green Cut line for either/both of the 10k / 14k gold sheets in question.") The 10K / 14K sheets a set waits for (cardinalWait
      `manual`: its ONE set, SharedOrders greenHomes) are drawn INSIDE that set's card, greyed, as `goldPending`: taken out of the "14K / 10K Solid" group, never one of the set's sheets (its membership,
@@ -16345,12 +16377,14 @@ const RunCtl = window.RunCtl = (() => {
     if (rows.some(x => (x.poolIds || []).some(id => !ids.has(id))) || [...ids].some(id => !rows.some(x => (x.poolIds || []).includes(id)))) return false;
     const cids = new Set(charms.map(c => c.id));
     p.charms = p.charms.filter(c => !cids.has(c.id)); p.placements = (p.placements || []).filter(q => !cids.has(q.id)); p.rejects = (p.rejects || []).filter(id => !cids.has(id));
-    if (Array.isArray(p.feedWait)) p.feedWait = p.feedWait.filter(id => !cids.has(id)); if (p.backPool) p.backPool = p.backPool.filter(b => !ids.has(b.poolId));
+    // (KEEPALL, Paul 14 Nov 2026: "Sending an order to the next draft should and must preserve everything about that order"): its approved backs travel with it (run.parkedBacks), back on whatever sheet its pieces land (pairResume)
+    if (p.backPool) { const going = p.backPool.filter(b => ids.has(b.poolId)); if (going.length) (r.parkedBacks ||= []).push(...going.filter(b => !r.parkedBacks.some(x => x.poolId === b.poolId && (x.face || "") === (b.face || "")))); p.backPool = p.backPool.filter(b => !ids.has(b.poolId)); }
+    if (Array.isArray(p.feedWait)) p.feedWait = p.feedWait.filter(id => !cids.has(id));
     const name = window.CharmNestSheetName ? CharmNestSheetName.short(t) : "Sheet " + t.page, other = m === "gold" ? "Sterling Silver" : "Gold Filled";
     for (const x of rows) {
-      x.poolIds = [];
-      try { for (const j of Engrave.jobsOf(x)) { j.copies = (j.copies || []).filter(id => !ids.has(id)); if (!j.copies.length) { Engrave.items().delete(j.key); Review.remove("eng:" + j.key); } } } catch (_) { /* made again when it is placed */ }
-      x.state = "waiting"; x.hold = null; x.wait = { kind: "pair", material: m, sheetId: t.sheetId || null, page: t.page || null };
+      x.poolIds = [];   // (its pieces are made again with the same ids when it is placed: the piece records keep their data)
+      // (KEEPALL: its engraving jobs and their Review items stay as they are, and a person's hold on it is never wiped)
+      x.state = "waiting"; x.wait = { kind: "pair", material: m, sheetId: t.sheetId || null, page: t.page || null };
       x.reason = `waits for ${name} to fill, then goes on the next ${labelOf(m)} sheet (it shares an order with another ${other} sheet; one ${labelOf(m)} sheet is filled at a time)`;
     }
     for (const id of ids) B.pool.rows.delete(id);

@@ -3071,12 +3071,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       //  order's lions stayed on the sheet for good, "inside the saved Rose Gold cut line")
       else ok.push({ id, sku, sh, where });
     }
-    // a sheet is not emptied here: with nothing left on it there are no files to rewrite, so it is deleted from its menu
-    for (const sh of new Set(ok.map(o => o.sh).filter(Boolean))) {
-      const going = new Set(ok.filter(o => o.sh === sh).map(o => o.id));
-      const left = sh.placements.filter(p => { const c = sh.charms.find(c => c.id === p.id); return c && !going.has(c.poolId); }).length;
-      if (!left && sh.placements.length) for (const o of ok.filter(o => o.sh === sh)) o.last = true;
-    }
+    // (EMPTYOK, Paul 14 Nov 2026: an order alone on its sheet can be taken off: the sheet left empty leaves its set and goes, Gate.dropEmpty, instead of being written again)
     let okF = ok.filter(o => !o.last), stayF = stay.concat(ok.filter(o => o.last).map(o => Object.assign(o, { kind: "last", why: "it is the last charm on that sheet: delete the sheet from its menu instead" })));
     // a line with a copy that must stay keeps all its copies: half a line on hold could never be put back whole (a CANCELLED order has nothing to put back: its uncut pieces come off, only the cut one stays)
     for (const r of cancelling ? [] : window.Orders ? Orders.rows() : []) {
@@ -3397,7 +3392,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       Review.syncOrderItems(); Orders.render(); Engrave.render();
       off.state = "ok"; paint();
       // 4 · each sheet written again as it now stands, with a new QR label, and read back
-      for (const r of rewrite) await rewritePage(r.sh, r.st, paint);
+      for (const r of rewrite) { if (!activeCharms(r.sh).length && window.Gate && typeof Gate.dropEmpty === "function") { await Gate.dropEmpty(r.sh); r.st.state = "ok"; paint(); continue; } await rewritePage(r.sh, r.st, paint); }   // (EMPTYOK)
       if (pages.length) {
         await remakeLabels(pages, labels, paint);
         letGo(pages);
