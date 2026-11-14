@@ -162,6 +162,10 @@ async function records(deps, o) {
   if (o.rid) {
     const ids = [String(o.rid)].concat(/^\d{3,20}$/.test(String(o.listingId || "")) ? [o.rid + "-" + o.listingId] : []);
     docs = (await db.getAll(...ids.map(i => db.collection(COLL).doc(i)))).filter(s => s.exists);
+  } else if (o.since) {
+    // (COSTCRON, Paul 14 Nov 2026: "Do this as well" -> the background cron jobs): between the daily full cycles only the saves made since the last full cycle are checked (where a save that went wrong is found)
+    const limit = Math.min(200, Math.max(1, Math.floor(+o.limit) || RECORDS_PER_PASS));
+    docs = (await db.collection(COLL).where("at", ">", +o.since).orderBy("at").limit(limit).get()).docs; out.recent = true; out.cursor = +o.cursor || 0;
   } else {
     const limit = Math.min(200, Math.max(1, Math.floor(+o.limit) || RECORDS_PER_PASS)), cursor = Math.max(0, +o.cursor || 0);
     const snap = await db.collection(COLL).orderBy("at").startAfter(cursor > 0 ? cursor - 1 : 0).limit(limit).get();
@@ -270,7 +274,9 @@ async function repair(deps, body) {
   };
   try {
     if (!targeted && body.etsy === true) await step("etsy", () => etsySteps(deps, body));   // (first: it is what the shop is waiting for)
-    await step("records", () => records(deps, { rid: body.rid, listingId: body.listingId, limit: body.limit, cursor: st.cursor }));
+    // (COSTCRON, Paul 14 Nov 2026: "Do this as well" -> the background cron jobs): the full cycle over every save (the cursor) once a day; between cycles, only the saves made since the last full cycle began (an hour of overlap)
+    const recentOnly = !targeted && !body.force && !timed && +st.cycleDoneAt > 0 && now - +st.cycleDoneAt < DAY;
+    await step("records", () => records(deps, { rid: body.rid, listingId: body.listingId, limit: body.limit, cursor: st.cursor, since: recentOnly ? Math.max(0, (+st.cycleStartAt || +st.cycleDoneAt) - SHORT_MS) : 0 }));
     // COST (Oct 2026): the day-scale steps, once a day on an unforced pass (see the header)
     const daily = !targeted && (body.force || timed || !(now - (+st.dailyAt || 0) < DAILY_MS));
     if (daily) await step("orphans", () => orphans(deps, { olderThanMs: timed ? +body.olderThanMs : GRACE_MS }));
@@ -281,6 +287,8 @@ async function repair(deps, body) {
     if (!targeted) {
       const cur = report.records && !report.records.error && !report.records.skipped ? report.records.cursor : st.cursor || 0;
       const daily = report.dailyDone ? { dailyAt: now } : {}; delete report.dailyDone;
+      const r = report.records || {}, full = !r.error && !r.skipped && !r.recent;   // (COSTCRON, Paul 14 Nov 2026: "Do this as well" -> the background cron jobs): a full cycle that reached its end is noted (cycleDoneAt); one starting is noted (cycleStartAt)
+      if (full && r.wrapped) Object.assign(daily, { cycleDoneAt: now }); else if (full && !(+st.cursor > 0)) Object.assign(daily, { cycleStartAt: now });
       try { await sref.set(Object.assign({ cursor: cur || 0, lastRunAt: now, runningUntil: 0, last: { orphans: report.orphans && report.orphans.deleted || 0, checked: report.records && report.records.checked || 0 } }, daily), { merge: true }); }
       catch (e) { warn("state not written", e); }
     }

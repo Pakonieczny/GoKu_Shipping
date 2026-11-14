@@ -1562,12 +1562,20 @@ async function health(body = {}) {
   const now = Date.now();
   const force = body.fresh === true && now - _healthForcedAt > 10 * 1000;
   if (!force && _health && now - _health.at < HEALTH_TTL_MS) return _health.value;
+  // (COSTMAIL, Paul 14 Nov 2026: "Do this as well" -> the mail health check, about 55 reads a minute while a reply box is showing): the judgement is shared by every sorter and every server instance for a minute (EtsyMail_Config/linkHealthLive):
+  //  each sorter asks once a minute while a place to write is on screen, and each ask gathered the whole evidence again (about 55 reads). One gathering a minute now serves
+  //  them all; the light is exactly as fresh (a minute at most, as before). Check now (fresh) still gathers at once. A sandbox ask neither reads nor writes it (the sandbox writes nothing of production's).
+  const sbx = !!(body && (body.sandbox === true || body.sandbox === 1 || body.sandbox === "1" || body.sandbox === "true"));
+  const live = sbx ? null : db.collection("EtsyMail_Config").doc("linkHealthLive");
+  if (!force && live) { try { const s = await live.get(), d = s.exists ? s.data() : null; if (d && d.json && now - (+d.at || 0) < HEALTH_SHARED_MS) { const value = JSON.parse(d.json); _health = { at: +d.at, value }; return value; } } catch (_) { /* gathered here below */ } }
   if (force) _healthForcedAt = now;
   const ev = await LinkHealth.gather(db);
   const value = LinkHealth.evaluate(ev, now);
   _health = { at: now, value };
+  if (live) { try { await live.set({ at: now, json: JSON.stringify(value) }); } catch (_) { /* the next ask gathers again */ } }
   return value;
 }
+const HEALTH_SHARED_MS = 55 * 1000;
 
 /* "Check now" on the missing-messages notice, and its Dismiss (the work is in _etsyMailLinkConsistency.js). Check now is the same
    pass over the open gaps that the 5-minute monitor makes, on demand: each conversation that fell short is looked at again (the

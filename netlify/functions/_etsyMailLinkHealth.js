@@ -326,7 +326,7 @@ async function gather(db, opts = {}) {
     soft("global", cfg.doc("global").get()), soft("watcher", cfg.doc("gmailWatcher").get()), soft("gmail", cfg.doc("gmailSyncState").get()),
     soft("helper", meta.doc("helper").get()),
     soft("drafts", db.collection("EtsyMail_Drafts").where("status", "==", "queued").limit(25).get()),
-    soft("jobs", db.collection("EtsyMail_Jobs").where("status", "==", "queued").limit(40).get()),
+    soft("jobs", db.collection("EtsyMail_Jobs").where("status", "==", "queued").where("jobType", "==", "scrape").limit(40).get()),   // (COSTMAIL, Paul 14 Nov 2026: "Do this as well" -> the mail health check, about 55 reads a minute while a reply box is showing): only the scrape jobs are judged (scrapeJobs below): the others were read for nothing
     soft("scrapeHealth", cfg.doc("scrapeHealth").get()), soft("mirror", cfg.doc("receiptsMirrorState").get()),
     soft("bell", meta.doc("bell").get()),
     opts.self ? Promise.resolve(null) : soft("monitor", cfg.doc("linkHealth").get()),
