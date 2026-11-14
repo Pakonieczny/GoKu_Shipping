@@ -6947,6 +6947,7 @@ async function nextSheetSeq(sh) {
     // (KEEPSET, Paul 12 Nov 2026: "Why would you take them out of the sets ... will this process also fail like this moving forward?": a sheet written again AS IT STANDS (writeAsPlaced: an overlap
     //  correction, a replaced piece; no charm added or taken off) keeps its set, its number and its label. Drafted here, the next look at the sets regrouped the run's sheets their own way)
     if (sh._keepSet && sh._keepSet.setId === sh.setId && !sh.draft) { delete sh._keepSet; return sh.seq || null; }
+    if (sh.setId && !sh.draft) return sh.seq || null;   // (NOSETPULL 2, Paul 13 Nov 2026: "nothing is allowed to pull a set apart ... under any circumstances"): a sheet in a set keeps its set, its number and its label when it is nested again; only a person takes a sheet out of a set
     if (window.CharmNestSheetName && CharmNestSheetName.fileTag(sh)) sh.leftFileBase = sh.fileBase;   // (its set's file name: a sheet coming back to the set it left takes its own old number back, charm-nest-sheet-name.js claim. Diagnostic, 26 Oct 2026)
     sh.draft = true; sh.setId = null; sh.setDay = today(); sh.sheetIndex = null; delete sh.numberOwed; return null;
   }
