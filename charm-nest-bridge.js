@@ -14687,7 +14687,9 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     let needsSeals=false,names=null,before=null,home=null;const lookup=()=>names || (names=R.lookup({rows:Orders.rows()})),moved=[],stepWant=[],painted=[];
     document.querySelectorAll('[data-laser-card]').forEach(card=>{
       if(!card._laserSheets)return;   // (a copy of a card flying to a tab, charm-nest-motion.js, is not a card: it holds none of its records)
-      if(only && !(card._laserSet?.setId && only.has('t:'+card._laserSet.setId)) && !card._laserSheets.some(id=>only.has('s:'+id)))return;   // (a card of nothing that changed is as it was drawn)
+      const pendingMoved=!!only && (card._laserSet?.goldPending || []).some(r=>r && only.has('s:'+(r.id || r.sheetId)));   // (GOLDLIVE, Paul 13 Nov 2026: "verify this 100% that if another computer moves something this computer instantly reflects that ... including this waiting for approval sheet")
+      if(only && !pendingMoved && !(card._laserSet?.setId && only.has('t:'+card._laserSet.setId)) && !card._laserSheets.some(id=>only.has('s:'+id)))return;   // (a card of nothing that changed is as it was drawn)
+      if(pendingMoved && !paint._gpTimer)paint._gpTimer=setTimeout(()=>{paint._gpTimer=0;try{if(S.mode==='library' && window.CN && typeof CN.loadLibrary==='function')CN.loadLibrary().catch(()=>{});}catch(_){}},1000);   // (its picture and lines are drawn with the Library list: drawn again, once a second at most)
       card._lrFresh=false;painted.push(card);   // (painted: a metal chip may show it again as it is, Sets.renderLibrary)
       const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):{...sheet(sheets[0] || {}),ready:canCut(sheets[0] || {})};
       if(sheets.some(s=>!s.laserDoneAt && sheet(s).ready!==!!s.processReady))needsSeals=true;
@@ -14985,7 +14987,9 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   function shown(){
     if(viewer)for(const x of inView.keys())if(!x.isConnected){viewer.unobserve(x);inView.delete(x);}
     const cards=[...document.querySelectorAll('[data-laser-card]')].filter(onScreen);
-    return {ids:[...new Set(cards.flatMap(x=>(x._laserSheets || []).concat([...x.querySelectorAll('[data-laser-sheet]')].map(n=>n.dataset.laserSheet))))],setIds:[...new Set(cards.map(x=>x._laserSet?.setId).filter(Boolean))]};
+    // (GOLDLIVE, Paul 13 Nov 2026: "verify this 100% that if another computer moves something this computer instantly reflects that ... including this waiting for approval sheet"): a set card on screen also reads the 10K / 14K sheets drawn greyed inside it, waiting for approval (goldPending): they are not its sheets, so they were never read again
+    const pendingOf=x=>(x._laserSet?.goldPending || []).map(r=>r && (r.id || r.sheetId)).filter(Boolean);
+    return {ids:[...new Set(cards.flatMap(x=>(x._laserSheets || []).concat([...x.querySelectorAll('[data-laser-sheet]')].map(n=>n.dataset.laserSheet),pendingOf(x))))],setIds:[...new Set(cards.map(x=>x._laserSet?.setId).filter(Boolean))]};
   }
   /** An answer, taken in: only what differs from the last answer is replaced (`always`: all of it, as the slow check always did).
       True when a card has to be drawn again. */
