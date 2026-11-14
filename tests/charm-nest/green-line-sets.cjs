@@ -50,9 +50,10 @@ const ok = (name, cond, detail) => { assert(cond, name + (detail ? ' :: ' + deta
     const gf2 = w.full(w.page('gold', base)), ss2 = w.full(w.page('silver', base)); w.put(gf2, '8002_2_1', '8003_1_1'); w.put(ss2, '8003_2_1');
     await w.assemble();
     const set1 = w.sets().find(s => s.setId === ss1.setId);
-    ok('the spare unit left Set 1 by itself', !(w.inSet(gf1) && gf1.setId === set1.setId), w.word());
+    // (NOAUTOTRIM, Paul 14 Nov 2026: spare sheets leave a set "only manually, not automatically")
+    ok('the spare unit stays in Set 1 until a person takes it out', w.inSet(gf1) && gf1.setId === set1.setId, w.word());
     ok('Set 1 keeps the sheets tied by orders', [ss1, gf2, ss2].every(p => p.setId === set1.setId && !p.draft), w.word());
-    ok('nothing left to flag', !w.selfCheck().violations.some(v => v.rule === 'surplus'));
+    ok('the spare unit is flagged for a person', w.selfCheck().violations.some(v => v.rule === 'surplus'));
   }
-  console.log('PASS: green-line sets: one GF / SS partner of one set, the automatic Cut Sheet once that set is complete, a set made too big trimmed by itself');
+  console.log('PASS: green-line sets: one GF / SS partner of one set, the automatic Cut Sheet once that set is complete, a set made too big flagged for a person to trim');
 })().catch(e => { console.error(e); process.exit(1); });

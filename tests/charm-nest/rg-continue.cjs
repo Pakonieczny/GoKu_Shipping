@@ -68,8 +68,21 @@ this.api = { S, B, rows, attachPool, greenFits, greenResume, greenHeld, greenPag
 }
 
 (async () => {
-  /* ── 1 · three successive sets: one open layout, waits, continuation on the cut's leftover ── */
-  for (const metal of ['rose', 'gold14k']) {
+  /* ── 1r · Rose Gold (NOWAIT, Paul 14 Nov 2026): an order greenFits refuses on the open layout goes on a new draft at once; the open layout keeps taking the orders that fit it ── */
+  {
+    const w = world(), { A } = w, metal = 'rose';
+    w.page('gold', ['g1', 'A1', 'A2', 'A3']); w.page('silver', ['s1', 'A1', 'A2', 'A3']);
+    w.page('gold', ['g2', 'B1']); w.page('silver', ['s2', 'B1']);
+    const rA1 = w.line('A1', metal), rB1 = w.line('B1', metal), rA3 = w.line('A3', metal);
+    w.place(rA1);
+    const L1 = A.pagesOf(metal)[0];
+    w.place(rB1);
+    ok('rose: an order the open layout refuses goes on a new draft at once, never waiting', A.pagesOf(metal).length === 2 && rB1.state !== 'waiting' && A.pagesOf(metal)[1].charms.some(ch => ch.order === 'B1'), JSON.stringify(rB1.reason));
+    w.place(rA3);
+    ok('rose: the open layout still takes the orders that fit it', L1.charms.some(ch => ch.order === 'A3'));
+  }
+  /* ── 1 · three successive sets: one open layout, waits, continuation on the cut's leftover (10K / 14K) ── */
+  for (const metal of ['gold14k']) {
     const w = world(), { A } = w;
     // three GF + SS units (drafts, each pair sharing its own order), as the run fills them
     w.page('gold', ['g1', 'A1', 'A2']); w.page('silver', ['s1', 'A1', 'A2']);
@@ -130,10 +143,10 @@ this.api = { S, B, rows, attachPool, greenFits, greenResume, greenHeld, greenPag
     const w = world({ mode: { rose: 'new' } }), { A } = w;
     w.page('gold', ['A1']); w.page('silver', ['A1']); w.page('gold', ['B1']); w.page('silver', ['B1']);
     const rA = w.line('A1'), rB = w.line('B1'); w.place(rA); w.place(rB);
-    ok('with Options set to a new sheet the order still waits for the open layout (one at a time)', rB.state === 'waiting');
-    await w.cut(A.pagesOf('rose')[0]);
+    // (NOWAIT, Paul 14 Nov 2026: a Rose Gold order never waits for the open layout)
     const pg = A.pagesOf('rose')[1];
-    ok('and the next layout is the brand-new sheet Paul set (no leftover is taken by itself)', pg && pg.charms.length === 1 && !pg.roseStock && !pg._partialId);
+    ok('with Options set to a new sheet the order goes on a new sheet at once', rB.state !== 'waiting' && !!pg);
+    ok('and that layout is the brand-new sheet Paul set (no leftover is taken by itself)', pg && pg.charms.length === 1 && !pg.roseStock && !pg._partialId);
   }
 
   /* ── 4 · the server's automatic choice: the newest leftover with room first ── */
