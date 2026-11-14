@@ -90,6 +90,16 @@ async function session(sb) {
   await L({ op: 'setUpdate', setId: SET, patch: { orders: { [A]: { held: null, lines: [1] } }, labels: { a: 1 } } });
   await L({ op: 'runPut', run: { runId: RUN, status: 'complete', step: 'complete', day: DAY, lines: { [`${A}_10010`]: { orderId: A, key: `${A}_10010` } } } });
   await L({ op: 'runArchive', runId: RUN, parts: [{ json: JSON.stringify({ [`${C}_30030`]: { orderId: C, key: `${C}_30030` } }) }] });
+  // (CLOUDSHARE / RUNCARRIER / CLOUDTRAY / ENGRSYNC, 13-14 Nov 2026): the run carrier, the shared stores, the Nest tray and the engraving work are sandbox families too
+  await L({ op: 'runCarrier', runId: RUN, dev: 'devGuard1', by: 'paul' });
+  await L({ op: 'arrivalsLease', dev: 'devGuard1', by: 'paul', carrier: true });
+  await L({ op: 'sharePut', name: 'sorter-settings', set: { maxFill: 0.8 }, dev: 'devGuard1', by: 'paul' });
+  await L({ op: 'trayPut', id: 'a1b2c3d4e5f60718', name: 'guard.pdf', path: 'charmnest/sources/guard.pdf', state: 'tray', dev: 'devGuard1', by: 'paul' });
+  await L({ op: 'engraveSyncPut', dev: 'dguard1', by: 'paul', lines: [{ key: `${A}_10010`, rec: { state: 'ready', text: 'guard' }, sig: 'g1' }] });
+  await L({ op: 'activityPut', dev: 'devGuard1', by: 'paul', rows: [{ t: at, kind: 'DS', text: 'guard line' }] });
+  await L({ op: 'runPut', run: { runId: RUN2, status: 'running', step: 'nest', day: DAY, lines: {} } });
+  await L({ op: 'runLinesAdd', runId: RUN2, dev: 'devGuard1', by: 'paul', lines: { [`${D}_40040`]: { orderId: D, key: `${D}_40040` } } });
+  await L({ op: 'runLinesPatch', runId: RUN2, dev: 'devGuard1', by: 'paul', lines: { [`${D}_40040`]: { state: 'held', hold: 'guard' } } });
   await L({ op: 'releasePut', released: { gf: DAY }, lastReleased: { gf: DAY } });
   // (COST, Oct 2026: bridgeLog writes nothing any more; a session's log written before that is still there to be wiped)
   store.set(`${P}Design_Bridge/${SESSION}`, { sessionId: SESSION, by: 'paul', updatedAt: new Date() }); store.set(`${P}Design_Bridge/${SESSION}/log/l1`, { t: Date.now(), dir: 'cmd', type: 'ping' }); store.set(`${P}Design_Bridge/${SESSION}/log/l2`, { t: Date.now(), dir: 'evt', type: 'pong' });
@@ -321,7 +331,7 @@ const sandboxDoc = (k, v) => { const o = own('firestore', k); if (!o || o.kind !
   const keptWritten = [...new Set(writes.map(w => own('firestore', w.path)).filter(o => o && o.kind === 'protected').map(o => o.key))].sort();
   // every op of the library: driven, or named with its reason and scanned for a write
   const OPS = Object.keys(lib.ops);
-  const READ_ONLY = new Set(['bridgeLog' /* (COST, Oct 2026: answers, writes nothing) */, 'ping', 'lookupCharms', 'listCharms', 'listSheets', 'getSheet', 'listingPhotos', 'getShapeGuidance', 'laserStatus', 'laserDoneList', 'getCalibration', 'jobList', 'getJob', 'getAgent', 'poolList', 'poolGet', 'backList', 'backPreview', 'setGet', 'setList', 'runGet', 'runList', 'history', 'releaseGet', 'cancelCheck', 'timelineGet', 'listingSkus', 'aliasGet', 'noDesignGet', 'optionMapGet', 'customReadGet',
+  const READ_ONLY = new Set(['activityGet', 'trayList', 'shareGet', 'engraveSyncGet', 'customPieceList', 'artPrepoolList', 'traceSrcGet' /* (13-14 Nov 2026: reads only) */, 'bridgeLog' /* (COST, Oct 2026: answers, writes nothing) */, 'ping', 'lookupCharms', 'listCharms', 'listSheets', 'getSheet', 'listingPhotos', 'getShapeGuidance', 'laserStatus', 'laserDoneList', 'getCalibration', 'jobList', 'getJob', 'getAgent', 'poolList', 'poolGet', 'backList', 'backPreview', 'setGet', 'setList', 'runGet', 'runList', 'history', 'releaseGet', 'cancelCheck', 'timelineGet', 'listingSkus', 'aliasGet', 'noDesignGet', 'optionMapGet', 'customReadGet',
     'customSheetGet', 'customGet', 'sandboxStatus', 'roseGet', 'roseList', 'remnantList', 'partialList', 'partialPolicyGet', 'partialPlan', 'partialStocks', 'sheetHistory', 'partialSearchList', 'masterGet', 'masterGetMany', 'masterList', 'masterListFiles', 'flowState', 'sharedOrders', 'getOrderPieces', 'laserDoneList', 'sessionsList']);
   READ_ONLY.add('reviewMarkOpen');   // REVMARK: one batch get by key of {rid}_review documents (which orders are in Review); writes nothing (tests/charm-nest/review-mark.cjs drives reviewMarkPut, this guard drives it on both sides)
   READ_ONLY.add('getOrderDays');   // SAL1 (9 Nov 2026): the Orders head's sales days, one document read; writes nothing (tests/charm-nest/sales-days.cjs)
