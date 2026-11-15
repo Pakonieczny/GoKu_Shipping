@@ -73,7 +73,7 @@ const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(R
    picks the charm) is written to the SHARED store in the sandbox too, read back, and never reaches Reset or Purge. The sandbox and production
    read the same links. An answer the sandbox kept before that (its own copy) is still read, the later write of the two standing for a key. ── */
 let PREFIX = "";
-const SANDBOXED = new Set(["Charm_Nest_Engrave", "Charm_Nest_Rose_Stock", "Charm_Nest_Remnants", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Pool_Art", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
+const SANDBOXED = new Set(["Charm_Nest_Engrave", "Charm_Nest_Rose_Stock", "Charm_Nest_Remnants", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Pool_Art", "Charm_Pool_Art_Draft", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
 const FV = admin.firestore.FieldValue;
 
@@ -183,7 +183,7 @@ function slim(d) {
 /* The fields of a sheet record that its list entry (slim) and its laser readiness (Readiness.sheet) read, and the lists
    filter on. A list reads only these: the rest of a record (its charms with their outlines, its placements) is most of
    its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
-const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit", "releasedChange", "filesOwed", "cutCheck", "_w"];   // (releasedChange: a set changed after it was released or approved for laser cutting, said on its Library card, Paul 27 Oct 2026)
+const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit", "releasedChange", "filesOwed", "cutCheck", "draftOrder", "_w"];   // (releasedChange: a set changed after it was released or approved for laser cutting, said on its Library card, Paul 27 Oct 2026)
 /** What the Library's live read (op_laserStatus) reads of a sheet: SLIM_SHEET, and the sheet's own number (readiness labels a sheet that is in no set by it). */
 const LASER_SHEET = SLIM_SHEET.filter(f => f !== "sources").concat(["seq", "sourcesLite"]);
 /** What decides whether a sheet is on the Library's Current list (op_listSheets with excludeDone): archived, completed, its set (filingRecords), the filters and the order. */
@@ -2066,8 +2066,16 @@ async function poolTakeOff(ids, patch, told) {
         for (const s of sheets.values()) if (num(s.laserDoneAt) > 0 || num(s.roseCutAt) > 0) for (const id of s.poolIds || []) if (want.has(String(id)) && !live.has(String(id))) kept.add(String(id));
         for (const id of kept) seen.delete(id);
       }
+      /* TAKEOFFSOLID G4 (Paul, 15 Nov 2026: "make sure it's absolutely rock solid"): the engraving BACK (and front) record of a piece that leaves a sheet kept that sheet's id,
+         so a reader of the sheet's backs (backList by sheetId) still found it. Its sheet link is cleared here, in the same commit; the approval (words, files, approvedAt) stays,
+         so a piece put back keeps its approved words (a later backPut names the new sheet). Read first: a transaction writes after it has read. */
+      const edits = []; for (const s of sheets.values()) { const t = Placement.takeOffUpdate(s, want, at); if (t) edits.push({ s, t }); }
+      const backRefs = [], backOf = new Map();
+      for (const { s, t } of edits) for (const id of t.removed) for (const f of ["back", "front"]) { const k = Faces.recKey(id, f); if (!backOf.has(k)) { backOf.set(k, s.id); backRefs.push(col(BACK).doc(k)); } }
+      const backRows = backRefs.length ? await txGetAll(tx, backRefs, ["sheetId"]) : [];
       for (const id of part.concat(more)) if (!kept.has(id)) tx.set(col(POOL).doc(id), Object.assign({}, patch, { updatedAt: at, [Placement.REPOOLED]: null }), { merge: true });
-      for (const s of sheets.values()) { const t = Placement.takeOffUpdate(s, want, at); if (!t) continue; tx.update(col(SHEETS).doc(s.id), t.update); touched.push({ sheetId: s.id, pieces: t.removed.length }); }
+      for (const { s, t } of edits) { tx.update(col(SHEETS).doc(s.id), t.update); touched.push({ sheetId: s.id, pieces: t.removed.length }); }
+      for (const r of backRows) if (r.exists && (r.data() || {}).sheetId && (r.data() || {}).sheetId === backOf.get(r.id)) tx.set(col(BACK).doc(r.id), { sheetId: null, updatedAt: at }, { merge: true });
       return { seen, touched, more, kept: [...kept] };   // (a retried attempt answers afresh: only the committed one is used)
     });
     if (before) for (const [k, v] of made.seen) before.set(k, v);
@@ -2823,6 +2831,7 @@ async function op_backList(b) {
    written the sheet again (putSheet { cutCheck: null }); a set with such a sheet is not released. A sheet already cut by the laser is never changed. The back's record never holds a part of the
    drawing (its shape is the front record's). ── */
 const ART = "Charm_Pool_Art";
+const ART_DRAFT = "Charm_Pool_Art_Draft";   // (CEAUTOSAVE, below)
 const ART_FACES = new Set(["front", "back"]), ART_ROLES = new Set(["cut", "line", "hatch", "art"]), ART_KINDS = new Set(["path", "text"]);
 const ART_MEMBER = /^\d{1,5}-[0-9a-z]{1,13}$/, ART_ITEM = /^[A-Za-z0-9_.:-]{1,64}$/, ART_KEY = /^[0-9a-z]{1,13}$/;
 const ART_MAX = { bytes: 600000, removed: 2000, changed: 2000, added: 400, ops: 60000, d: 200000, coord: 20000, lwPt: 20, weightMm: 5, text: 200, list: 200 };
@@ -2939,6 +2948,8 @@ async function op_artPut(b) {
     if (blob) { const f = await designFile(artBlobPath(blob.key), blob.gz, "application/octet-stream"); art.blob = { key: blob.key, path: f.path, url: f.url, gz: blob.gz.length, n: blob.n, ops: c.blobOps }; }
   }
   const key = Faces.recKey(poolId, face), ref = col(ART).doc(key), poolRef = col(POOL).doc(poolId);
+  // (ARTEVERYWHERE, Paul 15 Nov 2026: "all the changes and updates automatically reflect across all the sheets and all the thumbnails": the feed names the piece's order (p:<order>) and, when it stands on a sheet, that sheet (s:<id>), so the other computers react at once and to this piece only)
+  feedOrders(b, [[poolId]]);
   return db.runTransaction(async tx => {
     const snap = await tx.get(ref), pool = await tx.get(poolRef);
     /* ARTPRE (Paul, 12 Nov 2026: "The charm editor won't let me save this change", nesting paused: no piece pooled yet). A piece not pooled yet keeps its edit too, under the pool id it WILL have
@@ -2960,6 +2971,7 @@ async function op_artPut(b) {
     if (!pool.exists) tx.set(col(ART).doc("_prepool"), { ids: { [key]: clear ? FV.delete() : now }, updatedAt: FV.serverTimestamp() }, { merge: true });
     if (pool.exists) tx.set(poolRef, { artEdit: Object.assign({}, row.artEdit && typeof row.artEdit === "object" ? row.artEdit : {}, { [face]: clear ? null : now }), updatedAt: FV.serverTimestamp() }, { merge: true });   // (ARTPRE: none yet: stamped when pooled)
     if (onSheet) tx.set(sheetRef, Object.assign({ filesOwed: now, updatedAt: FV.serverTimestamp() }, cutChanged ? { cutCheck: Object.assign({}, sheet.cutCheck && typeof sheet.cutCheck === "object" ? sheet.cutCheck : {}, { [poolId]: { at: now, by } }) } : {}), { merge: true });
+    if (onSheet) revTouch(b, ["s:" + sid]);
     return { ok: true, key, art: clear ? null : Object.assign({ poolId, face }, art, { cutKey, by, at: now }), sheetId: onSheet ? sid : null, filesOwed: onSheet ? now : null, cutChanged };
   });
 }
@@ -3193,7 +3205,7 @@ async function op_setUpdate(b) {
   revTouch(b, ["t:" + id]);   // COST (Oct 2026): it writes this set record alone
   const ref=col(SETS).doc(id);
   await db.runTransaction(async tx=>{
-    const old=await tx.get(ref),patch=await keepListed(tx,id,old.exists?old.data():null,keepEditedSheets(old.exists?old.data():null,withoutCleared(old.exists?old.data():null,b.patch || {}))),next={...(old.exists?old.data():{}),...patch};
+    const old=await tx.get(ref),patch=await withoutTakenOff(tx,old.exists?old.data():null,await keepListed(tx,id,old.exists?old.data():null,keepEditedSheets(old.exists?old.data():null,withoutCleared(old.exists?old.data():null,b.patch || {})))),next={...(old.exists?old.data():{}),...patch};
     // the numbers a set has given out (`sheetNos`, the highest of each metal) only go up: a page holding an older copy cannot lower them (charm-nest-sheet-name.js)
     if(Object.prototype.hasOwnProperty.call(patch,'sheetNos')){patch.sheetNos=SheetName.mergeNos(old.exists?old.data().sheetNos:null,patch.sheetNos);next.sheetNos=patch.sheetNos;}
     // (Paul, 7 Oct) a committed set whose sheets were added or taken out (its `setEdit`) may hold a sheet that is not ready yet: the set then waits
@@ -3264,6 +3276,29 @@ async function keepListed(tx, setId, old, patch) {
     next.orders = orders;
   }
   return next;
+}
+/* TAKEOFFSOLID G3 (Paul, 15 Nov 2026: "rock solid ... between the cloud and all the computers"): a computer that took a piece off a sheet drops it from the set's order lines and
+   saves the set (setUpdate replaces `orders` whole); the computer that carries the run never heard of it and its next save of the set listed the piece again. A copy the saved
+   `orders` names that the stored set did not list, and whose pool row is TAKEN OFF (abandoned/superseded, on no sheet: Placement.takenOff), is left out of what is written; a copy the
+   stored set already lists is never touched here (a take-off's own removal is the page's), and a piece put back (its row live again) is let in. Lines/orders left empty by this go too.
+   Only the copies the save adds are read (one getAll, four fields). */
+async function withoutTakenOff(tx, old, patch) {
+  if (!patch || !patch.orders || typeof patch.orders !== "object") return patch;
+  const had = new Set(), copiesOf = l => (l && Array.isArray(l.copies) ? l.copies : []), linesOf = o => (o && Array.isArray(o.lines) ? o.lines : o && o.lines && typeof o.lines === "object" ? Object.values(o.lines) : []);
+  if (old && old.orders && typeof old.orders === "object") for (const o of Object.values(old.orders)) for (const l of linesOf(o)) for (const c of copiesOf(l)) if (c && c.poolId) had.add(String(c.poolId));
+  const added = new Set(); for (const o of Object.values(patch.orders)) for (const l of linesOf(o)) for (const c of copiesOf(l)) if (c && c.poolId && !had.has(String(c.poolId)) && isPoolId(String(c.poolId))) added.add(String(c.poolId));
+  if (!added.size) return patch;
+  const off = new Set(), ids = [...added];
+  for (let i = 0; i < ids.length; i += 200) for (const r of await txGetAll(tx, ids.slice(i, i + 200).map(x => col(POOL).doc(x)), ["state", "sheetId", "heldAt", "removedAt", "heldBy", "removedBy", "repooledAt"])) if (r.exists && Placement.takenOff(r.data())) off.add(r.id);
+  if (!off.size) return patch;
+  const keep = l => Object.assign({}, l, { copies: copiesOf(l).filter(c => !(c && off.has(String(c.poolId)))) }), orders = {};
+  for (const [k, o] of Object.entries(patch.orders)) {
+    if (!o || typeof o !== "object") { orders[k] = o; continue; }
+    if (Array.isArray(o.lines)) { const lines = []; let hit = false; for (const l of o.lines) { const hot = copiesOf(l).some(c => c && off.has(String(c.poolId))); if (!hot) { lines.push(l); continue; } hit = true; const n = keep(l); if (n.copies.length) lines.push(n); } if (lines.length || !hit) orders[k] = Object.assign({}, o, { lines }); continue; }
+    if (o.lines && typeof o.lines === "object") { const lines = {}; let hit = false; for (const [t, l] of Object.entries(o.lines)) { const hot = copiesOf(l).some(c => c && off.has(String(c.poolId))); if (!hot) { lines[t] = l; continue; } hit = true; const n = keep(l); if (n.copies.length) lines[t] = n; } if (Object.keys(lines).length || !hit) orders[k] = Object.assign({}, o, { lines }); continue; }
+    orders[k] = o;
+  }
+  return Object.assign({}, patch, { orders });
 }
 /* Copies a cleanup took off a set's sheet on purpose (the set's `cleanup`, rg-cleanup-2026-09-29) stay off the set when a
    page that still lists them saves its orders. Nothing else in the patch changes. */
@@ -5211,6 +5246,55 @@ NO_GEN_BUMP.add("customPieceList");   // CUSTOMPOOL (Paul, 28 Oct 2026): a desig
    artGet and artList only read the documents named (they move no counter). */
 /** PREPOOLLIST: the artwork edits kept for pieces not pooled yet: { ids: { "<poolId>[~front]": at } } (one read). */
 async function op_artPrepoolList() { const s = await col(ART).doc("_prepool").get(); const ids = s.exists && s.data() && s.data().ids && typeof s.data().ids === "object" ? s.data().ids : {}; return { ids }; }
+/* CEAUTOSAVE (Paul, 15 Nov 2026: "ensure that everything in the charm editor gets saved onto the cloud as well ... including when I add images and make any and all sorts of changes inside the charm editor"):
+   the Charm Editor's open document is kept in the cloud as a DRAFT while it is being edited, one per piece (Charm_Pool_Art_Draft/{poolId}), last writer wins, the document saying who (by) and when (at).
+     artDraftPut { poolId, by, baseAt (the piece's saved art stamp the draft started from), draft (base64 of the gzip of JSON { v: 1, faces }, or the object itself) }
+     artDraftGet { poolId, full } → { draft: { poolId, by, at, baseAt, n, gz } | null } (data: the base64 gzip, only with full: true)
+     artDraftDrop { poolId, by }
+   A draft is NOT a saved edit: no pool row, no artEdit stamp, no sheet and no feed key is touched, nothing is un-approved (it is not in NO_GEN_BUMP's way: all three are listed there). A draft up to
+   DRAFT.inline gzipped lives in the record (a record is at most 600 KB); a bigger one is a file in Storage (charmnest/[sandbox/]art-draft/<poolId>-<hash>.json.gz, the one it replaces deleted), up to
+   ART_BLOB.gz as the picture's file is. */
+const DRAFT = { inline: 440000, json: 12000000 };
+const artDraftPath = (poolId, key) => (PREFIX ? "charmnest/sandbox/art-draft/" : "charmnest/art-draft/") + poolId + "-" + key + ".json.gz";
+async function op_artDraftPut(b) {
+  const poolId = str(b.poolId, 80); if (!isPoolId(poolId)) return { error: "bad pool id", status: 400 };
+  const by = str(b.by, 80).trim(); if (!by) return { error: "a draft needs the name of the signed-in person who is editing", status: 400 };
+  const zlib = require("zlib"); let gz;
+  if (b.draft && typeof b.draft === "object") gz = zlib.gzipSync(Buffer.from(JSON.stringify(b.draft), "utf8"));
+  else { const raw = String(b.draft == null ? "" : b.draft).replace(/^data:[a-z]+\/[a-z0-9.+-]+;base64,/i, ""); if (raw.length > Math.ceil(ART_BLOB.gz / 3) * 4 + 8) return { error: `the draft is ${Math.ceil(raw.length * 0.75 / 1e6 * 10) / 10} MB gzipped; one piece keeps at most ${ART_BLOB.gz / 1e6} MB`, status: 400 }; gz = Buffer.from(raw, "base64"); }
+  if (!gz.length || gz.length > ART_BLOB.gz) return { error: `a draft is at most ${ART_BLOB.gz / 1e6} MB gzipped`, status: 400 };
+  let text, j; try { text = zlib.gunzipSync(gz, { maxOutputLength: DRAFT.json }).toString("utf8"); j = JSON.parse(text); } catch (_) { return { error: `the draft is not a gzip of JSON of at most ${DRAFT.json / 1e6} MB`, status: 400 }; }
+  if (!j || typeof j !== "object" || Array.isArray(j) || !j.faces || typeof j.faces !== "object" || Array.isArray(j.faces)) return { error: "the draft is { v: 1, faces: { front, back } }", status: 400 };
+  const baseAt = Math.max(0, Math.round(num(b.baseAt))), now = Date.now(), ref = col(ART_DRAFT).doc(poolId), old = await ref.get(), was = old.exists ? old.data() || {} : {};
+  const rec = { poolId, by, at: now, baseAt, n: text.length, gz: gz.length, updatedAt: FV.serverTimestamp() };
+  if (gz.length <= DRAFT.inline) rec.data = gz.toString("base64");
+  else {
+    const key = require("crypto").createHash("sha256").update(gz).digest("hex").slice(0, 16), f = await designFile(artDraftPath(poolId, key), gz, "application/octet-stream");
+    rec.blob = { key, path: f.path, url: f.url };
+  }
+  await ref.set(rec);   // (the whole record: a draft replaces the one before it)
+  if (was.blob && was.blob.path && (!rec.blob || rec.blob.path !== was.blob.path)) { try { await admin.storage().bucket().file(was.blob.path).delete(); } catch (_) { /* a file already gone */ } }
+  return { ok: true, poolId, by, at: now, baseAt, n: rec.n, gz: rec.gz, stored: rec.blob ? "file" : "record" };
+}
+async function op_artDraftGet(b) {
+  const poolId = str(b.poolId, 80); if (!isPoolId(poolId)) return { error: "bad pool id", status: 400 };
+  const s = await col(ART_DRAFT).doc(poolId).get(); if (!s.exists) return { draft: null };
+  const d = s.data() || {}, out = { poolId, by: str(d.by, 80), at: num(d.at), baseAt: num(d.baseAt), n: num(d.n), gz: num(d.gz) };
+  if (b.full === true) {
+    if (d.data) out.data = String(d.data);
+    else if (d.blob && d.blob.path) { try { const [buf] = await admin.storage().bucket().file(d.blob.path).download(); out.data = buf.toString("base64"); } catch (e) { return { error: "the draft's file could not be read: " + ((e && e.message) || e), status: 500 }; } }
+  }
+  return { draft: out };
+}
+async function op_artDraftDrop(b) {
+  const poolId = str(b.poolId, 80); if (!isPoolId(poolId)) return { error: "bad pool id", status: 400 };
+  const by = str(b.by, 80).trim(); if (!by) return { error: "dropping a draft needs the name of the signed-in person", status: 400 };
+  const ref = col(ART_DRAFT).doc(poolId), s = await ref.get(); if (!s.exists) return { ok: true, dropped: false };
+  const d = s.data() || {}; await ref.delete();
+  if (d.blob && d.blob.path) { try { await admin.storage().bucket().file(d.blob.path).delete(); } catch (_) { /* a file already gone */ } }
+  return { ok: true, dropped: true, by: str(d.by, 80), at: num(d.at) };
+}
+Object.assign(OPS, { artDraftPut: op_artDraftPut, artDraftGet: op_artDraftGet, artDraftDrop: op_artDraftDrop }); NO_GEN_BUMP.add("artDraftPut"); NO_GEN_BUMP.add("artDraftGet"); NO_GEN_BUMP.add("artDraftDrop");
 Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList, artPrepoolList: op_artPrepoolList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList"); NO_GEN_BUMP.add("artPrepoolList");
 Object.assign(OPS, { traceSrcPut: op_traceSrcPut, traceSrcGet: op_traceSrcGet }); NO_GEN_BUMP.add("traceSrcPut"); NO_GEN_BUMP.add("traceSrcGet");   // TRACESRC (28 Oct 2026): the picture a traced image was made from, in Storage by its own hash (op_traceSrcPut above); no pool row, sheet or Library record is written
 /* ── (CLOUDALL S4, Paul 13 Nov 2026: "Small lists ... the activity log" -> every computer's activity lines are kept in the cloud and every computer shows them) ──
