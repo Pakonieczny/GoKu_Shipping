@@ -44,6 +44,20 @@
   const LOCAL_AT = new Map();  // line key -> when this page last saw it change by itself (a press here)
   const TAKING = new Set();    // line keys being put on the page now (their changes are not sends)
   const WAITING = new Map();   // line key -> a cloud record whose line was not on this page yet
+  /* ENGREV (Paul, 15 Nov 2026: "I wanna make sure they're absolutely rock solid between the cloud and all the computers"): the revision of each line as this page last read or wrote it; every send carries it (baseRev), and a line the
+     cloud has since moved on (answered in `stale`) is not written: it is read again and the cloud's copy put on this page. A line never read has no revision and is sent as before. */
+  const REVS = new Map();      // line key -> the cloud's rev as last read or written here
+  const noteRev = (k, r) => { if (r != null && Number.isFinite(+r)) REVS.set(k, Math.max(REVS.get(k) || 0, +r)); };
+  const baseOf = k => (REVS.has(k) ? { baseRev: REVS.get(k) } : {});
+  async function staleAgain(list) {
+    const keys = [...new Set((list || []).map(x => x && x.key).filter(Boolean))]; if (!keys.length) return 0;
+    for (const x of list) noteRev(x.key, x.rev);
+    let res; try { res = await api({ op: "engraveSyncGet", keys }); } catch (_) { st.fails++; return 0; }
+    let n = 0;
+    for (const l of (res && res.lines) || []) { st.lastAt = Math.max(st.lastAt, l.at || 0); CLOUD.set(l.key, l); noteRev(l.key, l.rev); LOCAL_AT.delete(l.key); if (await take(l, "stale")) n++; }   // (the cloud's copy wins over the write it refused: the press is no longer held; a later press here is sent again with the new revision)
+    if (n) { safe(() => E().render()); safe(() => O().render()); }
+    return n;
+  }
   const CLOUD = new Map();     // line key -> the cloud's record as last read or written here { key, rec, sig, at }
   /* (ANYPC, Paul 13 Nov 2026: "It doesn't matter which computer it's on"): a line ANY computer knows to be one to engrave is marked so in the cloud: the cloud's own record with raised added, nothing else of it changed, and the mark never
      comes off. No computer is special: whichever knows it first adds it, and every computer then shows the line the same way. */
@@ -51,7 +65,7 @@
     const out = [];
     for (const [k, line] of linesNow()) { const c = CLOUD.get(k); if (!c || !c.rec || c.rec.raised) continue; if (!((line.spec && line.spec.engraveCandidate) || RAISED.has(k))) continue; out.push({ key: k, rec: Object.assign({}, c.rec, { raised: true }), sig: c.sig || "" }); }
     if (!out.length) return 0;
-    for (let i = 0; i < out.length; i += BATCH) { const chunk = out.slice(i, i + BATCH); try { const res = await api({ op: "engraveSyncPut", lines: chunk, by: who(), dev: dev() }); for (const r of (res && res.lines) || []) { const x = chunk.find(c => c.key === r.key); if (x && r.at) { CLOUD.set(x.key, { key: x.key, rec: x.rec, sig: x.sig, at: r.at }); RAISED.add(x.key); st.sent++; } } } catch (_) { st.fails++; } }
+    for (let i = 0; i < out.length; i += BATCH) { const chunk = out.slice(i, i + BATCH); try { const res = await api({ op: "engraveSyncPut", lines: chunk.map(x => Object.assign({}, x, baseOf(x.key))), by: who(), dev: dev() }); for (const r of (res && res.lines) || []) { const x = chunk.find(c => c.key === r.key); if (x && r.at) { CLOUD.set(x.key, { key: x.key, rec: x.rec, sig: x.sig, at: r.at, rev: r.rev }); noteRev(x.key, r.rev); RAISED.add(x.key); st.sent++; } } if (res && res.stale && res.stale.length) await staleAgain(res.stale); } catch (_) { st.fails++; } }
     return out.length;
   }
   async function retryWaiting() { if (!WAITING.size) return 0; const lines = linesNow(); let n = 0; for (const [k, l] of [...WAITING]) { if (!lines.has(k)) continue; WAITING.delete(k); if (await take(l, "keys")) n++; } if (n) { safe(() => E().render()); safe(() => O().render()); } return n; }
@@ -123,8 +137,9 @@
     try {
       for (let i = 0; i < list.length; i += BATCH) {
         const chunk = list.slice(i, i + BATCH);
-        const res = await api({ op: "engraveSyncPut", lines: chunk.map(x => ({ key: x.key, rec: x.rec, sig: x.sig })), by: who(), dev: dev() });
-        for (const r of (res && res.lines) || []) { const x = chunk.find(c => c.key === r.key); if (!x) continue; if (r.at) { SIGS.set(x.key, x.sig); CLOUD.set(x.key, { key: x.key, rec: x.rec, sig: x.sig, at: r.at }); st.sent++; st.lastAt = Math.max(st.lastAt, r.at); } else st.fails++; }
+        const res = await api({ op: "engraveSyncPut", lines: chunk.map(x => Object.assign({ key: x.key, rec: x.rec, sig: x.sig }, baseOf(x.key))), by: who(), dev: dev() });
+        for (const r of (res && res.lines) || []) { const x = chunk.find(c => c.key === r.key); if (!x) continue; if (r.at) { SIGS.set(x.key, x.sig); noteRev(x.key, r.rev); CLOUD.set(x.key, { key: x.key, rec: x.rec, sig: x.sig, at: r.at, rev: r.rev }); st.sent++; st.lastAt = Math.max(st.lastAt, r.at); } else st.fails++; }
+        if (res && res.stale && res.stale.length) await staleAgain(res.stale);
       }
       st.last = { at: Date.now(), sent: list.length };
     } catch (e) { st.fails++; st.last = { at: Date.now(), error: String(e && e.message || e) }; setTimeout(changed, 15000); }
@@ -136,7 +151,7 @@
     const body = Array.isArray(orders) ? { op: "engraveSyncGet", orders: orders.slice(0, 600) } : { op: "engraveSyncGet", since: Math.max(0, st.lastAt - 5000) };
     let res; try { res = await api(body); } catch (e) { st.fails++; return 0; }
     const lines = (res && res.lines) || []; let n = 0;
-    for (const l of lines) { st.lastAt = Math.max(st.lastAt, l.at || 0); CLOUD.set(l.key, l); if (await take(l, why)) n++; }
+    for (const l of lines) { st.lastAt = Math.max(st.lastAt, l.at || 0); CLOUD.set(l.key, l); noteRev(l.key, l.rev); if (await take(l, why)) n++; }
     if (n) { safe(() => E().render()); safe(() => O().render()); }
     return n;
   }
@@ -147,7 +162,7 @@
     const mine = l.dev && l.dev === dev(), localAt = LOCAL_AT.get(l.key) || 0;
     if (Date.now() - localAt < OWN_HOLD) return false;   // (a press made here a moment ago: it is sent, and wins)
     const sigNow = sigOf(line); if (l.sig && sigNow === l.sig) { SIGS.set(l.key, sigNow); return false; }
-    if (mine && why !== "start") return false;   // (this computer's own write coming back: already here)
+    if (mine && why !== "start" && why !== "stale") return false;   // (this computer's own write coming back: already here)
     TAKING.add(l.key);
     try {
       const rec = l.rec;
@@ -191,7 +206,7 @@
       const got = [];
       for (let i = 0; i < orders.length; i += 600) {
         const res = await api({ op: "engraveSyncGet", orders: orders.slice(i, i + 600) });
-        for (const l of (res && res.lines) || []) { have.add(l.key); CLOUD.set(l.key, l); cloudRaised.set(l.key, !!(l.rec && l.rec.raised)); st.lastAt = Math.max(st.lastAt, l.at || 0); got.push(l); }
+        for (const l of (res && res.lines) || []) { have.add(l.key); CLOUD.set(l.key, l); noteRev(l.key, l.rev); cloudRaised.set(l.key, !!(l.rec && l.rec.raised)); st.lastAt = Math.max(st.lastAt, l.at || 0); got.push(l); }
       }
       const onScreen = new Set(); safe(() => { for (const c of root.document.querySelectorAll(".rvItem")) { const j = c._job; const r = j && j.row && (j.row.parentRow || j.row); if (r && r.key) onScreen.add(r.key); } });
       got.sort((a, b) => (onScreen.has(b.key) ? 1 : 0) - (onScreen.has(a.key) ? 1 : 0));

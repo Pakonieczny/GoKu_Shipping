@@ -9582,6 +9582,12 @@ const Engrave = window.Engrave = (() => {
     fitTasks.set(job, task);
     return task;
   }
+  /** { poolId: art-edit stamp of this job's face } as the pool row and the charm hold it now (0 when none). */
+  function artStampsOf(job) {
+    const face = faceOf(job), out = {};
+    for (const id of job.copies || []) { let row = null, c = null; try { row = B.pool.rows.get(id); c = Pool.charmOf(id) || Pool.previewCharmOf(id); } catch (_) {} const a = row && row.artEdit && typeof row.artEdit === "object" ? +row.artEdit[face] || 0 : 0, b = c && c.artEdit && c.artEdit[face] ? +c.artEdit[face].at || 0 : 0; out[id] = Math.max(a, b); }
+    return out;
+  }
   async function fitJobOnce(job) {
     const currentItems = items(), state = job.state, row = job.row, preparing = !!job.approvalPreparing;
     if (currentItems.get(job.key) !== job || row.state === "gone" || job.stamping || job.backSaving || ["approved", "written", "skipped", "none"].includes(state)) return job;
@@ -9620,6 +9626,7 @@ const Engrave = window.Engrave = (() => {
     delete job.keepPlace; KEPT.delete(job); if (lost) job.keepLost = Date.now(); else delete job.keepLost;
     // materialVersion marks a fit made with the current material model; Pool.repairRecoveredGeometry refits only older
     // ones on restore. Without the mark every fit (and every nudge, turn and resize on it) was thrown away on reload.
+    job.artAtBy = artStampsOf(job);   // (ARTSTAMP, Paul 15 Nov 2026: "I wanna make sure they're absolutely rock solid between the cloud and all the computers": the art-edit stamp of each piece's face this fit was made around; the Approve sends it and the cloud refuses it when the drawing was edited since)
     job.view=view; job.mask=mask; if(job.turnUp == null && view && Number.isFinite(view.upAngle))job.upSystem=view.upAngle; job.lines=lines; job.text=lines.join("\n"); job.fit=fit; job.fitAt=Date.now(); job.materialVersion=2; if(!input.viewOptions?.holeOnly)job.orientVersion=G.ORIENT;   // (a view kept as it was saved is not one made with the long-axis rule)
     if(!fit) {
       job.state="review";job.reason=result.reason;job.row.engrave.state="review";
@@ -12540,7 +12547,12 @@ const Engrave = window.Engrave = (() => {
           if (!current()) return false;
           if (sheetFor(job,poolId) !== sh) throw Object.assign(new Error("The charm moved during approval. Retry on its current sheet."),{engravingPending:true});
           if (!S.cloud.ok || !rec.outputs.ai?.url || !rec.outputs.png?.url) throw new Error("Reconnect to save the approved back files");
-          await api("charmNestLibrary", { op: "backPut", back: rec, ...(job.editingBack ? {expectedApprovedAt:job.expectedApprovedAt} : {}) });
+          const put = await api("charmNestLibrary", { op: "backPut", back: job.artAtBy && job.artAtBy[poolId] != null ? Object.assign({}, rec, { artAt: job.artAtBy[poolId] }) : rec, ...(job.editingBack ? {expectedApprovedAt:job.expectedApprovedAt} : {}) });
+          if (put && Array.isArray(put.staleArt) && put.staleArt.includes(poolId)) {   // (ARTSTAMP: the drawing was edited after this fit; the cloud kept no back: the face is un-approved so Approve is lit again)
+            job.stagedBacks = (job.stagedBacks || []).filter(b => b.poolId !== poolId);
+            try { artChanged(poolId, faceOf(job), "This charm's artwork changed while it was being approved — approve it again"); toast("This charm's artwork changed while you were approving it, so the approval was not kept. Press Approve again.", "bad", 8000); } catch (_) {}
+            return false;
+          }
           for (const page of allSheets()) page.backPool = (page.backPool || []).filter(b => !(b.poolId === poolId && faceOf(b) === faceOf(job)));   // (this face's record alone)
           if (!current()) return false;
           sh.backPool = (sh.backPool || []).filter(b=>!(b.poolId===poolId && faceOf(b)===faceOf(job))); sh.backPool.push(rec); job.backs.push(rec);
