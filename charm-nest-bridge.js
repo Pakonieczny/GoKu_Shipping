@@ -16098,8 +16098,21 @@ const RunCtl = window.RunCtl = (() => {
     if (B.run && ["running", "review", "paused", "processed", "stopped"].includes(B.run.status)) { toast("A run is already open — resume, finish, or abandon it before starting another", "bad"); return B.run; }
     if (B.run) await save(B.run);
     if ((B.run || Recall.on()) && clearRunState()===false) return B.run;
+    // (RUNOPEN, Paul 15 Nov 2026: "Computers are only fed the truth ... never duplicating the truth in their own way"): the run is MADE BY THE CLOUD. This page asks for the run; the cloud answers with the one that is open
+    //  (this computer follows it: nothing is started here) or makes one and names it (this computer carries it). No page mints a run, and none is started while the cloud cannot be reached
+    let made = null;
+    try { made = await api("charmNestLibrary", { op: "runOpen", mode: opts.mode || S.settings.runMode || "manual", day: today(), solidIncluded: Object.assign({}, Gate.state().solidIncluded || {}) }, { quiet: true }); }
+    catch (e) { toast(`A run is started by the cloud, and the cloud could not be reached: ${e.message}`, "bad", 9000); return null; }
+    if (!made || !made.runId) return null;
+    if (!made.created) {
+      agent({ bridge: true }, "cloud", `A run is open in the cloud (${made.runId}): none is started here; this computer follows it`);
+      toast("A run is already open in the cloud: this computer follows it", "ok", 7000); renderBanner();
+      try { window.CharmNestRunFollow && CharmNestRunFollow.now("open"); } catch (_) {}
+      try { Recall.follow(made.runId, { force: true }).catch(() => {}); } catch (_) {}
+      return null;
+    }
     try { Recall.unfollow(); } catch (_) {}   // (CLOUDFIRST, Paul 15 Nov 2026: the sheets of a run that was followed here leave the cards before a run of this computer's own fills them)
-    const r = newRun(opts.mode); Gate.state().solidIncluded = {}; B.run = r; claimRun(r.runId); carrier(r.runId).catch(() => {});   // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access")
+    const r = newRun(opts.mode); r.runId = made.runId; if (made.day) r.day = made.day; Gate.state().solidIncluded = {}; B.run = r; claimRun(r.runId); carrier(r.runId).catch(() => {});   // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access")
     agent({ run: r.runId }, "DS", `Run ${r.runId} started (${r.mode} mode)`);
     try { await saveSoft(r); } catch (e) {
       // (ONERUN, Paul 15 Nov 2026: "There can only be one master version of it in the cloud there may never be any other versions"): the cloud refused the new run because a run is open: this computer drops the run it had just made (nothing of it was written or nested) and follows the open one
