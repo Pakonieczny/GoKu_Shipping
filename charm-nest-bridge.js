@@ -16098,6 +16098,7 @@ const RunCtl = window.RunCtl = (() => {
     if (B.run && ["running", "review", "paused", "processed", "stopped"].includes(B.run.status)) { toast("A run is already open — resume, finish, or abandon it before starting another", "bad"); return B.run; }
     if (B.run) await save(B.run);
     if ((B.run || Recall.on()) && clearRunState()===false) return B.run;
+    try { Recall.unfollow(); } catch (_) {}   // (CLOUDFIRST, Paul 15 Nov 2026: the sheets of a run that was followed here leave the cards before a run of this computer's own fills them)
     const r = newRun(opts.mode); Gate.state().solidIncluded = {}; B.run = r; claimRun(r.runId); carrier(r.runId).catch(() => {});   // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access")
     agent({ run: r.runId }, "DS", `Run ${r.runId} started (${r.mode} mode)`);
     try { await saveSoft(r); } catch (e) { stop(e.message, "Fix the cause and press Resume."); throw e; }   // (a run that cannot start says so and waits for Resume, it is not left running)
@@ -16602,6 +16603,7 @@ const RunCtl = window.RunCtl = (() => {
     }, ms || 0);
   }
   async function restoreRunSheets(rec) {
+    try { Recall.unfollow(); } catch (_) {}   // (CLOUDFIRST, Paul 15 Nov 2026: the sheets shown from the cloud while this computer followed the run leave the cards; they are built here, from the same records, below)
     const setIds = [...new Set((rec.setIds || []).concat(rec.setId ? [rec.setId] : []))];
     const sets = [];
     for (const sid of setIds) {
@@ -16620,10 +16622,23 @@ const RunCtl = window.RunCtl = (() => {
     // (PAGEORDER, Paul 14 Nov 2026: a 14K piece went onto a new Draft 3 while Draft 2 had room): the Library lists a run's sheets newest-updated first, and each restored sheet
     //  became the next page in that order, so the last page (the "newest sheet" every intake and overflow looks at) was the oldest one. The sheets are restored oldest first
     const startedOf = x => +x.cardStartedAt || +(x.createdAt && (x.createdAt._seconds || x.createdAt.seconds)) * 1000 || Date.parse(x.createdAt) || 0;
-    for (const slim of (ls.sheets || []).slice().sort((a, b) => startedOf(a) - startedOf(b))) {
-      const d = (await api("charmNestLibrary", { op: "getSheet", id: slim.id })).sheet; if (!d) continue;
+    // (QUIETLOAD, Paul 15 Nov 2026: "The whole computer was stalling. Nothing was clickable ... This thing must happen seamlessly in the background"): a run put back on a computer read its sheets one after
+    //  another and every piece of every sheet in a call of its own (about 190 calls for 170 pieces), all in one stretch the page could not answer in. The sheets' records are read six at a time, the
+    //  pieces of all of them in one call (poolGet takes 300), and the page is let answer between sheets. What is restored, and in what order, is unchanged
+    const slims = (ls.sheets || []).slice().sort((a, b) => startedOf(a) - startedOf(b)), recs = new Map();
+    for (let i = 0; i < slims.length; i += 6) await Promise.all(slims.slice(i, i + 6).map(async x => { recs.set(x.id, (await api("charmNestLibrary", { op: "getSheet", id: x.id })).sheet || null); }));
+    { const mine = new Set(), want = new Set(); for (const row of Orders.rows()) for (const id of row.poolIds || []) mine.add(id);
+      for (const d of recs.values()) if (d) for (const { c: rc } of placedOfRecord(d)) if (rc && rc.poolId && mine.has(rc.poolId) && !B.pool.rows.has(rc.poolId)) want.add(rc.poolId);
+      const ids = [...want];
+      for (let i = 0; i < ids.length; i += 300) { try { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: ids.slice(i, i + 300) })).pools || {}; for (const id of Object.keys(got)) if (got[id]) B.pool.rows.set(id, got[id]); } catch (_) { /* a piece not read here is asked for on its own below, as before */ } } }
+    let breathAt = typeof performance !== "undefined" ? performance.now() : 0;
+    const breathe = async () => { if (typeof performance === "undefined" || performance.now() - breathAt < 120) return; await new Promise(res => setTimeout(res, 0)); breathAt = performance.now(); };
+    for (const slim of slims) {
+      await breathe();
+      const d = recs.get(slim.id); if (!d) continue;
       const prim = S.sheets[d.metal]; let pg = prim.pages.find(p => p.sheetId === d.id) || (prim.pages[0].charms.length ? addPage(d.metal, { fresh: true }) : prim.pages[0]);   // (ONEFILL: a restored sheet is its own page)
       const set = d.draft ? null : bySet.get(d.setId);
+      if (pg.followed || (pg.recalled && !pg.charms.length)) { pg.recalled = null; pg.followed = false; pg._img = null; pg.placements = []; }   // (CLOUDFIRST: a sheet shown from its record while this computer followed the run is built here now)
       pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.laserDoneAt = +d.laserDoneAt || null; pg.releasedChange = d.releasedChange || null; /* (INPLACE: a set changed after it was released, said on the card) */ pg.intakeFinalized = !!d.intakeFinalized; pg.intakeOptimized=!!d.intakeOptimized; pg.intakeOptimizedCount=+d.intakeOptimizedCount||0; pg.missRearranged=!!d.missRearranged; pg.topup=d.topup||null;
       if (["gold10k","gold14k","rose"].includes(d.metal) && d.solidIncluded === true) pg.solidPick = true;   // a 10K/14K/Rose Gold sheet's own Include tick
       pg.leftSet = Gate.leftSetOf(d); if (pg.leftSet && ["gold10k","gold14k","rose"].includes(d.metal)) pg.solidPick = false;
@@ -16670,6 +16685,10 @@ const RunCtl = window.RunCtl = (() => {
       // sheet must be rebuilt and verified before it can acquire set membership.
       // (TAKEOVERSAFE, Paul 14 Nov 2026: "A real run takeover between computers ... test them"): a draft whose every placement came back from its record keeps its layout, its pins and its approved engravings (it was nested again from scratch at every takeover);
       //  only a sheet that is missing placements is rebuilt
+      // (CLOUDFIRST, Paul 15 Nov 2026: "The library tab is the correct one. The nesting on the nest tab is incorrect"): a sheet put back whole from its record IS the cloud's copy: it keeps the record's revision, so its next save here says
+      //  which copy it was made from and the cloud refuses it if another computer saved the sheet meanwhile (it was learned only 15 s later, and never for a sheet at work by then: such a save overwrote the other computer's)
+      //  A sheet that is missing pieces and is nested again below was made from that revision too: its save is refused the same way, never written over a newer copy
+      if (d.layoutRev != null && Number.isFinite(+d.layoutRev)) pg.layoutRev = +d.layoutRev;
       if (pg.placements.length !== (d.placements || []).length) {
         for (const c of pg.charms) if (!c.manual) c.pinned = null;   // (a piece placed by hand, Manual Control, stays where the person put it)
         sheetDirty(pg);
@@ -16742,9 +16761,26 @@ const RunCtl = window.RunCtl = (() => {
     Orders.render();Engrave.render();Review.render();renderBanner();renderRail();updateTopSub();
     return true;
   }
-  function setRunMode(mode) {
+  /* (AUTOASK, Paul 15 Nov 2026: "when she loaded the application for the first time all the nesting on the nest tab start nesting everything"): Auto turned on, on a computer with no run of its own, started a NEW run at once,
+     without asking the cloud whether a run was open (the page's start asks, NOBOOTRUN; an arriving order asks, NOSECONDRUN; the Auto button did not). That second run took the open run's waiting pieces and nested them again
+     on this computer. The cloud is asked first: while a run is open there, Auto starts none here (this computer follows that run), and when the cloud cannot be asked none is started either. o.asked: the caller has just asked. */
+  async function openRunInCloud() {
+    if ((B.openRuns && B.openRuns.length) || (window.CharmNestRunFollow && CharmNestRunFollow.state().runId)) return true;
+    const lr = await api("charmNestLibrary", { op: "runList", limit: 10 }, { quiet: true });
+    return ((lr && lr.runs) || []).some(x => x && x.runId && !["complete", "abandoned", "archived"].includes(x.status) && !(B.run && x.runId === B.run.runId));
+  }
+  async function autoStart(o = {}) {
+    if (!o.asked) {
+      let open = true; try { open = await openRunInCloud(); } catch (_) { toast("Auto is on, but the cloud could not be asked whether a run is open: no run is started on this computer yet", "bad", 8000); return; }
+      if (open) { agent({ bridge: true }, "cloud", "A run is open in the cloud: Auto starts no new run on this computer"); toast("A run is already open in the cloud: this computer follows it and starts no run of its own", "ok", 7000); return; }
+    }
+    if (S.settings.runMode !== "auto" || (B.run && B.run.status !== "complete")) return;   // (changed while the cloud was asked)
+    if (B.run && B.run.status === "complete" && clearRunState()===false) return;
+    await start({ mode: "auto" });
+  }
+  function setRunMode(mode, o) {
     S.settings.runMode = mode === "auto" ? "auto" : "manual"; saveSettings(); renderModeBtn();
-    if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, continuing past pending approvals"); if (!B.run || B.run.status === "complete") { if (B.run && B.run.status === "complete" && clearRunState()===false)return; start({ mode: "auto" }).catch(e => toast(e.message, "bad")); } else if (B.run.status === "stopped") { B.run.mode = "auto"; resume().catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
+    if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, continuing past pending approvals"); if (!B.run || B.run.status === "complete") { autoStart(o).catch(e => toast(e.message, "bad")); } else if (B.run.status === "stopped") { B.run.mode = "auto"; resume().catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
     else { clearTimeout(autoTimer); if (B.run) B.run.mode = "manual"; agent({ bridge: true }, "DS", "Manual mode: finish processing; start the next run manually"); }
     renderBanner();
   }
@@ -27616,7 +27652,59 @@ const Recall = window.Recall = (() => {
       agent({ metal: pg.metal }, "cloud", `${rec.fileBase || rec.id}: ${pg.charms.length} charm(s) rebuilt from the master files — the sheet can be edited and nested again`);
     } finally { if (bar) bar.end(); }
   }
-  return { open, rebuild, on, state: () => RC };
+  /* (CLOUDFIRST, Paul 15 Nov 2026: "the nest thing on the nest tab does not match the nest thing in the library tab. The library tab is the correct one"): a computer that follows a run another computer carries
+     (charm-nest-run-follow.js) took the run's order lines from the cloud and never its sheets: its Nest cards stayed empty, or showed what it had nested itself. follow(runId) puts the run's sheets on the cards as
+     the cloud has them, each drawn from its saved record and picture as a recalled sheet is (read only: nothing is nested, rebuilt or written; one read of the run's sheet list, at most every ten minutes; a sheet the
+     changes feed names is refreshed by charm-nest-cloud-sheets.js). Only on a computer with no run of its own, no set opened on purpose, and no piece of its own on any card: this computer's own work is never replaced.
+     unfollow() takes them off again before a run is started here (a run resumed here builds its sheets on those same pages: restoreRunSheets). */
+  let followAt = 0, following = null, followSig = "";
+  const ownWork = () => allSheets().some(p => (p.charms || []).length || (p.workers || []).length || ["nesting", "finishing", "queued"].includes(p.status) || ((p.rosePlan || p.roseProtected) && !p.roseCutAt));
+  const emptyCard = prim => { for (const pg of prim.pages.slice(1)) { (pg.workers || []).forEach(w => w.terminate()); }
+    prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; prim.recalled = null; prim.followed = false; prim.status = "idle"; prim.placements = []; prim.fileBase = null; prim.sheetId = null; prim.runId = null; prim.setId = null; prim.seq = null; prim.sheetIndex = null; prim.cloud = null; prim.backPool = []; prim._img = null; };
+  async function follow(runId, o = {}) {
+    if (!runId || B.run || on() || following || ownWork()) return false;
+    if (!o.force && Date.now() - followAt < 600000) return false;
+    followAt = Date.now();
+    following = (async () => {
+      const ls = await api("charmNestLibrary", { op: "listSheets", limit: 200, runId }, { quiet: true, all: "sheets" });
+      if (B.run || on() || ownWork()) return false;   // (a run was opened, or work begun, here while the list was on its way)
+      const byName = new Map();
+      for (const x of ls.sheets || []) { const k = x.fileBase || x.id; const had = byName.get(k); if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) byName.set(k, x); }
+      const startedOf = x => +x.cardStartedAt || +(x.createdAt && (x.createdAt._seconds || x.createdAt.seconds)) * 1000 || Date.parse(x.createdAt) || 0;
+      const sheets = [...byName.values()].sort((a, b) => startedOf(a) - startedOf(b));   // (oldest first, as a run put back here lists them: PAGEORDER)
+      const sig = runId + "|" + sheets.map(x => x.id + ":" + (x.updatedAt || 0)).join("|");
+      if (sig === followSig && allSheets().some(p => p.followed)) return true;
+      followSig = sig;
+      for (const m of METALS) {
+        const prim = S.sheets[m.key], mine = sheets.filter(x => x.metal === m.key);
+        if (!mine.length && !prim.pages.some(p => p.followed || p.recalled)) continue;
+        emptyCard(prim);
+        mine.forEach((rec, i) => {
+          const pg = i === 0 ? prim.pages[0] : CN.addPage(m.key, { fresh: true });
+          pg.charms = []; pg.placements = []; pg.rejects = []; pg.outputs = null; pg.verification = rec.verification || null; pg.liveInfo = null; pg.dirty = false; pg.problem = null;
+          delete pg.roseStock; delete pg.roseProtected; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded = false; pg._roseError = null; pg.roseCutAt = rec.roseCutAt || null;
+          pg.recalled = rec; pg.followed = true; pg.status = "complete"; pg.sheetId = rec.id; pg.runId = rec.runId || runId; pg.setId = rec.setId; pg.seq = rec.setSeq; pg.setDay = rec.day; pg.cardStartedAt = rec.cardStartedAt || rec.createdAt || null; pg.sheetIndex = rec.sheetIndex; pg.fileBase = rec.fileBase; pg.group = null;
+          pg.backPool = (rec.backs || []).map(bk => ({ sheetId: rec.id, engravingSeals: bk.engravingSeals || [], approvedAt: bk.approvedAt, copy: bk.copy, previewWPt: bk.previewWPt, previewHPt: bk.previewHPt, pageWPt: bk.pageWPt, pageHPt: bk.pageHPt, poolId: bk.poolId, ...(bk.face === "front" ? { face: "front" } : {}), order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));
+          pg.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
+          pg.persistedDone = true; pg.persisted = Promise.resolve(); pg._img = null;
+        });
+        // the newest sheet that is not cut is the one shown, as on the computer that carries the run
+        let show = 0; mine.forEach((rec, i) => { if (!(+rec.laserDoneAt > 0)) show = i; });
+        prim.active = 0; prim.el = prim.cardEl; CN.showPage(m.key, show);
+      }
+      CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub();
+      agent({ run: runId }, "cloud", `${sheets.length} sheet(s) of the open run shown on the Nest cards as the cloud has them: nothing is nested on this computer`);
+      return true;
+    })();
+    try { return await following; } catch (e) { console.warn("[follow sheets]", e && e.message); followAt = 0; return false; } finally { following = null; }
+  }
+  function unfollow() {
+    let n = 0;
+    for (const m of METALS) { const prim = S.sheets[m.key]; if (!prim.pages.some(p => p.followed)) continue; if (prim.pages.some(p => (p.charms || []).length)) { for (const p of prim.pages) p.followed = false; continue; } emptyCard(prim); CN.renderCard(prim); n++; }
+    followSig = ""; if (n) { CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub(); }
+    return n;
+  }
+  return { open, rebuild, on, state: () => RC, follow, unfollow };
 })();
 
 
@@ -29392,7 +29480,8 @@ async function bootBridge() {
     if (open.length && !B.run) {
       // (FOLLOWOPEN 2, Paul 13 Nov 2026: this computer's saved copy put the run back as an earlier set at every reload): a run (not a set opened on purpose) restored from that copy is let go of; the run's orders, sheets and engraving stay on the page, followed from the cloud
       try { const rc = Recall.state(); if (rc && rc.runId && !rc.setId && open.some(x => x.runId === rc.runId)) { Object.assign(rc, { runId: null, setId: null, live: null }); B.orders.recalled = null; agent({ bridge: true }, "cloud", "Following the open run from the cloud on this computer"); Orders.render(); Engrave.render(); Review.render(); Arrivals.paint(); } } catch (_) {}
-      try { window.CharmNestRunFollow && window.CharmNestRunFollow.now("boot"); } catch (_) {} }
+      try { window.CharmNestRunFollow && window.CharmNestRunFollow.now("boot"); } catch (_) {}
+      try { Recall.follow(open[0].runId, { force: true }).catch(() => {}); } catch (_) {} }   // (CLOUDFIRST, Paul 15 Nov 2026: and the run's sheets, as the cloud has them, on the Nest cards)
     else if (last && !B.run && !B.orders.rows.length && !Recall.on()) Recall.open({ runId: last.runId, quiet: true }).catch(() => {});
     // (CLOUDLINES, Paul 13 Nov 2026: the other computer showed only the 7 newest orders until its data was deleted: its saved copy held fewer of the run's lines than the cloud. The run is read
     //  from the cloud, as on a clean computer. A set opened on purpose (its own orders only) is left as it is)
@@ -29414,7 +29503,7 @@ async function bootBridge() {
   if (!recovered && !recoveryFailed && S.settings.runMode === "auto" && !Sandbox.held()) { setTimeout(async () => { if (B.openRuns?.length || Recall.on() || B.run) return;
       // (NOBOOTRUN, Paul 14 Nov 2026: the takeover test: a computer reloaded with no run of its own started a NEW run by itself 1.5 s after loading, before the cloud's list of open runs had come back): the cloud is asked first; Auto starts a run here only when no run is open
       try { const lr = await api("charmNestLibrary", { op: "runList", limit: 10 }, { quiet: true }); if (((lr && lr.runs) || []).some(x => x && x.runId && !["complete", "abandoned", "archived"].includes(x.status))) { agent({ bridge: true }, "cloud", "A run is open in the cloud: Auto starts no new run on this computer"); return; } } catch (_) { return; }
-      if (B.openRuns?.length || Recall.on() || B.run) return; RunCtl.setMode("auto"); }, 1500); }
+      if (B.openRuns?.length || Recall.on() || B.run) return; RunCtl.setMode("auto", { asked: true }); }, 1500); }
   document.addEventListener("keydown", e => { if (e.altKey && e.key === "r") { e.preventDefault(); setMode("review"); } });
   agent({ bridge: true }, "DS", `Bridge ready · station ${DesignLink.origin()} · ${S.settings.runMode} mode`);
 }
