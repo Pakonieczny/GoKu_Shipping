@@ -50,7 +50,7 @@
     const t = pending.get(id);
     if (!t || t.place !== where) return;
     if (t.repeat) t.due = performance.now() + t.ms; else { pending.delete(id); if (t.wid != null) byWid.delete(t.wid); }
-    try { t.fn.apply(window, t.args); } catch (err) { fail(err); }
+    try { if (window.CharmNestHang && window.CharmNestHang.active) window.CharmNestHang.run(t.fn, t.repeat ? "interval" : "timeout", window, t.args); else t.fn.apply(window, t.args); } catch (err) { fail(err); }   // (the stall recorder, charm-nest-hangwatch.js, notes which piece of code is running)
   }
   /** Puts a timer where the clock is now, `wait` ms from now. An interval moved part way through its period waits what was
       left of it first (`first`), then keeps its period. */
@@ -104,7 +104,7 @@
     // wait until the tab is shown again; with the clock off a frame waits for the browser, as on any page.
     const frames = new Map();   // id -> { fn, nativeId, timerId }
     let nextFrame = 0x50000000;
-    const runFrame = id => { const f = frames.get(id); if (!f) return; frames.delete(id); f.fn(performance.now()); };
+    const runFrame = id => { const f = frames.get(id); if (!f) return; frames.delete(id); if (window.CharmNestHang && window.CharmNestHang.active) window.CharmNestHang.run(f.fn, "frame", window, [performance.now()]); else f.fn(performance.now()); };
     const timed = () => document.hidden && on && !!worker;
     const toTimer = (id, f) => { if (f.nativeId != null) native.cancelAnimationFrame(f.nativeId); f.nativeId = null; f.timerId = window.setTimeout(() => runFrame(id), 16); };
     const toNative = (id, f) => { if (f.timerId != null) window.clearTimeout(f.timerId); f.timerId = null; f.nativeId = native.requestAnimationFrame(() => runFrame(id)); };
