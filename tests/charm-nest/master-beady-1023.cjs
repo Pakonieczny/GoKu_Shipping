@@ -82,7 +82,9 @@ const longMm = seg => { const b = trueBox(seg); return Math.max(b[2] - b[0], b[3
       labels: [{ text: 'Ring_1', cx: 30 + big / 2, top: 118 }, { text: 'Hole_1', cx: 110 + big / 2, top: 118 }, { text: 'Small_1', cx: 190 + small / 2, top: 118 }, { text: 'Bar_1', cx: 250 + 12.5 * PT, top: 118 }, { text: 'Sized_1 · L', cx: 340 + big / 2, top: 118 }, { text: 'Off_1', cx: 420 + big / 2, top: 118 }] });
     const W = await read(sheet), skip = new Set(Pair.rowsOf(W.g.charms).flat().map(c => c.index));
     const hoopsOf = c => P.findHoops(c, V).map(h => [+h.outer.r.toFixed(3), h.aperture ? +h.aperture.r.toFixed(3) : 0]);
-    const fit = (sku, o) => { const c = W.bySku(sku), l = W.lab.labels.get(c.index); return { c, before: hoopsOf(c), detail: c.members.find(m => m.fill && !m.stroke), r: P.fitCharmSize(c, Object.assign({ skip, sized: [l].concat(l.extra || []).some(x => x.size) }, o)) }; };
+    const fit = (sku, o) => { const c = W.bySku(sku), l = W.lab.labels.get(c.index); return { c, before: hoopsOf(c), detail: c.members.find(m => m.fill && !m.stroke), r: P.fitCharmSize(c, Object.assign({ maxMm: 11.5, skip, sized: [l].concat(l.extra || []).some(x => x.size) }, o)) }; };   // (SIZEOFF, Paul 14 Nov 2026: the standard size is off by default; this case sets it to 11.5 as a person may in the settings)
+    ok(P.SIZE_RULE.maxMm === 0, 'the standard size is off by default: a charm keeps the size its master draws: ' + JSON.stringify(P.SIZE_RULE));
+    ok(P.fitCharmSize(W.bySku('RING_1'), { skip }).skipped === 'off', 'with no size set a 15 mm body is left as drawn');
     const ring = fit('RING_1');
     ok(ring.r.k && Math.abs(ring.r.fromMm - 15) < 0.05 && ring.r.toMm === 11.5 && Math.abs(longMm(ring.c.outline) - 11.5) < 0.02, 'a 15 mm body is drawn at 11.5 mm: ' + JSON.stringify(ring.r) + ' ' + longMm(ring.c.outline).toFixed(3));
     ok(JSON.stringify(hoopsOf(ring.c)) === JSON.stringify(ring.before) && JSON.stringify(ring.before) === '[[3.25,1.85]]', 'its ring keeps its own size: ' + JSON.stringify(hoopsOf(ring.c)));
@@ -101,7 +103,7 @@ const longMm = seg => { const b = trueBox(seg); return Math.max(b[2] - b[0], b[3
     ok(fit('BAR_1').r.skipped === 'long and narrow', 'a 25 x 6 mm bar is long and narrow: left as drawn');
     ok(fit('SIZED_1').r.skipped === 'its label names a size', 'a design whose label names a size is that size');
     ok(fit('OFF_1', { maxMm: 0 }).r.skipped === 'off' && !W.bySku('OFF_1').sizeXform, 'max 0: every charm as drawn');
-    { const W2 = await read(sheet), c = W2.bySku('OFF_1'); ok(P.fitCharmSize(c, { skip: new Set([c.index]) }).skipped === 'touches a body without a SKU (a possible pair)', 'a body the pair layer may build with another keeps its size'); }
+    { const W2 = await read(sheet), c = W2.bySku('OFF_1'); ok(P.fitCharmSize(c, { maxMm: 11.5, skip: new Set([c.index]) }).skipped === 'touches a body without a SKU (a possible pair)', 'a body the pair layer may build with another keeps its size'); }
     const note = P.sizeRuleNote([{ sku: 'RING_1', r: ring.r }, { sku: 'BAR_1', r: { skipped: 'long and narrow', fromMm: 25 } }, { sku: 'SMALL_1', r: { skipped: 'fits', fromMm: 9 } }], 11.5);
     ok(/^1 charm\(s\) longer than 11.5 mm were drawn at 11.5 mm .*RING_1 15\.0 · 1 over it left as drawn \(1 long and narrow\)$/.test(note), 'the run says what it did: ' + note);
     // the Master tab writes design files in a worker, from a list of the charm's fields: the matrix must be on it, or the file holds the scaled cut line over the drawing at its old size
