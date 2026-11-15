@@ -12049,6 +12049,12 @@ const Engrave = window.Engrave = (() => {
   function charmEditEverywhere(poolIds, rid) {
     const ids = (poolIds || []).map(String).filter(Boolean); if (!ids.length) return;
     const tryDo = f => { try { f(); } catch (e) { console.warn("charm edit: views", e); } };
+    // (ONEWORDS, Paul 15 Nov 2026: "Make sure that the charm editor and the engraving detailed model don't conflict"): words typed in the engraving card and not yet approved lived on in the card's draft after a Charm Editor
+    //  Save had changed the same piece's words: the next Approve kept the card's OLDER words over the editor's. A Save in the Charm Editor is the newest word on the piece: the card's unsaved draft of it is dropped, and
+    //  the card shows what was saved (an Approve already being kept is left to land)
+    tryDo(() => { const PNL = window.CharmNestEngravePanel; if (!PNL || !PNL.DRAFTS) return;
+      const rows = Orders.rows().filter(r => (r.poolIds || []).some(id => ids.includes(String(id)))), keys = new Set(rows.map(r => String(r.key)));
+      for (const k of [...PNL.DRAFTS.keys()]) { const base = String(k).split("#")[0]; if ((keys.has(String(k)) || keys.has(base)) && !(PNL.COMMITS && PNL.COMMITS.has(k))) PNL.DRAFTS.delete(k); } });
     tryDo(() => window.CharmNestMadeThumb?.changed("art", ids));
     // (CES4, Paul 9 Nov 2026: "why can't you speed this up?": a Save is a finished change, not a run of moves: the piece's new picture goes to the cloud as soon as its look has been taken
     //  (charm-nest-made-thumb.js sweep, 120 ms), not after its 1.5 to 6 s pause, so other computers show it a few seconds sooner; a face still being fitted again still waits for its words)
@@ -14309,9 +14315,20 @@ const Engrave = window.Engrave = (() => {
   function artChanged(poolId, face, why) {
     face = face === "front" ? "front" : "back";
     const said = why || `This charm's ${face} changed since the words were approved — fit the words again`;
-    let n = 0;
+    let n = 0, busy = false;
     for (const j of [...items().values()]) {
       if (!j || j.editingBack || !(j.copies || []).includes(poolId) || faceOf(j) !== face) continue;
+      /* (RELIT, Paul 15 Nov 2026: "every time I make any changes the approved button needs to be re-lit again"). Two changes that left Approve calm:
+         · a face decided "cut plain" (no engraving: state none / skipped, its CUT PLAIN seal) whose drawing or cut line was then changed in the Charm Editor kept its seal, and the card went on saying Approved.
+           The seal is of the piece as it WAS: it is taken off, so the card's Approve is lit and the piece is approved again as it now is;
+         · an Approve still being written when the change arrived (decidedBusy) could land after it, on the old drawing: the face is looked at again once that Approve has landed, and un-approved then. */
+      if (decidedBusy(j)) busy = true;
+      if (["none", "skipped"].includes(j.state)) {
+        const plain = x => !(x && x.how === "engravePlain"), had = (j.engravingSeals || []).some(x => !plain(x)) || !!(j.row && j.row.engrave && (j.row.engrave.seals || []).some(x => !plain(x))) || (j.state === "skipped" && +j.decidedAt > 0);
+        if (had) { j.engravingSeals = (j.engravingSeals || []).filter(plain); if (j.state === "skipped") { j.decidedAt = null; j.decidedBy = null; }
+          if (j.row && j.row.engrave) j.row.engrave = Object.assign({}, j.row.engrave, { seals: (j.row.engrave.seals || []).filter(plain), approved: false, reason: `This charm's ${face} changed since it was approved to be cut plain: approve it again` });
+          j.reason = `This charm's ${face} changed since it was approved to be cut plain: approve it again`; n++; }
+      }
       // EDITOR WORDS (27 Oct 2026): the face now carries parts the editor added and its words are only the order's offer (none, a proposal, the buyer's whole note): they are not fitted around the
       // new drawing as if a person had asked for them. The face is placed as the editor drew it and waits for Approve; a person who wants words as well types them (they are fitted as ever).
       const settled = ["skipped", "none"].includes(j.state) || decidedBusy(j);
@@ -14339,9 +14356,11 @@ const Engrave = window.Engrave = (() => {
       } else continue;
       try { Review.remove("eng:" + j.key); } catch (_) { /* nothing to take down */ }
     }
+    if (busy) { const k = poolId + "|" + face, t = (artChanged._again.get(k) || 0) + 1; if (t <= 40) { artChanged._again.set(k, t); setTimeout(() => { try { artChanged(poolId, face, why); } catch (_) {} }, 1500); } else artChanged._again.delete(k); } else artChanged._again.delete(poolId + "|" + face);
     if (n) { try { Session.schedule(); render(); } catch (_) { /* drawn with the next render */ } }
     return n;
   }
+  artChanged._again = new Map();
   return { viewFaceOf, setViewFace, showFace, showStage: svShowStage, stageNow: svStageNow, stageSeq: k => { const r = SV_STAGES.get(String(k == null ? "" : k)); return r ? r.seq : 0; }, stagePlaceOf: svPlaceOf, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, discardStaged, stageFace, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, pendingOrderIds, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
@@ -27670,6 +27689,8 @@ const Recall = window.Recall = (() => {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: rec.id })).sheet; if (!d) throw new Error("the sheet record is gone");
       for (const { p, c: rc } of placedOfRecord(d)) {   // (DUPID: the charm the record's poolIds names, as the restore above)
         if (!rc || !rc.poolId) continue;
+        // (TAKENRELOAD, Paul 15 Nov 2026): a piece taken off this sheet on another computer leaves the record's list of pieces at once (poolIds, with dirty: the layout is still to be written again) while its place is still in the record's layout until that computer has written it: it is not drawn back here
+        if (d.dirty === true && Array.isArray(d.poolIds) && !d.poolIds.map(String).includes(String(rc.poolId))) continue;
         const pool = B.pool.rows.get(rc.poolId) || ((await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools || {})[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
         // (TAKEOVERSAFE2, Paul 14 Nov 2026: "Yes, fix resume first"): a custom design is in no master file: it is rebuilt from its own file, the one its sheet was cut from (the sheet record's sources, as the back editor reads it); it was left out, and its sheet nested again from scratch
         const own = pool.custom || rc.custom ? (d.sources || []).find(s => s && (s.id === rc.sourceId || s.name === rc.sourceName)) : null;
@@ -28655,6 +28676,7 @@ const Arrivals = window.Arrivals = (() => {
     Orders.render(); Review.render(); Engrave.render(); refreshAllCards(); Session.schedule(); paint();ListMedia.prepare(Orders.rows());
     return added;
   }
+  let softFails = 0;   // (STATIONOPEN: intakes in a row that failed for a passing cause)
   async function processPending({checkpoint=false}={}) {
     if (!state.pending || S.settings.runMode !== "auto" || Recall.on()) return;
     const r = B.run;
@@ -28676,8 +28698,12 @@ const Arrivals = window.Arrivals = (() => {
       // The gold dot is a courtesy, never a lock (Orders.claim), and the station waves its cursor over the rows before it
       // writes it: the new charms go onto their sheets meanwhile, where they used to wait seconds for the wave.
       Orders.claim([...new Set(Orders.rows().filter(x => x.state === "pulled").map(x => x.order.receiptId))]).catch(() => {});
+      // (STATIONOPEN, Paul 15 Nov 2026: "Why does it always make me resume the run?" — "New orders could not be added: Cannot verify Etsy open orders: orders.check: the Design Station frame is not open"): the station's frame
+      //  is opened here before the orders are checked with it (it is mounted only when its tab is first visited, or by Auto at page load: a page that had neither stopped the run at every intake)
+      try { await DesignLink.ensure(); } catch (_) { /* said below if the check then fails */ }
       if(state.revalidate){await Orders.revalidate(r,"during intake");state.revalidate=false;}
       await LiveNest.add(r);
+      softFails = 0;
       // the new lines' words are read and fitted beside the next orders (Engrave.background): the next charm never waits
       Engrave.background(r); RunCtl.save(r).catch(() => {});
     } catch (e) {
@@ -28686,6 +28712,15 @@ const Arrivals = window.Arrivals = (() => {
       // Stop pressed while the orders went on keeps its own plain reason: the orders not placed yet wait, and this intake
       // runs again after Resume. It used to be stopped a second time, as "New orders could not be added: stopped by the
       // operator", with a red toast and an alert.
+      // (STATIONOPEN): a passing cause (the station's frame not open yet or not answering, the network) is NOT a reason to stop the run and wait for a person: the new orders stay pending, the frame is opened again and the
+      //  intake is tried again by itself, a little later each time; only after six tries in a row does the run stop and say so
+      if (r.status !== "stopped" && (e.transient || /Design Station frame is not open|Failed to fetch|NetworkError|Load failed|timed out|did not answer|not connected/i.test(String(e.message || ""))) && ++softFails <= 6) {
+        agent({ run: r.runId }, "warn", `New orders wait: ${e.message}. Tried again by itself in ${20 * softFails} s (try ${softFails} of 6); the run goes on`);
+        try { Promise.resolve(DesignLink.ensure()).catch(() => {}); } catch (_) { /* opened at the next try */ }
+        setTimeout(() => { processPending().catch(() => {}); }, 20000 * softFails);
+        return;
+      }
+      softFails = 0;
       if (r.status !== "stopped") RunCtl.stop(`New orders could not be added: ${e.message}`, "Resume after fixing the cause. Your earlier work is kept.");
     }
     finally { r.arrivalBusy = false; RunCtl.poke(); Session.schedule(); window.CN?.flushManualIntake?.(); }

@@ -3436,7 +3436,19 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // (REFILL, Paul 11 Nov 2026: "when a user removes a given piece from a sheet ... another piece is found to take its place on that particular sheet and taken from a newer In process sheet
       //  to fill the empty gap"): the room freed on a draft sheet still filling is filled at once, as Hold did (holdKit.fill): the orders waiting for a sheet first, oldest first, then an order
       //  moved, verified, from a newer filling sheet of the same metal. A sheet of a released set is never changed here.
-      if (!opt.noFill) for (const sh of pages) { try { const single = !plan.whole; if (single) await openDrafts(sh); if (holdKit.fillable(sh) && (single || !(sh.setId && !sh.draft)) && holdKit.freed(sh.sheetId)) await holdKit.fill(sh, who, { skip: rid ? [rid] : [], avoid: pages.filter(p => p !== sh).map(p => p.sheetId), only: single ? "draftSingle" : "" }); } catch (e) { console.warn("sheet window: refill", e); } }   // (CLOUDALL C4, Paul 13 Nov 2026: "The Take of Sheet function is not working. Remember, only the actual charm selected should be removed ... replaced from a draft sheet with a piece that fits ... only from a single piece order"; "It doesn't matter which computer is doing that"): one charm taken off: its spot is filled only from a draft sheet, by a piece of a one-piece order, released sheets too
+      if (!opt.noFill) for (const sh of pages) {
+        // (FILLSAID, Paul 15 Nov 2026: "the system should automatically try to fill the empty space with another piece from the available draft sheets of the same colour"): the fill was tried in silence: what it did, or why the spot stays empty, is now SAID
+        const say = (text, tone) => { try { (window.CN && typeof CN.toast === "function" ? CN.toast : typeof toast === "function" ? toast : () => {})(text, tone || "", 9000); } catch (_) {} try { window.CN && CN.agent && CN.agent({ metal: sh.metal }, tone === "bad" ? "warn" : "info", text); } catch (_) {} };
+        const nm = (() => { try { return holdKit.word(sh); } catch (_) { return sh.fileBase || "the sheet"; } })();
+        try { const single = !plan.whole; if (single) await openDrafts(sh);
+          if (!allSheets().includes(sh) || !(sh.placements || []).length) { /* the sheet is empty or gone: nothing to fill */ }
+          else if (!holdKit.fillable(sh)) say(`${nm}: the freed spot stays empty (${sh.metal === "rose" ? "a Rose Gold sheet is never filled from another sheet" : sh.rosePlan || sh.roseProtected ? "this sheet has a cut line drawn" : "this sheet can no longer change"})`);
+          else if (!(single || !(sh.setId && !sh.draft))) { /* a whole order taken off a sheet of a set: the set's sheet is not changed further */ }
+          else if (!holdKit.freed(sh.sheetId)) { /* no spot was freed */ }
+          else { const fr = await holdKit.fill(sh, who, { skip: rid ? [rid] : [], avoid: pages.filter(p => p !== sh).map(p => p.sheetId), only: single ? "draftSingle" : "" });
+            if (fr && fr.placed) say(`${nm}: the freed spot was filled with ${fr.placed === 1 ? "a piece" : fr.placed + " pieces"} from a draft sheet`, "ok");
+            else say(`${nm}: no ${single ? "one-piece order on a draft sheet" : "waiting or draft order"} fits the freed spot: it stays empty`); }
+        } catch (e) { console.warn("sheet window: refill", e); say(`${nm}: the freed spot could not be filled: ${(e && e.message) || e}`, "bad"); } }   // (CLOUDALL C4, Paul 13 Nov 2026: "The Take of Sheet function is not working. Remember, only the actual charm selected should be removed ... replaced from a draft sheet with a piece that fits ... only from a single piece order"; "It doesn't matter which computer is doing that"): one charm taken off: its spot is filled only from a draft sheet, by a piece of a one-piece order, released sheets too
       if (sheetId && W.id === sheetId && W.dlg.open) open2(sheetId);
     } catch (e) {
       for (const st of work.steps) doneStep(st);
