@@ -5351,12 +5351,13 @@ OPS.runCarrier = op_runCarrier; NO_GEN_BUMP.add("runCarrier");
    runCmdPut { runId, cmd: { type: reorder | consolidate | empty | delete, metal, ids?, sourceId?, targetId?, sheetId? }, by, dev } adds it to ONE document (Charm_Nest_Run_Cmds/<run>, the newest 30 kept) and touches the run's feed key r:<run>;
    runCmdList { runId } -> { cmds } newest first; runCmdDone { runId, id, ok, text, dev } is the carrier's answer. None of them writes anything a placement answer is made from (NO_GEN_BUMP). */
 const CMDS = "Charm_Nest_Run_Cmds"; SANDBOXED.add(CMDS);
-const CMD_TYPES = new Set(["reorder", "consolidate", "empty", "delete", "repicture"]);
+const CMD_TYPES = new Set(["reorder", "consolidate", "empty", "delete", "repicture", "seat"]);   // (ONEGRID, Paul 15 Nov 2026: "move already partially and fully nested sheets onto new nested sheets and all those charms should move over": seat = a nested sheet's pieces onto a physical sheet)
 async function op_runCmdPut(b) {
   const runId = str(b.runId, 80), dev = str(b.dev, 60) || "", by = str(b.by, 80) || ""; if (!isId(runId) || !dev) return { error: "bad run or computer" };
   const c = b.cmd && typeof b.cmd === "object" ? b.cmd : null; if (!c || !CMD_TYPES.has(c.type)) return { error: "unknown command" };
   const metal = ["gold10k", "gold14k"].includes(c.metal) ? c.metal : "";
-  const args = { metal, ...(Array.isArray(c.ids) ? { ids: c.ids.slice(0, 80).map(x => str(x, 80)).filter(Boolean) } : {}), ...(c.sourceId ? { sourceId: str(c.sourceId, 80) } : {}), ...(c.targetId ? { targetId: str(c.targetId, 80) } : {}), ...(c.sheetId ? { sheetId: str(c.sheetId, 80) } : {}) };
+  const args = { metal, ...(Array.isArray(c.ids) ? { ids: c.ids.slice(0, 80).map(x => str(x, 80)).filter(Boolean) } : {}), ...(c.sourceId ? { sourceId: str(c.sourceId, 80) } : {}), ...(c.targetId ? { targetId: str(c.targetId, 80) } : {}), ...(c.sheetId ? { sheetId: str(c.sheetId, 80) } : {}), ...(c.partialId ? { partialId: str(c.partialId, 120) } : {}), ...(c.label ? { label: str(c.label, 160) } : {}) };
+  if (c.type === "seat" && (!args.sheetId || !args.partialId)) return { error: "a seat names the sheet and the physical sheet" };
   const ref = col(CMDS).doc(runId), now = Date.now(), id = "c" + now.toString(36) + Math.random().toString(36).slice(2, 6).padEnd(4, "0");
   const cmd = { id, type: c.type, args, by, dev, at: now, state: "waiting" };
   await db.runTransaction(async tx => {
@@ -5383,7 +5384,20 @@ async function op_runCmdDone(b) {
   revTouch(b, ["r:" + runId]);
   return { ok: true, found: got };
 }
-Object.assign(OPS, { runCmdPut: op_runCmdPut, runCmdList: op_runCmdList, runCmdDone: op_runCmdDone }); ["runCmdPut", "runCmdList", "runCmdDone"].forEach(op => NO_GEN_BUMP.add(op));
+/* (ONEGRID, Paul 15 Nov 2026: a request that still waits can be cancelled by the person who sent it; the carrier skips it) runCmdCancel { runId, id, dev } -> state "cancelled" only while the command is still "waiting". */
+async function op_runCmdCancel(b) {
+  const runId = str(b.runId, 80), id = str(b.id, 40); if (!isId(runId) || !id) return { error: "bad run or command" };
+  const ref = col(CMDS).doc(runId), now = Date.now();
+  const got = await db.runTransaction(async tx => {
+    const d = await tx.get(ref), cmds = Object.assign({}, (d.exists && d.data().cmds) || {}), c = cmds[id]; if (!c) return "missing";
+    if (c.state !== "waiting") return c.state;
+    cmds[id] = Object.assign({}, c, { state: "cancelled", text: "Cancelled before it started", doneAt: now, doneBy: str(b.dev, 60) || "" });
+    tx.set(ref, { runId, cmds, expireAt: new Date(now + 30 * 86400000) }); return "cancelled";
+  });
+  if (got === "cancelled") revTouch(b, ["r:" + runId]);
+  return { ok: true, state: got, cancelled: got === "cancelled" };
+}
+Object.assign(OPS, { runCmdPut: op_runCmdPut, runCmdList: op_runCmdList, runCmdDone: op_runCmdDone, runCmdCancel: op_runCmdCancel }); ["runCmdPut", "runCmdList", "runCmdDone", "runCmdCancel"].forEach(op => NO_GEN_BUMP.add(op));
 /* (CLOUDTRAY, Paul 14 Nov 2026: "You must put all this in the cloud" -> "Yes, build it"): the Nest rail's dropped files, listed for every computer. trayPut { id: the file's hash, name, path, url, state: tray | assigned | removed, metal, dev, by };
    a file claimed or removed by one computer is never put back in the tray by another that still lists it. trayList: the last three days, newest first (100 at most). */
 const TRAY = "Charm_Nest_Tray"; SANDBOXED.add(TRAY);
