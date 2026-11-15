@@ -108,6 +108,14 @@ async function otherComputer(H) {
     log(`3 · ${pieces} pieces on ${first.length} sheets were read in ${gets} poolGet call(s)`);
     assert(gets <= 2, `3 · the pieces are read together, not one call each (${gets} calls for ${pieces} pieces)`);
     assert.deepStrictEqual(two.errors, [], '3 · no page error on the second computer');
+    /* 4 · CACHEONLY: the first computer, whose run was taken over, loads itself again and follows. Its saved workspace still holds its own copies of the run's sheets: they are NOT used: its cards show the cloud's */
+    await page.waitForFunction(() => window.__followedNow === undefined && typeof B !== 'undefined' && !B.run && typeof allSheets === 'function' && allSheets().some(p => p.followed), null, { timeout: 120000, polling: 1000 });
+    const back = await page.evaluate(() => ({ run: B.run ? B.run.runId : null, pages: allSheets().filter(p => p.sheetId).map(p => ({ id: p.sheetId, followed: !!p.followed, charms: (p.charms || []).length, placed: p.recalled ? p.recalled.placedCount : null })) }));
+    log('first computer after its run was taken over:', JSON.stringify(back));
+    assert.equal(back.run, null, '4 · the first computer carries no run after the takeover');
+    assert.deepStrictEqual(back.pages.map(x => x.id).sort(), first.map(x => x[0]).sort(), '4 · it shows the run\'s sheets');
+    for (const s of back.pages) assert(s.followed && s.charms === 0 && s.placed === (st.doc('Charm_Nest_Sheets', s.id).placements || []).length, `4 · sheet ${s.id} is shown from the cloud, not from this computer's saved copy: ${JSON.stringify(s)}`);
+    for (const [id, was] of before) assert.equal(layoutOf(st.doc('Charm_Nest_Sheets', id)), was, `4 · sheet ${id} in the cloud is still as it was`);
     console.log(at(), `OK · run ${runId}`);
   } finally { await H.close(); }
 })().catch(e => { console.error('FAIL', e && e.stack || e); process.exit(1); });
