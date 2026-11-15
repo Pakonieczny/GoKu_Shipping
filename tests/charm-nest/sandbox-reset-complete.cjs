@@ -22,6 +22,7 @@
 //     keeps its own production behaviour: production's runs, sheets, sets, pool, backs and counters go, its seals, custom
 //     orders and cancel records stay.
 //   node tests/charm-nest/sandbox-reset-complete.cjs
+process.env.CN_TEST_SEED_RUNS = '1';   // (RUNOPEN: this test writes run records straight into its fake cloud; on the site a run is made by the cloud only, runOpen)
 'use strict';
 const path = require('path'), assert = require('assert');
 const fnDir = path.join(__dirname, '../../netlify/functions');

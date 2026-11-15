@@ -1,6 +1,7 @@
 // Handler smoke test for the charmNest* Netlify functions against an in-memory
 // Firestore/Storage fake injected in place of ./firebaseAdmin. No network.
 //   node tests/charm-nest/functions.cjs
+process.env.CN_TEST_SEED_RUNS = '1';   // (RUNOPEN: this test writes run records straight into its fake cloud; on the site a run is made by the cloud only, runOpen)
 const path = require('path'), assert = require('assert');
 const fnDir = path.join(__dirname, '../../netlify/functions');
 

@@ -22,6 +22,7 @@
 // Each call of the wipe takes the cloud's time here (SLOW): on clean main both buttons then end "The sandbox was not fully reset ... (sheets 1,
 // sets 1 ...)" with Set-1 and its GF sheet saved back by tab B, which is what Paul saw stand in the Library.
 //   node tests/charm-nest/purge-library-clean.cjs [playwright-core dir]      (CHROMIUM=/path/to/chrome when it is not the default)
+process.env.CN_TEST_SEED_RUNS = '1';   // (RUNOPEN: this test writes run records straight into its fake cloud; on the site a run is made by the cloud only, runOpen)
 'use strict';
 process.env.CHARM_NEST_DELETE_CODE = 'purge-library-test-code';   // (the purge's passcode for this run only, set before the handlers load)
 const path = require('path'), assert = require('assert'), fs = require('fs');

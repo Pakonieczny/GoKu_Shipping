@@ -19,6 +19,7 @@
 //   5. sandboxStatus (read-only) counts every family of the registry: non-zero before, zero after, and says what is kept.
 //   6. Purge all run history ends in the same wipe.
 //   node tests/charm-nest/sandbox-wipe-guard.cjs
+process.env.CN_TEST_SEED_RUNS = '1';   // (RUNOPEN: this test writes run records straight into its fake cloud; on the site a run is made by the cloud only, runOpen)
 'use strict';
 const path = require('path'), assert = require('assert'), fs = require('fs');
 process.env.CHARM_NEST_DELETE_CODE = 'guard-test-delete-code';

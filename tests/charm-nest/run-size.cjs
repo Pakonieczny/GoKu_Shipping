@@ -5,6 +5,7 @@
 // laser readiness and set completion still find every line — a recalled set and laser readiness reading only the archive
 // parts that hold what they ask about, and readiness only their decisions. No network, no real services.
 //   node tests/charm-nest/run-size.cjs
+process.env.CN_TEST_SEED_RUNS = '1';   // (RUNOPEN: this test writes run records straight into its fake cloud; on the site a run is made by the cloud only, runOpen)
 process.env.CHARM_NEST_PARTS_KEEP = '0';
 const MANY_QUERIES = 70, MANY_READS = 308;   // (measured 26 Oct 2026, see the 700-copy check)   // (the reads of the archive are what this test counts: a cold instance's, without a warm instance's memory of the parts it read, partKeep)
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');

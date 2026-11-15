@@ -19,6 +19,7 @@
 //     orders, with none of the old stamps, pool rows, sheets or decisions on them,
 //   · production's records and keys are byte-identical, and nothing of the old sandbox was written to the cloud again.
 //   node tests/charm-nest/sandbox-reset-e2e.cjs [playwright-core dir]
+process.env.CN_TEST_SEED_RUNS = '1';   // (RUNOPEN: this test writes run records straight into its fake cloud; on the site a run is made by the cloud only, runOpen)
 'use strict';
 const path = require('path'), assert = require('assert'), fs = require('fs');
 const root = path.join(__dirname, '../..'), fnDir = path.join(root, 'netlify/functions');

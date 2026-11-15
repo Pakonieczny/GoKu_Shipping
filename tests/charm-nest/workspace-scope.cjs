@@ -1,3 +1,4 @@
+process.env.CN_TEST_SEED_RUNS = '1';   // (RUNOPEN: this test writes run records straight into its fake cloud; on the site a run is made by the cloud only, runOpen)
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 (async()=>{
  const html=fs.readFileSync('charm-nest-1.html','utf8'),bridge=fs.readFileSync('charm-nest-bridge.js','utf8');
