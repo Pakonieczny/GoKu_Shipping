@@ -5347,6 +5347,43 @@ async function op_arrivalsLease(b) {
 }
 OPS.arrivalsLease = op_arrivalsLease; NO_GEN_BUMP.add("arrivalsLease");
 OPS.runCarrier = op_runCarrier; NO_GEN_BUMP.add("runCarrier");
+/* (SHEETSANYWHERE, Paul 15 Nov 2026: "I need that full capability to choose partial sheets ... Combine them with other sheets, choose which sheet I want one two or three by dragging them"): a computer that only FOLLOWS the run arranges its sheets by sending a command to the one that carries it.
+   runCmdPut { runId, cmd: { type: reorder | consolidate | empty | delete, metal, ids?, sourceId?, targetId?, sheetId? }, by, dev } adds it to ONE document (Charm_Nest_Run_Cmds/<run>, the newest 30 kept) and touches the run's feed key r:<run>;
+   runCmdList { runId } -> { cmds } newest first; runCmdDone { runId, id, ok, text, dev } is the carrier's answer. None of them writes anything a placement answer is made from (NO_GEN_BUMP). */
+const CMDS = "Charm_Nest_Run_Cmds"; SANDBOXED.add(CMDS);
+const CMD_TYPES = new Set(["reorder", "consolidate", "empty", "delete"]);
+async function op_runCmdPut(b) {
+  const runId = str(b.runId, 80), dev = str(b.dev, 60) || "", by = str(b.by, 80) || ""; if (!isId(runId) || !dev) return { error: "bad run or computer" };
+  const c = b.cmd && typeof b.cmd === "object" ? b.cmd : null; if (!c || !CMD_TYPES.has(c.type)) return { error: "unknown command" };
+  const metal = ["gold10k", "gold14k"].includes(c.metal) ? c.metal : "";
+  const args = { metal, ...(Array.isArray(c.ids) ? { ids: c.ids.slice(0, 80).map(x => str(x, 80)).filter(Boolean) } : {}), ...(c.sourceId ? { sourceId: str(c.sourceId, 80) } : {}), ...(c.targetId ? { targetId: str(c.targetId, 80) } : {}), ...(c.sheetId ? { sheetId: str(c.sheetId, 80) } : {}) };
+  const ref = col(CMDS).doc(runId), now = Date.now(), id = "c" + now.toString(36) + Math.random().toString(36).slice(2, 6).padEnd(4, "0");
+  const cmd = { id, type: c.type, args, by, dev, at: now, state: "waiting" };
+  await db.runTransaction(async tx => {
+    const d = await tx.get(ref), cmds = Object.assign({}, (d.exists && d.data().cmds) || {}); cmds[id] = cmd;
+    const keep = Object.values(cmds).sort((x, y) => (num(y.at) || 0) - (num(x.at) || 0)).slice(0, 30), out = {}; for (const k of keep) out[k.id] = k;
+    tx.set(ref, { runId, cmds: out, expireAt: new Date(now + 30 * 86400000) });
+  });
+  revTouch(b, ["r:" + runId]);
+  return { ok: true, id, cmd };
+}
+async function op_runCmdList(b) {
+  const runId = str(b.runId, 80); if (!isId(runId)) return { error: "bad run" };
+  const d = await col(CMDS).doc(runId).get();
+  return { ok: true, cmds: Object.values((d.exists && d.data().cmds) || {}).sort((x, y) => (num(y.at) || 0) - (num(x.at) || 0)) };
+}
+async function op_runCmdDone(b) {
+  const runId = str(b.runId, 80), id = str(b.id, 40); if (!isId(runId) || !id) return { error: "bad run or command" };
+  const ref = col(CMDS).doc(runId), now = Date.now();
+  const got = await db.runTransaction(async tx => {
+    const d = await tx.get(ref), cmds = Object.assign({}, (d.exists && d.data().cmds) || {}), c = cmds[id]; if (!c) return false;
+    cmds[id] = Object.assign({}, c, { state: b.ok ? "done" : "failed", text: str(b.text, 400) || "", doneAt: now, doneBy: str(b.dev, 60) || "" });
+    tx.set(ref, { runId, cmds, expireAt: new Date(now + 30 * 86400000) }); return true;
+  });
+  revTouch(b, ["r:" + runId]);
+  return { ok: true, found: got };
+}
+Object.assign(OPS, { runCmdPut: op_runCmdPut, runCmdList: op_runCmdList, runCmdDone: op_runCmdDone }); ["runCmdPut", "runCmdList", "runCmdDone"].forEach(op => NO_GEN_BUMP.add(op));
 /* (CLOUDTRAY, Paul 14 Nov 2026: "You must put all this in the cloud" -> "Yes, build it"): the Nest rail's dropped files, listed for every computer. trayPut { id: the file's hash, name, path, url, state: tray | assigned | removed, metal, dev, by };
    a file claimed or removed by one computer is never put back in the tray by another that still lists it. trayList: the last three days, newest first (100 at most). */
 const TRAY = "Charm_Nest_Tray"; SANDBOXED.add(TRAY);
