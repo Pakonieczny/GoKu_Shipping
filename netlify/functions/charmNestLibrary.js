@@ -1661,6 +1661,7 @@ async function op_getAgent(b) {
 /* ═══ Charm Sorter ⇄ Design Station bridge — master index, pool, backs, sets, runs, maps (design §12, §13) ═══
    Every query below is a single-field equality or range, like the rest of this file: no composite indexes. */
 const Master = require("./_charmNestMaster");
+const OPS_LATE = {};   // (ops defined above the OPS table that are added to it once it exists)
 const POOL = "Charm_Pool", BACK = "Charm_Pool_Back", SETS = "Charm_Nest_Sets", COUNTERS = "Charm_Nest_Counters", RUNS = "Charm_Nest_Runs", RUN_LINES = "Charm_Nest_Run_Lines", RUN_LIVE = "Charm_Nest_Run_Live", RELEASE = "Charm_Nest_Release", BRIDGE = "Design_Bridge", ALIASES = "Charm_Sku_Aliases", NODESIGN = "Charm_Sku_NoDesign", OPTMAP = "Charm_Option_Map";
 // the learned maps: shared and read by both sides, but a sandbox answer is written to Sandbox_<name> only (see the top of this file)
 const SANDBOX_MAPS = [ALIASES, NODESIGN, OPTMAP];
@@ -3413,6 +3414,7 @@ async function op_runPut(b) {
   let openRun = null;
   await db.runTransaction(async tx => {
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : null, put = Object.assign({}, doc);
+    if (old && old.retiredInto) { openRun = String(old.retiredInto); return; }   // (RUNRETIRE: a run retired into another is closed for good: a page that still holds it cannot bring it back)
     if (!old && !["complete", "abandoned", "archived"].includes(String(r.status || ""))) {
       const others = await col(RUNS).orderBy("updatedAt", "desc").limit(50).select("runId", "status").get();
       const open = others.docs.map(d => d.data()).find(x => x && x.runId && x.runId !== id && !["complete", "abandoned", "archived"].includes(String(x.status || "")));
@@ -3452,6 +3454,46 @@ async function op_runPut(b) {
   revTouch(b, read ? ["r:" + id] : []);   // COST (Oct 2026): a save of the run's step, status or counts (most of a nesting run's saves) moves the Library's revision no more
   return { ok: true, runId: id };
 }
+/* ── RUNRETIRE (Paul, 15 Nov 2026: "There can only be one master version of it in the cloud there may never be any other versions"; "just do it and monitor the output yourself").
+   A second run of the same orders was made beside the open one (before ONERUN refused it) and took its waiting pieces: each piece has ONE record, which then named the second run. This puts the one truth back:
+   {from, into, dry} → every piece record that names `from` names `into` again (its set id as the other pieces of `into` have it when the piece is on one of `into`'s sheets; a sheet id of `from` is cleared; its
+   state, its engraving and everything else stay), `from`'s sheets are archived (their files are KEPT; nothing is deleted), and `from` is closed (abandoned, retiredInto: runPut then refuses to save it again).
+   Refused when `from` has a committed set or a cut sheet, or `into` is not open. dry: true answers what would change and writes nothing. The app's own "Abandon run" is NOT this: it marks the shared pieces abandoned. */
+async function op_runRetire(b) {
+  const from = str(b.from, 80), into = str(b.into, 80), dry = !(b.dry === false || b.dry === "0" || b.dry === 0 || b.dry === "false");
+  if (!isId(from) || !isId(into) || from === into) return { error: "bad run ids" };
+  const [fs, is] = await Promise.all([col(RUNS).doc(from).get(), col(RUNS).doc(into).get()]);
+  if (!fs.exists || !is.exists) return { error: "run not found", status: 404 };
+  const F = fs.data(), I = is.data();
+  if (["complete", "abandoned", "archived"].includes(String(I.status || ""))) return { error: "the run to keep is not open", status: 409 };
+  if (I.retiredInto) return { error: "the run to keep was itself retired", status: 409 };
+  const [fSheets, iSheets, rows] = await Promise.all([col(SHEETS).where("runId", "==", from).get(), col(SHEETS).where("runId", "==", into).get(), col(POOL).where("runId", "==", from).get()]);
+  const fromSheets = fSheets.docs.map(d => Object.assign({}, d.data(), { id: d.id })), intoSheets = iSheets.docs.map(d => Object.assign({}, d.data(), { id: d.id })).filter(x => !x.archived);
+  const cut = fromSheets.filter(x => num(x.laserDoneAt) > 0 || x.roseCutAt || (x.setId && !x.draft));
+  if (cut.length) return { error: `the run to retire has ${cut.length} sheet(s) cut or in a set: it is not retired by this`, status: 409, sheets: cut.map(x => x.id) };
+  const fromIds = new Set(fromSheets.map(x => x.id)), home = new Map();   // piece → the sheet of the run kept that holds it
+  for (const sh of intoSheets) for (const id of sh.poolIds || []) if (!home.has(id)) home.set(id, sh);
+  const keepSet = isId(I.setId) ? I.setId : null;
+  const plan = [], count = { rows: rows.size, onKeptSheet: 0, waiting: 0, sheetCleared: 0, states: {} };
+  for (const d of rows.docs) {
+    const r = d.data(), sh = home.get(d.id) || null, patch = { runId: into };
+    count.states[r.state || "?"] = (count.states[r.state || "?"] || 0) + 1;
+    if (sh) { count.onKeptSheet++; if (!sh.draft && isId(sh.setId)) { patch.setId = sh.setId; } else if (keepSet && !r.setId) patch.setId = keepSet; }
+    else count.waiting++;
+    if (r.sheetId && fromIds.has(r.sheetId)) { patch.sheetId = sh && !sh.draft ? sh.id : null; count.sheetCleared++; }
+    plan.push([d.ref, patch, d.id]);
+  }
+  const out = { ok: true, dry, from, into, fromStatus: F.status || null, intoStatus: I.status || null, pieces: count, sheetsArchived: fromSheets.filter(x => !x.archived).map(x => x.fileBase || x.id), keptSheets: intoSheets.length,
+    waitingPieces: plan.filter(x => !home.has(x[2])).map(x => x[2]).slice(0, 100) };
+  if (dry) return out;
+  const now = Date.now();
+  for (let i = 0; i < plan.length; i += 400) { const batch = db.batch(); for (const [ref, patch] of plan.slice(i, i + 400)) batch.set(ref, Object.assign({}, patch, { updatedAt: FV.serverTimestamp(), retiredFrom: from }), { merge: true }); await batch.commit(); }
+  { const batch = db.batch(); for (const sh of fromSheets) if (!sh.archived) batch.set(col(SHEETS).doc(sh.id), { archived: true, archivedReason: `run retired into ${into}`, current: false, updatedAt: FV.serverTimestamp() }, { merge: true });
+    batch.set(col(RUNS).doc(from), { status: "abandoned", abandonedAt: now, retiredInto: into, stoppedBy: "retired: a second run of the same orders", updatedAt: FV.serverTimestamp() }, { merge: true }); await batch.commit(); }
+  revTouch(b, ["*"]);
+  return out;
+}
+OPS_LATE.runRetire = op_runRetire;
 /* ── a run's line archive: the lines of the orders a run is done with, sent by the page before it leaves them out of the
    run's record (RunCtl.save). One document per part, at most 900 KB of JSON kept as one text (two index entries, where
    the same lines as fields were some sixty each), named by its content, so a part sent twice is written once. Beside
@@ -5901,6 +5943,7 @@ OPS.customSaveCommit = op_customSaveCommit;   // ... and its write (repo upload 
 OPS.customSaveRepair = b => require("./_charmNestCustomRepair").repair({ db, FV, bucket: admin.storage().bucket(), etsySku: require("./_charmNestEtsySku").ops.customEtsySkuWrite }, b); NO_GEN_BUMP.add("customSaveRepair");   // KEEP R1-R9: the repair of saved designs (orphan files, records vs entries vs aliases vs files, a stuck Etsy note, intent litter, optional Etsy steps); free below, an upload token to remove files younger than an hour
 OPS.customSkuCheck = b => require("./_charmNestSkuCheck").check(db, b); NO_GEN_BUMP.add("customSkuCheck");   // SKUGEN: which proposed SKU for a saved custom design nobody holds; reads only, so it does not raise the placement counter
 OPS.customEtsySkuWrite = require("./_charmNestEtsySku").ops.customEtsySkuWrite; NO_GEN_BUMP.add("customEtsySkuWrite");   // ETSYSKU: {rid} the last step of saving a custom design (CONTRACT section 5): the SKU on Etsy. Never in the sandbox, no token (the saved record decides). It writes Etsy and its own records, nothing a placement answer is made from, so it does not raise the placement counter
+Object.assign(OPS, OPS_LATE);
 OPS.listingEtsySkuWrite = require("./_charmNestEtsyLink").ops.listingEtsySkuWrite; NO_GEN_BUMP.add("listingEtsySkuWrite");   // SWANSKU: {listingId, sku, by} the master charm's own SKU on an existing Etsy listing (Paul, 12 Oct 2026). A repo "modify" op (the password gate, _charmNestRepoAuth.js LIBRARY), never in the sandbox; reads the live inventory first, before-copy, one PUT. Writes Etsy and its own record, nothing a placement answer is made from
 /* EDITSKU (Paul, 26 Oct 2026: "When a user updates the SKU the matching etsy listing must also be immediately auto updated in real-time", without the Charm Repo's password). The order window's Edit SKU:
    {listingId, sku, onlySku, by}: the same careful write as listingEtsySkuWrite (the master holds exactly that SKU, the live listing read first, a safety copy before the one PUT, the body checked field by
