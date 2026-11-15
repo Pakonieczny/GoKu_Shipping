@@ -175,9 +175,10 @@ const pairs = new Map();   // "name\nvalue" -> [name, value]
   assert.deepEqual(Said.choicesOf(row).map(c => c.name), ['Metal &middot; #Characters?', 'Necklace Length&middot;FONT'], 'the choices are still the line\'s own (the filter reads them as they are)');
   assert.deepEqual(Said.rowsOf(row), [['Options', 'Metal: Gold · Engraved\nNecklace Length: 16" & 18" · Font: Angelina']]);
   const html = Said.html(row);
-  assert.ok(html.includes('Metal: Gold · Engraved\nNecklace Length: 16&quot; &amp; 18&quot; · Font: Angelina') || html.includes('Metal: Gold · Engraved\nNecklace Length: 16" &amp; 18" · Font: Angelina'), html);
+  // (SMARTNOTE, 15 Nov 2026: the options are itemized, one item each; the tidy line is the item's text, the original its hover)
+  assert.ok(html.includes('>Metal: Gold · Engraved<') && (html.includes('>Necklace Length: 16&quot; &amp; 18&quot; · Font: Angelina<') || html.includes('>Necklace Length: 16" &amp; 18" · Font: Angelina<')), html);
   assert.ok(!/&amp;middot;|&middot;|#Characters|ENGRAVED|ANGELINA|\bSet\b/.test(html.replace(/title="[^"]*"/g, '')), 'none of the filler is drawn');
-  assert.ok(html.includes('title="As ordered:\nMetal · #Characters?: GOLD·Set·ENGRAVED\nNecklace Length·FONT: 16&quot;&amp;18&quot;·Set·ANGELINA"'), 'the original reads in the label\'s hover (decoded to text, escaped in the attribute): ' + html);
+  assert.ok(html.includes('title="As ordered:\nMetal · #Characters?: GOLD·Set·ENGRAVED"') && html.includes('title="As ordered:\nNecklace Length·FONT: 16&quot;&amp;18&quot;·Set·ANGELINA"'), 'the original reads in each item\'s hover (decoded to text, escaped in the attribute): ' + html);
   // an option that needs no tidying: the same box as before, no hover
   const plain = { line: { variations: [{ name: 'Font choice', value: 'Ace' }, { name: 'Charm Type', value: 'Tag1 (front+back)' }], personalization: [] }, spec: { options: [] } };
   assert.deepEqual(Said.rowsOf(plain), [['Options', 'Font: Ace\nCharm Type: Tag1 (front+back)']]);
