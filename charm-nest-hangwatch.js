@@ -22,7 +22,7 @@
       const put = (store, val, key) => open().then(d => new Promise((res) => { const tx = d.transaction(store, 'readwrite'); const s = tx.objectStore(store); if (store === 'rec') { s.add(val); const c = s.count(); c.onsuccess = () => { if (c.result > 120) { const k = s.openCursor(); let n = c.result - 120; k.onsuccess = () => { const cur = k.result; if (cur && n-- > 0) { cur.delete(); cur.continue(); } }; } }; } else s.put(val, key); tx.oncomplete = () => { d.close(); res(); }; tx.onerror = () => { d.close(); res(); }; })).catch(() => {});
       const recent = () => { const head = Atomics.load(ia, 1), out = []; for (let i = 0; i < RING; i++) { const id = ia[8 + (((head - 1 - i) % RING) + RING) % RING]; if (id) out.push([id, (reg.get(id) || '?').slice(0, 400)]); } return out; };
       const now = () => ft[0];
-      onmessage = e => { const d = e.data; if (d.init) { ia = new Int32Array(d.sab); ft = new Float64Array(d.sab, 512, 4); port = d.port; return; } if (d.id) { reg.set(d.id, d.k + ': ' + d.src); if (reg.size > 4000) { const k = reg.keys().next().value; reg.delete(k); } return; } if (d.sample) { samples.push(d.sample); if (samples.length > 120) samples.shift(); return; } if (d.slow) { slow.push(d.slow); if (slow.length > 60) slow.shift(); } };
+      onmessage = e => { const d = e.data; if (d.init) { ia = new Int32Array(d.sab); ft = new Float64Array(d.sab, 512, 4); port = d.port; return; } if (d.id) { reg.set(d.id, d.k + ': ' + d.src); if (reg.size > 20000) { const k = reg.keys().next().value; reg.delete(k); } return; } if (d.sample) { samples.push(d.sample); if (samples.length > 120) samples.shift(); return; } if (d.slow) { slow.push(d.slow); if (slow.length > 60) slow.shift(); } };
       const details = (kind) => { const cur = Atomics.load(ia, 2); return { kind, at: Date.now(), page: self.location ? self.location.origin : '', inside: cur ? [cur, (reg.get(cur) || '?').slice(0, 600)] : null, insideForMs: cur ? Math.round(performance.timeOrigin + performance.now() - ft[0]) : null, hidden: Atomics.load(ia, 4) === 1, frozen: Atomics.load(ia, 3) === 1, recent: recent(), slow: slow.slice(-25), samples: samples.slice(-30) }; };
       setInterval(() => {
         if (!ia || !port) return;
@@ -38,16 +38,25 @@
     const ch = new MessageChannel();
     ch.port1.onmessage = () => { Atomics.add(ia, 0, 1); };   // (an event, not a timer: a hidden tab's slowed timers do not stop the answers)
     worker.postMessage({ init: 1, sab, port: ch.port2 }, [ch.port2]);
-    const ids = new WeakMap(); let nid = 1, slowSent = 0;
+    const ids = new WeakMap(), byKey = new Map(), made = new WeakMap(); let nid = 1, slowSent = 0, madeSecond = 0, madeCount = 0;
     const src = fn => { try { return Function.prototype.toString.call(fn).replace(/\s+/g, " ").slice(0, 400); } catch (_) { return "?"; } };
-    const idOf = (fn, kind) => { let id = ids.get(fn); if (!id) { id = nid++; ids.set(fn, id); try { worker.postMessage({ id, k: kind, src: src(fn) }); } catch (_) {} } return id; };
+    // where a piece of code was set up, for the ones that carry no source of their own: `await new Promise(r => setTimeout(r, 500))` sets a timer whose function is the promise's native resolver,
+    // and what runs after it is the code that waited, which only the place that set the timer can name
+    const place = () => { try { return String(new Error().stack || "").split("\n").slice(1).map(l => { const m = /at (?:async )?(?:([^\s(]+) )?\(?(.*?):(\d+):\d+\)?\s*$/.exec(l); if (!m || /charm-nest-(hangwatch|clock)\.js/.test(m[2])) return null; return (m[1] || "anon") + "@" + m[2].replace(/^.*\//, "").replace(/\?.*$/, "") + ":" + m[3]; }).filter(Boolean).slice(0, 5).join(" < "); } catch (_) { return ""; } };
+    HW.created = fn => { try { if (typeof fn !== "function" || made.has(fn)) return; const s = Math.floor(Date.now() / 1000); if (s !== madeSecond) { madeSecond = s; madeCount = 0; } if (++madeCount > 200) return; if (/\[native code\]/.test(Function.prototype.toString.call(fn))) made.set(fn, place()); } catch (_) {} };
+    const idOf = (fn, kind) => {
+      let id = ids.get(fn); if (id) return id;
+      const where = made.get(fn), text = where ? "(no source: set up at) " + where : src(fn), key = kind + "|" + text;
+      id = byKey.get(key); if (!id) { id = nid++; if (byKey.size > 20000) byKey.clear(); byKey.set(key, id); try { worker.postMessage({ id, k: kind, src: text }); } catch (_) {} }
+      ids.set(fn, id); return id;
+    };
     const run = (fn, kind, self, args) => {
       const id = idOf(fn, kind), h = Atomics.add(ia, 1, 1); ia[8 + (h % RING)] = id; Atomics.store(ia, 2, id); const t0 = performance.now(); ft[0] = performance.timeOrigin + t0;
       try { return fn.apply(self, args); }
       finally { Atomics.store(ia, 2, 0); const d = performance.now() - t0; if (d > SLOW_MS && Date.now() - slowSent > 5000) { slowSent = Date.now(); try { worker.postMessage({ slow: [id, Math.round(d), Date.now()] }); } catch (_) {} } }
     };
     HW.run = run; HW.active = true;
-    const wrap = (fn, kind) => typeof fn === "function" ? function (...a) { return run(fn, kind, this, a); } : fn;
+    const wrap = (fn, kind) => { if (typeof fn !== "function") return fn; HW.created(fn); return function (...a) { return run(fn, kind, this, a); }; };
     const oST = window.setTimeout, oSI = window.setInterval, oRAF = window.requestAnimationFrame;
     window.setTimeout = function (f, ...r) { return oST.call(this, wrap(f, "timeout"), ...r); };
     window.setInterval = function (f, ...r) { return oSI.call(this, wrap(f, "interval"), ...r); };

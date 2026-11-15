@@ -79,6 +79,7 @@
   };
   const set = repeat => function (fn, ms, ...args) {
     if (typeof fn !== "function") return (repeat ? native.setInterval : native.setTimeout)(fn, ms, ...args);
+    if (window.CharmNestHang && window.CharmNestHang.created) window.CharmNestHang.created(fn);   // (the stall recorder notes where a function with no source of its own was set up)
     const id = ++next, wait = Math.max(0, +ms || 0), t = { fn, args, repeat, ms: wait, due: performance.now() + wait, place: "", wid: null, nid: null, first: false };
     pending.set(id, t); place(id, t, wait);
     return id;
