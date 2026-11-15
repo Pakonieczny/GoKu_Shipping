@@ -3406,8 +3406,18 @@ async function op_runPut(b) {
   if (Math.max(bytes / RUN_DOC_BYTES, entries / RUN_DOC_ENTRIES) > 0.7 && !runSizeWarned.has(PREFIX + id)) { runSizeWarned.add(PREFIX + id); console.warn(`[charmNestLibrary] run ${id}${PREFIX ? " (sandbox)" : ""}: its record is ${Math.round(bytes / 1024)} KB of the 1,024 KB and ${entries} of the 40,000 index entries one Firestore document can hold. A full record cannot be saved, and the run stops.`); }
   const ref = col(RUNS).doc(id);
   let read = true;   // (whether this save changed what the Library's live read takes from a run record: see runLibrarySig)
+  /* (ONERUN, Paul 15 Nov 2026: "There can only be one master version of it in the cloud there may never be any other versions"): ONE run is open at a time, and the cloud is what says so. A run's record was made by
+     whichever page saved one, and nothing here looked for a run already open: a second computer made a second run of the same orders beside the first (run-2026-11-15 beside run-2026-11-12), each with sheets of its
+     own. A record that does not exist yet is refused (409, openRun: the run that is open) while any other run is open (not complete, abandoned or archived); nothing is written. A run that exists is saved as ever,
+     so a run is still resumed, taken over, finished and given up on any computer. Read only when a new run is made. */
+  let openRun = null;
   await db.runTransaction(async tx => {
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : null, put = Object.assign({}, doc);
+    if (!old && !["complete", "abandoned", "archived"].includes(String(r.status || ""))) {
+      const others = await col(RUNS).orderBy("updatedAt", "desc").limit(50).select("runId", "status").get();
+      const open = others.docs.map(d => d.data()).find(x => x && x.runId && x.runId !== id && !["complete", "abandoned", "archived"].includes(String(x.status || "")));
+      if (open) { openRun = open.runId; return; }
+    }
     put.createdAt = old ? (old.createdAt || FV.serverTimestamp()) : FV.serverTimestamp();
     const had = old && old.liveLines && Array.isArray(old.liveLines.ids) ? old.liveLines.ids : [];
     // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer": an order line changed on any computer (taken off, held, cancelled) is written to the cloud run by that computer): a line another computer changed (its stamp _lp) after the copy this save was made from keeps that change
@@ -3438,6 +3448,7 @@ async function op_runPut(b) {
     read = !old || runLibrarySig(old) !== runLibrarySig(after);
     tx.set(ref, put, { merge: !!b.merge });
   });
+  if (openRun) return { error: `A run is already open in the cloud (${openRun}): one run at a time. This computer follows it; resume it, finish it or give it up before another is started`, status: 409, openRun };   // (ONERUN)
   revTouch(b, read ? ["r:" + id] : []);   // COST (Oct 2026): a save of the run's step, status or counts (most of a nesting run's saves) moves the Library's revision no more
   return { ok: true, runId: id };
 }
