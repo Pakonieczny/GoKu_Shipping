@@ -21,6 +21,8 @@
   const NO_CARRIER = 'No computer is carrying the run right now: open the app on the computer that runs it, or press Resume here to carry it on this computer.';
   const CSS = `
 .osShWrap{display:contents}
+.ohcGrid:has(.osShWrap){grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:14px}
+.ohcGrid:has(.osShWrap) .ohcBig{grid-column:1/-1}
 .osShHead2{margin:6px 0 10px}.osShHead2 h4{margin:0 0 2px;font:500 20px var(--serif,inherit)}
 .osKind{display:inline-block;align-self:flex-start;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:2px 9px;border-radius:99px;border:1px solid var(--line);color:var(--ink45,#777);background:var(--card2,transparent)}
 .osKind.nest{border-color:var(--gold2,#b8913f);color:#7a5a1a}.osKind.empty{border-color:#8a8579;color:#5b554c}
@@ -30,7 +32,7 @@
 .osSh{position:relative;min-width:0;box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--paper2,transparent);outline:none;transition:box-shadow .14s,border-color .14s,transform .14s;touch-action:pan-y}
 .osSh:focus-visible{box-shadow:0 0 0 2px var(--gold2)}
 .osSh.fixed{background:repeating-linear-gradient(135deg,transparent 0 9px,rgba(120,110,90,.06) 9px 18px)}
-.osShPic{position:relative;width:100%;max-width:560px;border-radius:8px;background:#fffefb;border:1px solid var(--line);overflow:hidden;cursor:grab;display:grid;place-items:center}
+.osShPic{position:relative;width:100%;max-width:340px;margin:0 auto;border-radius:8px;background:#fffefb;border:1px solid var(--line);overflow:hidden;cursor:grab;display:grid;place-items:center}
 .osSh.fixed .osShPic{cursor:default}
 .osShPic canvas,.osShPic img{display:block;width:100%;height:100%;object-fit:contain;pointer-events:none;-webkit-user-drag:none}
 .osShPic .osShNone{font-size:11.5px;color:var(--ink45,#888);padding:6px;text-align:center}
