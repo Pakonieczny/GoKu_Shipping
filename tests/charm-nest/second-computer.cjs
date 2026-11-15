@@ -5,6 +5,7 @@
 // workspace, no settings, nothing in its storage.
 //  1 · AUTOASK: Auto is turned on there. It starts no run of its own and writes no sheet, run, set or piece record: the run open in the cloud is followed.
 //  2 · CLOUDFIRST: its Nest cards show the run's sheets as the cloud has them (the same sheets, the same number of pieces), read from their records; nothing is nested there.
+//  2b· ONERUN: a run started there by hand, or a new run's record sent straight to the cloud, is refused while one is open: the cloud keeps ONE run.
 //  3 · QUIETLOAD + CLOUDFIRST: the run is taken over on the second computer. Every sheet comes back with every piece where the cloud has it (no sheet is nested again, no record's
 //      layout changes), the pieces are read in one call and not one call each, and each sheet restored keeps the cloud's revision of its layout.
 //   node tests/charm-nest/second-computer.cjs [playwright-core dir]      (CHROMIUM=/path/to/chrome when playwright's own is not installed)
@@ -78,6 +79,16 @@ async function otherComputer(H) {
     for (const [id, was] of before) assert.equal(layoutOf(st.doc('Charm_Nest_Sheets', id)), was, `2 · sheet ${id} in the cloud is as the first computer left it`);
     assert.deepStrictEqual(two.errors, [], '2 · no page error on the second computer');
     log('2 · the second computer shows', shown.length, 'sheet(s) as the cloud has them');
+
+    /* 2b · ONERUN: a run started by hand there, and a new run's record sent straight to the cloud, are both refused: one run is open */
+    const n2 = st.calls.length;
+    const hand = await p2.evaluate(async () => { const r = await RunCtl.start({ mode: 'manual' }).catch(e => 'threw: ' + e.message); return { r: r == null ? null : String(r.runId || r), run: B.run ? B.run.runId : null }; });
+    assert.deepStrictEqual(hand, { r: null, run: null }, '2b · a run started by hand on the second computer is refused and leaves no run there: ' + JSON.stringify(hand));
+    const raw = await p2.evaluate(() => CN.api('charmNestLibrary', { op: 'runPut', run: { runId: 'run-2026-11-15-zzsecond01', day: '2026-11-15', step: 'pull', status: 'running', mode: 'auto', lines: {}, orders: [] } }, { quiet: true }).then(() => 'saved', e => `${e.status}:${(e.data && e.data.openRun) || ''}`));
+    assert.equal(raw, '409:' + runId, '2b · the cloud refuses a second run\'s record and names the open run: ' + raw);
+    assert.equal([...st.docs.keys()].filter(k => k.startsWith('Charm_Nest_Runs/')).length, runsBefore, '2b · still one run record in the cloud');
+    assert.deepStrictEqual(st.calls.slice(n2).filter(c => WRITES.test(String(c.op)) && !marksOnly(c) && c.op !== 'runPut').map(c => c.op), [], '2b · and nothing else was written');
+    log('2b · a second run is refused by the cloud, by hand and by a direct save');
 
     /* 3 · the run is taken over there: every piece where the cloud has it */
     const n1 = st.calls.length;
