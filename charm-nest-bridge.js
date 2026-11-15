@@ -27681,9 +27681,14 @@ const Recall = window.Recall = (() => {
      changes feed names is refreshed by charm-nest-cloud-sheets.js). Only on a computer with no run of its own, no set opened on purpose, and no piece of its own on any card: this computer's own work is never replaced.
      unfollow() takes them off again before a run is started here (a run resumed here builds its sheets on those same pages: restoreRunSheets). */
   let followAt = 0, following = null, followSig = "";
-  const ownWork = () => allSheets().some(p => (p.charms || []).length || (p.workers || []).length || ["nesting", "finishing", "queued"].includes(p.status) || ((p.rosePlan || p.roseProtected) && !p.roseCutAt));
+  /* (CACHEONLY, Paul 15 Nov 2026: "Computers are only fed the truth ... never duplicating the truth in their own way"): what this computer holds of the run it follows is a COPY, and the cloud's replaces it: a page of
+     that run (or one holding only what was shown from the cloud) is given up to the cloud's sheets, whatever this computer's saved workspace says. A card is left alone only while something is really in hand on it:
+     a nest at work, an uncut contour planned here, or pieces of no run at all (files a person dropped here). */
+  const atWorkHere = p => (p.workers || []).length > 0 || ["nesting", "finishing", "queued"].includes(p.status) || !!p._operationStarting || ((p.rosePlan || p.roseProtected) && !p.roseCutAt && !p.recalled);
+  const keepsCard = (prim, runId) => prim.pages.some(p => atWorkHere(p) || ((p.charms || []).length && (p.runId || null) !== runId));
+  const ownWork = () => false;
   const emptyCard = prim => { for (const pg of prim.pages.slice(1)) { (pg.workers || []).forEach(w => w.terminate()); }
-    prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; prim.recalled = null; prim.followed = false; prim.status = "idle"; prim.placements = []; prim.fileBase = null; prim.sheetId = null; prim.runId = null; prim.setId = null; prim.seq = null; prim.sheetIndex = null; prim.cloud = null; prim.backPool = []; prim._img = null; };
+    prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; prim.recalled = null; prim.followed = false; prim.status = "idle"; prim.placements = []; prim.charms = []; prim.rejects = []; prim.liveInfo = null; prim.verification = null; prim.outputs = null; prim.dirty = false; prim.problem = null; delete prim._writeOwed; delete prim.saveOwed; delete prim.layoutRev; prim.fileBase = null; prim.sheetId = null; prim.runId = null; prim.setId = null; prim.seq = null; prim.sheetIndex = null; prim.cloud = null; prim.backPool = []; prim._img = null; };
   async function follow(runId, o = {}) {
     if (!runId || B.run || on() || following || ownWork()) return false;
     if (!o.force && Date.now() - followAt < 600000) return false;
@@ -27696,11 +27701,12 @@ const Recall = window.Recall = (() => {
       const startedOf = x => +x.cardStartedAt || +(x.createdAt && (x.createdAt._seconds || x.createdAt.seconds)) * 1000 || Date.parse(x.createdAt) || 0;
       const sheets = [...byName.values()].sort((a, b) => startedOf(a) - startedOf(b));   // (oldest first, as a run put back here lists them: PAGEORDER)
       const sig = runId + "|" + sheets.map(x => x.id + ":" + (x.updatedAt || 0)).join("|");
-      if (sig === followSig && allSheets().some(p => p.followed)) return true;
+      if (sig === followSig && allSheets().some(p => p.followed) && !allSheets().some(p => !p.followed && (p.charms || []).length && (p.runId || null) === runId)) return true;
       followSig = sig;
       for (const m of METALS) {
         const prim = S.sheets[m.key], mine = sheets.filter(x => x.metal === m.key);
-        if (!mine.length && !prim.pages.some(p => p.followed || p.recalled)) continue;
+        if (keepsCard(prim, runId)) continue;   // (something is in hand on this card: it is looked at again at the next read)
+        if (!mine.length && !prim.pages.some(p => p.followed || p.recalled || (p.charms || []).length)) continue;
         emptyCard(prim);
         mine.forEach((rec, i) => {
           const pg = i === 0 ? prim.pages[0] : CN.addPage(m.key, { fresh: true });
@@ -28072,7 +28078,7 @@ const Session = window.Session = (() => {
       B.carry = d.carry;
       B.run = d.run; B.orders = d.orders; B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
       // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"): the run this computer carried before it closed, carried meanwhile by another computer that is alive, is not taken back: this page follows it from the cloud
-      try { if (B.run && B.run.runId && S.cloud && S.cloud.ok && window.RunCtl && RunCtl.carrier) { const c = await RunCtl.carrier(B.run.runId, { check: true }); if (c && c.ok && !c.mine && c.alive) { agent({ bridge: true }, "cloud", `${B.run.runId} is carried by ${(c.carrier && c.carrier.by) || "another computer"} on another computer: this computer follows it`); B.run = null; } } } catch (_) { /* the heartbeat looks again in 20 s */ }
+      try { if (B.run && B.run.runId && S.cloud && S.cloud.ok && window.RunCtl && RunCtl.carrier) { const c = await RunCtl.carrier(B.run.runId, { check: true }); if (c && c.ok && !c.mine && (c.alive || (c.carrier && c.carrier.dev))) { agent({ bridge: true }, "cloud", c.alive ? `${B.run.runId} is carried by ${(c.carrier && c.carrier.by) || "another computer"} on another computer: this computer follows it` : `${B.run.runId} was last carried on another computer: this computer's saved copy of it is older than the cloud's and is not used; the run is followed from the cloud (Resume takes it up here, from the cloud)`); B.run = null; } } } catch (_) { /* the heartbeat looks again in 20 s */ }   // (CACHEONLY, Paul 15 Nov 2026: "Computers are only fed the truth"): and a run another computer carried LAST, though that computer is gone now, is not carried on from this computer's older copy either (it was, and its next save put the older copy over the cloud's)
       /* (CLOUDLINES, Paul 13 Nov 2026: "Why is the other computer only showing seven orders ... I had to go and delete all the data on the computer again for it to actually show me all the
          orders"): this computer's checkpoint is a copy, never the authority. The run's lines the cloud holds and this copy lacks (taken on another computer, or a copy saved while this one held
          only the newest arrivals) are added from the cloud record, as a clean computer reads them; nothing this computer holds is dropped or changed. */
