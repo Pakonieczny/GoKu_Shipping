@@ -1045,7 +1045,22 @@ async function withFullBacks(d) {
 const SHEET_DOC_BYTES = 900000;
 /** Documents read inside a transaction, with only the fields asked for (tx.getAll); one tx.get each where a transaction has no getAll (a test's stand-in). */
 const txGetAll = (tx, refs, fieldMask) => (typeof tx.getAll === "function" ? tx.getAll(...refs, ...(fieldMask ? [{ fieldMask }] : [])) : Promise.all(refs.map(r => tx.get(r))));
+/* ── CARRIERONLY (Paul, 15 Nov 2026: "Computers are only fed the truth and whatever changes they make that goes to the cloud to be updating, the truth, never duplicating the truth in their own way").
+   ONE computer carries the run (Charm_Nest_Run_Carrier/<run>, renewed every 20 s), and the cloud is what holds a page to it: a save of the run's record, or of a sheet's layout made without the revision it was
+   read at, is refused (409, notCarrier) when it comes from a computer that is not the one carrying the run while that one is alive. Every other computer follows; what it changes on purpose goes through the
+   doors made for it (a line: runLinesPatch / runLinesAdd; a sheet opened to be changed: putSheet with layoutBase; moves by hand: sheetLayoutPatch), each checked against what the cloud holds. A request that
+   names no computer (a page loaded before this) is taken as before. One small read of the carrier's own document. */
+async function carriedElsewhere(runId, dev) {
+  if (!dev || !isId(runId)) return null;
+  try { const d = await col(CARRIER).doc(runId).get(), c = d.exists ? d.data().carrier : null; if (c && c.dev && c.dev !== dev && Date.now() - (num(c.at) || 0) < 90000) return { by: str(c.by, 80) || "another computer", at: num(c.at) || 0 }; } catch (_) { /* not known: the save is taken as before */ }
+  return null;
+}
 async function op_putSheet(b) {
+  { const s0 = b.sheet || {}, dev0 = str(b.dev, 60);
+    if (dev0 && Array.isArray(s0.placements) && !(typeof b.layoutBase === "number" && Number.isFinite(b.layoutBase)) && isId(s0.runId)) {
+      const c = await carriedElsewhere(s0.runId, dev0);
+      if (c) return { error: `This sheet belongs to the run ${c.by} is carrying on another computer: this computer's copy was not saved over the cloud's; it is read again`, status: 409, conflict: true, notCarrier: true, carrier: c };
+    } }
   const s = b.sheet || {}; if (!isId(s.id)) return { error: "bad sheet id" };
   revTouch(b, ["s:" + s.id]);   // COST (Oct 2026): it writes this sheet record alone (the Library's revision names it: bumpRev)
   const doc = Object.assign({}, s, { id: s.id, archived: false, updatedAt: FV.serverTimestamp() });
@@ -3399,6 +3414,7 @@ const RUN_DOC_BYTES = 1048576, RUN_DOC_ENTRIES = 40000, runSizeWarned = new Set(
 const runLibrarySig = d => JSON.stringify(d ? [d.liveLines && Array.isArray(d.liveLines.ids) ? d.liveLines.ids : null, d.lines && typeof d.lines === "object" ? d.lines : null, d.lineArchive || null, Array.isArray(d.orders) ? d.orders.map(String) : null] : null);
 async function op_runPut(b) {
   const r = b.run || {}; const id = str(r.runId, 80); if (!isId(id)) return { error: "bad run id" };
+  { const c = await carriedElsewhere(id, str(b.dev, 60)); if (c) return { error: `This run is carried by ${c.by} on another computer: nothing was saved from this computer, which follows it`, status: 409, notCarrier: true, carrier: c }; }   // (CARRIERONLY)
   const doc = Object.assign({}, r, { runId: id, updatedAt: FV.serverTimestamp() }); delete doc.liveLines;
   let parts = r.lines && typeof r.lines === "object" && !Array.isArray(r.lines) ? liveParts(id, r.lines) : null;
   if (parts && parts.some(p => p.bytes > 1000000)) return { error: "a piece of this run is too large to save" };
