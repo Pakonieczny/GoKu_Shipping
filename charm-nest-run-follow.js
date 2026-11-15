@@ -116,7 +116,8 @@
       const r = G.reorder(a.metal, want); return r && r.ok ? { ok: true, text: r.changed === false ? "The sheets were already in that order" : "Sheet order changed: " + (r.names || []).join(", ") } : { ok: false, text: (r && r.why) || "The order was not changed" };
     }
     let r = null;
-    if (c.type === "consolidate") r = await G.consolidate(a.sourceId, a.targetId);
+    if (c.type === "repicture") r = root.Recall && typeof root.Recall.repicture === "function" ? await root.Recall.repicture(a.sheetId) : { ok: false, why: "not ready" };   // (REPICTURE: a sheet's saved picture drawn again, nothing else of it written)
+    else if (c.type === "consolidate") r = await G.consolidate(a.sourceId, a.targetId);
     else if (c.type === "empty") r = await G.emptySheet(a.sheetId);
     else if (c.type === "delete") r = await G.deleteEmpty(a.sheetId);
     else return { ok: false, text: "Unknown command" };

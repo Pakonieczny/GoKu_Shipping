@@ -28152,7 +28152,32 @@ const Recall = window.Recall = (() => {
     followSig = ""; if (n) { CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub(); }
     return n;
   }
-  return { open, rebuild, on, state: () => RC, follow, unfollow };
+  /* (REPICTURE, Paul 15 Nov 2026: "The rose gold sheet in the library tab is now overlapping pieces over completed greyed out pieces"): a sheet's saved PICTURE (preview.png, what the Library and every other computer show
+     of it) is written when the sheet is saved, and stays as it was drawn then. RG Set-2 Sheet-2's was written on 12 Nov with a cut that was later done again drawn grey under its own pieces: the page stopped drawing
+     that superseded cut the same day, the saved picture never was drawn again. repicture(sheetId) draws ONLY the picture again from the sheet as this computer holds it and its cuts as they are read now, and saves
+     only that file and its link: the layout, the pieces, the .ai, the .dxf, the proof and the labels are not touched (a cut sheet never changes). Only on the computer that carries the run, only for a sheet it
+     holds whole (as many pieces as its record), never while it is nesting or changed here. */
+  async function repicture(sheetId) {
+    if (!B.run) return { ok: false, why: "A sheet's picture is drawn again on the computer that carries the run" };
+    const pg = allSheets().find(p => p.sheetId === sheetId);
+    if (!pg || pg.recalled || !(pg.charms || []).length) return { ok: false, why: "This computer does not hold that sheet's pieces" };
+    if (pg.runId !== B.run.runId) return { ok: false, why: "That sheet is of another run" };
+    if (["nesting", "finishing", "queued"].includes(pg.status) || pg.dirty || (pg.persisted && !pg.persistedDone)) return { ok: false, why: "That sheet is at work here: try again when it is saved" };
+    const d = (await api("charmNestLibrary", { op: "getSheet", id: sheetId }, { quiet: true })).sheet; if (!d) return { ok: false, why: "The sheet's record is gone" };
+    if ((d.placements || []).length !== (pg.placements || []).length) return { ok: false, why: "This computer's copy of the sheet differs from its record" };
+    const cuts = pg.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(pg.metal));
+    if (cuts && d.roseStockId && window.RoseStock && typeof RoseStock.load === "function") { try { await RoseStock.load(pg); for (let i = 0; i < 40 && pg._roseOlder; i++) await new Promise(res => setTimeout(res, 250)); } catch (e) { return { ok: false, why: "Its cuts could not be read: " + ((e && e.message) || e) }; } }
+    const png = typeof previewPng === "function" ? await previewPng(pg) : null; if (!png) return { ok: false, why: "The picture could not be drawn" };
+    const outs = d.outputs || {}, dir = outs.ai && outs.ai.path ? String(outs.ai.path).replace(/\/[^/]*$/, "") : pg.folderPath || null, path = (outs.preview && outs.preview.path) || (dir ? dir + "/preview.png" : null);
+    if (!path) return { ok: false, why: "The sheet has no folder to save its picture in" };
+    const r = await uploadBytes(path, png, "image/png", "Saving preview");
+    const preview = { path: r.path, url: r.url };
+    await api("charmNestLibrary", { op: "putSheet", sheet: { id: sheetId, outputs: Object.assign({}, outs, { preview }), preview: r.url, previewAt: Date.now() } }, { quiet: true });   // (no placements: the layout and its revision are untouched)
+    pg.cloud = Object.assign({}, pg.cloud || {}, { preview: r.url });
+    agent({ metal: pg.metal }, "cloud", `${pg.fileBase || sheetId}: its saved picture was drawn again as the sheet is now (nothing else of the sheet was written)`);
+    return { ok: true, text: `${d.fileBase || sheetId}: its picture was drawn again` };
+  }
+  return { open, rebuild, on, state: () => RC, follow, unfollow, repicture };
 })();
 
 
