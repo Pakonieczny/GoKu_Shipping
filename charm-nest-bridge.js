@@ -20470,7 +20470,10 @@ const Review = window.Review = (() => {
      Etsy, the link, each order and sheet, every view. → { ok, why, sku, via, done } (done: the panel's end, with the Etsy answer) */
   function editSkuOffer(row) {
     if (!row || !row.line || !row.spec || row.loading) return { ok: false, why: "the piece is not read yet" };
-    if (row.fromRecord) return { ok: false, why: "this order is read from the records, not the open orders" };
+    // (SKUFOLLOW, Paul 15 Nov 2026: "I also can't click on the SKU update button in the detailed order view" on the computer that follows the run): an order of the OPEN run, read from the cloud on a computer that follows it, is an open order:
+    //  its SKU is changed here (Etsy and the saved link), and the computer that carries the run makes the piece again. An order of an earlier run or set opened from the records is still not changed
+    const followsOpen = !B.run && !Recall.on() && !!(window.CharmNestRunFollow && CharmNestRunFollow.state().runId);
+    if (row.fromRecord && !followsOpen) return { ok: false, why: "this order is read from the records, not the open orders" };
     // (a line with no design, "No vector available", is what Edit SKU is for: it is made up again with the charm; a committed, skipped or gone line is not changed here)
     if (row.state !== "noDesign" && O.FINISHED_LINE && O.FINISHED_LINE.has(row.state)) return { ok: false, why: row.state === "committed" ? "the piece's set was committed at the Design Station" : "the piece is skipped or gone" };
     if (row.spec.ownDesign || row.spec.customDone) return { ok: false, why: "this piece is made from its own artwork, not a library charm" };
@@ -20565,6 +20568,14 @@ const Review = window.Review = (() => {
       answered({ kind: "unmatchedSku", rows }, "decided", `Edit SKU: ${off.from || "no SKU"} → ${sku}`, { sku, from: off.from || null }, who);
       await Orders.loadMaps(true);
       toast(`${off.from || "This SKU"} → ${sku} saved for listing ${off.lid}`, "ok");
+      // (SKUFOLLOW): on a computer that follows the run nothing more is done here: no piece is made, no sheet is touched. The saved link reaches the computer that carries the run through the cloud's feed (a:aliases),
+      //  which makes each piece again with the new charm and puts it on its sheet (its own LISTPICK sweep); this computer sees it as it follows the run
+      if (!B.run) {
+        try { flow.line("carrier", `The computer that carries the run makes the piece${rows.length === 1 ? "" : "s"} again as ${sku} and puts ${rows.length === 1 ? "it" : "them"} on the sheet: it shows here as soon as that is saved`, "done"); } catch (_) { /* a word only */ }
+        Orders.interpretAll(); syncOrderItems(); Orders.render();
+        later(flow, null, true);
+        return { ok: true, sku, via: "alias", follower: true, orders: [...new Set(rows.map(r => String(r.order.receiptId)))], done };
+      }
       linkHolds(rows, sku); pickedMarks(rows, sku, who);
       const relinked = (await relinkNow().catch(() => null)) || { keys: new Set() };   // (the orders on a sheet: swapped in place, each on the panel through its sweep)
       for (const rr of Orders.rows()) if (same(rr) && !relinked.keys.has(rr.key)) await repool(rr);
@@ -20583,6 +20594,7 @@ const Review = window.Review = (() => {
     sku = String(sku || "").trim().toUpperCase();
     const no = (why, tone) => { if (why) toast(why, tone || "bad", 7000); return { ok: false, why }; };
     const off = editSkuOffer(row); if (!off.ok) return no(off.why);
+    if (!B.run) return no("“Just this order” is done on the computer that carries the run: it changes one piece on its sheet. “Change SKU” for the listing can be used here");   // (SKUFOLLOW: a one-order charm lives in the run's own lines and its piece is swapped on its sheet, both the carrying computer's to write)
     if (!sku) return no("Pick a charm from the repo first");
     const e = Master.entryFor(sku); if (!e || !B.master.entries.has(sku)) return no(`${sku} is not in the charm repo`);
     if (O.entryBlock(e)) return no(`${sku} is blocked in the master, so it cannot be cut`);
@@ -20684,6 +20696,7 @@ const Review = window.Review = (() => {
   const relinkLib = () => window.CharmNestListingRelink || null, relinkRL = () => window.CharmNestReviewLink || null;
   /** The maps were replaced: `prev` is what they were. The live lines of every listing whose answers moved are noted as they read now (before they are read again). */
   function relinkMaps(prev) {
+    if (!B.run) return;   // (SKUFOLLOW: a line is made up again only by the page whose run holds its pieces; a computer that follows the run queued it too, tried for two minutes and warned)
     try {
       const L = relinkLib(), RL = relinkRL(); if (!L || !RL || !prev) return;
       const entries = L.snapshot(Orders.rows(), prev, { aliases: B.maps.aliases, optionMaps: B.maps.optionMaps }, (r, m) => RL.linkOf(r, m));
@@ -29562,6 +29575,9 @@ async function bootBridge() {
       // (NOBOOTRUN, Paul 14 Nov 2026: the takeover test: a computer reloaded with no run of its own started a NEW run by itself 1.5 s after loading, before the cloud's list of open runs had come back): the cloud is asked first; Auto starts a run here only when no run is open
       try { const lr = await api("charmNestLibrary", { op: "runList", limit: 10 }, { quiet: true }); if (((lr && lr.runs) || []).some(x => x && x.runId && !["complete", "abandoned", "archived"].includes(x.status))) { agent({ bridge: true }, "cloud", "A run is open in the cloud: Auto starts no new run on this computer"); return; } } catch (_) { return; }
       if (B.openRuns?.length || Recall.on() || B.run) return; RunCtl.setMode("auto", { asked: true }); }, 1500); }
+  // (SKUFOLLOW, Paul 15 Nov 2026): a charm link saved on ANY computer (a:aliases, a:options in the cloud's feed) is read here at once on the computer that carries the run, which makes the pieces again (Orders.loadMaps → Review.relinkMaps);
+  //  it was read only at the next order check, up to ten minutes later
+  try { if (window.CNSync && typeof CNSync.follow === "function") { let mapsT = 0; CNSync.follow({ name: "maps", kinds: "a", active: () => !!B.run, read: () => { clearTimeout(mapsT); mapsT = setTimeout(() => { if (B.run) Orders.loadMaps(true).catch(() => {}); }, 1500); } }); } } catch (_) { /* read at the next order check, as before */ }
   document.addEventListener("keydown", e => { if (e.altKey && e.key === "r") { e.preventDefault(); setMode("review"); } });
   agent({ bridge: true }, "DS", `Bridge ready · station ${DesignLink.origin()} · ${S.settings.runMode} mode`);
 }
