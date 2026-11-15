@@ -3411,10 +3411,11 @@ async function op_runPut(b) {
      whichever page saved one, and nothing here looked for a run already open: a second computer made a second run of the same orders beside the first (run-2026-11-15 beside run-2026-11-12), each with sheets of its
      own. A record that does not exist yet is refused (409, openRun: the run that is open) while any other run is open (not complete, abandoned or archived); nothing is written. A run that exists is saved as ever,
      so a run is still resumed, taken over, finished and given up on any computer. Read only when a new run is made. */
-  let openRun = null;
+  let openRun = null, noMint = false;
   await db.runTransaction(async tx => {
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : null, put = Object.assign({}, doc);
     if (old && old.retiredInto) { openRun = String(old.retiredInto); return; }   // (RUNRETIRE: a run retired into another is closed for good: a page that still holds it cannot bring it back)
+    if (!old && process.env.CN_TEST_SEED_RUNS !== "1") { noMint = true; return; }   // (CN_TEST_SEED_RUNS: the offline tests that write a run record straight into their fake cloud; never set on the site)   // (RUNOPEN: a run is made by the cloud, runOpen; a page saves only a run that exists)
     if (!old && !["complete", "abandoned", "archived"].includes(String(r.status || ""))) {
       const others = await col(RUNS).orderBy("updatedAt", "desc").limit(50).select("runId", "status").get();
       const open = others.docs.map(d => d.data()).find(x => x && x.runId && x.runId !== id && !["complete", "abandoned", "archived"].includes(String(x.status || "")));
@@ -3450,6 +3451,7 @@ async function op_runPut(b) {
     read = !old || runLibrarySig(old) !== runLibrarySig(after);
     tx.set(ref, put, { merge: !!b.merge });
   });
+  if (noMint) { let cur = null; try { cur = (await op_runOpen({ only: "get" })).runId; } catch (_) {} return { error: "A run is made by the cloud, never by a page: this record does not exist and was not saved", status: 409, noMint: true, openRun: cur || null }; }
   if (openRun) return { error: `A run is already open in the cloud (${openRun}): one run at a time. This computer follows it; resume it, finish it or give it up before another is started`, status: 409, openRun };   // (ONERUN)
   revTouch(b, read ? ["r:" + id] : []);   // COST (Oct 2026): a save of the run's step, status or counts (most of a nesting run's saves) moves the Library's revision no more
   return { ok: true, runId: id };
@@ -3459,6 +3461,33 @@ async function op_runPut(b) {
    {from, into, dry} → every piece record that names `from` names `into` again (its set id as the other pieces of `into` have it when the piece is on one of `into`'s sheets; a sheet id of `from` is cleared; its
    state, its engraving and everything else stay), `from`'s sheets are archived (their files are KEPT; nothing is deleted), and `from` is closed (abandoned, retiredInto: runPut then refuses to save it again).
    Refused when `from` has a committed set or a cut sheet, or `into` is not open. dry: true answers what would change and writes nothing. The app's own "Abandon run" is NOT this: it marks the shared pieces abandoned. */
+/* ── RUNOPEN (Paul, 15 Nov 2026: "Why would any computer even ever request? ... Computers are only fed the truth and whatever changes they make that goes to the cloud to be updating, the truth, never
+   duplicating the truth in their own way"). A run is MADE BY THE CLOUD, never by a page. {mode, day, solidIncluded} → {runId, created}: the one open run when there is one (created: false: the page follows it),
+   else a new run made here, its id minted here (created: true: the page that asked carries it). One transaction over the one document that names the open run (Charm_Nest_Open/run), so two computers asking in
+   the same moment get the same run. only: "get" never makes one. runPut refuses a run record that does not exist: a page can no longer bring a run into being by saving one. */
+const OPEN_RUN = "Charm_Nest_Open";
+const runClosed = st => ["complete", "abandoned", "archived"].includes(String(st || ""));
+async function op_runOpen(b) {
+  const mode = b.mode === "auto" ? "auto" : "manual", day = /^\d{4}-\d{2}-\d{2}$/.test(String(b.day || "")) ? String(b.day) : new Date().toISOString().slice(0, 10);
+  const ref = col(OPEN_RUN).doc("run"), now = Date.now();
+  const out = await db.runTransaction(async tx => {
+    const cur = await tx.get(ref), named = cur.exists ? cur.data().runId : null;
+    if (isId(named)) { const rs = await tx.get(col(RUNS).doc(named)); if (rs.exists && !runClosed(rs.data().status) && !rs.data().retiredInto) return { ok: true, created: false, runId: named, status: rs.data().status || null }; }
+    // (a run opened before this door existed: the newest open one is the run)
+    const others = await col(RUNS).orderBy("updatedAt", "desc").limit(50).select("runId", "status", "retiredInto").get();
+    const open = others.docs.map(d => d.data()).find(x => x && isId(x.runId) && !runClosed(x.status) && !x.retiredInto);
+    if (open) { tx.set(ref, { runId: open.runId, at: now }); return { ok: true, created: false, runId: open.runId, status: open.status || null }; }
+    if (b.only === "get") return { ok: true, created: false, runId: null };
+    const id = `run-${day}-${require("crypto").randomBytes(5).toString("hex")}`;
+    const solid = b.solidIncluded && typeof b.solidIncluded === "object" && !Array.isArray(b.solidIncluded) ? b.solidIncluded : {};
+    tx.set(col(RUNS).doc(id), { runId: id, day, setId: null, releasePolicy: 2, solidIncluded: solid, step: "pull", status: "running", mode, startedAt: now, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [], madeBy: "cloud", createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });
+    tx.set(ref, { runId: id, at: now });
+    return { ok: true, created: true, runId: id, day, status: "running" };
+  });
+  if (out.created) revTouch(b, ["r:" + out.runId]);
+  return out;
+}
+OPS_LATE.runOpen = op_runOpen;
 async function op_runRetire(b) {
   const from = str(b.from, 80), into = str(b.into, 80), dry = !(b.dry === false || b.dry === "0" || b.dry === 0 || b.dry === "false");
   if (!isId(from) || !isId(into) || from === into) return { error: "bad run ids" };
