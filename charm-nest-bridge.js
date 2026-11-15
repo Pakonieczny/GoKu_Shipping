@@ -7756,6 +7756,7 @@ const Gate = window.Gate = (() => {
     if (!solid(m)) return [];
     const all = pagesOf(m), runId = (all.find(p => p.runId) || {}).runId || null, carrying = canArrange(), relay = !carrying && !!relayRun(), arrange = carrying || relay, N = window.CharmNestSheetName;
     const mine = all.filter(p => (p.runId || null) === runId && (p.charms.length || p.sheetId || p.recalled || all.length > 1));
+    if (!carrying && mine.length > 1 && mine.every(p => Number.isFinite(+p.draftOrder))) { const at = new Map(mine.map((p, i) => [p, i])); mine.sort((x, y) => (+x.draftOrder - +y.draftOrder) || (at.get(x) - at.get(y))); }   // (ORDERCLOUD: a computer that follows the run lists the sheets in the order the cloud has)
     return mine.map(p => {
       const st = stockFor(m, p), li = p.liveInfo, rc = !p.charms.length && p.recalled ? p.recalled : null, dens = rc && Number.isFinite(+rc.density) ? Math.max(0, Math.min(100, Math.round(100 * +rc.density))) : null;
       const pct = li && +li.usablePt2 ? Math.max(0, Math.min(100, Math.round(100 * (1 - (+li.freePt2 || 0) / +li.usablePt2)))) : dens;
@@ -28084,7 +28085,7 @@ const Recall = window.Recall = (() => {
         if (own) charm.custom = true;   // (TAKEOVERSAFE2, Paul 14 Nov 2026: "Yes, fix resume first")
         const man = window.CNManual && CNManual.fromRecord ? CNManual.fromRecord(rc) : null; if (man) { charm.manual = man; if (man.size) charm.pinned.size = man.size; }
         pg.charms.push(charm);
-        pg.placements.push({ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: man && man.size ? +((typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) * man.size).toFixed(5) : (typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) });
+        pg.placements.push({ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: Number.isFinite(+p.scale) && +p.scale > 0 ? +p.scale : man && man.size ? +((typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) * man.size).toFixed(5) : (typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) });   // (OWNSCALE, Paul 15 Nov 2026: a 14K sheet read "6 charms overlap" on the computer that follows the run): the piece is drawn at the scale ITS PLACEMENT was saved with (six pieces of that sheet were saved a little smaller); it was drawn at the standard scale, larger than it lies on the sheet
       }
       pg.recalled = null; pg.status = "complete"; pg.dirty = false;
       CN.computeSaturation(pg); CN.renderCard(pg);

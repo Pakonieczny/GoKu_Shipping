@@ -26,6 +26,7 @@
     return runs.length ? runs[0].runId : null;
   }
   async function now(why) {
+    if (holdsRun()) safe(() => { const G = root.Gate; if (G && typeof G.ensureOrder === "function") ["gold10k", "gold14k"].forEach(m => G.ensureOrder(m)); });   // (ORDERCLOUD: the carrier writes its draft order once, without the Options window having to be opened, so every computer numbers the drafts alike)
     if (holdsRun()) runCommands().catch(() => {});   // (SHEETSANYWHERE: the commands of the computers that follow, apart from the 15 s throttle of applyOthers)
     if (st.busy) return st;
     if (holdsRun()) return applyOthers(why);   // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer"): the run's own computer takes the lines other computers changed
