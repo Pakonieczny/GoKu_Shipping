@@ -26,6 +26,7 @@
     return runs.length ? runs[0].runId : null;
   }
   async function now(why) {
+    if (holdsRun()) runCommands().catch(() => {});   // (SHEETSANYWHERE: the commands of the computers that follow, apart from the 15 s throttle of applyOthers)
     if (st.busy) return st;
     if (holdsRun()) return applyOthers(why);   // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer"): the run's own computer takes the lines other computers changed
     st.busy = true;
@@ -103,6 +104,40 @@
       return st;
     } catch (e) { st.last = { at: Date.now(), why, error: String((e && e.message) || e) }; return st; }
     finally { st.busy = false; }
+  }
+  /* (SHEETSANYWHERE, Paul 15 Nov 2026: "I need that full capability ... drag the sheets from one sheet to another and amalgamate sheets as needed"): the computer that CARRIES the run does what a following computer asked for in the Sheets card
+     (runCmdPut on the cloud): one at a time, in the order asked, through the Gate, then answers (runCmdDone) with the result line. Looked at when the feed names the run, at most every 3 s; a command older than 10 minutes is answered "too old". */
+  let cmdAt = 0, cmdT = 0, cmdBusy = false; const cmdSeen = new Set();
+  async function execCmd(c) {
+    const G = root.Gate, a = c.args || {}; if (!G) return { ok: false, text: "The sheets are not ready on the computer that carries the run." };
+    if (c.type === "reorder") {
+      const rows = safe(() => G.sheetsOf(a.metal), []), have = rows.map(r => r.id), want = [...new Set((a.ids || []).filter(id => have.includes(id)))];
+      have.forEach((id, i) => { if (!want.includes(id)) want.splice(Math.min(i, want.length), 0, id); });
+      const r = G.reorder(a.metal, want); return r && r.ok ? { ok: true, text: r.changed === false ? "The sheets were already in that order" : "Sheet order changed: " + (r.names || []).join(", ") } : { ok: false, text: (r && r.why) || "The order was not changed" };
+    }
+    let r = null;
+    if (c.type === "consolidate") r = await G.consolidate(a.sourceId, a.targetId);
+    else if (c.type === "empty") r = await G.emptySheet(a.sheetId);
+    else if (c.type === "delete") r = await G.deleteEmpty(a.sheetId);
+    else return { ok: false, text: "Unknown command" };
+    return r && r.ok !== false ? { ok: true, text: r.text || "Done" } : { ok: false, text: (r && (r.why || r.text)) || "Not done" };
+  }
+  async function runCommands() {
+    if (cmdBusy) return; const t = Date.now();
+    if (t - cmdAt < 3000) { if (!cmdT) cmdT = setTimeout(() => { cmdT = 0; runCommands().catch(() => {}); }, 3000 - (t - cmdAt)); return; }
+    cmdAt = t; cmdBusy = true;
+    try {
+      for (let guard = 0; guard < 12; guard++) {
+        const run = root.B && root.B.run; if (!run || !run.runId) break;
+        const res = await api({ op: "runCmdList", runId: run.runId }), me = dev();
+        const next = ((res && res.cmds) || []).filter(c => c && c.id && c.state === "waiting" && c.dev !== me && !cmdSeen.has(c.id)).sort((x, y) => (+x.at || 0) - (+y.at || 0))[0];
+        if (!next) break;
+        cmdSeen.add(next.id); let out;
+        if (Date.now() - (+next.at || 0) > 600000) out = { ok: false, text: "too old" };
+        else { try { out = await execCmd(next); } catch (e) { out = { ok: false, text: String((e && e.message) || e) }; } }
+        for (let k = 0; k < 3; k++) { try { await api({ op: "runCmdDone", runId: run.runId, id: next.id, ok: !!out.ok, text: String(out.text || "").slice(0, 400), dev: me }); break; } catch (_) { await new Promise(r => setTimeout(r, 1500)); } }
+      }
+    } catch (_) { /* looked at again at the next feed */ } finally { cmdBusy = false; }
   }
   async function patchRows(rows) {
     rows = (rows || []).filter(r => r && r.key && !r.parentRow); if (!rows.length) return null;

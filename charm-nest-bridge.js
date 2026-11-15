@@ -7615,7 +7615,7 @@ const Gate = window.Gate = (() => {
     if (!plan || st.busy || !["move", "renest"].includes(kind)) return Promise.resolve(false);
     const run = B.run, t = plan.target, ops = window.CharmNestOperations;
     st.ask = null; st.done = null;
-    st.busy = { kind, at: Date.now(), text: "Waiting for the sheets to finish their current step…", pages: new Set(plan.pages), before: new Set(pagesOf(m)), target: t, ...(spec ? { retire: new Set(plan.sources), source: plan.sources[0], names: new Map(plan.pages.map(p => [p, pw(p)])) } : {}) };
+    st.busy = { kind, at: Date.now(), text: "Waiting for the sheets to finish their current step…", pages: new Set(plan.pages), before: new Set(pagesOf(m)), target: t, ...(spec ? { retire: new Set(spec.keep ? [] : plan.sources), source: plan.sources[0], names: new Map(plan.pages.map(p => [p, pw(p)])) } : {}) };
     if (!spec) closeOptions(m); repaintMerge(m);   // (a drop in the Sheets card keeps the window open: its card shows the result)
     const work = async ctx => {
       // looked at again in its turn: a sheet may have started nesting, been cut or committed meanwhile
@@ -7716,11 +7716,24 @@ const Gate = window.Gate = (() => {
   const sheetKey = p => { if (p.sheetId) return p.sheetId; if (!p._cnKey) Object.defineProperty(p, "_cnKey", { value: "pg-" + Math.random().toString(36).slice(2, 10), writable: true, enumerable: false }); return p._cnKey; };
   const pageById = id => { for (const m of ["gold10k", "gold14k"]) for (const p of pagesOf(m)) if (sheetKey(p) === id) return p; return null; };
   const canArrange = () => !!B.run && modern(B.run.runId);
-  const cutSheet = p => +p.roseCutAt > 0 || +p.laserDoneAt > 0;
+  // (SHEETSANYWHERE, Paul 15 Nov 2026: "I wanted the drafts to be part of the partial sheets view so then I can drag the sheets from one sheet to another ... I need that full capability"): a computer that does NOT carry the run still arranges the sheets: each action is sent to the one that carries it (the run's id comes from CharmNestRunFollow), so a sheet shown from its record is not "locked"
+  const relayRun = () => (!B.run && window.CharmNestRunFollow && CharmNestRunFollow.state().runId) || null;
+  const cutSheet = p => +p.roseCutAt > 0 || +p.laserDoneAt > 0 || !!(p.recalled && (+p.recalled.roseCutAt > 0 || +p.recalled.laserDoneAt > 0));
+  const lineDrawn = p => !!(p.rosePlan || p.roseProtected || (p.recalled && (p.recalled.rosePlan || p.recalled.roseProtected)));
+  const lockedSheet = p => cutSheet(p) || committedSheet(p) || fixedSet(p) || lineDrawn(p);
   const movableSheet = p => !cutSheet(p) && !p.recalled && !committedSheet(p) && !fixedSet(p);
+  const piecesOf = p => p.charms.length ? activeCharms(p).length : (p.recalled ? +p.recalled.placedCount || 0 : 0);
   /** Why this sheet cannot take part in a move (as source or as target), in words; "" when it can. */
   function whyNot(p, role) {
-    if (!canArrange()) return "Sheets are arranged on the computer that carries the run.";
+    if (!canArrange()) {
+      // a following computer: the sheet's own record decides (the carrier answers again when it does the move)
+      if (!relayRun()) return "there is no open run to arrange sheets in";
+      if (cutSheet(p)) return "already cut";
+      if (committedSheet(p) || fixedSet(p)) return "in a set that is already committed";
+      if (lineDrawn(p)) return "has a cut line drawn";
+      if (role === "source" && !piecesOf(p)) return "has no pieces";
+      return "";
+    }
     if (cutSheet(p)) return "already cut";
     if (p.recalled || !membershipEditable(p)) return "in a set that is already committed";
     if (holding(p)) return "being held right now";
@@ -7741,15 +7754,17 @@ const Gate = window.Gate = (() => {
   /** The metal's sheets of the open run, in their order, as the Sheets card draws them. */
   function sheetsOf(m) {
     if (!solid(m)) return [];
-    const all = pagesOf(m), runId = (all.find(p => p.runId) || {}).runId || null, arrange = canArrange(), N = window.CharmNestSheetName;
+    const all = pagesOf(m), runId = (all.find(p => p.runId) || {}).runId || null, carrying = canArrange(), relay = !carrying && !!relayRun(), arrange = carrying || relay, N = window.CharmNestSheetName;
     const mine = all.filter(p => (p.runId || null) === runId && (p.charms.length || p.sheetId || p.recalled || all.length > 1));
     return mine.map(p => {
-      const st = stockFor(m, p), li = p.liveInfo, pct = li && +li.usablePt2 ? Math.max(0, Math.min(100, Math.round(100 * (1 - (+li.freePt2 || 0) / +li.usablePt2)))) : null;
-      const cut = cutSheet(p), line = !!(p.rosePlan || p.roseProtected), n = activeCharms(p).length, inSet = inSetNow(p);
-      const why = whyNot(p, "source"), whyT = whyNot(p, "target");
-      let del = ""; if (n || p.charms.length) del = `Move its ${charmsWord(n || p.charms.length).replace(" charms", " pieces").replace(" charm", " piece")} onto another sheet first`; else if (!arrange) del = whyNot(p, "target"); else if (cut) del = "already cut"; else if (inSet) del = "in a set"; else if (line) del = "has a cut line drawn"; else if (!modern(p.runId) || !membershipEditable(p)) del = "cannot change"; else if (busyPage(p)) del = "is nesting or saving";
-      return { id: sheetKey(p), page: p.page, index: all.indexOf(p), name: pw(p), draft: N ? !N.numbered(p) : true, size: `${Math.round(st.wPt / 72 * 25.4)} × ${Math.round(st.hPt / 72 * 25.4)} mm`, pieces: n, placed: p.placements.length, pct,
-        inSet, cutLine: line, cut, locked: !movableSheet(p), movable: arrange && movableSheet(p), canSource: !why, whySource: why, canTarget: !whyT, whyTarget: whyT, canDelete: !del, whyDelete: del, busy: busyPage(p), arrange };
+      const st = stockFor(m, p), li = p.liveInfo, rc = !p.charms.length && p.recalled ? p.recalled : null, dens = rc && Number.isFinite(+rc.density) ? Math.max(0, Math.min(100, Math.round(100 * +rc.density))) : null;
+      const pct = li && +li.usablePt2 ? Math.max(0, Math.min(100, Math.round(100 * (1 - (+li.freePt2 || 0) / +li.usablePt2)))) : dens;
+      const cut = cutSheet(p), line = lineDrawn(p), n = piecesOf(p), inSet = inSetNow(p), locked = lockedSheet(p) || (carrying && !movableSheet(p) && !!p.recalled);
+      const why = whyNot(p, "source"), whyT = whyNot(p, "target"), idle = relay ? !locked : movableSheet(p), lockWhy = !locked ? "" : cut ? "Already cut" : (committedSheet(p) || fixedSet(p)) ? "In a set that is already committed" : line ? "Has a cut line drawn" : whyT || "Cannot change";
+      let del = ""; if (n || p.charms.length) del = `Move its ${charmsWord(n || p.charms.length).replace(" charms", " pieces").replace(" charm", " piece")} onto another sheet first`; else if (!arrange) del = whyNot(p, "target"); else if (cut) del = "already cut"; else if (inSet) del = "in a set"; else if (line) del = "has a cut line drawn"; else if (!relay && (!modern(p.runId) || !membershipEditable(p))) del = "cannot change"; else if (!relay && busyPage(p)) del = "is nesting or saving";
+      const src = rc ? (rc.previewSrc || (rc.preview ? rc.preview + (rc.preview.includes("?") ? "&" : "?") + "v=" + (rc.previewAt || rc.createdAt || rc.updatedAt || 0) : "")) : "";
+      return { id: sheetKey(p), runId: p.runId || runId, page: p.page, index: all.indexOf(p), name: pw(p), draft: N ? !N.numbered(p) : true, size: `${Math.round(st.wPt / 72 * 25.4)} × ${Math.round(st.hPt / 72 * 25.4)} mm`, aspect: +(st.wPt / Math.max(1, st.hPt)).toFixed(3), pieces: n, placed: p.charms.length ? p.placements.length : n, pct, live: !!p.charms.length, picture: p.charms.length ? "" : src, rev: p.layoutRev || p.placements.length || 0,
+        inSet, cutLine: line, cut, locked, lockWhy, movable: arrange && !locked && idle, canSource: !why, whySource: why, canTarget: !whyT, whyTarget: whyT, canDelete: !del, whyDelete: del, busy: !relay && busyPage(p), arrange, relay };
     });
   }
   const orderCall = body => api("charmNestLibrary", { op: "putSheet", ...body }, { quiet: true });
@@ -7792,7 +7807,25 @@ const Gate = window.Gate = (() => {
     if (ws) return Promise.resolve({ ok: false, why: `${pw(src)} ${ws}` });
     if (wt) return Promise.resolve({ ok: false, why: `${pw(t)} ${wt}` });
     const ord = order ? order.map(pageById).filter(Boolean) : pagesOf(m).slice();
-    return mergeSheets(m, "move", { target: t, sources: [src], order: ord }).then(ok => ({ ok, text: (SAID[m] || {}).text || "" }));
+    return mergeResult(m, mergeSheets(m, "move", { target: t, sources: [src], order: ord }));
+  }
+  /** The result of a merge in words: this merge's own line (not an older one), and not ok when the merge ended in trouble. */
+  function mergeResult(m, task) {
+    const was = SAID[m];
+    return task.then(ok => { const d = (MERGE[m] || {}).done, mine = SAID[m] && SAID[m] !== was ? SAID[m].text : "", text = mine || (d && d.text) || ""; return ok ? { ok: !(d && d.bad && !mine), text } : { ok: false, why: text || "The move could not start. Try again when the sheets are not nesting.", text }; });
+  }
+  /** (SHEETSANYWHERE: "I should be able to empty them out"): every piece of the sheet onto the OTHER sheets in the user's order (the sheets before it, then the ones after it); what fits nowhere stays; the emptied sheet is kept (the card offers Delete). */
+  function emptySheet(id) {
+    const src = pageById(id); if (!src) return Promise.resolve({ ok: false, why: "That sheet is not here." });
+    const m = src.metal, ws = whyNot(src, "source"); if (ws) return Promise.resolve({ ok: false, why: `${pw(src)} ${ws}` });
+    const ord = pagesOf(m).slice(), at = ord.indexOf(src), same = p => (p.runId || null) === (src.runId || null);
+    const cand = ord.slice(0, at).concat(ord.slice(at + 1)).filter(p => p !== src && same(p) && mergeableT(p)), t = cand.find(p => !whyNot(p, "target"));
+    if (!t) return Promise.resolve({ ok: false, why: `${pw(src)} has no other sheet that can take its pieces.` });
+    const n = src.charms.length;
+    return mergeResult(m, mergeSheets(m, "move", { target: t, sources: [src], order: cand.concat([src]), keep: true })).then(r => {
+      if (r && r.text) { r.text = r.text.replace(/(\d+) left on (.+)$/, "$1 could not be placed and stay on $2").replace(/, none left on .+$/, ""); if (SAID[m]) SAID[m].text = r.text; }
+      return r;
+    });
   }
   /** An empty draft goes: its stock is let go when it holds one with no line, then the sheet is removed (dropEmpty); the rest are numbered again. */
   async function deleteEmpty(id) {
@@ -8363,7 +8396,7 @@ const Gate = window.Gate = (() => {
   }
   return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull || staysCut(sh) : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
      staysInSet, keepsPlace: sh => !!sh && !!sh.setId && !sh.draft && (committedSheet(sh) || staysInSet(sh)), followRecords, followSheet,   // (Paul, 27 Oct 2026: a sheet written again keeps its set when it may not leave it: nextSheetSeq)
-     dropEmpty, violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, undoGoldJoin, goldWaitHome, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, sheetsOf, reorder, consolidate, deleteEmpty, sheetsSaid: m => SAID[m] || null, mergeFx: () => ({ live: FX.size }), state: () => R, autoCut, trimSurplus, unpair, unpairPlan, unpairLine, greenHomes: run => { const V = cardinalView(run || B.run); return V ? greenHomesOf(V, run || B.run) : new Map(); } };
+     dropEmpty, violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, undoGoldJoin, goldWaitHome, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, sheetsOf, reorder, consolidate, emptySheet, deleteEmpty, pageOf: pageById, sheetsSaid: m => SAID[m] || null, mergeFx: () => ({ live: FX.size }), state: () => R, autoCut, trimSurplus, unpair, unpairPlan, unpairLine, greenHomes: run => { const V = cardinalView(run || B.run); return V ? greenHomesOf(V, run || B.run) : new Map(); } };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -28097,7 +28130,15 @@ const Recall = window.Recall = (() => {
         if (B.run || on()) break;
         pages = todo(); if (!pages.length) break;
         const shown = pages.find(p => { const prim = S.sheets[p.metal]; return prim && prim.pages[prim.active || 0] === p; }), pg = shown || pages[0];
+        const stockWas = pg.recalled && pg.recalled.roseStockId;
         try { await CS.reload(pg, "this computer follows the run"); pg.followed = true; n++; } catch (e) { pg._liveFailed = true; console.warn("[follow sheets] " + (pg.fileBase || pg.sheetId) + ": " + (e && e.message)); }
+        // (FOLLOWSTOCK, Paul 15 Nov 2026: "I'm still seeing the rose gold sheet like this ... it sometimes updates and sometimes it doesn't": the sheet with none of its earlier cuts, and "room for about 60 more"): a sheet's metal (its
+        //  physical sheet, the cuts already made on it, its own line) was read only while the sheet was still shown from its record; a sheet built here before that read had finished never read it at all. It is read as part
+        //  of building the sheet, as a run put back on a computer reads it (restoreRunSheets)
+        if (stockWas && !pg._liveFailed && window.RoseStock && typeof RoseStock.restore === "function" && (pg.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(pg.metal)))) {
+          try { const d = (await api("charmNestLibrary", { op: "getSheet", id: pg.sheetId }, { quiet: true })).sheet; if (d && d.roseStockId) { await RoseStock.restore(pg, d); try { CN.computeSaturation(pg); } catch (_) {} CN.renderCard(pg); if (CN.drawPreview) CN.drawPreview(pg); } }
+          catch (e) { console.warn("[follow sheets] metal of " + (pg.fileBase || pg.sheetId) + ": " + (e && e.message)); }
+        }
         await new Promise(res => setTimeout(res, 30));
       }
       if (n) { try { CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub(); } catch (_) {} agent({ run: runId }, "cloud", `${n} sheet(s) of the open run built on this computer from their cloud records: every piece where the cloud has it`); }
