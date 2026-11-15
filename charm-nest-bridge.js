@@ -16101,7 +16101,17 @@ const RunCtl = window.RunCtl = (() => {
     try { Recall.unfollow(); } catch (_) {}   // (CLOUDFIRST, Paul 15 Nov 2026: the sheets of a run that was followed here leave the cards before a run of this computer's own fills them)
     const r = newRun(opts.mode); Gate.state().solidIncluded = {}; B.run = r; claimRun(r.runId); carrier(r.runId).catch(() => {});   // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access")
     agent({ run: r.runId }, "DS", `Run ${r.runId} started (${r.mode} mode)`);
-    try { await saveSoft(r); } catch (e) { stop(e.message, "Fix the cause and press Resume."); throw e; }   // (a run that cannot start says so and waits for Resume, it is not left running)
+    try { await saveSoft(r); } catch (e) {
+      // (ONERUN, Paul 15 Nov 2026: "There can only be one master version of it in the cloud there may never be any other versions"): the cloud refused the new run because a run is open: this computer drops the run it had just made (nothing of it was written or nested) and follows the open one
+      if (e && e.status === 409 && e.data && e.data.openRun) {
+        if (B.run === r) B.run = null;
+        agent({ bridge: true }, "cloud", `A run is already open in the cloud (${e.data.openRun}): no second run is started; this computer follows it`);
+        toast("A run is already open in the cloud: no second run was started. This computer follows it", "bad", 9000); renderBanner();
+        try { window.CharmNestRunFollow && CharmNestRunFollow.now("refused"); } catch (_) {}
+        try { Recall.follow(e.data.openRun, { force: true }).catch(() => {}); } catch (_) {}
+        return null;
+      }
+      stop(e.message, "Fix the cause and press Resume."); throw e; }   // (a run that cannot start says so and waits for Resume, it is not left running)
     renderBanner();
     loop().catch(e => { stop(e.message, "Fix the cause and press Resume."); });
     return r;
