@@ -20961,25 +20961,31 @@ const Review = window.Review = (() => {
   const rdUp = s => String(s == null ? "" : s).trim().toUpperCase();
   const rdHashes = e => (e ? [e.charmHash].concat(Object.values(e.sizes || {}).map(z => z && z.charmHash)) : []).filter(Boolean).map(String);
   const rdCustom = e => !!e && e.hashSource === "custom-save";
+  /** SIZEFIX (Paul, 14 Nov 2026: "correct the charm repository ... don't change the already ones"): true when `now` draws what `was` did not, but ONLY because the entry was re-indexed at the size its master draws it
+      (now.sizeFix.from lists every hash `was` had). The pieces already cut from the old drawing stay as they are; the drawing this page holds is forgotten so the next piece made up reads the new one (redrawNoted). */
+  const rdFixed = (was, now) => { const f = now && now.sizeFix && Array.isArray(now.sizeFix.from) ? new Set(now.sizeFix.from.map(String)) : null; if (!f || !was) return false; const a = rdHashes(was), b = rdHashes(now); return a.length > 0 && b.length > 0 && b.some(h => !a.includes(h)) && a.every(h => f.has(h) || b.includes(h)); };
   /** True when `now` draws something `was` did not (a charm hash, whole or of a size, it did not have). Only what a person set changed, or a design saved from an order: false. */
   function redrawChanged(was, now) {
     // (KEEPOVERRIDE, Paul 20 Oct 2026: a SKU the designs window's switch took for another design (the entry carries `override`) is a new drawing for every computer: the one whose run holds its pieces makes them again)
     const took = !!now && !!now.override && String((now.override.from && now.override.from.charmHash) || "") !== String(now.charmHash || "");
     if (!was || !now || was === now || ((rdCustom(was) || rdCustom(now)) && !took)) return false;
     const a = new Set(rdHashes(was)), b = rdHashes(now);
-    return a.size > 0 && b.length > 0 && b.some(h => !a.has(h));
+    return a.size > 0 && b.length > 0 && b.some(h => !a.has(h)) && !rdFixed(was, now);
   }
   /** Master.load replaced the library: `prev` is what it was. Each entry whose drawing changed waits for the sweep, from the drawing it had first (a second change meanwhile keeps that). → how many */
   function redrawNoted(prev, next) {
-    if (!prev || !next) return 0; const skus = [];
+    if (!prev || !next) return 0; const skus = [], fixedSkus = [];
     for (const [k, now] of next) {
-      const was = prev.get(k); if (!was || was === now || !redrawChanged(was, now)) continue;
+      const was = prev.get(k); if (!was || was === now) continue;
+      if (rdFixed(was, now)) { try { Pool.forgetDrawing(was, now); } catch (e) { console.warn("[redraw] the old design was not forgotten:", e && e.message); } fixedSkus.push(rdUp(k)); continue; }   // (SIZEFIX: nothing placed is touched)
+      if (!redrawChanged(was, now)) continue;
       const sku = rdUp(k), had = redrawWait.get(sku);
       let old = new Set(); try { old = Pool.forgetDrawing(was, now); } catch (e) { console.warn("[redraw] the old design was not forgotten:", e && e.message); }
       if (had) { for (const h of old) had.oldSrc.add(h); had.tries = 0; } else redrawWait.set(sku, { sku, was, oldSrc: old, at: Date.now(), tries: 0 });
       skus.push(sku);
     }
     while (redrawWait.size > REDRAW_MAX) redrawWait.delete(redrawWait.keys().next().value);
+    if (fixedSkus.length) { agent({ pool: true }, "MASTER", `${fixedSkus.length} SKU(s) are drawn at the size their master draws them now: ${fixedSkus.slice(0, 8).join(", ")}${fixedSkus.length > 8 ? " …" : ""}. Pieces already made up keep the drawing they were cut from; every piece made up from now on takes the new one`); for (const k of fixedSkus) heldWait.add(k); heldLater(0); }   // (SIZEFIX)
     if (skus.length) { agent({ pool: true }, "MASTER", `${skus.length} SKU(s) now draw another design in the library: ${skus.slice(0, 8).join(", ")}${skus.length > 8 ? " …" : ""}. Open pieces cut from the old drawing are made up again from the new one; a cut or committed piece is only noted`); redrawLater(0); for (const k of skus) heldWait.add(k); heldLater(0); }   // (HELDRECHECK: and the lines the system held for the old drawing are checked again against the new one)
     return skus.length;
   }

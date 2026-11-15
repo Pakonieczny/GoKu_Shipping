@@ -3252,7 +3252,8 @@
          (a body touching one without a SKU: the pair layer may build both into one design, at the size drawn; neighbours that each have their own SKU are sized one by one).
      The members' geometry becomes the scaled one; the source artwork copied into a file is written under the same matrix (c.sizeXform, buildSheet), a redrawn member (a welded outline) in place.
      Returns { k, fromMm, toMm } when it scaled, else { skipped: why, fromMm }. maxMm 0 turns it off. */
-  const SIZE_RULE = { maxMm: 11.5, longRatio: 1.6 };
+  /* (SIZEOFF, Paul 14 Nov 2026: "I want the sizes to be exactly the same size as on the master Illustrator files": the standard size is OFF by default (maxMm 0): a charm is indexed at the size the master draws it. A person can still set a size in the settings.) */
+  const SIZE_RULE = { maxMm: 0, longRatio: 1.6 };
   function fitCharmSize(c, opts) {
     const o = Object.assign({}, SIZE_RULE, opts || {}), maxMm = +o.maxMm, longRatio = +o.longRatio || SIZE_RULE.longRatio;
     if (!c || !c.outline || !Array.isArray(c.outline.subpaths) || !c.outline.subpaths.length) return { skipped: "no outline" };
