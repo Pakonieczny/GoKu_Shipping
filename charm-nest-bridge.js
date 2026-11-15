@@ -27700,8 +27700,8 @@ const Recall = window.Recall = (() => {
       for (const x of ls.sheets || []) { const k = x.fileBase || x.id; const had = byName.get(k); if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) byName.set(k, x); }
       const startedOf = x => +x.cardStartedAt || +(x.createdAt && (x.createdAt._seconds || x.createdAt.seconds)) * 1000 || Date.parse(x.createdAt) || 0;
       const sheets = [...byName.values()].sort((a, b) => startedOf(a) - startedOf(b));   // (oldest first, as a run put back here lists them: PAGEORDER)
-      const sig = runId + "|" + sheets.map(x => x.id + ":" + (x.updatedAt || 0)).join("|");
-      if (sig === followSig && allSheets().some(p => p.followed) && !allSheets().some(p => !p.followed && (p.charms || []).length && (p.runId || null) === runId)) return true;
+      const sig = runId + "|" + sheets.map(x => x.id).sort().join("|");
+      if (sig === followSig && allSheets().some(p => p.followed) && !allSheets().some(p => !p.followed && (p.charms || []).length && (p.runId || null) === runId)) { liveLater(runId); return true; }
       followSig = sig;
       for (const m of METALS) {
         const prim = S.sheets[m.key], mine = sheets.filter(x => x.metal === m.key);
@@ -27723,9 +27723,38 @@ const Recall = window.Recall = (() => {
       }
       CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub();
       agent({ run: runId }, "cloud", `${sheets.length} sheet(s) of the open run shown on the Nest cards as the cloud has them: nothing is nested on this computer`);
+      liveLater(runId);
       return true;
     })();
     try { return await following; } catch (e) { console.warn("[follow sheets]", e && e.message); followAt = 0; return false; } finally { following = null; }
+  }
+  /* (LIVEFOLLOW, Paul 15 Nov 2026: "Michelle's computer is now updated but I can't click on any of the sheets ... I also can't see the red dots that show the back engraving"): a sheet shown from its saved picture cannot
+     be clicked and shows no piece. Each followed sheet is made a LIVE sheet here, built from its cloud record: every piece from the master files at the place its record gives it (charm-nest-cloud-sheets.js reload,
+     which keeps the cloud's revision of its layout, so whatever is changed here later is checked against the cloud). Nothing is nested and nothing is written. The pieces of all the sheets are read together (300 a
+     call), the sheet on screen is built first, and the page is let answer between sheets. A sheet already cut stays its picture (it can no longer change). */
+  let livening = null, liveT = 0;
+  function liveLater(runId) { clearTimeout(liveT); liveT = setTimeout(() => { makeLive(runId).catch(e => console.warn("[follow sheets] live", e && e.message)); }, 400); }
+  async function makeLive(runId) {
+    if (livening) return livening;
+    livening = (async () => {
+      const CS = window.CharmNestCloudSheets; if (!CS || typeof CS.reload !== "function") return 0;
+      const todo = () => allSheets().filter(p => p.followed && p.recalled && !(p.charms || []).length && (p.runId || null) === runId && !p._liveFailed && !(+p.recalled.laserDoneAt > 0) && !p.recalled.roseCutAt);
+      let pages = todo(); if (!pages.length) return 0;
+      const want = [...new Set(pages.flatMap(p => (p.recalled.poolIds || []).map(String)))].filter(id => !B.pool.rows.has(id));
+      for (let i = 0; i < want.length; i += 300) { try { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: want.slice(i, i + 300) }, { quiet: true })).pools || {}; for (const id of Object.keys(got)) if (got[id]) B.pool.rows.set(id, got[id]); } catch (_) { /* a piece not read here is asked for with its sheet */ } }
+      try { await Master.load(); } catch (_) {}
+      let n = 0;
+      for (;;) {
+        if (B.run || on()) break;
+        pages = todo(); if (!pages.length) break;
+        const shown = pages.find(p => { const prim = S.sheets[p.metal]; return prim && prim.pages[prim.active || 0] === p; }), pg = shown || pages[0];
+        try { await CS.reload(pg, "this computer follows the run"); pg.followed = true; n++; } catch (e) { pg._liveFailed = true; console.warn("[follow sheets] " + (pg.fileBase || pg.sheetId) + ": " + (e && e.message)); }
+        await new Promise(res => setTimeout(res, 30));
+      }
+      if (n) { try { CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub(); } catch (_) {} agent({ run: runId }, "cloud", `${n} sheet(s) of the open run built on this computer from their cloud records: every piece where the cloud has it`); }
+      return n;
+    })();
+    try { return await livening; } finally { livening = null; }
   }
   function unfollow() {
     let n = 0;
