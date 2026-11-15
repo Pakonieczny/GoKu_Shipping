@@ -66,14 +66,104 @@
     return out;
   }
 
-  /** The box: a title that says plainly what it is, then each part under its small label (the look of the order window's "What the customer wrote"). "" when there is nothing to show. */
+  // SMARTNOTE (Paul, 15 Nov 2026: "This needs to be an intelligent customer note where the system interprets what the customer is actually looking for ... Sometimes customers will add images or links here; those
+  // links need to be clickable. They need to be itemized."): the same words, itemized, links made clickable, and the plain asks (font, side, place, size, case, layout) read by rules. No AI, display only.
+  const URL_RE = /https?:\/\/(?:(?!&quot;|&#39;|&lt;|&gt;)[^\s<>"'])+/gi;
+  const IMG_EXT = /\.(?:jpe?g|png|webp|gif)$/i;
+  const urlParts = u => { const m = /^(https?:\/\/)([^\/?#]+)([^?#]*)/i.exec(u); return m ? { host: m[2].toLowerCase().replace(/:\d+$/, ''), path: m[3] } : null; };
+  const unEsc = u => u.replace(/&amp;/g, '&');
+  const isImageUrl = u => { const p = urlParts(unEsc(u)); return !!p && (p.host === 'i.etsystatic.com' || IMG_EXT.test(p.path)); };
+  // the links of an ESCAPED text: [{ at, len, u (still escaped), tail }] (a trailing . , ; ) is not part of the link; an entity's own ";" stays)
+  function scan(e) {
+    const out = []; let m; const re = new RegExp(URL_RE.source, 'gi');
+    while ((m = re.exec(e))) {
+      let u = m[0], tail = '';
+      for (;;) { const t = u.replace(/[.,;)]$/, ''); if (t === u || /&(?:#\d+|[a-z]+)$/i.test(t)) break; tail = u.slice(t.length) + tail; u = t; }
+      if (/^https?:\/\/[^\s]{2,}/i.test(u)) out.push({ at: m.index, len: m[0].length, u, tail });
+    }
+    return out;
+  }
+  /** The http(s) links of a text, as written. */
+  const urlsOf = text => scan(esc(text)).map(x => unEsc(x.u));
+  /** The text, escaped FIRST, then each http(s) link made a link that opens in a new tab (never javascript: / data:); a picture link also shows a small thumbnail that opens the picture. */
+  function linkify(text) {
+    const e = esc(text); let out = '', at = 0;
+    for (const { at: i, len, u, tail } of scan(e)) {
+      out += e.slice(at, i);
+      const a = `target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"`;
+      if (isImageUrl(u)) out += `<a class="owThumb" href="${u}" ${a}><img src="${u}" loading="lazy" referrerpolicy="no-referrer" alt=""></a> `;
+      out += `<a class="owLink" href="${u}" ${a}>${u}</a>${tail}`; at = i + len;
+    }
+    return out + e.slice(at);
+  }
+
+  // the plain asks, by a short table of phrases (conservative: a phrase that could be about the product, not the engraving, needs an engraving word near it)
+  const CUE = /text|font|letter|writ|name|words?|engrav|initial|size|make|print|line/i;
+  const near = (t, m, w) => CUE.test(t.slice(Math.max(0, m.index - w), m.index + m[0].length + w));
+  const PHRASES = [
+    ['position', 'left', /\b(?:(?:on|to|at|in)\s+the\s+left|left[\s-]*(?:side|aligned?|justified?|hand))\b/i],
+    ['position', 'right', /\b(?:(?:on|to|at|in)\s+the\s+right|right[\s-]*(?:side|aligned?|justified?|hand))\b/i],
+    ['position', 'top', /\b(?:(?:on|at|in|to)\s+the\s+top|top[\s-]*(?:side|aligned?|of the))\b/i],
+    ['position', 'bottom', /\b(?:(?:on|at|in|to)\s+the\s+bottom|bottom[\s-]*(?:side|aligned?|of the))\b/i],
+    ['position', 'centre', /\b(?:(?:in|at|on|to)\s+the\s+(?:centre|center|middle)|cent(?:re|er)(?:ed|d)|(?:centre|center)[\s-]*aligned?)\b/i],
+    ['size', 'small', /\b(?:smaller|small|tiny)\b/i, true],
+    ['size', 'big', /\b(?:bigger|big|larger|large)\b/i, true],
+    ['case', 'all caps', /\b(?:all[\s-]*caps(?:ital(?:s|\s+letters)?)?|upper[\s-]*case|block\s+capitals|capital\s+letters)\b/i],
+    ['case', 'lowercase', /\b(?:lower[\s-]*case|all\s+lower|no\s+caps|small\s+letters)\b/i],
+    ['layout', 'one line', /\b(?:one|single|1)[\s-]*line\b/i],
+    ['layout', 'two lines', /\b(?:two|2)[\s-]*lines\b/i],
+    ['layout', 'vertical', /\bvertical(?:ly)?\b/i, true]
+  ];
+  const phrasesIn = text => {
+    const out = [];
+    for (const [type, value, re, cue] of PHRASES) { const m = re.exec(text); if (m && (!cue || near(text, m, 30))) out.push({ type, value }); }
+    return out;
+  };
+  const SAY = { position: v => v + ' side', size: v => v + ' text', case: v => v, layout: v => v, side: v => v, font: v => v };
+  const SAY_POS = { top: 'at the top', bottom: 'at the bottom', centre: 'in the centre' };
+
+  /** The note, itemized: [{ kind, label, text, urls, note, type?, value? }] - kinds: option | file | personalisation | message | staff | instruction. */
+  function itemsOf(row) {
+    const L = lineOf(row), sp = L.spec || (row && row.spec) || {}, line = L.line || (row && row.line) || {}, o = O();
+    const items = [], mk = (kind, label, text, extra) => Object.assign({ kind, label, text, urls: urlsOf(text), note: '' }, extra || {});
+    const texts = [];
+    // options: the engraving ones, and any whose value is only a link (the customer's file)
+    const ch = choicesOf(row), keep = new Set(ch.map(c => norm(c.name) + '\n' + norm(c.value)));
+    const views = ch.length ? viewsOf(row, ch) : null;
+    let all = ch; try { if (o && typeof o.purchaseOptions === 'function') all = o.purchaseOptions(line, sp) || ch; } catch (_) { all = ch; }
+    for (const v of all) {
+      const name = str(v.name), value = str(v.value);
+      if (/^\s*https?:\/\/[^\s<>"]+\s*$/i.test(value)) items.push(mk('file', 'Customer file', value, { name }));
+      else if (keep.has(norm(name) + '\n' + norm(value))) { const k = ch.findIndex(c => c.name === name && c.value === value), vw = k >= 0 && views ? views[k] : null;   // (OPTTIDY: the tidied line; the original is the hover)
+        items.push(mk('option', 'Option', vw ? vw.line : plainLine({ name, value }), { name, value, was: vw && vw.changed ? vw.was : '' })); }
+    }
+    const pers = (sp.personalization && sp.personalization.length ? sp.personalization : line.personalization || []).map(visible).filter(Boolean);
+    for (const t of pers.join('\n').split('\n').map(x => x.trim()).filter(Boolean)) { items.push(mk('personalisation', 'Personalisation', t)); texts.push(t); }
+    const bm = visible(sp.buyerMessage); if (bm) { items.push(mk('message', 'Buyer message', bm)); texts.push(bm); }
+    const sn = visible(sp.staffNote); if (sn) { items.push(mk('staff', 'Staff note', sn)); texts.push(sn); }
+    // the asks, read from the free words only (the options already say their own)
+    const asks = [], seen = new Set(), add = (type, value, text) => { const k = type + '\n' + value; if (!seen.has(k)) { seen.add(k); asks.push(mk('instruction', 'Asked', text, { type, value })); } };
+    const free = texts.join('\n');
+    if (free) {
+      try { const fr = o && typeof o.fontReadText === 'function' ? o.fontReadText(free) : null; const r = fr && fr.requests && fr.requests.find(q => q.asked); if (r) add('font', r.asked, r.asked + ' font'); } catch (_) { /* no font read */ }
+      try { const m = o && typeof o.engravingModeIn === 'function' ? o.engravingModeIn(free, true) : ''; if (m) add('side', m, m === 'both' ? 'both sides' : m + ' side'); } catch (_) { /* no side read */ }
+      for (const t of texts) for (const { type, value } of phrasesIn(t)) add(type, value, type === 'position' ? (SAY_POS[value] || value + ' side') : SAY[type](value));
+    }
+    return items.concat(asks);
+  }
+
+  /** The box: a title that says plainly what it is, then each item under its small label chip. "" when there is nothing to show. `opts.applied` ([{ type, value, ok, why }]) adds "applied" / "could not apply: why" to the matching ask. */
   function html(row, o) {
-    const rows = rowsOf(row); if (!rows.length) return '';
-    // (the Options label carries the choices exactly as the order has them when any was tidied: a hover, no extra line)
-    const asOrdered = (() => { const ch = choicesOf(row), vs = ch.length ? viewsOf(row, ch) : null; return vs && vs.some(v => v.changed) ? 'As ordered:\n' + vs.map(v => v.was).join('\n') : ''; })();
-    const box = `<div class="owSaid">${rows.map(([k, v]) => `<span class="lbl"${k === 'Options' && asOrdered ? ` title="${esc(asOrdered)}"` : ''}>${esc(k)}</span> ${esc(v)}`).join('')}</div>`;
+    const items = itemsOf(row); if (!items.length) return '';
+    const applied = o && Array.isArray(o.applied) ? o.applied : null;
+    const status = it => {
+      if (!applied || it.kind !== 'instruction') return '';
+      const a = applied.find(x => x && x.type === it.type && (x.value == null || norm(x.value) === norm(it.value)));
+      return a ? (a.ok ? ' <span class="owOk">applied</span>' : ` <span class="owNo">could not apply${a.why ? ': ' + esc(a.why) : ''}</span>`) : '';
+    };
+    const box = `<div class="owSaid">${items.map(it => `<div class="owI" data-kind="${it.kind}"${it.was ? ` title="${esc('As ordered:\n' + it.was)}"` : ''}><span class="lbl">${esc(it.label)}</span> <span class="owT">${linkify(it.text)}${status(it)}</span></div>`).join('')}</div>`;
     return `<section class="pvSec pvSaid" data-said>${o && o.bare ? '' : '<h4 class="pvH">What the customer wrote</h4>'}${box}</section>`;
   }
 
-  return { rowsOf, choicesOf, html, ENGRAVING_WORD };
+  return { rowsOf, choicesOf, itemsOf, linkify, html, ENGRAVING_WORD };
 });

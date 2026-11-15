@@ -696,6 +696,17 @@ dialog.skuDlg{width:min(600px,94vw)}
 .owSaid .lbl:first-child{margin-top:0}
 .owSaid .owSaidT{font-weight:600}   /* TW1 (Paul, 9 Nov 2026): the buyer's own words bold, the only bold of the box */
 .owSaid.none{font-family:var(--sans);font-size:12.5px;color:var(--ink45)}
+/* SMARTNOTE (Paul, 15 Nov 2026: "an intelligent customer note ... links clickable ... itemized"): one item per thing the customer said or chose; links underlined, a picture link shows a small thumbnail */
+.owSaid .owI{display:flex;gap:8px;align-items:baseline;white-space:normal}
+.owSaid .owI+.owI{margin-top:3px}
+.owSaid .owI .lbl{display:inline-block;flex:none;min-width:70px;margin:0}
+.owSaid .owI .lbl:not(:first-child)::before{content:none}
+.owSaid .owT{min-width:0;white-space:pre-wrap}
+.owSaid .owLink{color:inherit;text-decoration:underline;text-underline-offset:2px}
+.owSaid .owThumb{display:inline-block;vertical-align:middle;margin:2px 4px 2px 0}
+.owSaid .owThumb img{display:block;max-height:56px;max-width:120px;border:1px solid var(--line);border-radius:4px}
+.owSaid .owOk{font:9.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink45)}
+.owSaid .owNo{font:9.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:#a4452c}
 /* ── the order's facts (Paul, 12 Oct 2026: "a mush of stuff ... only the relevant data with hover states that expand more or drop-down menus"): a quiet glance line of
    icon chips, a small card anchored to each, one Details drop-down with the whole old grid. charm-nest-order-facts.js draws it into #owMeta. The chip is the
    Overview's own pill (.owName: card, hairline, 999px), a tone is the pills' own colours, the card is the dot cards' (.railTip), the dot is .owDot. ── */
@@ -4012,7 +4023,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-ce-ai-dialogs.js?v=20261028-aid1-ces1"></script><!-- charm-nest-ce-ai-dialogs.js: every dialog and modal of the Charm Editor drawn as Adobe Illustrator's (Mac, Medium Dark): the title bar, labels and fields with units, Preview at the bottom left, Cancel / OK with OK the default; nothing they do changes (AIDIALOGS, Paul 28 Oct 2026) -->
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1-sl1-pm1-zs1-dm1-nb1-ch1-ns1-lk1-nr1-au1-rlk2-rs1-en1-kp1-wo1-sb1-od1-nk2-rvd1-add1-szf1-szr1-mono1-monoui1-mono7-pin1-meg1-setfix1-hp1-rv1-br1-hsym1-bh1-num1-bl1-so1-fh1-co1-fd1-once1-skp1-oos1-bf1-tab1-bfw1-ltr1-fh3-fh4-fh5-fh2-bfh1-od1-fhd1-on1-l16-oc1"></script>
-<script src="charm-nest-engrave-said.js?v=20261012-nt1-en1-od1"></script>
+<script src="charm-nest-engrave-said.js?v=20261012-nt1-en1-od1-sn1"></script>
 <script src="charm-nest-engrave-read.js?v=20261013-sbc1-fh5-sk2"></script>
 <script src="charm-nest-engrave-piece-words.js?v=20261016-pw1-br1-ms1-bh1"></script>
 <script src="charm-nest-engrave-preview.js?v=20261012-pv1-r2th1-th2-bg1-sb2-cb1-rf2-mg1-up1-es1-bb1-fa2"></script>
