@@ -5724,6 +5724,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function sheetClashes(sh) {
     if (!sh) return [];
     if (MC.on && MC.sh === sh) return [...(MC.bad || [])];
+    // (FOLLOWTRUST, Paul 15 Nov 2026: a 14K sheet read "6 charms overlap" on the computer that follows the run while the cloud's record of it is verified clean): a sheet shown from the cloud, not changed here, is as its record says; it is not judged again on this computer
+    if (sh.followed && !sh.dirty && sh.verification && sh.verification.ok === true) return [];
     if (!MANUAL_METALS.includes(sh.metal) || !(sh.charms || []).some(c => c && c.manual)) return [];
     return mcSheetClash(sh);
   }
