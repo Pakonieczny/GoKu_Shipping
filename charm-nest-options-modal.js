@@ -214,6 +214,20 @@
   const pending = m => { try { const s = PUI() && PUI().state && PUI().state[m]; return !!(s && (s.ask || (s.chain && s.chain.length))); } catch (_) { return false; } };
   /** Draw the repository: the cards (large, with the history in their thumbnails), the answer in place after the row of the card picked. */
   function paintAll(M, o = {}) {
+    paintAll0(M, o);
+    try { if (M && !M.done && M.source) { kindLabels(M); root.OptionsSheets && OptionsSheets.place(M); } } catch (e) { warn('grid', e); }
+  }
+  /** (ONEGRID) Every repository card says what kind of sheet it is: PARTIAL SHEET (a leftover), NEW SHEET · unused or CUSTOM SIZE (one made with New sheet). A small label added after the card is drawn; the card itself is OptionsHistory's. */
+  function kindLabels(M) {
+    const host = M.host; if (!host) return;
+    for (const card of host.querySelectorAll(':scope > .ohc')) {
+      if (card.querySelector(':scope > .osKind')) continue;
+      const c = (ALL.items || []).find(x => x.id === card.dataset.id); if (!c) continue;
+      const lab = c.kind === 'new' ? ((c.status || 'available') === 'available' ? 'New sheet · unused' : 'Custom size') : 'Partial sheet';
+      const el = doc.createElement('span'); el.className = 'osKind'; el.textContent = lab; card.prepend(el);
+    }
+  }
+  function paintAll0(M, o = {}) {
     if (!M || M.done || !M.source) return;
     const src = M.source, res = q(src, 'results'), more = q(src, 'more'), older = q(src, 'older'), lock = q(src, 'lock'), P = PUI();
     for (const b of src.querySelectorAll('[data-os="metal"]')) b.setAttribute('aria-pressed', String((b.dataset.v || '') === ALL.metal));
@@ -452,7 +466,8 @@
       if (M.inc && slot) slot.appendChild(M.inc); else if (slot) slot.remove();
       const sheetCard = box.querySelector('[data-card="sheet"]') || box; sheetCard.appendChild(M.source);
       // (SHEETSLIST, Paul 15 Nov 2026: "control in this screen" the order, the consolidating and the deleting of sheets): the Sheets card, above the Sheet source, for 10K and 14K
-      try { const sc = root.OptionsSheets && OptionsSheets.mount(M); if (sc) { if (sheetCard === box) box.prepend(sc); else box.insertBefore(sc, sheetCard); } } catch (e) { warn('sheets card', e); }
+      // (ONEGRID, Paul 15 Nov 2026: "the partial sheets and the unused sheets, the custom sheets all to be at the bottom together"): no Sheets card above: the run's sheets are the first tiles of the one grid below (OptionsSheets.place, after every draw)
+      try { root.OptionsSheets && OptionsSheets.mount(M); } catch (e) { warn('sheets grid', e); }
       ALL.q = ''; ALL.metal = M.m; ALL.status = 'available'; ALL.shown = PAGE; ALL.enlarged = null;   // (the view it opens on: this sheet's metal, the available ones)
       wire(M); watchToasts(M);
       CUR = M;
@@ -508,5 +523,5 @@
     paintAll(M);
   }
 
-  root.OptionsStudio = { open, close, isOpen: m => !!CUR && !CUR.done && (!m || CUR.m === m), sync, release, state: () => ({ cur: CUR, all: ALL }) };
+  root.OptionsStudio = { open, close, isOpen: m => !!CUR && !CUR.done && (!m || CUR.m === m), sync, release, state: () => ({ cur: CUR, all: ALL }), cardOf: id => (ALL.items || []).find(x => x.id === id) || null, reload: () => { const W = CUR && !CUR.done ? CUR : null; return W ? loadAll(W, { force: true }) : Promise.resolve(); } };
 })(window);

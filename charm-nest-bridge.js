@@ -7775,7 +7775,8 @@ const Gate = window.Gate = (() => {
     for (const p of pages) {
       if (!p.sheetId || !p.cloud || !Number.isFinite(p.draftOrder) || gone.has(p.sheetId)) continue;
       const rec = rows.find(r => r && r.id === p.sheetId); if (rec && rec.archived) continue;
-      try { await orderCall({ sheet: { id: p.sheetId, draftOrder: p.draftOrder, page: p.page } }); n++; } catch (e) { agent({ metal: m, run: run && run.runId }, "warn", `The order of ${pw(p)} was not saved (${e && e.message}); it is saved with the sheet`); }
+      if (p._savedDO === p.draftOrder && p._savedPage === p.page) continue;   // (ORDERCLOUD: the record already carries exactly this)
+      try { const want = [p.draftOrder, p.page]; await orderCall({ sheet: { id: p.sheetId, draftOrder: p.draftOrder, page: p.page } }); p._savedDO = want[0]; p._savedPage = want[1]; n++; } catch (e) { agent({ metal: m, run: run && run.runId }, "warn", `The order of ${pw(p)} was not saved (${e && e.message}); it is saved with the sheet`); }
     }
     return n;
   }
@@ -7786,18 +7787,33 @@ const Gate = window.Gate = (() => {
     if (want.length !== pages.length || new Set(want).size !== pages.length) return { ok: false, why: "That order does not list this metal's sheets once each." };
     const free = want.filter(movableSheet), seats = pages.map((p, i) => movableSheet(p) ? i : -1).filter(i => i >= 0);
     const placed = pages.slice(); seats.forEach((at, k) => { placed[at] = free[k]; });
-    if (placed.every((p, i) => p === pages[i])) return { ok: true, changed: false, order: placed.map(sheetKey) };
+    // (ORDERCLOUD, Paul 15 Nov 2026: the carrier's Draft 1 and the follower's Draft 1 were different sheets: "the CLOUD is the one order"): the answer "already in that order" needs the array order AND every sheet's SAVED draftOrder/page to match
+    const same = placed.every((p, i) => p === pages[i]);
     const values = seats.map(i => +pages[i].page).filter(Number.isFinite).sort((a, b) => a - b), usable = values.length === seats.length && new Set(values).size === values.length;
+    const val = k => usable ? values[k] : k + 1;
+    if (same && seats.every((at, k) => { const p = placed[at]; return p.draftOrder === val(k) && p.page === val(k) && (!(p.sheetId && p.cloud) || (p._savedDO === val(k) && p._savedPage === val(k))); })) return { ok: true, changed: false, order: placed.map(sheetKey) };
     const slots = pages.map(p => prim.pages.indexOf(p));
     placed.forEach((p, i) => { prim.pages[slots[i]] = p; });
-    const was = new Map(free.map(p => [p, p.page]));
-    seats.forEach((at, k) => { const p = placed[at]; p.page = usable ? values[k] : k + 1; p.draftOrder = p.page; });
+    seats.forEach((at, k) => { const p = placed[at]; p.page = val(k); p.draftOrder = p.page; });
     const act = prim.pages[prim.active] || prim.pages[0];
     try { if (window.CN && CN.showPage) CN.showPage(m, Math.max(0, prim.pages.indexOf(act))); } catch (_) { /* drawn at the next look */ }
     agent({ metal: m, run: B.run && B.run.runId }, "nest", `Sheet order changed by hand: ${placed.filter(movableSheet).map(pw).join(", ")}`);
     const saved = persistOrder(m, placed.filter(movableSheet)); changed();
     try { refreshAllCards(); repaintMerge(m); } catch (_) { /* drawn at the next look */ }
     return { ok: true, changed: true, order: placed.map(sheetKey), names: placed.map(pw), saved };
+  }
+  /** (ORDERCLOUD) The first time a metal's sheets are shown on the carrier and none has a draftOrder yet, the current order is written once (saved sheets only, never archived ones), so every computer numbers the drafts alike. */
+  const ordered = new Set();
+  function ensureOrder(m) {
+    if (!solid(m) || !canArrange() || !S.cloud || !S.cloud.ok) return false;
+    const rid = B.run.runId, key = m + "|" + rid; if (ordered.has(key)) return false;
+    const mine = pagesOf(m).filter(p => (p.runId || null) === rid); if (!mine.length) return false;
+    ordered.add(key);
+    if (mine.some(p => Number.isFinite(p.draftOrder))) return false;
+    if (mine.some(busyPage)) { ordered.delete(key); return false; }
+    mine.forEach((p, i) => { if (movableSheet(p)) { p.page = i + 1; p.draftOrder = i + 1; } });
+    persistOrder(m, mine.filter(p => movableSheet(p) && p.sheetId && p.cloud && Number.isFinite(p.draftOrder)));
+    return true;
   }
   /** One sheet's pieces onto another (the target keeps its own); what does not fit goes to the next sheets of `order` (default: the metal's order), then stays on the source. */
   function consolidate(sourceId, targetId, order) {
@@ -7807,7 +7823,7 @@ const Gate = window.Gate = (() => {
     if (ws) return Promise.resolve({ ok: false, why: `${pw(src)} ${ws}` });
     if (wt) return Promise.resolve({ ok: false, why: `${pw(t)} ${wt}` });
     const ord = order ? order.map(pageById).filter(Boolean) : pagesOf(m).slice();
-    return mergeResult(m, mergeSheets(m, "move", { target: t, sources: [src], order: ord }));
+    return mergeResult(m, mergeSheets(m, "move", { target: t, sources: [src], order: ord, keep: true }));   // (ONEGRID, Paul 15 Nov 2026: "I might wanna keep it": the sheet dropped is KEPT, empty, and the person decides to delete it)
   }
   /** The result of a merge in words: this merge's own line (not an older one), and not ok when the merge ended in trouble. */
   function mergeResult(m, task) {
@@ -7826,6 +7842,21 @@ const Gate = window.Gate = (() => {
       if (r && r.text) { r.text = r.text.replace(/(\d+) left on (.+)$/, "$1 could not be placed and stay on $2").replace(/, none left on .+$/, ""); if (SAID[m]) SAID[m].text = r.text; }
       return r;
     });
+  }
+  /** (ONEGRID, Paul 15 Nov 2026: "move already partially and fully nested sheets onto new nested sheets and all those charms should move over"): every piece of a nested sheet onto an Available physical sheet (the repository card's id), through the partial-sheet engine. o.preview: only the trial pack (writes nothing); o.onStep: progress. */
+  async function seatOn(sheetId, partialId, o = {}) {
+    const p = pageById(sheetId), E = window.PartialNest; if (!p) return { ok: false, why: "That sheet is not here." };
+    if (!E || !E.seat) return { ok: false, why: "Partial sheets cannot be used on this page yet." };
+    if (!partialId) return { ok: false, why: "Choose the sheet to move onto." };
+    if (!canArrange()) return { ok: false, why: "Sheets are moved on the computer that carries the run." };
+    const can = E.canSeat(p); if (!can.ok) return { ok: false, why: can.why };
+    try {
+      if (o.preview) { const r = await E.preview(p, [partialId], { onStep: o.onStep }); return r && r.ok ? { ok: true, text: r.words || "", preview: r } : { ok: false, why: (r && (r.why || r.reason)) || "That sheet cannot take them now." }; }
+      const r = await E.seat(p, [partialId], { onStep: o.onStep, confirmed: true });
+      if (!r || r.ok === false) return { ok: false, why: (r && (r.why || r.error)) || "The pieces were not moved." };
+      const text = `${pw(p)}'s ${piecesOf(p)} pieces are being nested on the sheet you chose` + (r.continues ? `; ${r.continues} continue on the next one` : ""); SAID[p.metal] = { text, at: Date.now() };
+      return { ok: true, text, result: r };
+    } catch (e) { return { ok: false, why: String((e && e.message) || e) }; }
   }
   /** An empty draft goes: its stock is let go when it holds one with no line, then the sheet is removed (dropEmpty); the rest are numbered again. */
   async function deleteEmpty(id) {
@@ -8396,7 +8427,7 @@ const Gate = window.Gate = (() => {
   }
   return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull || staysCut(sh) : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
      staysInSet, keepsPlace: sh => !!sh && !!sh.setId && !sh.draft && (committedSheet(sh) || staysInSet(sh)), followRecords, followSheet,   // (Paul, 27 Oct 2026: a sheet written again keeps its set when it may not leave it: nextSheetSeq)
-     dropEmpty, violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, undoGoldJoin, goldWaitHome, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, sheetsOf, reorder, consolidate, emptySheet, deleteEmpty, pageOf: pageById, sheetsSaid: m => SAID[m] || null, mergeFx: () => ({ live: FX.size }), state: () => R, autoCut, trimSurplus, unpair, unpairPlan, unpairLine, greenHomes: run => { const V = cardinalView(run || B.run); return V ? greenHomesOf(V, run || B.run) : new Map(); } };
+     dropEmpty, violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, undoGoldJoin, goldWaitHome, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, sheetsOf, reorder, ensureOrder, consolidate, seatOn, emptySheet, deleteEmpty, pageOf: pageById, sheetsSaid: m => SAID[m] || null, mergeFx: () => ({ live: FX.size }), state: () => R, autoCut, trimSurplus, unpair, unpairPlan, unpairLine, greenHomes: run => { const V = cardinalView(run || B.run); return V ? greenHomesOf(V, run || B.run) : new Map(); } };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -17025,7 +17056,7 @@ const RunCtl = window.RunCtl = (() => {
       if (["gold10k","gold14k","rose"].includes(d.metal) && d.solidIncluded === true) pg.solidPick = true;   // a 10K/14K/Rose Gold sheet's own Include tick
       pg.leftSet = Gate.leftSetOf(d); if (pg.leftSet && ["gold10k","gold14k","rose"].includes(d.metal)) pg.solidPick = false;
       if (+d.joinedAt) pg.joinedAt = +d.joinedAt; if (d.joinedBy) pg.joinedBy = d.joinedBy; if (!pg.leftSet && d.leftSet) { pg.leftSet = d.leftSet; if (["gold10k","gold14k","rose"].includes(d.metal)) pg.solidPick = false; }   // (CLOUDMARKS, Paul 14 Nov 2026: "You must put all this in the cloud"): the set marks from the sheet's cloud record   // a sheet a person took out of a committed set stays out (and can be put back by the In current set switch)
-      pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; if (d.draftOrder != null && Number.isFinite(+d.draftOrder)) pg.draftOrder = +d.draftOrder; pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
+      pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; if (d.draftOrder != null && Number.isFinite(+d.draftOrder)) { pg.draftOrder = +d.draftOrder; pg._savedDO = pg.draftOrder; if (Number.isFinite(+d.page)) pg._savedPage = +d.page; } pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
       // a 10K/14K sheet keeps its own size after a reload (keptStock: a cut sheet an Apply size left as it was), read from
       // the size its record was nested at; one at the metal's size now takes the metal's size (as before)
@@ -17201,7 +17232,8 @@ const RunCtl = window.RunCtl = (() => {
      network comes back. The operator's Stop, a decision waiting for a person, a sign-in and a spent Etsy budget (the
      heartbeat lifts that one) are left alone. */
   // ("Reconnect to the cloud before numbering a new set": the page's check of the cloud had failed when a set had to be numbered; it passes by itself like the others, 15 Oct 2026)
-  const PASSING = /answer in time|timed out|network|Failed to fetch|HTTP 5\d\d|link is down|no reply|closed|Reconnect (to|before)/i, AUTO_WAIT = [60000, 120000, 300000, 600000];
+  // (SELFRESUME, Paul 15 Nov 2026: "When I refreshed the browser on my computer, it's still telling me that it stopped for new orders"): the Design Station's frame not being open yet is a passing cause (it opens by itself: DesignLink.ensure), as a slow answer is
+  const PASSING = /answer in time|timed out|network|Failed to fetch|HTTP 5\d\d|link is down|no reply|closed|Reconnect (to|before)|frame is not open/i, ARRIVAL_STOP = /^New orders could not be added:/, AUTO_WAIT = [60000, 120000, 300000, 600000];
   const auto = { runId: null, step: null, n: 0, next: 0, busy: false, t: 0 };   // the retries of one run at one step: a step done starts them afresh
   function kindOf(why) {
     why = why || "";
@@ -17210,10 +17242,11 @@ const RunCtl = window.RunCtl = (() => {
       : PASSING.test(why) || /stopped answering the heartbeat/.test(why) ? "transient" : "error";
   }
   // (a run stopped by a reload, or one saved before stops had kinds, is read from its words)
-  function stopKindOf(r) { return !r || r.status !== "stopped" ? null : r.stoppedBy === "Workspace restored after refresh" ? "restored" : r.stopKind || kindOf(r.stoppedBy); }
+  function stopKindOf(r) { return !r || r.status !== "stopped" ? null : r.stoppedBy === "Workspace restored after refresh" ? "restored" : r.stopKind && !(r.stopKind === "error" && PASSING.test(r.stoppedBy || "")) ? r.stopKind : kindOf(r.stoppedBy); }
   function autoResumable(r) {
-    if (!r || r !== B.run || r.status !== "stopped" || S.settings.runMode !== "auto" || settling === r) return false;
+    if (!r || r !== B.run || r.status !== "stopped" || settling === r) return false;
     const k = stopKindOf(r), m = window.DesignLink?.etsy?.().meter;
+    if (S.settings.runMode !== "auto" && !(k === "transient" && ARRIVAL_STOP.test(r.stoppedBy || ""))) return false;   // (SELFRESUME: the background check for new orders stopped it for a passing cause: it carries on by itself whatever the run mode)
     return k === "transient" || k === "restored" || k === "watchdog" && Date.now() >= ((m && m.braked && m.brakeUntil) || 0);
   }
   // two sorter tabs brought back from the same workspace would both carry on with the one run: the first to take its lock does.
@@ -17298,7 +17331,11 @@ const RunCtl = window.RunCtl = (() => {
     // a run left open by a reload or a closed tab is offered here, not in a toast pointing at another tab's button
     if (B.openRuns && B.openRuns.length) {
       const n = B.openRuns.length, runs = `${n} open run${n === 1 ? "" : "s"}`;
-      return { tone: "wait", short: runs, why: `<b>${runs}</b> · left from an earlier session`,
+      // (FOLLOWSTATE, Paul 15 Nov 2026: "Michelle's computer doesn't say that it just says running"): a computer that follows the run says the run's state as the cloud has it, with the reason it stopped
+      const fs = window.CharmNestRunFollow && CharmNestRunFollow.state(), fr = fs && fs.runId && fs.run;
+      const fShort = !fr ? runs : fr.status === "stopped" ? "Run stopped on the computer that carries it" : `Following the run · ${fr.status === "processed" ? "processed, sheets filling" : fr.status || "open"}`;
+      const fWhy = !fr ? `<b>${runs}</b> · left from an earlier session` : fr.status === "stopped" ? `<b>Stopped on the computer that carries the run:</b> ${esc(fr.stoppedBy || "")} — it is resumed there` : `<b>This computer follows the run</b> · it is carried on another computer · ${esc(fr.status || "open")}`;
+      return { tone: fr && fr.status === "stopped" ? "stop" : "wait", short: fShort, why: fWhy,
         acts: B.openRuns.slice(0, 3).map(x => `<button class="btn gold sm" data-rbres="${esc(x.runId)}" title="carry on from ${esc(x.step)} · ${x.lines} piece(s) · ${new Date(x.updatedAt).toLocaleString()}">Resume ${esc(x.runId.slice(-8))} · ${esc(x.step)}</button>`).join("") + `<button class="btn ghost sm" id="rbLater" title="leave these for later — they stay on record">Not now</button>` };
     }
     // with no run open, a failed save of this browser's workspace is still said, once, until the next save works
@@ -28094,7 +28131,7 @@ const Recall = window.Recall = (() => {
           const pg = i === 0 ? prim.pages[0] : CN.addPage(m.key, { fresh: true });
           pg.charms = []; pg.placements = []; pg.rejects = []; pg.outputs = null; pg.verification = rec.verification || null; pg.liveInfo = null; pg.dirty = false; pg.problem = null;
           delete pg.roseStock; delete pg.roseProtected; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded = false; pg._roseError = null; pg.roseCutAt = rec.roseCutAt || null;
-          pg.recalled = rec; pg.followed = true; pg.status = "complete"; pg.sheetId = rec.id; pg.runId = rec.runId || runId; pg.setId = rec.setId; pg.seq = rec.setSeq; pg.setDay = rec.day; pg.cardStartedAt = rec.cardStartedAt || rec.createdAt || null; pg.sheetIndex = rec.sheetIndex; pg.fileBase = rec.fileBase; pg.group = null;
+          pg.recalled = rec; pg.followed = true; pg.status = "complete"; if (rec.draftOrder != null && Number.isFinite(+rec.draftOrder)) { pg.draftOrder = +rec.draftOrder; pg._savedDO = pg.draftOrder; } pg.sheetId = rec.id; pg.runId = rec.runId || runId; pg.setId = rec.setId; pg.seq = rec.setSeq; pg.setDay = rec.day; pg.cardStartedAt = rec.cardStartedAt || rec.createdAt || null; pg.sheetIndex = rec.sheetIndex; pg.fileBase = rec.fileBase; pg.group = null;
           pg.backPool = (rec.backs || []).map(bk => ({ sheetId: rec.id, engravingSeals: bk.engravingSeals || [], approvedAt: bk.approvedAt, copy: bk.copy, previewWPt: bk.previewWPt, previewHPt: bk.previewHPt, pageWPt: bk.pageWPt, pageHPt: bk.pageHPt, poolId: bk.poolId, ...(bk.face === "front" ? { face: "front" } : {}), order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));
           pg.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
           pg.persistedDone = true; pg.persisted = Promise.resolve(); pg._img = null;
@@ -29952,7 +29989,7 @@ async function bootBridge() {
     if(recovered)RunCtl.recoverReviewStop().catch(e=>RunCtl.stop(e.message,"Reconnect and Resume."));
     // a reload (a discarded tab, a crash, a browser update) left an Auto run stopped with no station until someone pressed
     // Resume: Auto takes the station again and carries on, from the step the restore rewound it to
-    if (recovered && S.settings.runMode === "auto") setTimeout(() => RunCtl.autoResume(true), 1500);
+    if (recovered) setTimeout(() => RunCtl.autoResume(true), 1500);   // (SELFRESUME: autoResumable decides: Auto, or a passing stop of the check for new orders in any mode)
     window.addEventListener("online", () => setTimeout(() => RunCtl.autoResume(true), 5000));
   }
   if (recovered) Engrave.refreshBackIndexes();

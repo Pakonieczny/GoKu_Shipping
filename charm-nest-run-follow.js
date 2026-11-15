@@ -36,6 +36,8 @@
       const res = await api({ op: "runGet", runId: id }); st.reads++;
       const run = res && (res.run || res); if (!run || !run.lines) return st;
       if (holdsRun()) return st;   // (the run was opened here while the read was on its way)
+      // (FOLLOWSTATE, Paul 15 Nov 2026: "Michelle's computer doesn't say that it just says running"): the run's state as the cloud has it, for this computer's banner
+      { const was = st.run ? st.run.status + "|" + (st.run.stoppedBy || "") : ""; st.run = { status: run.status || null, stoppedBy: run.stoppedBy || null, step: run.step || null, at: Date.now() }; if (was !== st.run.status + "|" + (st.run.stoppedBy || "")) safe(() => root.RunCtl && root.RunCtl.renderBanner()); }
       const lines = run.lines, inRun = new Set((run.orders || []).map(String)), O = root.Orders, B = root.B;
       if (!O || !B || !B.orders) return st;
       let changed = 0, gone = 0, added = 0;
@@ -118,6 +120,7 @@
     let r = null;
     if (c.type === "repicture") r = root.Recall && typeof root.Recall.repicture === "function" ? await root.Recall.repicture(a.sheetId) : { ok: false, why: "not ready" };   // (REPICTURE: a sheet's saved picture drawn again, nothing else of it written)
     else if (c.type === "consolidate") r = await G.consolidate(a.sourceId, a.targetId);
+    else if (c.type === "seat") r = typeof G.seatOn === "function" ? await G.seatOn(a.sheetId, a.partialId) : { ok: false, why: "not ready" };   // (ONEGRID: a nested sheet's pieces onto a physical sheet)
     else if (c.type === "empty") r = await G.emptySheet(a.sheetId);
     else if (c.type === "delete") r = await G.deleteEmpty(a.sheetId);
     else return { ok: false, text: "Unknown command" };
