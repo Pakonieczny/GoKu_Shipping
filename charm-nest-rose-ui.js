@@ -21,6 +21,13 @@
   const when=at=>Number.isFinite(at)?new Date(at).toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):null;
   const stamp=at=>Number.isFinite(at)?`<time datetime="${new Date(at).toISOString()}">${esc(when(at))}</time>`:'<span class="roseUndated">Time not recorded</span>';
   const count=list=>{const n=list?.length||0;return n+' charm'+(n===1?'':'s');};
+  /* (ALLCUTS, Paul 15 Nov 2026: "the rose gold sheet is not showing all the greyed out older pieces" on the computer that follows the run): the cloud gives a sheet's cuts a few at a time (more: true), and only the computer that
+     made the cuts held them all; any other computer, and the same one after a reload, drew the newest three and left the older ones out. The older cuts are read too, a page at a time (eight pages at most), and the card
+     is drawn again as each arrives */
+  function olderLater(sh){
+    if(!sh||!sh.roseMore||sh._roseOlder)return;sh._roseOlder=true;
+    (async()=>{try{for(let i=0;i<8&&sh.roseMore&&(sh.roseHistory||[]).length;i++){const n=(sh.roseHistory||[]).length;await load(sh,true);if((sh.roseHistory||[]).length===n)break;}}catch(e){console.warn('[rose] older cuts',e&&e.message);}finally{sh._roseOlder=false;try{refresh(sh);}catch(_){}}})();
+  }
   async function load(sh,older=false){
     const stockId=sh.roseStock?.id||sh.recalled?.roseStockId;if(!stockId)return;
     const result=await api('roseGet',{stockId,metal:sh.metal,...(older?{before:Math.min(...sh.roseHistory.map(c=>c.revision))}:{})});
@@ -29,6 +36,7 @@
     if(!sh.roseStock||sh.roseCutAt)sh.roseStock=result.stock;
     sh.roseHistory=current(older?[...(sh.roseHistory||[]),...decode(result.cuts)]:decode(result.cuts));
     sh.roseMore=result.more;sh._roseLoaded=true;
+    if(!older)olderLater(sh);
     // (a cut on the stock a sheet HOLDS is an old cut it set aside when it was moved onto the leftover that cut made: the stock is its seat again, not cut)
     const completed=result.stock&&result.stock.owner===sh.sheetId?null:sh.roseHistory.find(c=>c.sheetId===sh.sheetId);if(completed){sh.roseCutAt=completed.at;sh.roseStock=result.stock;}
     if(sh.recalled){const rec=(await api('getSheet',{id:sh.sheetId})).sheet;sh.roseCutAt=rec.roseCutAt||null;sh.rosePlan=parse(rec.rosePlanJson);sh.rosePlanHash=rec.rosePlanHash;sh.roseRevision=rec.roseRevision;sh.roseProtected=parse(rec.roseProtectedJson);}
@@ -37,6 +45,7 @@
   async function restore(sh,rec){
     const result=await api('roseGet',{stockId:rec.roseStockId,metal:sh.metal});
     sh.roseStock=result.stock;sh.roseHistory=current(decode(result.cuts));sh.roseMore=result.more;sh.roseCutAt=rec.roseCutAt||null;sh.roseRevision=rec.roseRevision;sh.rosePlan=parse(rec.rosePlanJson);sh.rosePlanHash=rec.rosePlanHash;sh.roseProtected=parse(rec.roseProtectedJson);sh._roseLoaded=true;
+    olderLater(sh);
     sh.roseReopened=!rec.roseCutAt&&rec.roseReopened&&rec.roseReopened.cut?rec.roseReopened:null;   // (a recorded cut set aside by a change by hand, not recorded again yet: said on the card, reopen below)
   }
   function protect(sh){

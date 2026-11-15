@@ -7486,6 +7486,7 @@ const Gate = window.Gate = (() => {
     const retry=inc.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
     retry.onclick=()=>changeMembership(m,picked(sh),sh).catch(()=>{});
     include.onchange=async e=>{
+      if(!B.run&&sh.runId&&solid(m)){renderRelease(sh,node);return sayNo(node,"Changed on the computer that carries the run");}   // (FOLLOWOPTIONS: the set a sheet is in is the run's to decide)
       const want=e.target.checked,route=includeRoute(sh,want);
       // a press the rule refuses: the switch goes back to where the truth is and says why, next to itself
       if(route.no){renderRelease(sh,node);return sayNo(node,route.no);}
@@ -8336,7 +8337,10 @@ const Gate = window.Gate = (() => {
    *  sheet has got. Nothing at all when there is nothing to say. */
   function renderCard(sh) {
     const el2 = sh.el && sh.el.querySelector('[data-r="gate"]'); if (!el2) return;
-    if (modern(sh.runId) || sh.metal === "rose") { renderRelease(sh, el2); return; }
+    // (FOLLOWOPTIONS, Paul 15 Nov 2026: "the options button is missing from the 14 K and 10 K sheets in the nesting tab" on the computer that follows the run): a sheet of the open run shown on a computer that follows it has its
+    //  Options too (the sheet's size, the partial sheets, the list of sheets); what changes the run's sheets is still done on the computer that carries the run, and says so
+    const followsIt = !B.run && !!sh.runId && !!(window.CharmNestRunFollow && CharmNestRunFollow.state().runId === sh.runId);
+    if (modern(sh.runId) || sh.metal === "rose" || (followsIt && solid(sh.metal))) { renderRelease(sh, el2); return; }
     // the line belongs to an open run: what waits, waits for that run's next sheet. With no run open it says nothing.
     if (!B.run || ["complete", "stopped", "abandoned"].includes(B.run.status)) { el2.classList.add("hidden"); return; }
     const m = sh.metal, p = R.plan && R.plan.materials[m];
