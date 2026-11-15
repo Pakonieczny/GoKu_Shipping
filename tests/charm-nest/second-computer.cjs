@@ -68,14 +68,20 @@ async function otherComputer(H) {
     assert.deepStrictEqual(states, ['no run'], '1 · Auto on a second computer starts no run while one is open in the cloud: ' + states.join(' → '));
     assert.equal([...st.docs.keys()].filter(k => k.startsWith('Charm_Nest_Runs/')).length, runsBefore, '1 · no second run record');
     assert.deepStrictEqual(wrote, [], '1 · the second computer writes no sheet, run, set or piece record');
-    assert.equal(st.calls.slice(n0).filter(c => c.op === 'poolGet').length, 0, '1 · and reads no piece: its cards are drawn from the sheets\' own records');
     log('1 · Auto on the second computer: no run, no write');
 
     /* 2 · its Nest cards are the cloud's sheets */
     await p2.waitForFunction(() => allSheets().some(p => p.followed), null, { timeout: 30000 });
-    const shown = await p2.evaluate(() => allSheets().filter(p => p.followed).map(p => [p.sheetId, p.recalled ? p.recalled.placedCount : null, (p.charms || []).length]));
-    assert.deepStrictEqual(shown.map(x => x[0]).sort(), first.map(x => x[0]).sort(), '2 · the second computer shows the run\'s sheets, the same ones: ' + JSON.stringify(shown));
-    for (const [id, placed, charms] of shown) { const doc = st.doc('Charm_Nest_Sheets', id); assert.equal(placed, (doc.placements || []).length, `2 · sheet ${id} is shown with the cloud's ${(doc.placements || []).length} pieces`); assert.equal(charms, 0, '2 · drawn from its record: nothing was built or nested here'); }
+    // (LIVEFOLLOW: each followed sheet is then built here from its cloud record, so it can be clicked and shows its pieces: every piece where the cloud has it, nothing nested, nothing written)
+    await p2.waitForFunction(() => { const f = allSheets().filter(p => p.followed); return f.length > 0 && f.every(p => !p.recalled && (p.charms || []).length > 0); }, null, { timeout: 90000, polling: 500 });
+    const shown = await p2.evaluate(() => allSheets().filter(p => p.followed).map(p => ({ id: p.sheetId, charms: (p.charms || []).length, rev: p.layoutRev, status: p.status, dirty: !!p.dirty, lay: JSON.stringify((p.placements || []).map(q => { const c = p.charms.find(x => x.id === q.id) || {}; return [c.poolId, +(+q.cxPt).toFixed(2), +(+q.cyPt).toFixed(2), +(+q.angle || 0).toFixed(2)]; }).sort()) })));
+    assert.deepStrictEqual(shown.map(x => x.id).sort(), first.map(x => x[0]).sort(), '2 · the second computer shows the run\'s sheets, the same ones: ' + JSON.stringify(shown.map(x => x.id)));
+    for (const x of shown) { const doc = st.doc('Charm_Nest_Sheets', x.id);
+      const cloudLay = JSON.stringify((doc.placements || []).map(q => { const c = (doc.charms || []).find(z => z.id === q.id) || {}; return [c.poolId, +(+q.cxPt).toFixed(2), +(+q.cyPt).toFixed(2), +(+q.angle || 0).toFixed(2)]; }).sort());
+      assert.equal(x.charms, (doc.placements || []).length, `2 · sheet ${x.id} is a live sheet with the cloud's ${(doc.placements || []).length} pieces`);
+      assert.equal(x.lay, cloudLay, `2 · sheet ${x.id}: every piece is where the cloud has it`);
+      assert(!x.dirty && x.status === 'complete' && Number.isFinite(x.rev), `2 · sheet ${x.id} is at rest at the cloud's revision: ${JSON.stringify({ status: x.status, dirty: x.dirty, rev: x.rev })}`); }
+    assert.deepStrictEqual(st.calls.slice(n0).filter(c => WRITES.test(String(c.op)) && !marksOnly(c)).map(c => c.op), [], '2 · building them wrote nothing');
     for (const [id, was] of before) assert.equal(layoutOf(st.doc('Charm_Nest_Sheets', id)), was, `2 · sheet ${id} in the cloud is as the first computer left it`);
     assert.deepStrictEqual(two.errors, [], '2 · no page error on the second computer');
     log('2 · the second computer shows', shown.length, 'sheet(s) as the cloud has them');
@@ -89,6 +95,19 @@ async function otherComputer(H) {
     assert.equal([...st.docs.keys()].filter(k => k.startsWith('Charm_Nest_Runs/')).length, runsBefore, '2b · still one run record in the cloud');
     assert.deepStrictEqual(st.calls.slice(n2).filter(c => WRITES.test(String(c.op)) && !marksOnly(c) && c.op !== 'runPut').map(c => c.op), [], '2b · and nothing else was written');
     log('2b · a second run is refused by the cloud, by hand and by a direct save');
+
+    /* 2c · CARRIERONLY: while the first computer carries the run, the cloud takes no save of the run, and no layout of a sheet made without its revision, from the second */
+    const one = first[0][0], docWas = layoutOf(st.doc('Charm_Nest_Sheets', one));
+    const tries = await p2.evaluate(async ({ runId, one }) => {
+      const say = p => p.then(() => 'saved', e => `${e.status}:${e.data && e.data.notCarrier ? 'notCarrier' : ''}`);
+      const rec = (await CN.api('charmNestLibrary', { op: 'getSheet', id: one }, { quiet: true })).sheet;
+      return { run: await say(CN.api('charmNestLibrary', { op: 'runPut', run: { runId, status: 'running', step: 'nest' }, merge: true }, { quiet: true })),
+        sheet: await say(CN.api('charmNestLibrary', { op: 'putSheet', sheet: { id: one, runId, metal: rec.metal, placements: [], charms: [], poolIds: [] } }, { quiet: true })) };
+    }, { runId, one });
+    assert.deepStrictEqual(tries, { run: '409:notCarrier', sheet: '409:notCarrier' }, '2c · a save of the run, and of a sheet without its revision, from a computer that does not carry the run is refused: ' + JSON.stringify(tries));
+    assert.equal(layoutOf(st.doc('Charm_Nest_Sheets', one)), docWas, '2c · the sheet in the cloud is untouched');
+    assert.equal(st.doc('Charm_Nest_Runs', runId).status, v.run.status, '2c · the run in the cloud is untouched');
+    log('2c · the cloud refuses the run and a sheet layout from the computer that does not carry the run');
 
     /* 3 · the run is taken over there: every piece where the cloud has it */
     const n1 = st.calls.length;
@@ -109,12 +128,12 @@ async function otherComputer(H) {
     assert(gets <= 2, `3 · the pieces are read together, not one call each (${gets} calls for ${pieces} pieces)`);
     assert.deepStrictEqual(two.errors, [], '3 · no page error on the second computer');
     /* 4 · CACHEONLY: the first computer, whose run was taken over, loads itself again and follows. Its saved workspace still holds its own copies of the run's sheets: they are NOT used: its cards show the cloud's */
-    await page.waitForFunction(() => window.__followedNow === undefined && typeof B !== 'undefined' && !B.run && typeof allSheets === 'function' && allSheets().some(p => p.followed), null, { timeout: 120000, polling: 1000 });
-    const back = await page.evaluate(() => ({ run: B.run ? B.run.runId : null, pages: allSheets().filter(p => p.sheetId).map(p => ({ id: p.sheetId, followed: !!p.followed, charms: (p.charms || []).length, placed: p.recalled ? p.recalled.placedCount : null })) }));
+    await page.waitForFunction(() => typeof B !== 'undefined' && !B.run && typeof allSheets === 'function' && allSheets().some(p => p.followed) && allSheets().filter(p => p.followed).every(p => !p.recalled && (p.charms || []).length > 0), null, { timeout: 150000, polling: 1000 });
+    const back = await page.evaluate(() => ({ run: B.run ? B.run.runId : null, pages: allSheets().filter(p => p.sheetId).map(p => ({ id: p.sheetId, followed: !!p.followed, charms: (p.charms || []).length, placed: (p.placements || []).length, dirty: !!p.dirty })) }));
     log('first computer after its run was taken over:', JSON.stringify(back));
     assert.equal(back.run, null, '4 · the first computer carries no run after the takeover');
     assert.deepStrictEqual(back.pages.map(x => x.id).sort(), first.map(x => x[0]).sort(), '4 · it shows the run\'s sheets');
-    for (const s of back.pages) assert(s.followed && s.charms === 0 && s.placed === (st.doc('Charm_Nest_Sheets', s.id).placements || []).length, `4 · sheet ${s.id} is shown from the cloud, not from this computer's saved copy: ${JSON.stringify(s)}`);
+    for (const s of back.pages) assert(s.followed && !s.dirty && s.charms === s.placed && s.placed === (st.doc('Charm_Nest_Sheets', s.id).placements || []).length, `4 · sheet ${s.id} is built from the cloud, not from this computer's saved copy: ${JSON.stringify(s)}`);
     for (const [id, was] of before) assert.equal(layoutOf(st.doc('Charm_Nest_Sheets', id)), was, `4 · sheet ${id} in the cloud is still as it was`);
     console.log(at(), `OK · run ${runId}`);
   } finally { await H.close(); }
