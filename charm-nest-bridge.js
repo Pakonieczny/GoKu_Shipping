@@ -13630,7 +13630,9 @@ const Engrave = window.Engrave = (() => {
     reviveShelved(job);   // (a written piece the upkeep let go of its placement: built again before anything below reads it, so its preview and controls are always there)
     const it = Review.items().find(i => i.key === "eng:" + job.key) || { kind: "placement", key: "eng:" + job.key, row: job.row, job };
     const card = el("div", "rvItem"); card.dataset.kind = "placement"; card.dataset.state = job.state; card.dataset.key = job.key; card.tabIndex = 0; card._job = job;   // (APPRFIX-B: renderView keeps this card only while it is still the card of THIS job object, in review)
-    const r = job.row, sp = r.spec, f = job.fit;
+    // (FOLLOWSPEC, Paul 15 Nov 2026: "This engraving preview could not open ... Cannot read properties of null (reading 'fontText')" on the computer that follows the run): an order line read from the run's record has no reading of its own until the lines are read (Orders.interpretAll); it is read here first, and a line still unread is shown without its font notes instead of failing the whole view
+    if (job.row && !job.row.spec) { try { Orders.interpretAll(); } catch (_) { /* shown without its notes */ } }
+    const r = job.row, sp = r.spec || {}, f = job.fit;
     try { charmBack(job); } catch (_) { /* the card as before */ }   // (CHARMBACK: a piece not on a sheet yet whose charm this page let go has it made again)
     const fw = faceNoun(faceOfJob(job)), faced = isFrontJob(job) || lineHasFront(job.row);   // (the face this card is the engraving of; faced: the line has a front job, so the card says which face it is)
     const counts = (ctx && ctx.counts) || rowCountsOf({ length: remaining }), decided = counts.decided;

@@ -54,6 +54,8 @@
       const newOrders = new Set();
       if (typeof O.rowFromRecord === "function") for (const [k, l] of Object.entries(lines)) { if (B.orders.byKey.has(k)) continue; const row = safe(() => O.rowFromRecord(k, l), null); if (row) { B.orders.rows.push(row); B.orders.byKey.set(k, row); added++; newOrders.add(k.split("_")[0]); } }
       // (NEWLINES, Paul 13 Nov 2026: "What about future orders?"): a line that arrives here takes its engraving work from the cloud at once (it may have been written before the line reached this computer)
+      // (FOLLOWSPEC, Paul 15 Nov 2026: "Cannot read properties of null (reading 'fontText')"): a line added here from the run's record is READ at once (its charm, its words, its font: Orders.interpretAll), as the lines another computer added to the run's own page are; it was left unread, and the engraving view of such an order could not open
+      if (added || O.rows().some(r => r && !r.spec && !r.parentRow)) safe(() => O.interpretAll());
       if (newOrders.size) safe(() => root.CharmNestEngraveSync && root.CharmNestEngraveSync.pull([...newOrders], "keys"));
       st.changed += changed; st.gone += gone; st.added += added; st.last = { at: Date.now(), why, changed, gone, added };
       if (changed || gone || added) { safe(() => root.Review && root.Review.syncOrderItems()); safe(() => O.render()); safe(() => root.Session && root.Session.schedule()); }
