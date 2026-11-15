@@ -2692,16 +2692,21 @@ const holds = (stored, patch) => (merges(patch) ? plainMap(stored) && Object.key
 function mergeInto(into, patch) { for (const [k, v] of Object.entries(patch)) into[k] = merges(v) && plainMap(into[k]) ? mergeInto(Object.assign({}, into[k]), v) : v; return into; }
 /** One transaction's backs, every one for the sheet `sheetId`. Returns how many were written and skipped, the refused
     ones (errors) and the files to archive once it commits. */
-async function putBacks(tx, sheetId, list, expected) {
+async function putBacks(tx, sheetId, list, expected, artAts) {
   const target = col(SHEETS).doc(sheetId), ids = [...new Set(list.map(recKeyOf))];   // (the doc of a back is its poolId, the doc of a FRONT is "<poolId>~front": two records, never one overwriting the other)
-  const [sheet, ...priors] = await tx.getAll(target, ...ids.map(id => col(BACK).doc(id)));
+  /* ARTSTAMP (Paul, 15 Nov 2026: "I wanna make sure they're absolutely rock solid between the cloud and all the computers"): a back that says the art-edit stamp its fit was made around (artAt) is refused,
+     in this same transaction, when the pool row's stamp for its face is newer: the Approve would land on old artwork. A back with no artAt (an older page) is taken as before. */
+  const artIds = [...new Set(list.filter(x => artAts && artAts.has(x)).map(x => x.poolId))];
+  const [sheet, ...rest] = await tx.getAll(target, ...ids.map(id => col(BACK).doc(id)), ...artIds.map(id => col(POOL).doc(id)));
+  const priors = rest.slice(0, ids.length), poolSnaps = new Map(artIds.map((id, i) => [id, rest[ids.length + i]]));
   const stored = new Map(priors.map((s, i) => [ids[i], s.exists ? s.data() : {}]));
   const formerIds = [...new Set([...stored.values()].map(r => r.sheetId).filter(id => id && id !== sheetId))];
   const formers = new Map(formerIds.length ? (await tx.getAll(...formerIds.map(id => col(SHEETS).doc(id)))).filter(s => s.exists).map(s => [s.id, s.data().backPool || []]) : []);
-  const poolIds = sheet.exists ? sheet.data().poolIds || [] : [], patches = new Map(), leaving = new Set(), out = { written: 0, skipped: 0, errors: [], moved: [], sheet: sheet.exists ? sheetLabel(sheet.data()) : "" };
+  const poolIds = sheet.exists ? sheet.data().poolIds || [] : [], patches = new Map(), leaving = new Set(), out = { written: 0, skipped: 0, errors: [], moved: [], staleArt: [], sheet: sheet.exists ? sheetLabel(sheet.data()) : "" };
   let pool = sheet.exists ? sheet.data().backPool || [] : null;
   for (const x of list) {
     const key = recKeyOf(x), old = stored.get(key), currentBack = pool && pool.find(v => recKeyOf(v) === key);
+    if (artAts && artAts.has(x)) { const ps = poolSnaps.get(x.poolId), ae = ps && ps.exists && ps.data().artEdit, at = ae && typeof ae === "object" ? +ae[x.face === "front" ? "front" : "back"] || 0 : 0; if (at > artAts.get(x)) { out.staleArt.push(x.poolId); out.staleRows = (out.staleRows || []).concat([x]); continue; } }
     const refused = !sheet.exists || !poolIds.includes(x.poolId) ? "The target sheet does not contain this exact charm copy"
       : (old.invalidated && (+old.approvedAt || 0) >= +x.approvedAt) || (+old.approvedAt || 0) > +x.approvedAt || (+old.invalidatedAt || 0) >= +x.approvedAt ? "This approval has been superseded; reopen the engraving"
       : null;
@@ -2747,22 +2752,23 @@ const pieceData = x => { const slot = str(x && x.slot, 8); return earWords(slot)
 async function op_backPut(b) {
   const rows = (Array.isArray(b.backs) ? b.backs : [b.back]).filter(x => x && isPoolId(x.poolId)).slice(0, 400); if (!rows.length) return { error: "no back rows" };
   for (const x of rows) if (x.face !== "front") delete x.face;   // (a back carries no `face`: the record is byte for byte what it was; only "front" is a face)
-  const bySheet = new Map(), errors = [], moved = [], labels = new Map(); let written = 0, skipped = 0;
+  const bySheet = new Map(), errors = [], moved = [], labels = new Map(), artAts = new Map(), staleArt = [], staleRows = new Set(); let written = 0, skipped = 0;
+  for (const x of rows) { if (x.artAt != null) { const n = num(x.artAt); if (Number.isFinite(n)) artAts.set(x, n); } delete x.artAt; }   // (ARTSTAMP: the stamp is the request's, never kept on the record)
   for (const x of rows) {
     if (!isId(x.sheetId) || !x.approvedAt || !x.approvedBy) { errors.push({ row: x, error: "approved back and sheet identity required", identity: true }); continue; }
     if (!bySheet.has(x.sheetId)) bySheet.set(x.sheetId, []); bySheet.get(x.sheetId).push(x);
   }
   for (const [sheetId, list] of bySheet) for (let i = 0; i < list.length; i += BACKS_PER_TX) {
     const part = list.slice(i, i + BACKS_PER_TX); let out;
-    try { out = await db.runTransaction(tx => putBacks(tx, sheetId, part, b.expectedApprovedAt)); }
+    try { out = await db.runTransaction(tx => putBacks(tx, sheetId, part, b.expectedApprovedAt, artAts)); }
     catch (e) { errors.push(...part.map(x => ({ row: x, error: e.message || String(e) }))); continue; }
-    await archiveFiles(out.moved); moved.push(...out.moved); written += out.written; skipped += out.skipped; errors.push(...out.errors); labels.set(sheetId, out.sheet);
+    await archiveFiles(out.moved); moved.push(...out.moved); written += out.written; skipped += out.skipped; errors.push(...out.errors); staleArt.push(...out.staleArt); for (const r of out.staleRows || []) staleRows.add(r); labels.set(sheetId, out.sheet);
   }
   /* Each approved back on its order's timeline, one event a piece (its copy), once per approval: a copy recorded again
      keeps its one event. The Engraved seal (station tracking, Paul 28 Sep 23:51): who approved it, as the sorter's own
      sign-in knows them (approvedBy: an approval without a name is refused above, so it is a signed-in person),
      where (the sorter, its page) and when (the approval, not the save). No employee id: the sorter's login has none. */
-  const refused = new Set(errors.map(x => x.row)), device = str(b.device, 40) || "charm-nest-1";
+  const refused = new Set([...errors.map(x => x.row), ...staleRows]), device = str(b.device, 40) || "charm-nest-1";
   await stamp(() => rows.filter(x => !refused.has(x)).map(x => {
     // (the caption is one line: the back's lines joined as the seal and the derived history show them)
     const words = str((typeof x.text === "string" ? x.text : Array.isArray(x.lines) ? x.lines.join(" / ") : "").trim().replace(/\s*\n\s*/g, " / "), 180), by = str(x.approvedBy, 80).trim();
@@ -2770,7 +2776,7 @@ async function op_backPut(b) {
     return { orderId: String(x.order || orderOfKey(x.poolId)), type: "engraveApproved", at: num(x.approvedAt), by, station: "sorter", device, lineKey: lineOfCopy(x.poolId), transactionId: str(x.transactionId || String(x.poolId).split("_")[1], 30),
       sheetId: x.sheetId, sheet: labels.get(x.sheetId) || "", setId: str(x.setId, 100), text: (front ? "Front: " : "") + (words ? `“${words}”` : "") + earCaption(x, !!words), data: Object.assign({ text: str(x.text, 400), poolId: x.poolId, copy: num(x.copy) || null, sku: str(x.sku, 60), signedIn: !!by }, front ? { face: "front" } : {}, x.side === "L" || x.side === "R" ? { side: x.side } : {}, pieceData(x)), id: `${recKeyOf(x)}-${num(x.approvedAt)}` };
   }), "engraving approved");
-  const done = { count: rows.length, written, skipped, superseded: moved.length };
+  const done = Object.assign({ count: rows.length, written, skipped, superseded: moved.length }, staleArt.length ? { staleArt } : {});
   if (!errors.length) return Object.assign({ ok: true }, done);
   // what went wrong, back by back in the order sent; the rest were recorded. Refused as before: 400 when a back said
   // nothing of whose it is, 500 otherwise
@@ -3026,17 +3032,32 @@ async function op_madeThumbPut(b) {
 const ENGR = "Charm_Nest_Engrave", ENGR_MAX = 400000, ENGR_LINE = /^\d{4,30}_[\w\-]{1,80}$/;
 async function op_engraveSyncPut(b) {
   const list = Array.isArray(b.lines) ? b.lines.slice(0, 40) : [], dev = MADE_DEV.test(String(b.dev || "")) ? String(b.dev) : null, by = str(b.by, 80).trim() || null;
-  const out = [], named = [], batch = db.batch();
+  const out = [], stale = [], todo = [];
   for (const l of list) {
     const key = str(l && l.key, 120); if (!ENGR_LINE.test(key)) { out.push({ key, error: "bad line key" }); continue; }
     let json = ""; try { json = JSON.stringify(l.rec == null ? null : l.rec); } catch (_) { json = ""; }
     if (!json || json === "null" || json.length > ENGR_MAX) { out.push({ key, error: `a line's engraving is plain JSON of at most ${ENGR_MAX / 1000} KB` }); continue; }
-    const at = Date.now();
-    batch.set(col(ENGR).doc(key), { key, order: key.split("_")[0], rec: json, at, by, dev, sig: str(l.sig, 60) || null, updatedAt: FV.serverTimestamp() });
-    named.push(key); out.push({ key, at });
+    todo.push({ key, json, sig: str(l.sig, 60) || null, base: l.baseRev == null || l.baseRev === "" || !Number.isFinite(+l.baseRev) ? null : Math.max(0, Math.floor(+l.baseRev)) });
   }
-  if (named.length) { feedOrders(b, [named]); await batch.commit(); }
-  return { ok: true, lines: out };
+  /* ENGREV (Paul, 15 Nov 2026: "I wanna make sure they're absolutely rock solid between the cloud and all the computers"): every line carries a revision (rev, up one at each accepted write). A line sent with the revision the page last
+     read or wrote (baseRev) is written only when the cloud still holds that revision; otherwise it is not written and is answered in `stale` with the cloud's rev (the page reads that line again). A line with no baseRev is taken as before. */
+  if (todo.length) {
+    for (let i = todo.length - 1; i >= 0; i--) if (todo.findIndex(t => t.key === todo[i].key) !== i) todo.splice(i, 1);   // (a line named twice: the first kept)
+    const res = await db.runTransaction(async tx => {
+      const snaps = await tx.getAll(...todo.map(t => col(ENGR).doc(t.key))), done = [], old = [];
+      todo.forEach((t, i) => {
+        const cur = snaps[i].exists ? snaps[i].data() : null, rev = cur && Number.isFinite(+cur.rev) ? +cur.rev : 0;
+        if (t.base != null && cur && t.base !== rev) { old.push({ key: t.key, rev }); return; }
+        const at = Date.now(), next = rev + 1;
+        tx.set(col(ENGR).doc(t.key), { key: t.key, order: t.key.split("_")[0], rec: t.json, at, by, dev, sig: t.sig, rev: next, updatedAt: FV.serverTimestamp() });
+        done.push({ key: t.key, at, rev: next });
+      });
+      return { done, old };
+    });
+    out.push(...res.done); stale.push(...res.old);
+    if (res.done.length) feedOrders(b, [res.done.map(x => x.key)]);
+  }
+  return Object.assign({ ok: true, lines: out }, stale.length ? { stale } : {});
 }
 async function op_engraveSyncGet(b) {
   const docs = [];
@@ -3050,7 +3071,7 @@ async function op_engraveSyncGet(b) {
     for (let i = 0; i < orders.length; i += 30) { const qs = await col(ENGR).where("order", "in", orders.slice(i, i + 30)).get(); qs.forEach(d => docs.push(d.data())); }
   }
   const lines = [];
-  for (const d of docs) { let rec = null; try { rec = JSON.parse(d.rec); } catch (_) { rec = null; } if (rec) lines.push({ key: d.key, order: d.order, rec, at: num(d.at), by: d.by || null, dev: d.dev || null, sig: d.sig || null }); }
+  for (const d of docs) { let rec = null; try { rec = JSON.parse(d.rec); } catch (_) { rec = null; } if (rec) lines.push({ key: d.key, order: d.order, rec, at: num(d.at), rev: Number.isFinite(+d.rev) ? +d.rev : 0, by: d.by || null, dev: d.dev || null, sig: d.sig || null }); }
   return { lines };
 }
 /* ── TRACESRC (Paul, 28 Oct 2026: "When I Press Image Trace on an existing already vectorized image, it does not open the actual chosen image"). The picture a traced image
