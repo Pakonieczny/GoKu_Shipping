@@ -41,7 +41,9 @@
  *    --no-pairs          do not look for designs that draw two bodies under one label (mismatched pairs: see pairLayer). With it the run is exactly what it was before the pair layer.
  *    --pair-also LIST    also fold these doubtful rows into one design (a JSON list or SKUs separated by commas, as --only): a row the layer found but was not sure of
  *                        (see "pairs" in the report). A row with a label of its own on a second body cannot be folded.
- *    --max-mm N          the standard charm size: a body longer than N mm is drawn at N mm, its ring at its own size (11.5; 0 leaves every size as drawn: STANDARD SIZE, charm-nest-pdf.js fitCharmSize)
+ *    --max-mm N          the standard charm size: a body longer than N mm is drawn at N mm, its ring at its own size (0, the default since 14 Nov 2026, leaves every size as drawn; it was 11.5: STANDARD SIZE, charm-nest-pdf.js fitCharmSize)
+ *    --size-fix FILE     SIZEFIX (Paul, 14 Nov 2026: "correct the charm repository ... don't change the already ones"): FILE is a JSON list of the library's entries as they were (what a snapshot kept before this run). A SKU written with a new drawing then says which drawing it
+ *                        replaced (entry.sizeFix.from = the hashes it had), so a sorter does NOT make again the pieces already cut from the old one; only pieces made up from now on take the new drawing.
  *    --long-ratio N      a body whose longer side is at least N times its shorter is long and narrow and keeps its size (1.6)
  *    (the passcode is read from the EDIT_PASSCODE environment variable when --passcode is not given: it is never printed)
  *  The master library (index and per-SKU files) is one library, read by production and the sandbox alike; it holds
@@ -55,7 +57,7 @@ const root = path.join(__dirname, "..");
 const MM = 25.4 / 72;
 
 function args(argv) {
-  const o = { file: null, origin: "", passcode: "", dry: false, pattern: "", gapMm: 6.4, minPt: 6, concurrency: 4, uploadMaster: false, replaces: [], resume: false, engraveMarginMm: 0.8, maxMm: 11.5, longRatio: 1.6 };
+  const o = { file: null, origin: "", passcode: "", dry: false, pattern: "", gapMm: 6.4, minPt: 6, concurrency: 4, uploadMaster: false, replaces: [], resume: false, engraveMarginMm: 0.8, maxMm: 0, longRatio: 1.6, sizeFix: "" };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i], v = argv[i + 1];
     if (a === "--origin") { o.origin = String(v || "").replace(/\/+$/, ""); i++; }
@@ -80,6 +82,7 @@ function args(argv) {
     else if (a === "--pair-also") { o.pairAlso = String(v || ""); i++; }
     else if (a === "--engrave-margin-mm") { o.engraveMarginMm = +v || 0.8; i++; }
     else if (a === "--max-mm") { o.maxMm = Math.max(0, +v || 0); i++; }
+    else if (a === "--size-fix") { o.sizeFix = String(v || ""); i++; }
     else if (a === "--long-ratio") { o.longRatio = +v > 1 ? +v : 1.6; i++; }
     else if (!a.startsWith("--") && !o.file) o.file = a;
   }
@@ -311,6 +314,10 @@ async function main(argv, log = console.log) {
     log(`--only: ${items.length} charm(s) on this sheet carry ${[...only].filter(sk => found.has(sk)).length} of the ${only.size} SKU(s) asked for${absent.length ? ` (${absent.length} not on this sheet: ${absent.slice(0, 20).join(", ")}${absent.length > 20 ? " …" : ""})` : ""}`);
   }
   const held = new Map();                                                // the library's entries for these SKUs, when it was read
+  // SIZEFIX: the hashes each SKU had before this run, from the snapshot named by --size-fix
+  const sizeFixOf = new Map(); const sizeFixAt = Date.now();
+  if (o.sizeFix) { const snap = JSON.parse(fs.readFileSync(o.sizeFix, "utf8")); for (const e of Array.isArray(snap) ? snap : []) { if (!e || !e.sku || e.size) continue; const hs = [e.charmHash].concat(Object.values(e.sizes || {}).map(z => z && z.charmHash)).filter(Boolean).map(String); if (hs.length) sizeFixOf.set(String(e.sku).toUpperCase(), hs); } log(`size fix: the earlier drawings of ${sizeFixOf.size} SKU(s) are noted, so pieces already cut from them stay as they are`); }
+  const fixFor = (sku, hash) => { const f = sizeFixOf.get(String(sku).toUpperCase()); return f && hash && !f.includes(String(hash)) ? { sizeFix: { from: f.slice(0, 20), at: sizeFixAt } } : {}; };
   // The SKUs are read from the sheet as text, so the library is consulted before any charm is built: one whose SKUs are
   // all held already is left alone, and one with even a single new SKU is rebuilt whole so they keep sharing a file.
   const supersede = new Set(); let heldCount = 0, fileRecs = [];
@@ -406,8 +413,9 @@ async function main(argv, log = console.log) {
       if (t && t.charmHash && near(t.widthPt, entry.widthPt) && near(t.heightPt, entry.heightPt) && near(t.areaPt2, entry.areaPt2) && (t.holes || 0) === (entry.holes || 0)) { if (t.charmHash !== entry.charmHash) hashKept = true; entry.charmHash = t.charmHash; }
     }
     if (hashKept) hashesKept++;
+    Object.assign(entry, fixFor(l.sku, entry.charmHash));
     addEntry(entry, index); skus.push(l.sku); const blk = reasons.length ? { sku: l.sku, reason: reasons.join("; ") } : null; if (blk) blocked.push(blk);
-    for (const x of l.extra || []) { addEntry(Object.assign({}, entry, { sku: x.sku, size: x.size }), index); skus.push(x.sku); if (blk) blocked.push({ sku: x.sku, reason: blk.reason }); }   // every further line under the charm: the same design under another SKU
+    for (const x of l.extra || []) { const ex2 = Object.assign({}, entry, { sku: x.sku, size: x.size }); delete ex2.sizeFix; Object.assign(ex2, fixFor(x.sku, entry.charmHash)); addEntry(ex2, index); skus.push(x.sku); if (blk) blocked.push({ sku: x.sku, reason: blk.reason }); }   // every further line under the charm: the same design under another SKU
     progress.done[key] = { entry, blocked: blk, extra: l.extra || [] }; done++;
     if (done % 25 === 0) { saveProgress(); log(`  ${done + skipped}/${total} · ${((Date.now() - t0) / 1000).toFixed(0)} s`); }
   };
