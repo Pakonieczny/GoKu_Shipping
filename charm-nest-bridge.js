@@ -9673,7 +9673,7 @@ const Engrave = window.Engrave = (() => {
           r = backgroundAgain; backgroundAgain = null;
         }
       } catch (e) { agent({ engrave: true }, "warn", `engraving: ${e.message}`); }
-      finally { backgroundPass = null; if (did) { settledPasses++; RunCtl.backgroundSettled(); } }
+      finally { backgroundPass = null; if (did) { window.CharmNestHang?.count?.("background pass did work"); settledPasses++; RunCtl.backgroundSettled(); } }
     })();
     return backgroundPass;
   }
@@ -16106,15 +16106,21 @@ const RunCtl = window.RunCtl = (() => {
     return r;
   }
   let loopTask=null,loopAgain=false;
+  const loopFresh = { at: performance.now(), asked: false };   // (when a task other than the run's own steps last ran: loopNow)
   function loop(){
     if(loopTask){loopAgain=true;return loopTask;}
-    loopTask=loopNow().finally(()=>{loopTask=null;const again=loopAgain;loopAgain=false;if(again && B.run?.status==='running')queueMicrotask(()=>loop().catch(e=>stop(e.message,'Fix the cause and press Resume.')));});return loopTask;
+    loopTask=loopNow().finally(()=>{loopTask=null;const again=loopAgain;loopAgain=false;if(again && B.run?.status==='running'){window.CharmNestHang?.count?.("loop again");queueMicrotask(()=>loop().catch(e=>stop(e.message,'Fix the cause and press Resume.')));}});return loopTask;
   }
   async function loopNow() {
     const r = B.run;
     while (r && r===B.run && r.status === "running") {
+      // a breath only when the page has not been let answer for a while (Paul, 14 Nov 2026: a tab that goes blank while Auto runs): the steps of a run can all finish without waiting for anything, and a run that goes round
+      // again at once never lets the page answer. While anything else gets its turn between steps nothing changes; after 1.5 s without one the loop waits a moment, and the page answers.
+      if (!loopFresh.asked) { loopFresh.asked = true; setTimeout(() => { loopFresh.at = performance.now(); loopFresh.asked = false; }, 0); }
+      if (performance.now() - loopFresh.at > 1500) { window.CharmNestHang?.count?.("loop breath (page not answering)"); await new Promise(res => setTimeout(res, 50)); if (r!==B.run || r.status !== "running") break; }
       if(r.membershipNext){await Gate.flush(r);r.step=r.membershipNext;delete r.membershipNext;}
       const step = r.step, membershipRevision=r.membershipRevision || 0;
+      window.CharmNestHang?.count?.("loop step " + step);
       renderBanner();
       /* A step that fails for a passing reason — the station did not answer, the network dropped, a function answered
          5xx — is tried again, twice, with a breath in between, before the run stops. The stages know what to expect
@@ -16137,7 +16143,7 @@ const RunCtl = window.RunCtl = (() => {
       if (outcome && outcome.goto) { r.step = outcome.goto; await save(r); continue; }
       const next = O.nextStep(step);
       // engraving finished beside the run after it passed Engraving: the steps after it run again before the run rests
-      if (!next && seenAtEngrave !== backgroundDone) { r.step = "engrave"; continue; }
+      if (!next && seenAtEngrave !== backgroundDone) { window.CharmNestHang?.count?.("engrave again (background settled)"); r.step = "engrave"; continue; }
       if (!next) { updatePending(r); r.status = hasPending(r) ? "processed" : "complete"; r.processingComplete = true; r.finishedAt = Date.now(); r.processingSignature=workSignature(r); await save(r); renderBanner(); onComplete(r); break; }
       r.step = next;
       if (r.mode === "manual" && PAUSE_AFTER.has(step)) { r.status = "paused"; await save(r); renderBanner(); agent({ run: r.runId }, "DS", `Paused after ${step} — press Next step (${next})`); break; }
@@ -16310,11 +16316,12 @@ const RunCtl = window.RunCtl = (() => {
      up its steps again at once (its record of the work may already hold the change, so it does not wait for one), and
      a run going through its steps goes through them again before it rests (loopNow). */
   let backgroundDone = 0, seenAtEngrave = 0;
-  function backgroundSettled() { backgroundDone++; poke(true); }
+  function backgroundSettled() { window.CharmNestHang?.count?.("backgroundSettled"); backgroundDone++; poke(true); }
   function poke(force) {
     const r=B.run;
     // (pieces a Send to Sheet tour is still flying: the run takes them up at their landing, not at the press: NestHold)
     if(r?.status==='processed' && !r.arrivalBusy && (force === true || workChanged(r)) && !(window.NestHold && NestHold.later(() => poke(force)))){
+      window.CharmNestHang?.count?.("poke restarts the run");
       r.processingSignature=workSignature(r);
       const needsNest=allSheets().some(p=>p.runId===r.runId&&!p.runHold&&Gate.nestable(p,r)&&p.charms.length&&(p.dirty||['ready','idle','queued','nesting','finishing'].includes(p.status)));
       continueProcessing(r,needsNest?'nest':'engrave');
