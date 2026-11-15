@@ -17,13 +17,13 @@
     // shared words: [0] answers counted, [1] ring head, [2] id of the piece running now (0 = none), [3] 1 while the tab is frozen by the browser, [4] 1 while hidden, [8 .. 8+RING) the last ids started; start time of the running piece at byte 512
     const sab = new SharedArrayBuffer(1024), ia = new Int32Array(sab), ft = new Float64Array(sab, 512, 4);
     const WSRC = `
-      let ia = null, ft = null, port = null, reg = new Map(), samples = [], slow = [], lastCnt = -1, same = 0, stallAt = 0, lastWrite = 0, db = null, RING = ${RING}, STALL_S = ${STALL_S};
+      let ia = null, ft = null, port = null, marks = new Map(), reg = new Map(), samples = [], slow = [], lastCnt = -1, same = 0, stallAt = 0, lastWrite = 0, db = null, RING = ${RING}, STALL_S = ${STALL_S};
       const open = () => new Promise((res, rej) => { const q = indexedDB.open('cn-hang', 1); q.onupgradeneeded = () => { const d = q.result; if (!d.objectStoreNames.contains('rec')) d.createObjectStore('rec', { keyPath: 'id', autoIncrement: true }); if (!d.objectStoreNames.contains('kv')) d.createObjectStore('kv'); }; q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
       const put = (store, val, key) => open().then(d => new Promise((res) => { const tx = d.transaction(store, 'readwrite'); const s = tx.objectStore(store); if (store === 'rec') { s.add(val); const c = s.count(); c.onsuccess = () => { if (c.result > 120) { const k = s.openCursor(); let n = c.result - 120; k.onsuccess = () => { const cur = k.result; if (cur && n-- > 0) { cur.delete(); cur.continue(); } }; } }; } else s.put(val, key); tx.oncomplete = () => { d.close(); res(); }; tx.onerror = () => { d.close(); res(); }; })).catch(() => {});
       const recent = () => { const head = Atomics.load(ia, 1), out = []; for (let i = 0; i < RING; i++) { const id = ia[8 + (((head - 1 - i) % RING) + RING) % RING]; if (id) out.push([id, (reg.get(id) || '?').slice(0, 400)]); } return out; };
       const now = () => ft[0];
-      onmessage = e => { const d = e.data; if (d.init) { ia = new Int32Array(d.sab); ft = new Float64Array(d.sab, 512, 4); port = d.port; return; } if (d.id) { reg.set(d.id, d.k + ': ' + d.src); if (reg.size > 20000) { const k = reg.keys().next().value; reg.delete(k); } return; } if (d.sample) { samples.push(d.sample); if (samples.length > 120) samples.shift(); return; } if (d.slow) { slow.push(d.slow); if (slow.length > 60) slow.shift(); } };
-      const details = (kind) => { const cur = Atomics.load(ia, 2); return { kind, at: Date.now(), page: self.location ? self.location.origin : '', inside: cur ? [cur, (reg.get(cur) || '?').slice(0, 600)] : null, insideForMs: cur ? Math.round(performance.timeOrigin + performance.now() - ft[0]) : null, hidden: Atomics.load(ia, 4) === 1, frozen: Atomics.load(ia, 3) === 1, recent: recent(), slow: slow.slice(-25), samples: samples.slice(-30) }; };
+      onmessage = e => { const d = e.data; if (d.init) { ia = new Int32Array(d.sab); ft = new Float64Array(d.sab, 512, 4); port = d.port; return; } if (d.id) { reg.set(d.id, d.k + ': ' + d.src); if (reg.size > 20000) { const k = reg.keys().next().value; reg.delete(k); } return; } if (d.mark) { marks.set(d.mark, d.label); return; } if (d.sample) { samples.push(d.sample); if (samples.length > 120) samples.shift(); return; } if (d.slow) { slow.push(d.slow); if (slow.length > 60) slow.shift(); } };
+      const details = (kind) => { const cur = Atomics.load(ia, 2), mk = Atomics.load(ia, 5); return { kind, at: Date.now(), lastMark: mk ? [marks.get(mk) || '?', Math.round(performance.timeOrigin + performance.now() - ft[1])] : null, page: self.location ? self.location.origin : '', inside: cur ? [cur, (reg.get(cur) || '?').slice(0, 600)] : null, insideForMs: cur ? Math.round(performance.timeOrigin + performance.now() - ft[0]) : null, hidden: Atomics.load(ia, 4) === 1, frozen: Atomics.load(ia, 3) === 1, recent: recent(), slow: slow.slice(-25), samples: samples.slice(-30) }; };
       setInterval(() => {
         if (!ia || !port) return;
         try { port.postMessage(1); } catch (_) {}
@@ -56,6 +56,9 @@
       finally { Atomics.store(ia, 2, 0); const d = performance.now() - t0; if (d > SLOW_MS && Date.now() - slowSent > 5000) { slowSent = Date.now(); try { worker.postMessage({ slow: [id, Math.round(d), Date.now()] }); } catch (_) {} } }
     };
     HW.run = run; HW.active = true;
+    // mark(label): says where the code is now (a step of the run, a stage of a check); the record of a stall shows the last mark and how long ago it was set
+    const markIds = new Map(); let mid = 0;
+    HW.mark = label => { try { let id = markIds.get(label); if (!id) { id = ++mid; markIds.set(label, id); worker.postMessage({ mark: id, label }); } Atomics.store(ia, 5, id); ft[1] = performance.timeOrigin + performance.now(); } catch (_) {} };
     const wrap = (fn, kind) => { if (typeof fn !== "function") return fn; HW.created(fn); return function (...a) { return run(fn, kind, this, a); }; };
     const oST = window.setTimeout, oSI = window.setInterval, oRAF = window.requestAnimationFrame;
     window.setTimeout = function (f, ...r) { return oST.call(this, wrap(f, "timeout"), ...r); };

@@ -15446,6 +15446,7 @@ const Sets = window.Sets = (() => {
   }
   /** labels/Set-K_labels.pdf (one page per sheet label), Set-K_manifest.pdf, set.json. */
   function validateRelease(set) {
+    window.CharmNestHang?.mark?.("validateRelease: start");
     const pendingRelease = message => Object.assign(new Error(message), {releasePending:true});
     const sheets = sheetsOf(set);
     // (NOHOLD, Paul 14 Nov 2026: "there's no need to enforce"): charms placed by hand where they overlap no longer hold their set; the red on the sheet is the warning
@@ -15458,6 +15459,7 @@ const Sets = window.Sets = (() => {
     // (Paul, 12 Nov 2026) a Rose Gold sheet that waits in this set for its automatic green line cut (Gate.autoCut) holds the set, in plain words: a wait, never a rule it breaks
     { const rg = sheets.find(sh => sh.metal === "rose" && !sh.roseCutAt && !(+sh.laserDoneAt > 0) && sh.autoMatched && String(sh.autoMatched) === String(set.setId)); if (rg) throw pendingRelease(`${set.name || "This set"} is waiting for the green line cut of ${window.CharmNestSheetName ? CharmNestSheetName.name(rg) : rg.fileBase || "its Rose Gold sheet"}${rg.autoCutWhy ? `: ${rg.autoCutWhy}` : ""}`); }
     // the cardinal rule: every sheet that shares a multi-piece order with a sheet of this set is in it
+    window.CharmNestHang?.mark?.("validateRelease: cardinalSplit");
     const split = Gate.cardinalSplit ? Gate.cardinalSplit(set) : [];
     if (split.length) {
       const there = [...new Set(split.flatMap(i => i.there))], os = split.map(i => i.orderId);
@@ -15469,16 +15471,21 @@ const Sets = window.Sets = (() => {
     if(Orders.rows().some(row=>row.state !== "gone" && (row.changePending || row.hold) && row.poolIds.some(id=>sheetPools.has(id))))throw pendingRelease("An order on this sheet changed or needs review");
     // an order sent to Review that sits on a sheet of this set holds the whole set until it is resolved there (it stays on its sheet; the set goes on by itself afterwards)
     for(const sh of sheets){const why=window.CharmNestReviewHold?.reasonFor?.(sh.sheetId);if(why)throw pendingRelease(why);}
+    window.CharmNestHang?.mark?.("validateRelease: physical sheets");
     const physical=allSheets().map(sh=>({...sh,roseStockId:sh.roseStock?.id,id:sh.sheetId,poolIds:(sh.placements || []).map(p=>sh.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean),placedCount:sh.placements.length,outputs:sh.cloud || {},engraving:window.CharmNestReadiness.decisions(Orders.rows())}));
+    window.CharmNestHang?.mark?.("validateRelease: orderReports");
     const orderReadiness=window.CharmNestReadiness.orderReports(Orders.rows(),physical);
     const reports=physical.filter(sh=>sh.setId===set.setId).map(sh=>({...sh,orderReadiness}));
+    window.CharmNestHang?.mark?.("validateRelease: orderBlockers");
     const blocked=reports.flatMap(window.CharmNestReadiness.orderBlockers);
     if(blocked.length)throw pendingRelease(`${blocked[0].id}: ${window.CharmNestReadiness.blockText(blocked[0])}`);
+    window.CharmNestHang?.mark?.("validateRelease: readiness.set");
     if(!window.CharmNestReadiness.set(set,reports).ready){
       // a Rose Gold sheet whose newest charms wait for Cut Sheet (only a press adds its green line): named, with what to press
       const uncut=sheets.find(sh=>window.RoseStock?.waiting?.(sh));
       throw pendingRelease(uncut?RoseStock.waitWords(uncut):"Set is not ready for laser: finish every sheet's engraving approvals, saved back files, layout checks and QR labels");
     }
+    window.CharmNestHang?.mark?.("validateRelease: sheet loop");
     if (!Gate.modern(set.runId)) return;
     if (!set.sheetIds.length || sheets.length !== set.sheetIds.length || set.sheetIds.some(id => !sheets.some(sh => sh.sheetId === id))) throw pendingRelease("The set's sheets are not all loaded");
     for (const sh of sheets) {
@@ -16142,6 +16149,7 @@ const RunCtl = window.RunCtl = (() => {
   }
   async function next() { const r = B.run; if (!r || r.status !== "paused") return; r.status = "running"; await saveSoft(r); loop().catch(e => stop(e.message, "Fix the cause and press Resume.")); }
   async function doStep(r, step) {
+    window.CharmNestHang?.mark?.("step " + step);   // (the stall recorder, charm-nest-hangwatch.js: where the run was when a tab stops answering)
     if (["labels","commit"].includes(step)) await Gate.flush(r);
     switch (step) {
       case "pull": { const rows = await Orders.pull(r, { silent: true }); if (!rows.length) { r.nothingToCut=true; return {goto:"complete"}; } return; }
@@ -16176,6 +16184,7 @@ const RunCtl = window.RunCtl = (() => {
       case "commit": {
         if (Gate.modern(r.runId) && !Sets.ofRun(r.runId).some(s => s.sheetIds.length)) { r.nothingToCut = true; return; }
         await Promise.race([window.CharmNestReviewMark?.refresh?.(), new Promise(r => setTimeout(r, 4000))]).catch(() => {});   // (as at labels: the Review feed rests on the Nest tab)
+        window.CharmNestHang?.mark?.("commit: eligible sets");
         const eligible=[];
         for(const set of Sets.ofRun(r.runId).filter(s=>s.sheetIds.length&&(!s.committedAt||Sets.unrecorded(s)))){
           const issue=Sets.unrecorded(set)?null:Sets.releaseIssue(set);if(issue)await deferSet(r,set,issue);else eligible.push(set);   // (a set the station committed whose record did not save is only recorded: nothing about it can be deferred now)
@@ -16183,8 +16192,10 @@ const RunCtl = window.RunCtl = (() => {
         if(!eligible.length){r.awaitCommit=false;return;}
         if (S.settings.autoCommit === "off" && !r.commitRequested) { r.awaitCommit = true; agent({ run: r.runId }, "DS", "Processing finished. Ready sets are saved; Commit set remains available."); return; }
         r.awaitCommit=false;
+        window.CharmNestHang?.mark?.("commit: revalidate");
         const v = await Orders.revalidate(r, "before commit");
         if (v.changed.length && [...Engrave.items().values()].some(j => j.state === "classify")) { agent({ run: r.runId }, "warn", `${v.changed.length} order(s) changed before the commit — back to engraving`); r.commitRequested = false; return { goto: "engrave" }; }
+        window.CharmNestHang?.mark?.("commit: Sets.commit");
         const all = { completed: [], refused: [], held: {} };
         for (const set of eligible) { try { const res = await Sets.commit(set, r); if(res.membershipChanged)return {goto:r.membershipNext || 'engrave'}; all.completed.push(...res.completed); all.refused.push(...res.refused); Object.assign(all.held, res.held || {}); } catch(e){if(!e.releasePending)throw e;await deferSet(r,set,e.message);} }
         r.committed = [...new Set([...(r.committed||[]),...all.completed])]; r.refused = all.refused; r.holds = {...r.holds,...all.held}; return;
