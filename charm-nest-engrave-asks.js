@@ -89,7 +89,31 @@
     }
     return { text: t, asks, removed, weak };
   }
+  /* (NUMBERED, Paul 15 Nov 2026: "a person writes 'I love you best' and then the second thing it says 'center': what they really mean here is they want it centred on a bar and this is not a personalization"): a listing
+     that asks two things in one box ("1. your text  2. alignment") is answered "1. I love you best 2. center". The numbers are the form's, never engraved; an answer that is only an instruction (center, left, all caps,
+     small) beside an answer that has words is the instruction it reads as, not words. Answers 1, 2, 3 in order, from the start of the text; anything else is read as before. -> [answer, ...] or null */
+  function numbered(text) {
+    const t = String(text || '').replace(/\r/g, ''), re = /(^|\n|\s)(\d{1,2})[.)]\s+/g, marks = []; let m, want = 1;
+    while ((m = re.exec(t))) { if (+m[2] !== want) continue; if (want === 1 && t.slice(0, m.index + m[1].length).trim()) return null; marks.push({ at: m.index + m[1].length, end: re.lastIndex }); want++; }
+    if (!marks.length) return null;
+    const items = marks.map((k, i) => t.slice(k.end, i + 1 < marks.length ? marks[i + 1].at : t.length).trim());
+    return items.some(Boolean) ? items : null;
+  }
   function asksOf(text) {
+    const items = numbered(text);
+    if (items) {
+      const kept = [], asksN = [], removedN = [];
+      const read = items.map(it => ({ it, c: it ? clause(it) : null }));
+      const hasWords = read.some(x => x.it && !x.c);
+      for (const x of read) { if (!x.it) continue; if (x.c && hasWords) { x.c.asks.forEach(a => asksN.push({ ...a, quote: x.it })); removedN.push(x.it); } else kept.push(x.it); }
+      const inner = asksOfPlain(kept.join('\n'));
+      const all = asksN.concat(inner.asks); let clash = false;
+      for (const ty of ['position', 'size', 'case', 'layout']) if (new Set(all.filter(a => a.type === ty).map(a => a.value)).size > 1) clash = true;
+      return { words: inner.words, asks: all, removed: removedN.concat(inner.removed), unsure: inner.unsure || clash, numbered: true };
+    }
+    return asksOfPlain(text);
+  }
+  function asksOfPlain(text) {
     const src = String(text == null ? '' : text), asks = [], removed = [];
     let rest = src.replace(URL_RE, m => { asks.push({ type: 'reference', value: m, quote: m }); removed.push(m); return ' '; });
     const lines = rest.split(/\r?\n/).map(l => l.replace(/[ \t]+/g, ' ').trim()).filter(Boolean);
