@@ -448,6 +448,16 @@
     //  handed back with the back is never refused (LOCKSAVE). A shape that only turned or moved as ONE body (every cut part by one turn and move) is the same coin: that turn and move is taken off
     //  every part of the face, so what the person put on the charm stays where it is on the charm, and no cut line changed.)
     const shapeAt = i => i != null && roleOf(base.members[i], base) === "cut";
+    // (ARTEVERYWHERE, Paul 15 Nov 2026: "adds pieces of that design to the existing charm or even replaces the charm completely": a whole drawing replaced takes the outline off and brings another design's cut line;
+    //  the outline is the piece itself and is never removed, so the new cut line (the added cut part with the biggest box) IS the outline's change: the same piece, a new shape. Without a cut line added the outline stays refused below.)
+    if (face === "front" && base.outline) {
+      const oi = base.members.indexOf(base.outline), oid = oi >= 0 ? ids[oi] : null;
+      if (oid && (changes.removed || []).map(String).includes(oid) && !(changes.changed || {})[oid]) {
+        let best = null, area = -1;
+        for (const it of changes.added || []) { if (!it || it.kind === "group" || (it.role || "") !== "cut" || !okSubs(it.subpaths)) continue; const b = bboxOf(ptsOf(it.subpaths)), a = b ? (b[2] - b[0]) * (b[3] - b[1]) : -1; if (a > area) { area = a; best = it; } }
+        if (best) changes = { removed: changes.removed.filter(id => String(id) !== oid), changed: Object.assign({}, changes.changed || {}, { [oid]: Object.assign({}, best, { id: oid }) }), added: (changes.added || []).filter(it => it !== best) };
+      }
+    }
     let Ti = null;
     { const cuts = base.members.map((m, i) => i).filter(i => shapeAt(i) && isPath(base.members[i])), pairs = []; let all = cuts.length > 0;
       for (const i of cuts) {

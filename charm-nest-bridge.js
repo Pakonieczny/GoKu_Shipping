@@ -5922,7 +5922,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(ListMedia.oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pairResume, keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewSwap, previewIds, previewSig: trySig, greenFits, partnerSheets, greenPage, greenResume, greenHeld, greenLeftover };
+  return { pairResume, keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewSwap, previewIds, previewAll: true, previewEntries: () => [...previews.entries()].filter(([id, c]) => c && !charmOf(id)), previewSig: trySig, greenFits, partnerSheets, greenPage, greenResume, greenHeld, greenLeftover };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -7607,19 +7607,21 @@ const Gate = window.Gate = (() => {
   }
   /** Merge a metal's sheets: kind "move" (the later sheets' charms into Sheet 1's free room) or "renest" (all of them
    *  again, from scratch). Resolves once the sheets it took are nested and saved (or it stopped), true when it ran. */
-  function mergeSheets(m, kind) {
-    const plan = mergePlan(m), st = MERGE[m] || (MERGE[m] = {});
+  function mergeSheets(m, kind, spec) {
+    // (SHEETSLIST, Paul 15 Nov 2026: "consolidating sheets by dragging and dropping one sheet onto another ... if consolidating two sheets onto one sheet doesn't fit, then automatically spilling over the remainder onto the next sheet in order that the user can also choose"): spec = { target, sources: [one page], order } moves that one sheet's pieces onto the target, the rest spills onto the next sheets of the user's order, and what fits nowhere stays on the source
+    if (spec) kind = "move";
+    const plan = spec ? specPlan(m, spec) : mergePlan(m), st = MERGE[m] || (MERGE[m] = {});
     if (!plan || st.busy || !["move", "renest"].includes(kind)) return Promise.resolve(false);
     const run = B.run, t = plan.target, ops = window.CharmNestOperations;
     st.ask = null; st.done = null;
-    st.busy = { kind, at: Date.now(), text: "Waiting for the sheets to finish their current step…", pages: new Set(plan.pages), before: new Set(pagesOf(m)), target: t };
-    closeOptions(m); repaintMerge(m);
+    st.busy = { kind, at: Date.now(), text: "Waiting for the sheets to finish their current step…", pages: new Set(plan.pages), before: new Set(pagesOf(m)), target: t, ...(spec ? { retire: new Set(plan.sources), source: plan.sources[0], names: new Map(plan.pages.map(p => [p, pw(p)])) } : {}) };
+    if (!spec) closeOptions(m); repaintMerge(m);   // (a drop in the Sheets card keeps the window open: its card shows the result)
     const work = async ctx => {
       // looked at again in its turn: a sheet may have started nesting, been cut or committed meanwhile
-      const now = mergePlan(m);
+      const now = spec ? specPlan(m, spec) : mergePlan(m);
       if (B.run !== run || !now || now.target !== t || now.sources.length !== plan.sources.length || now.sources.some((p, i) => p !== plan.sources[i])) throw new Error("the sheets changed meanwhile. Look again and press it once more");
       if (pagesOf(m).some(busyPage)) throw new Error("a sheet of this metal is nesting or saving. Try again when it is done");
-      const { sources, pages } = plan, moveIn = kind === "move";
+      const { sources, pages } = plan, moveIn = kind === "move", touched = spec ? [t, ...sources] : pages;   // (a spec merge changes only the target and the source; the sheets between only receive what spills over)
       st.busy.text = moveIn ? `Moving ${charmsWord(plan.moving)} into ${pw(t)}'s free room…` : `Gathering ${charmsWord(plan.total)} onto ${pw(t)}…`; repaintMerge(m);
       // the picture of the sheets as they stand, for the merge to be seen (it never holds up what follows)
       let seen = null; try { seen = mergeCapture(m, plan, kind); } catch (e) { console.warn("merge sheets: motion", e); }
@@ -7627,18 +7629,19 @@ const Gate = window.Gate = (() => {
         // nothing is re-arranged: every sheet taking part is only marked as changing, so the set lets it go (assemble)
         // while Sheet 1 takes the others; a later sheet remembers where its charms lay, for the ones that come back to it
         // (a sheet taking part is open again: it takes the metal's size, not one an Apply size kept for it)
-        for (const p of pages) { p.dirty = true; delete p.keptStock; }
+        for (const p of touched) { p.dirty = true; delete p.keptStock; }
         for (const p of sources) { p._mergeSpots = new Map((p.placements || []).filter(x => [x.cxPt, x.cyPt].every(Number.isFinite)).map(x => [x.id, { cxPt: x.cxPt, cyPt: x.cyPt, angle: x.angle || 0 }])); p.feedWait = null; }
       } else {
         // every sheet taking part is nested again from scratch: pins go, as with Apply size
         for (const p of pages) { for (const c of p.charms) { c.pinned = null; delete c.arrivalPin; } p.feedWait = null; sheetDirty(p); }
       }
       // a sheet in the current set leaves it before a charm moves (a new QR label comes once it is written again)
-      if (run && modern(run.runId) && pages.some(p => p.setId && !p.draft)) { for (const p of pages) mergeLeaving.add(p); try { await assemble(run, ctx); } catch (e) { changed(); throw e; } finally { for (const p of pages) mergeLeaving.delete(p); } }
+      if (run && modern(run.runId) && touched.some(p => p.setId && !p.draft)) { for (const p of touched) mergeLeaving.add(p); try { await assemble(run, ctx); } catch (e) { changed(); throw e; } finally { for (const p of touched) mergeLeaving.delete(p); } }
       // each order that moves, from its sheet to Sheet 1 (idle time); Move all records it once the nest is done, for the
       // orders that landed on Sheet 1 (watchMerge), never for one that did not fit and stayed where it was
       const tell = window.SheetEvents?.merged(kind, pages, t, st.busy.at, moveIn); if (typeof tell === "function") st.busy.tell = tell;
-      const moving = sources.flatMap(p => p.charms), poolIds = new Set(moving.map(c => c.poolId).filter(Boolean));
+      const moving = sources.flatMap(p => p.charms); if (spec) st.busy.movingIds = new Set(moving.map(c => c.id));
+      const poolIds = new Set(moving.map(c => c.poolId).filter(Boolean));
       // onto Sheet 1 first, with their approved backs; only then is anything taken away
       for (const c of moving) { c.pinned = null; delete c.arrivalPin; c.metal = m; }
       t.charms = moveIn ? t.charms.concat(moving.slice().sort(byDate)) : t.charms.concat(moving).sort(byDate);
@@ -7691,12 +7694,118 @@ const Gate = window.Gate = (() => {
     for (const p of pagesOf(m)) { delete p._mergeNext; delete p._mergeSpots; }
     if (b.tell) { const t = b.target, on = new Set(t.placements.filter(pl => t.charms.some(c => c.id === pl.id)).map(pl => pl.id)); b.tell(on); b.tell = null; }
     const run = B.run, gone = [];
-    for (const p of [...b.pages].reverse()) if (p !== b.target && pagesOf(m).includes(p) && !p.charms.length && !busyPage(p) && pagesOf(m).indexOf(p) > 0) { gone.push(p.page); retirePage(run, p); removePage(p); }
+    for (const p of [...b.pages].reverse()) if (p !== b.target && pagesOf(m).includes(p) && !p.charms.length && !busyPage(p) && pagesOf(m).indexOf(p) > 0 && (!b.retire || b.retire.has(p))) { gone.push(p.page); if (b.retire && window.RoseStock && RoseStock.letGo) { try { await RoseStock.letGo(p); } catch (_) { /* its stock is let go at the next look */ } } retirePage(run, p); removePage(p); }
+    // (SHEETSLIST: the result of a drop, said in numbers: "12 moved onto Draft 1, 3 onto Draft 2, none left on Draft 4")
+    let said = null;
+    if (b.movingIds && b.source) { const nm = p => b.names.get(p) || pw(p), parts = []; for (const p of b.pages) { if (p === b.source) continue; const n = p.charms.filter(c => b.movingIds.has(c.id)).length; if (n) parts.push(parts.length ? `${n} onto ${nm(p)}` : `${n} moved onto ${nm(p)}`); } const left = b.source.charms.filter(c => b.movingIds.has(c.id)).length; parts.push(left ? `${left} left on ${nm(b.source)}` : `none left on ${nm(b.source)}`); said = parts.join(", "); SAID[m] = { text: said, at: Date.now() }; }
     const left = mine().filter(p => p.charms.length), trouble = left.find(p => p.problem), waiting = left.find(held);
     st.busy = null;
-    st.done = { at: Date.now(), bad: !!trouble, text: trouble ? `${pw(trouble)} needs a look: ${trouble.problem}` : waiting ? `${pw(waiting)} waits for Resume` : ["Done", ...left.map(p => `${pw(p)}: ${charmsWord(p.charms.length)}`)].join(" · ") };
+    st.done = { at: Date.now(), bad: !!trouble, text: trouble ? `${pw(trouble)} needs a look: ${trouble.problem}` : said ? said : waiting ? `${pw(waiting)} waits for Resume` : ["Done", ...left.map(p => `${pw(p)}: ${charmsWord(p.charms.length)}`)].join(" · ") };
+    if (said) agent({ metal: m, run: run?.runId }, "nest", `Sheets: ${said}`);
     if (gone.length) { agent({ metal: m, run: run?.runId }, "nest", `Merge: ${gone.length === 1 ? `Sheet ${gone[0]} was left empty and removed` : `${gone.length} sheets were left empty and removed`}`); changed(); }
     repaintMerge(m); mergeNote(m, st.done); setTimeout(() => repaintMerge(m), 12500);
+  }
+
+  /* ── SHEETSLIST (Paul, 15 Nov 2026: "I'm not seeing the partially filled sheets as partial sheets here ... I should be able to easily control in this screen: 1. consolidating sheets by dragging and
+     dropping one sheet onto another. 2. deleting unnecessary sheets and easily being able to choose which sheet is to be draft 1, then which sheet is to be draft 2 ... 3. The user should be able to
+     choose sheet 1 2 3 4 in whatever order they decide"). The Sheets card of the Options window (charm-nest-options-sheets.js) lists every page of a 10K / 14K run and drives these: sheetsOf (the list),
+     reorder (the order, saved as draftOrder on each record), consolidate (one sheet's pieces onto another; the rest spills on in the user's order) and deleteEmpty (an empty draft goes). ── */
+  const SAID = {};   // metal → { text, at }: the last drop's result line
+  const mergeableT = p => solid(p.metal) && modern(p.runId) && membershipEditable(p) && !p.roseCutAt && !p.laserDoneAt && !holding(p) && !(p.rosePlan || p.roseProtected);   // (a target may be empty: everything else mergeable asks stays)
+  const sheetKey = p => { if (p.sheetId) return p.sheetId; if (!p._cnKey) Object.defineProperty(p, "_cnKey", { value: "pg-" + Math.random().toString(36).slice(2, 10), writable: true, enumerable: false }); return p._cnKey; };
+  const pageById = id => { for (const m of ["gold10k", "gold14k"]) for (const p of pagesOf(m)) if (sheetKey(p) === id) return p; return null; };
+  const canArrange = () => !!B.run && modern(B.run.runId);
+  const cutSheet = p => +p.roseCutAt > 0 || +p.laserDoneAt > 0;
+  const movableSheet = p => !cutSheet(p) && !p.recalled && !committedSheet(p) && !fixedSet(p);
+  /** Why this sheet cannot take part in a move (as source or as target), in words; "" when it can. */
+  function whyNot(p, role) {
+    if (!canArrange()) return "Sheets are arranged on the computer that carries the run.";
+    if (cutSheet(p)) return "already cut";
+    if (p.recalled || !membershipEditable(p)) return "in a set that is already committed";
+    if (holding(p)) return "being held right now";
+    if (p.rosePlan || p.roseProtected) return "has a cut line drawn";
+    if (busyPage(p)) return "is nesting or saving";
+    if (role === "source" && !p.charms.length) return "has no pieces";
+    return "";
+  }
+  function specPlan(m, spec) {
+    if (!solid(m) || !spec || !spec.target || !(spec.sources || []).length) return null;
+    const t = spec.target, src = spec.sources, all = pagesOf(m), count = list => list.reduce((n, p) => n + p.charms.length, 0);
+    if (!all.includes(t) || src.some(p => !all.includes(p) || p === t || (p.runId || null) !== (t.runId || null))) return null;
+    if (!mergeableT(t) || !src.every(mergeable)) return null;
+    const ord = (spec.order || all).filter(p => all.includes(p)), at = ord.indexOf(t);
+    const chain = ord.slice(at + 1).filter(p => !src.includes(p) && p !== t && mergeableT(p) && (p.runId || null) === (t.runId || null));
+    return { target: t, sources: src, chain, pages: [t, ...chain, ...src], moving: count(src), total: count([t, ...src]) };
+  }
+  /** The metal's sheets of the open run, in their order, as the Sheets card draws them. */
+  function sheetsOf(m) {
+    if (!solid(m)) return [];
+    const all = pagesOf(m), runId = (all.find(p => p.runId) || {}).runId || null, arrange = canArrange(), N = window.CharmNestSheetName;
+    const mine = all.filter(p => (p.runId || null) === runId && (p.charms.length || p.sheetId || p.recalled || all.length > 1));
+    return mine.map(p => {
+      const st = stockFor(m, p), li = p.liveInfo, pct = li && +li.usablePt2 ? Math.max(0, Math.min(100, Math.round(100 * (1 - (+li.freePt2 || 0) / +li.usablePt2)))) : null;
+      const cut = cutSheet(p), line = !!(p.rosePlan || p.roseProtected), n = activeCharms(p).length, inSet = inSetNow(p);
+      const why = whyNot(p, "source"), whyT = whyNot(p, "target");
+      let del = ""; if (n || p.charms.length) del = `Move its ${charmsWord(n || p.charms.length).replace(" charms", " pieces").replace(" charm", " piece")} onto another sheet first`; else if (!arrange) del = whyNot(p, "target"); else if (cut) del = "already cut"; else if (inSet) del = "in a set"; else if (line) del = "has a cut line drawn"; else if (!modern(p.runId) || !membershipEditable(p)) del = "cannot change"; else if (busyPage(p)) del = "is nesting or saving";
+      return { id: sheetKey(p), page: p.page, index: all.indexOf(p), name: pw(p), draft: N ? !N.numbered(p) : true, size: `${Math.round(st.wPt / 72 * 25.4)} × ${Math.round(st.hPt / 72 * 25.4)} mm`, pieces: n, placed: p.placements.length, pct,
+        inSet, cutLine: line, cut, locked: !movableSheet(p), movable: arrange && movableSheet(p), canSource: !why, whySource: why, canTarget: !whyT, whyTarget: whyT, canDelete: !del, whyDelete: del, busy: busyPage(p), arrange };
+    });
+  }
+  const orderCall = body => api("charmNestLibrary", { op: "putSheet", ...body }, { quiet: true });
+  /** The new order is written to each sheet's record (draftOrder, page), without placements; a sheet with no saved record keeps it in memory (persistSheet carries it). */
+  async function persistOrder(m, pages) {
+    if (!S.cloud || !S.cloud.ok) return 0;
+    const run = B.run, rows = (S.library && S.library.rows) || [], gone = new Set((run && run.intakeRecovery && run.intakeRecovery.retire) || []); let n = 0;
+    for (const p of pages) {
+      if (!p.sheetId || !p.cloud || !Number.isFinite(p.draftOrder) || gone.has(p.sheetId)) continue;
+      const rec = rows.find(r => r && r.id === p.sheetId); if (rec && rec.archived) continue;
+      try { await orderCall({ sheet: { id: p.sheetId, draftOrder: p.draftOrder, page: p.page } }); n++; } catch (e) { agent({ metal: m, run: run && run.runId }, "warn", `The order of ${pw(p)} was not saved (${e && e.message}); it is saved with the sheet`); }
+    }
+    return n;
+  }
+  /** ids: the sheets' ids in the order wanted. Sheets that cannot move keep their place; the others fill the remaining places in the order given. */
+  function reorder(m, ids) {
+    if (!solid(m) || !canArrange()) return { ok: false, why: "Sheets are arranged on the computer that carries the run." };
+    const rows = sheetsOf(m), prim = S.sheets[m], pages = rows.map(r => pageById(r.id)), want = (ids || []).map(pageById).filter(p => p && pages.includes(p));
+    if (want.length !== pages.length || new Set(want).size !== pages.length) return { ok: false, why: "That order does not list this metal's sheets once each." };
+    const free = want.filter(movableSheet), seats = pages.map((p, i) => movableSheet(p) ? i : -1).filter(i => i >= 0);
+    const placed = pages.slice(); seats.forEach((at, k) => { placed[at] = free[k]; });
+    if (placed.every((p, i) => p === pages[i])) return { ok: true, changed: false, order: placed.map(sheetKey) };
+    const values = seats.map(i => +pages[i].page).filter(Number.isFinite).sort((a, b) => a - b), usable = values.length === seats.length && new Set(values).size === values.length;
+    const slots = pages.map(p => prim.pages.indexOf(p));
+    placed.forEach((p, i) => { prim.pages[slots[i]] = p; });
+    const was = new Map(free.map(p => [p, p.page]));
+    seats.forEach((at, k) => { const p = placed[at]; p.page = usable ? values[k] : k + 1; p.draftOrder = p.page; });
+    const act = prim.pages[prim.active] || prim.pages[0];
+    try { if (window.CN && CN.showPage) CN.showPage(m, Math.max(0, prim.pages.indexOf(act))); } catch (_) { /* drawn at the next look */ }
+    agent({ metal: m, run: B.run && B.run.runId }, "nest", `Sheet order changed by hand: ${placed.filter(movableSheet).map(pw).join(", ")}`);
+    const saved = persistOrder(m, placed.filter(movableSheet)); changed();
+    try { refreshAllCards(); repaintMerge(m); } catch (_) { /* drawn at the next look */ }
+    return { ok: true, changed: true, order: placed.map(sheetKey), names: placed.map(pw), saved };
+  }
+  /** One sheet's pieces onto another (the target keeps its own); what does not fit goes to the next sheets of `order` (default: the metal's order), then stays on the source. */
+  function consolidate(sourceId, targetId, order) {
+    const src = pageById(sourceId), t = pageById(targetId);
+    if (!src || !t || src === t || src.metal !== t.metal) return Promise.resolve({ ok: false, why: "Pick two sheets of one metal." });
+    const m = src.metal, ws = whyNot(src, "source"), wt = whyNot(t, "target");
+    if (ws) return Promise.resolve({ ok: false, why: `${pw(src)} ${ws}` });
+    if (wt) return Promise.resolve({ ok: false, why: `${pw(t)} ${wt}` });
+    const ord = order ? order.map(pageById).filter(Boolean) : pagesOf(m).slice();
+    return mergeSheets(m, "move", { target: t, sources: [src], order: ord }).then(ok => ({ ok, text: (SAID[m] || {}).text || "" }));
+  }
+  /** An empty draft goes: its stock is let go when it holds one with no line, then the sheet is removed (dropEmpty); the rest are numbered again. */
+  async function deleteEmpty(id) {
+    const p = pageById(id); if (!p) return { ok: false, why: "That sheet is not here." };
+    const row = sheetsOf(p.metal).find(r => r.id === id); if (row && !row.canDelete) return { ok: false, why: row.whyDelete };
+    if (p.charms.length) return { ok: false, why: "It still has pieces." };
+    const m = p.metal, name = pw(p), run = B.run;
+    if (p.roseStock && window.RoseStock && RoseStock.letGo && !cutSheet(p) && !p.rosePlan && !p.roseProtected) { try { await RoseStock.letGo(p); } catch (_) { /* its stock is let go at the next look */ } }
+    const gone = await dropEmpty(p); if (!gone) return { ok: false, why: `${name} could not be removed.` };
+    const left = pagesOf(m).filter(x => movableSheet(x) && x.sheetId && (x.runId || null) === (p.runId || null)); left.forEach((x, i) => { if (Number.isFinite(x.draftOrder)) x.draftOrder = x.page; });
+    persistOrder(m, left.filter(x => Number.isFinite(x.draftOrder)));
+    const text = `${name} deleted (it was empty)`; agent({ metal: m, run: run && run.runId }, "nest", text); toast(text, "ok", 5000); SAID[m] = { text, at: Date.now() };
+    try { repaintMerge(m); } catch (_) { /* drawn at the next look */ }
+    return { ok: true, text };
   }
   /** The panel's Merge sheets section: shown while the metal has two sheets or more that can change, or a merge runs. */
   function paintMerge(sh, node) {
@@ -8250,7 +8359,7 @@ const Gate = window.Gate = (() => {
   }
   return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull || staysCut(sh) : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
      staysInSet, keepsPlace: sh => !!sh && !!sh.setId && !sh.draft && (committedSheet(sh) || staysInSet(sh)), followRecords, followSheet,   // (Paul, 27 Oct 2026: a sheet written again keeps its set when it may not leave it: nextSheetSeq)
-     dropEmpty, violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, undoGoldJoin, goldWaitHome, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R, autoCut, trimSurplus, unpair, unpairPlan, unpairLine, greenHomes: run => { const V = cardinalView(run || B.run); return V ? greenHomesOf(V, run || B.run) : new Map(); } };
+     dropEmpty, violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, undoGoldJoin, goldWaitHome, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, sheetsOf, reorder, consolidate, deleteEmpty, sheetsSaid: m => SAID[m] || null, mergeFx: () => ({ live: FX.size }), state: () => R, autoCut, trimSurplus, unpair, unpairPlan, unpairLine, greenHomes: run => { const V = cardinalView(run || B.run); return V ? greenHomesOf(V, run || B.run) : new Map(); } };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -8750,7 +8859,7 @@ const Engrave = window.Engrave = (() => {
      A line of quantity >= 2 is cut into one job per piece (charm-nest-engrave-sides.js: "C1".."CN", and "L.2" / "R.2" / "D1.2" for the later units of an ear pair or a disc necklace). A record made before this (one job for the
      whole line, or an "L" job holding the ears of two pairs) is MIGRATED here, never asked again: every piece gets a copy of the decision (state, words, fit, approval, seals, the file of ITS OWN pool id) and says where it came from. */
   const PIECE_OWN = new Set(["key", "row", "slot", "rowKey", "groupKey", "copies", "copyOverrides", "linked", "face", "engraveRec", "backs", "migratedFrom", "copiedFrom", "archived", "seededFrom", "pre", "t"]);
-  const WORDS_OF = ["text", "lines", "lineInput", "lineMode", "source", "quote", "confidence", "requests", "questions", "claudeJob", "claudeReasoning", "wordsSource", "faceFontWord", "fontKey", "fontAsked", "font", "fontName", "lineGap"];
+  const WORDS_OF = ["text", "lines", "lineInput", "lineMode", "source", "quote", "confidence", "requests", "questions", "claudeJob", "claudeReasoning", "wordsSource", "faceFontWord", "fontKey", "fontAsked", "font", "fontName", "lineGap", "asks", "applied"];
   /** The job of (slot, face) takes what `src` carried. grow: only its words (a piece the line gained: it is a new physical piece, it needs its own approval); else the whole decision. */
   function seedPiece(row, slot, face, src, grow) {
     const j = ensureOne(row, slot, face, true), c = Session.copy(src);
@@ -8984,6 +9093,18 @@ const Engrave = window.Engrave = (() => {
    *    person to confirm ("Words to confirm", the reason line says what was read, split, left out and fixed): they are never cut unseen. What the rules cannot settle (a request that may carry the words, a bracket that
    *    may be for the shop, a label used twice) returns false here and the line goes on exactly as before (the paid reader, a person). ── */
   const READER = () => (typeof CharmNestEngraveRead !== "undefined" ? CharmNestEngraveRead : null);
+  /* FOLLOWASK (Paul, 15 Nov 2026): "the engraving ... needs to also be smart and interpreted so that the system doesn't conflate user instructions with the actual things they want on the charm". The words lose the
+     instruction text ("on the left side please", "all caps", a web link); the asks stay on the job (job.asks) for applyAsks after the fit. Rule-based, no model. Returns the lines to engrave; job.askUnsure when a person must look. */
+  function takeAsks(job, lines) {
+    const A = typeof CharmNestEngraveAsks !== "undefined" ? CharmNestEngraveAsks : null; job.askUnsure = false; delete job.applied;
+    if (!A || !lines || !lines.length) return lines;
+    let r; try { r = A.asksOf(lines.join("\n")); } catch (_) { return lines; }
+    job.asks = r.asks.length ? r.asks : undefined; job.askUnsure = !!r.unsure;
+    const out = r.words.split("\n").map(x => x.trim()).filter(Boolean);
+    if (r.asks.some(a => a.type === "reference")) job.askRef = true; else delete job.askRef;
+    return out;
+  }
+  const askWhy = job => job.askUnsure ? "Check the requested inscription: it may be an instruction" : job.askRef ? "A web link was sent with the order: it is not engraved. Say what goes on the charm" : null;
   const lineRowOf = row => (row && row.parentRow) || row;
   /* SETBAR (Paul, 13 Oct 2026: "The thinner bar always sits on the shorter chain unless the user special requests a different layout"): the reader's one hook. A set's piece is the engraving job of slot D1 (the large,
      thicker bar) or D2 (the small, thinner bar); its chain is CharmNestOrders.setPiecesOf's `length` (null while a different layout is asked for and no person has looked: nothing is then assigned, the person sees every wording). */
@@ -9009,7 +9130,8 @@ const Engrave = window.Engrave = (() => {
   }
   /** Give one job the words the rules read (or none), and put it to a person: "Words to confirm". */
   function giveRead(row, j, words, why, how, confidence) {
-    const sp = row.spec, lines = String(words || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+    const sp = row.spec, lines = takeAsks(j, String(words || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean));   // (FOLLOWASK: an instruction in the words is an ask, not engraving)
+    if (askWhy(j)) { why = askWhy(j); confidence = 0; }
     j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
     Object.assign(j, { text: lines.join("\n"), lines, source: "personalization", quote: (sp.personalization || []).join(" / ") || null, confidence: lines.length ? confidence || 0 : 0, questions: [why], claudeReasoning: null, requests: { side: faceOf(j), font: null, handwriting: false, image: false }, wordsSource: "personalization:" + how });   // (the reading stays on the card as its note once the preview is drawn and the reason line is gone, as the faces reading's own reason does)
     toWords(j, why);
@@ -9278,22 +9400,22 @@ const Engrave = window.Engrave = (() => {
     const fr = typeof O !== "undefined" && O.fontReadText ? O.fontReadText(text, { cueOnly: true }) : { changed: false, lines: [] };
     const lines = (fr.changed ? fr.lines : text.split(/\r?\n/)).map(x => String(x).trim()).filter(Boolean);
     const alone = !String(sp.buyerMessage || "").trim() && !String(sp.staffNote || "").trim() && !(sp.messages || []).length;
-    const clear = alone && lines.length >= 1 && lines.length <= 4 && lines.every(x => x.length <= 40);
     const unitSplit = pieceWordsOf(row, todo);   // (PIECES: the note says which words go on which piece of a line cut by unit)
     if (unitSplit) { await giveUnitWords(row, todo, unitSplit); return todo[0] || jobs[0]; }
     for (const j of todo) {
       j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
       const face = faceOf(j), req = { side: face, font: null, handwriting: false, image: false };
+      const own = takeAsks(j, lines), awhy = askWhy(j), clearOwn = alone && own.length >= 1 && own.length <= 4 && own.every(x => x.length <= 40) && !awhy;   // (FOLLOWASK: "Anna (on the left side please)" is the word Anna and an ask)
       if (todo.length > 1 && !copiesOnly(todo)) {
         Object.assign(j, { text: "", lines: [], source: "personalization", quote: pers.join(" / ") || null, confidence: 0, questions: [], claudeReasoning: null, requests: req });
         toWords(j, `Say which words go on the ${(SIDES().slotWord(j) || "piece").toLowerCase()}`);
-      } else if (clear) {
-        Object.assign(j, { text: lines.join("\n"), lines: lines.slice(), source: "personalization", quote: pers.join(" / ") || null, confidence: 1, questions: [], claudeReasoning: null, requests: req, wordsSource: "personalization:clear" });
+      } else if (clearOwn) {
+        Object.assign(j, { text: own.join("\n"), lines: own.slice(), source: "personalization", quote: pers.join(" / ") || null, confidence: 1, questions: [], claudeReasoning: null, requests: req, wordsSource: "personalization:clear" });
         agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}: "${j.text.replace(/\n/g, " / ")}" taken from the personalisation, no paid reading`);
         await setReady(j, false);
       } else {
-        Object.assign(j, { text: lines.join("\n"), lines: lines.slice(), source: "personalization", quote: pers.join(" / ") || null, confidence: 0, questions: [], claudeReasoning: null, requests: req, wordsSource: "personalization:proposal" });
-        if (lines.length) toWords(j, "Check the requested inscription"); else toWords(j, "Enter the requested inscription");
+        Object.assign(j, { text: own.join("\n"), lines: own.slice(), source: "personalization", quote: pers.join(" / ") || null, confidence: 0, questions: [], claudeReasoning: null, requests: req, wordsSource: "personalization:proposal" });
+        if (awhy) toWords(j, awhy); else if (own.length) toWords(j, "Check the requested inscription"); else toWords(j, "Enter the requested inscription");
       }
       if (items() !== owner || row.state === "gone") return todo[0] || jobs[0];
     }
@@ -9308,6 +9430,8 @@ const Engrave = window.Engrave = (() => {
       const fr0 = typeof O !== "undefined" && O.fontReadText ? O.fontReadText(sp.personalization.join("\n"), { cueOnly: true }) : { changed: false, lines: [] };
       job.text = fr0.changed && fr0.lines.length ? fr0.lines.join("\n") : sp.personalization.join("\n"); job.lines = fr0.changed && fr0.lines.length ? fr0.lines : sp.personalization.slice(); job.source = "personalization"; job.confidence = 0; job.questions = [`Claude was unavailable (${(r && (r.skipped || r.error)) || "no answer"}) — confirm the words`]; job.requests = { side: "back", font: null, handwriting: false, image: false };
       { const R = READER(); if (R && job.lines.length) { const fd = R.fixDegrees(job.lines.join("\n")); if (fd.count) { job.lines = fd.text.split("\n"); job.text = fd.text; } const fs = R.fixSymbols ? R.fixSymbols(job.lines.join("\n")) : null; if (fs && fs.count) { job.lines = fs.text.split("\n"); job.text = fs.text; } } }   // (SETBAR-C: the buyer's asterisk in a coordinate is the degree sign here too)
+      job.lines = takeAsks(job, job.lines); job.text = job.lines.join("\n");   // (FOLLOWASK)
+      if (askWhy(job)) return toWords(job, askWhy(job));
       return job.lines.length ? setReady(job) : toWords(job, "Enter the requested inscription");
     }
     if (job.slot && !(SIDES() && SIDES().isCopy(job.slot)) && Array.isArray(r.pieces) && r.pieces.length) {
@@ -9325,9 +9449,12 @@ const Engrave = window.Engrave = (() => {
     // BFFONT: a line of the reading that is only a font request ("Typewriter font") is never engraved; its font is read from the order's own words (spec.fontText) and, when the reader named none, from the request itself
     { const fr = typeof O !== "undefined" && O.fontReadText ? O.fontReadText(job.lines.join("\n"), { cueOnly: true }) : { changed: false, lines: [], requests: [] };
       if (fr.changed && fr.lines.length) { const ask = fr.requests.find(q => q.asked); job.lines = fr.lines; job.text = fr.lines.join("\n"); if (ask && !(job.requests && job.requests.font)) job.requests = Object.assign({}, job.requests, { font: ask.asked }); } }
+    // FOLLOWASK (Paul, 15 Nov 2026): the reader's words lose any instruction to the shop ("on the left", "all caps", a web link); the asks wait on the job for the fit
+    job.lines = takeAsks(job, job.lines); job.text = job.lines.join("\n");
     agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}${job.slot ? " · " + SIDES().slotWord(job) : ""}: Claude reads ${r.engrave ? `"${job.text.replace(/\n/g, " / ")}" from ${r.source} (${Math.round(r.confidence * 100)}%)` : "no engraving"}${job.questions.length ? ` · ${job.questions.length} question(s)` : ""}${job.ignored.length ? ` · left out (a note to the shop): ${job.ignored.map(x => "“" + x + "”").join(", ")}` : ""}`, { reason: r.reasoning || null });
     // Confidence describes the interpretation, not whether a preview can be drawn.
     // Nothing here approves or exports a proposed inscription.
+    if (askWhy(job)) return toWords(job, askWhy(job));
     if (!r.engrave && !job.lines.length) {
       // Settings' engraving confidence: 0 is a setting (trust every reading); it used to be read as 0.8, like an empty field
       const trust = S.settings.engraveConfidence;
@@ -9346,6 +9473,8 @@ const Engrave = window.Engrave = (() => {
     const owner = items(), state = job.state, row = job.row, preparing = !!job.approvalPreparing;
     if (owner.get(job.key) !== job || row.state === "gone" || job.stamping || job.backSaving || ["approved", "written", "skipped", "none"].includes(state)) return job;
     if (neverEngraves(row)) return setNone(job, neverWhy(row));   // (NO EARRING IS EVER ENGRAVED: a person's words for an earring never make it ready either)
+    // FOLLOWASK: a web link is never engraved (a person's own decided words are theirs)
+    if (!job.decision && (job.lines || []).some(l => /\b(?:https?:\/\/|www\.)\S/i.test(l))) { job.askRef = true; return toWords(job, "A web link was sent with the order: it is not engraved. Say what goes on the charm"); }
     await loadFonts();
     // A font arriving belongs to the proposal that asked for it. Closing an edit,
     // restoring another set, or deciding this job meanwhile must not undo approval.
@@ -9637,7 +9766,57 @@ const Engrave = window.Engrave = (() => {
     job.state = "review"; job.row.engrave.state = "review"; job.claude = null;
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: "${job.lines.join(" / ")}" fits at ${fit.size.toFixed(2)} pt (cap ${fit.capMm.toFixed(2)} mm, ${fit.weight}${fit.angle ? `, ${fit.angle}°` : ""}${fit.small ? ", SMALL" : ""}${fit.thin ? ", strokes under the engraver limit" : ""}) — awaiting a person`);
     if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job });
+    if (!kept && !input.keep) { try { applyAsks(job); } catch (e) { console.warn("Engrave: the buyer's asks", e); } }   // (FOLLOWASK: the state stays review; Approve is a person's)
     render(); return job;
+  }
+  /* FOLLOWASK (Paul, 15 Nov 2026): "those instructions should be followed, and then to the system's best ability that engraving should be applied based on the user's instructions." After the automatic fit: layout and case
+     (re-laid out), size (small = 70% of the fitted size, large = the most the metal allows), then position (the left / right / top / bottom third of the safe area, as far as the mask allows; the words are measured in the
+     placement picture, so no ear mirroring is needed). job.applied = [{type, value, ok, why}] says what happened. Never on a placement a person made, a decided or approved job, an earring. */
+  function applyAsks(job) {
+    const A = typeof CharmNestEngraveAsks !== "undefined" ? CharmNestEngraveAsks : null, P = typeof CharmNestEngravePosition !== "undefined" ? CharmNestEngravePosition : null;
+    if (!A || !P || !job || !Array.isArray(job.asks) || job.applied) return false;
+    const pl = A.plan(job.asks); if (!Object.keys(pl).length) return false;
+    if (job.state !== "review" || !job.fit || job.fit.artOnly || !job.mask || job.nudged || job.decision || job.approvedAt || job.approvalIntent || job.keepPlace || neverEngraves(job.row)) return false;
+    const done = [], rec = (type, value, ok, why) => done.push({ type, value, ok, why: why || "" });
+    const keep = () => ({ lineInput: job.lineInput, lineMode: job.lineMode, lines: job.lines, text: job.text, fit: job.fit, wantSize: job.wantSize, verify: job.verify, nudged: job.nudged });
+    const undo = k => Object.assign(job, k);
+    const cur = () => (job.wantSize ?? job.fit.size);
+    if (pl.case || pl.layout) {
+      const k = keep(), base = (job.lineInput || job.lines).slice(), lines = pl.case ? A.caseLines(base, pl.case) : base, mode = pl.layout ? A.layoutMode(pl.layout, lines) : null;
+      job.lineInput = lines; if (mode) job.lineMode = mode;
+      const cov = G.glyphCoverage(fontFor("Regular", job), lines.join("\n")).ok;
+      const ok = cov && refit(job, { centre: job.fit.centre, angle: job.fit.angle, size: cur() });
+      if (!ok) undo(k);
+      for (const t of ["case", "layout"]) if (pl[t]) rec(t, pl[t], !!ok, ok ? "" : cov ? "no room: kept as it was" : "the letters are not in the font: kept as it was");
+    }
+    if (pl.size) {
+      const k = keep(), was = job.fit.small, want = pl.size === "small" ? cur() * 0.7 : fitOpts(job, true).maxHeightFrac * (job.mask.hPt || job.mask.h / job.mask.res);
+      const ok = refit(job, { centre: job.fit.centre, angle: job.fit.angle, size: want });
+      if (ok && pl.size === "small" && job.fit.small && !was) { undo(k); rec("size", "small", false, "smaller would be too fine to engrave: kept"); }
+      else if (!ok) { undo(k); rec("size", pl.size, false, "no room at that size: kept"); }
+      else rec("size", pl.size, true, pl.size === "large" && job.fit.size < want - 0.005 ? "as large as the metal allows" : "");
+    }
+    if (pl.position) {
+      let ok = false, why = "";
+      if (pl.position === "center") { const r = P.centre(job); ok = true; why = r.ok ? "" : "already centred"; }
+      else {
+        const m = job.mask, PT = 72 / 25.4; let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+        for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (m.bits[y * m.w + x]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        if (x1 < x0) { rec("position", pl.position, false, "no safe area: kept"); }
+        else {
+          const b = { x0: m.ox + x0 / m.res, x1: m.ox + (x1 + 1) / m.res, y0: m.oy + y0 / m.res, y1: m.oy + (y1 + 1) / m.res }, t = A.thirdOf(pl.position, b), c = job.fit.centre;
+          const d = t.axis === "x" ? t.to - c[0] : t.to - c[1], toward = pl.position === "left" || pl.position === "bottom" ? d < 0 : d > 0;
+          if (!toward) { ok = true; why = "already there"; }
+          else { const r = P.nudge(job, t.axis === "x" ? d / PT : 0, t.axis === "y" ? d / PT : 0); ok = !!r.ok; why = r.ok ? (r.clamped ? "moved as far as the metal allows" : "") : `no room on the ${pl.position}: kept centred`; }
+          rec("position", pl.position, ok, why);
+        }
+      }
+      if (pl.position === "center") rec("position", "center", ok, why);
+    }
+    job.applied = done; job.nudged = done.some(d => d.ok && d.why !== "already there" && d.why !== "already centred");
+    agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: the buyer's asks applied — ${done.map(d => d.type + " " + d.value + (d.ok ? "" : " (" + d.why + ")")).join(", ")} — awaiting a person`);
+    try { Session.schedule(); } catch (_) { /* the checkpoint is taken at the next change */ }
+    return true;
   }
   async function claudeRead(job) {
     if (!S.cloud.ok || !job.fit) return;
@@ -10100,13 +10279,21 @@ const Engrave = window.Engrave = (() => {
       changed: (line, res) => { try { if (res && Array.isArray(res.removed)) for (const k of dropped) if (!res.removed.includes(k)) res.removed.push(k); } catch (_) {} try { const S = SIDES(); if (S && line._engraveLinked) S.linkParent(sidesCtx, line, jobsOf(line)); } catch (_) {} try { Orders.render(); } catch (_) {} try { render(); } catch (_) {} try { Review.render(); } catch (_) {} try { if (window.OrderWin && OrderWin.isOpen && OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} try { RunCtl.poke(); } catch (_) {} }
     };
   }
+  /* STAGEHANDLES (Paul, 15 Nov 2026): what the box and the bar changed on staged words (size, turn, line gap, line mode) is put on the face's job after its fit, with its place. */
+  const lookOf = p => (p ? { size: p.size > 0 ? p.size : null, angle: Number.isFinite(p.angle) ? p.angle : null, lineGap: Number.isFinite(p.lineGap) ? p.lineGap : null, lineMode: p.lineMode ? String(p.lineMode) : "" } : null);
+  function applyLook(j, k) {
+    if (!k || !j.fit || j.fit.artOnly || (k.size == null && k.angle == null && k.lineGap == null && !k.lineMode)) return false;
+    const gap0 = j.lineGap, mode0 = j.lineMode; if (k.lineGap != null) j.lineGap = k.lineGap; if (k.lineMode) j.lineMode = k.lineMode;
+    try { if (refit(j, { centre: j.fit.centre.slice(), angle: k.angle != null ? k.angle : j.fit.angle || 0, size: k.size || undefined })) { j.nudged = true; refresh(j); return true; } } catch (_) { /* the fit it has stands */ }
+    j.lineGap = gap0; j.lineMode = mode0; return false;
+  }
   /** Save the choice (patch: { mode?, front?, back? }): see CharmNestEngraveSetup.apply. Resolves { ok, cancelled?, message?, pending?, removed, plain, none, reopened, seeded, added }. */
   async function saveSetup(row, patch, o) {
     const CS = window.CharmNestEngraveSetup, line = lineOf(row);
     if (!CS || !line) return { ok: false, message: "The engraving setup is not loaded yet." };
     if (setupBusy.has(line.key)) return { ok: false, message: "The last change to this piece is still being saved." };
     setupBusy.add(line.key);
-    const had = new Set(jobsOf(line).map(j => j.key)), places = (o && o.places) || {}, slot0 = patch && patch.slot ? String(patch.slot) : null;
+    const had = new Set(jobsOf(line).map(j => j.key)), places = (o && o.places) || {}, looks = (o && o.looks) || {}, slot0 = patch && patch.slot ? String(patch.slot) : null;
     try {
       const placed = stagedFacesOfLine(line);   // (FRONTSTAGE: where the person dragged the staged words of a face that had no job)
       const res = await CS.apply(line, patch, setupEnv());
@@ -10114,7 +10301,7 @@ const Engrave = window.Engrave = (() => {
       //  after their first fit, with the work area's own move (moveTo), before anything approves them)
       if (res && res.ok) for (const p of placed) { if (!p.centre || !p.view) continue; const nj = jobsOf(line).find(j => !had.has(j.key) && faceOf(j) === p.face); if (nj) { const pc = charmPointOf(p.view, p.centre); if (pc) nj._placeAt = pc; } }
       // (ENGSTAGE: the panel's own staged place of a face, o.places[face] = a point of the charm (CharmNestEngravePanel.stagePos's pos.charm), wins: the same _placeAt, on the new job of that face and piece)
-      if (res && res.ok) for (const f of ["front", "back"]) { const pc = places[f]; if (!Array.isArray(pc) || pc.length < 2 || !pc.every(Number.isFinite)) continue; const nj = jobsOf(line).find(j => !had.has(j.key) && faceOf(j) === f && (!slot0 || (j.slot || null) === slot0)); if (nj) nj._placeAt = [pc[0], pc[1]]; }
+      if (res && res.ok) for (const f of ["front", "back"]) { const pc = places[f]; if (!Array.isArray(pc) || pc.length < 2 || !pc.every(Number.isFinite)) continue; const nj = jobsOf(line).find(j => !had.has(j.key) && faceOf(j) === f && (!slot0 || (j.slot || null) === slot0)); if (nj) { nj._placeAt = [pc[0], pc[1]]; const lk = looks[f]; if (lk) { nj._placeLook = lk; if (lk.lineGap != null) nj.lineGap = lk.lineGap; } } }
       if (res && res.ok && jobsOf(line).some(j => !had.has(j.key))) prepareLate(line).catch(() => {});
       // (NONEPLAIN 2: None approved: the piece is a regular order now, said once, plainly; the tab moves on as after any Approve: the piece is in no list any more)
       if (res && res.ok && patch && patch.mode === "none" && (res.none || []).length) { toast(`Order ${line.order.receiptId} · no engraving · now a regular order`, "ok", 6000); setTimeout(() => { try { render(); Orders.render(); } catch (_) {} }, 2700); }   // (NONESTAMP, Paul 13 Nov 2026: "I didn't see the seal and stamp animation on the computer where I pressed approve": the card stays until the CUT PLAIN stamp has come down on it (at most 2.5 s), then the piece moves on)
@@ -10158,8 +10345,8 @@ const Engrave = window.Engrave = (() => {
     const before = new Set(jobsOf(line).map(j => j.key)), patch = stage.patch && typeof stage.patch === "object" ? stage.patch : null;   // (a job made by this commit takes its dragged place as _placeAt; one that was there, placed or opened again, is moved below)
     if (patch && (patch.mode || patch.front !== undefined || patch.back !== undefined)) {
       while (setupBusy.has(line.key) && Date.now() < until) await wait(40);   // (another piece of this line is being kept: this one follows it)
-      const places = {}; for (const f of on) { const p = faces[f] && faces[f].pos; if (p && Array.isArray(p.charm)) places[f] = p.charm; }
-      const res = await saveSetup(line, Object.assign({}, patch, slot ? { slot } : {}), { places });
+      const places = {}, looks = {}; for (const f of on) { const p = faces[f] && faces[f].pos; if (p && Array.isArray(p.charm)) { places[f] = p.charm; looks[f] = lookOf(p); } }
+      const res = await saveSetup(line, Object.assign({}, patch, slot ? { slot } : {}), { places, looks });
       if (!res || !res.ok) return { ok: false, cancelled: !!(res && res.cancelled), message: (res && res.message) || "The change was not kept.", approved: [] };
       step("kept");
     }
@@ -10190,7 +10377,7 @@ const Engrave = window.Engrave = (() => {
         if (!j) { if (Date.now() > until) { why = `the ${f} could not be made here`; break; } await wait(60); continue; }
         jobs[f] = j;
         if (["approved", "written"].includes(j.state)) break;
-        if (j.state === "review" && j.fit && j._placeAt && !lateTasks.has(j) && !isWorking(j)) { const pc = j._placeAt; delete j._placeAt; if (j.view && !j.fit.artOnly) { const c = viewPointOf(j.view, pc); try { if (c && moveTo(j, c)) j.nudged = true; } catch (_) { /* the system's place stands */ } } }   // (fitted by another path than prepareLate: the dragged place is put on it here)
+        if (j.state === "review" && j.fit && j._placeAt && !lateTasks.has(j) && !isWorking(j)) { const pc = j._placeAt; delete j._placeAt; if (j.view && !j.fit.artOnly) { const c = viewPointOf(j.view, pc); try { if (c && moveTo(j, c)) j.nudged = true; } catch (_) { /* the system's place stands */ } } const lk = j._placeLook; delete j._placeLook; if (lk) applyLook(j, lk); }   // (fitted by another path than prepareLate: the dragged place is put on it here)
         if (j.state === "review" && j.fit && !isWorking(j) && !lateTasks.has(j) && !j._placeAt && !fitTasks.get(j)) break;
         if (["words", "blocked"].includes(j.state)) { if (!text && !decided.has(j) && typeof faceHasEditorArt === "function" && !engravedWords(j).length && faceHasEditorArt(j) && artOnlyPlacement(j)) { decided.add(j); continue; }   /* (APPROVEALL, Paul 12 Nov 2026: "the approved button breaks on front or back or front and back options": a face the Charm Editor drew whose words were taken off is approved as drawn, never refused for words) */
           const said = text || (j.state === "words" ? String(j.text || "").trim() : "");   /* (APPROVEALL: Approve on words shown and not retyped approves those words) */
@@ -10209,6 +10396,7 @@ const Engrave = window.Engrave = (() => {
       const p = faces[f] && faces[f].pos, j = jobs[f]; if (!p || !j || !before.has(j.key) || !j.fit || j.fit.artOnly) continue;
       let c = null; try { const E = window.Engrave; c = E && typeof E.stagePlaceOf === "function" ? E.stagePlaceOf(j, p) : Array.isArray(p.charm) && j.view ? viewPointOf(j.view, p.charm) : null; } catch (_) { c = null; }
       if (c && j.fit.centre && Math.hypot(c[0] - j.fit.centre[0], c[1] - j.fit.centre[1]) > 1e-6) { try { if (moveTo(j, c)) j.nudged = true; } catch (_) { /* the place it has stands */ } }
+      applyLook(j, lookOf(p));   // (STAGEHANDLES: the size, turn, line gap and mode left on the staged words)
     }
     // (4) the approvals, Front before Back. The card in front, when it is this piece's, is held on it (EG.opened: a decided piece stays in front when it was opened): it moves on only when the panel asks
     //     once the commit is over and nothing is staged on top of it (stageMoveOn: coordinator 30 Oct 2026, "move on ONLY if the piece's draft is clean")
@@ -10283,9 +10471,9 @@ const Engrave = window.Engrave = (() => {
         for (let pass = 0; pass < 2 && items() === owner && jobsOf(line).some(j => OPENREAD.includes(j.state) && owner.get(j.key) === j) && facedSetup(line, jobsOf(line)); pass++) await classify(line);   // (only a line the setup itself reads (facedSetup, checked in this very tick: classifyOnce takes the same branch), so never the paid reader; joins a reading of the line already under way; the second pass takes what that one's list did not hold)
         for (const j of jobsOf(line)) if (items() === owner && owner.get(j.key) === j && !j.editingBack && j.state === "ready" && canFit(j) && !isWorking(j) && !j.approvalPreparing) await fitJob(j);
         // (ONEAPPROVE: a face made from a staged preview takes the place its words were dragged to, by the work area's own move, in its own frame)
-        for (const j of jobsOf(line)) if (j._placeAt) { const pc = j._placeAt; delete j._placeAt; if (j.fit && j.view && j.state === "review" && !j.fit.artOnly) { const c = viewPointOf(j.view, pc); try { if (c && moveTo(j, c)) j.nudged = true; } catch (_) { /* the system's place stands */ } } }
+        for (const j of jobsOf(line)) if (j._placeAt) { const pc = j._placeAt, lk = j._placeLook; delete j._placeAt; delete j._placeLook; if (j.fit && j.view && j.state === "review" && !j.fit.artOnly) { const c = viewPointOf(j.view, pc); try { if (c && moveTo(j, c)) j.nudged = true; } catch (_) { /* the system's place stands */ } if (lk) applyLook(j, lk); } }
       } catch (e) {
-        for (const j of jobsOf(line)) delete j._placeAt;
+        for (const j of jobsOf(line)) { delete j._placeAt; delete j._placeLook; }
         if (items() === owner) for (const j of jobsOf(line)) if (OPENREAD.includes(j.state) && owner.get(j.key) === j) toWords(j, `These words could not be read (${e && e.message ? e.message : e}) — confirm them`);
       }
       return jobsOf(line);
@@ -10966,7 +11154,7 @@ const Engrave = window.Engrave = (() => {
   function stagedFaceFit(job, face, fv, rec) {
     const view = fv.view, charm = fv.charm, front = face === "front";
     if (!rec.mask || rec.view !== view) { rec.view = view; rec.centre = null; rec.mask = G.engraveMask(view, { marginMm: S.settings.engraveMarginMm, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [], ...(!front && charm.artBack?.length ? { avoid: charm.artBack } : {}) }); }
-    const mask = rec.mask, lines0 = draftLines(rec.text); if (!lines0.length) return { mask, fit: null };
+    const mask = rec.mask, lines0 = draftLines(rec.text); rec.fitNow = null; if (!lines0.length) return { mask, fit: null };
     let fid = rec.fontWord ? O.fontOfPhrase(rec.fontWord) || "" : "";
     if (!fid) { try { fid = O.pieceFont(job.row && job.row.spec, pieceIndexOf(job), face).id; } catch (_) { fid = O.DEFAULT_FONT; } }
     const set = draftSet(fid);
@@ -10975,29 +11163,42 @@ const Engrave = window.Engrave = (() => {
       return { mask, fit: null };
     }
     const lines = lines0.map(l => O.capsText(l, fid)), font = pinFont(set.Regular, { scriptFonts: typeof set.Regular.scriptFonts === "function" ? set.Regular.scriptFonts(lines.join("\n")) : [] });
-    const pseudo = { mask, lineGap: job.lineGap }, h = mask.hPt || mask.h / mask.res, fo = fitOpts(pseudo);
+    const pseudo = { mask, lineGap: rec.lineGap ?? job.lineGap }, h = mask.hPt || mask.h / mask.res, fo = fitOpts(pseudo);
     // (ENGSTAGE: the shop's own size rule for what is said (charm-nest-geom.js defaultSize, as the face's real fit and the thumbnails' quick place use it), so the words are drawn at the size the face will
     //  have, and laid out at once (reflowAt finds them in place at that size; the largest size, tried first, was searched down at every letter))
     let want = rec.size || 0;
     if (!want) { try { const ch = fv.charm || {}, bw = ch.widthPt || (ch.bbox ? ch.bbox[2] - ch.bbox[0] : 0), bh = ch.heightPt || (ch.bbox ? ch.bbox[3] - ch.bbox[1] : 0), MMPT = 25.4 / 72; if (mask._svArea == null) mask._svArea = G.area(mask);
       want = G.defaultSize(lines, fo.maxHeightFrac * h, { capPerEm: G.capPerEm(font), minCapMm: fo.minCapMm, charmMinMm: Math.min(bw, bh) * MMPT, charmMaxMm: Math.max(bw, bh) * MMPT, usableAreaMm2: mask._svArea / (mask.res * mask.res) * MMPT * MMPT, advanceOf: t => font.getAdvanceWidth(t, 1, { kerning: true }) }); } catch (_) { want = 0; } }
     if (!(want > 0)) want = fo.maxHeightFrac * h;
-    let f = null; try { f = G.reflowAt(lines, font, mask, { ...fitOpts(pseudo, true), measure: false }, { centre: rec.centre || mask._svCentroid || (mask._svCentroid = maskCentroid(mask)), angle: 0, size: want }, "auto"); } catch (_) { f = null; }   // (ENGSTAGE: drawn at every letter: no stroke measure, as a drag draws: the face's own fit measures it)
-    return { mask, fit: f && f.ok ? f : null };
+    let f = null; try { f = G.reflowAt(lines, font, mask, { ...fitOpts(pseudo, true), measure: false }, { centre: rec.centre || mask._svCentroid || (mask._svCentroid = maskCentroid(mask)), angle: rec.angle || 0, size: want }, rec.lineMode || "auto"); } catch (_) { f = null; }   // (STAGEHANDLES: the staged turn, size and line mode)   // (ENGSTAGE: drawn at every letter: no stroke measure, as a drag draws: the face's own fit measures it)
+    rec.fitNow = f && f.ok ? f : null; return { mask, fit: rec.fitNow };
   }
   /** A drag of the staged words: they follow the pointer on that face's safe area (drawn again into the same canvas, every frame at most); nothing is kept but the place, in the staged record. */
   function stagedDrag(cv, job, face, fv, rec, draw, onEnd) {
     let start = null, raf = 0, last = null;
     const pt = e => { const r = cv.getBoundingClientRect(); return cv._map.inv((e.clientX - r.left) * (cv.width / r.width), (e.clientY - r.top) * (cv.height / r.height)); };
+    const px = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * (cv.width / r.width), (e.clientY - r.top) * (cv.height / r.height)]; };
+    const near = (p, q, r) => Math.hypot(p[0] - q[0], p[1] - q[1]) <= r;
     cv.style.cursor = "move";
-    const paintAt = () => { if (!last) return; rec.centre = last; if (typeof cv._svRedraw === "function") { cv._svRedraw(); return; } try { const nc = draw(), g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(nc, 0, 0, cv.width, cv.height); } catch (_) { /* the drawing it had stays */ } };   // (ENGSTAGE: a stage's face paints only its words, as typing does)
-    cv.addEventListener("pointerdown", e => { const sf = stagedFaceFit(job, face, fv, rec); if (!sf.fit || !cv._map) return; start = { p: pt(e), c: sf.fit.centre.slice() }; last = null; try { cv.setPointerCapture(e.pointerId); } catch (_) {} e.preventDefault(); });
+    // (STAGEHANDLES: the same hit test as the placed job's wire: the handle above the box turns, a corner (or Shift) sizes, the rest moves; the staged record only, never the real job)
+    cv.addEventListener("pointermove", e => { if (start || !cv._editable || !cv._box) return; const p = px(e), b = cv._box; cv.style.cursor = near(p, b.rotate, 9) ? "alias" : b.corners.some(c => near(p, c, 8)) ? "nwse-resize" : "grab"; });
+    const paintAt = () => { if (!last) return; if (last.centre) rec.centre = last.centre; if (last.size != null) rec.size = last.size; if (last.angle != null) rec.angle = last.angle; if (typeof cv._svRedraw === "function") { cv._svRedraw(); return; } try { const nc = draw(), g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(nc, 0, 0, cv.width, cv.height); } catch (_) { /* the drawing it had stays */ } };   // (ENGSTAGE: a stage's face paints only its words, as typing does)
+    cv.addEventListener("pointerdown", e => {
+      const sf = stagedFaceFit(job, face, fv, rec); if (!sf.fit || !cv._map) return;
+      const p = px(e), b = cv._editable ? cv._box : null, mode = b && near(p, b.rotate, 10) ? "rotate" : (b && b.corners.some(c => near(p, c, 9))) || (cv._editable && e.shiftKey) ? "resize" : "move";
+      const cpx = b ? b.centrePx : cv._map.tx(sf.fit.centre[0], sf.fit.centre[1]);
+      start = { mode, p: pt(e), c: sf.fit.centre.slice(), size: sf.fit.size, angle: sf.fit.angle || 0, cpx, r0: Math.max(4, Math.hypot(p[0] - cpx[0], p[1] - cpx[1])), a0: Math.atan2(p[1] - cpx[1], p[0] - cpx[0]), h: sf.mask.hPt || sf.mask.h / sf.mask.res };
+      last = null; try { cv.setPointerCapture(e.pointerId); } catch (_) {} e.preventDefault();
+    });
     cv.addEventListener("pointermove", e => {
-      if (!start) return; const p = pt(e); last = [start.c[0] + p[0] - start.p[0], start.c[1] + p[1] - start.p[1]];
+      if (!start) return;
+      if (start.mode === "resize") { const p = px(e); last = { size: Math.min(fitOpts({ mask: rec.mask }, true).maxHeightFrac * start.h, Math.max(0.01, start.size * Math.hypot(p[0] - start.cpx[0], p[1] - start.cpx[1]) / start.r0)) }; }
+      else if (start.mode === "rotate") { const p = px(e), a = Math.atan2(p[1] - start.cpx[1], p[0] - start.cpx[0]); let ang = start.angle - (a - start.a0) * 180 / Math.PI; ang = ((ang % 360) + 360) % 360; for (const snap of [0, 90, 180, 270, 360]) if (Math.abs(ang - snap) < 3) ang = snap % 360; last = { angle: ang }; }
+      else { const p = pt(e); last = { centre: [start.c[0] + p[0] - start.p[0], start.c[1] + p[1] - start.p[1]] }; }
       if (raf) return; raf = requestAnimationFrame(() => { raf = 0; paintAt(); });
     });
-    // (ENGSTAGE: the place the words were let go at is the stage's: onEnd(centre), CharmNestEngravePanel.stagePos; a frame still waiting is painted first, so the last move is never dropped)
-    const end = e => { const was = start; start = null; if (raf) { cancelAnimationFrame(raf); raf = 0; paintAt(); } if (was && last && e && e.type === "pointerup" && typeof onEnd === "function") { try { onEnd(rec.centre.slice()); } catch (_) { /* the drawing keeps the place */ } } last = null; };
+    // (ENGSTAGE: the place the words were let go at is the stage's: onEnd(centre, extra), CharmNestEngravePanel.stagePos; a frame still waiting is painted first, so the last move is never dropped)
+    const end = e => { const was = start; start = null; if (raf) { cancelAnimationFrame(raf); raf = 0; paintAt(); } if (was && last && e && e.type === "pointerup" && typeof onEnd === "function") { try { const c = rec.centre || (rec.fitNow && rec.fitNow.centre); const extra = {}; if (rec.size) extra.size = rec.size; if (rec.angle) extra.angle = rec.angle; else if (was.mode === "rotate") extra.angle = 0; if (rec.lineGap != null) extra.lineGap = rec.lineGap; if (rec.lineMode) extra.lineMode = rec.lineMode; onEnd((c || was.c).slice(), extra); } catch (_) { /* the drawing keeps the place */ } } last = null; };
     cv.addEventListener("pointerup", end); cv.addEventListener("pointercancel", end);
   }
   /** FRONTSTAGE · THE ONE CALL of the panel: the staged words of a face of `jobKey`'s piece that has no job yet (staged = { text, fontWord }), shown in the work area at once; null takes it away (the face's
@@ -11334,7 +11535,7 @@ const Engrave = window.Engrave = (() => {
     const choice = SV_CHOICES.includes(st.choice) ? st.choice : SV_CHOICES.includes(st.mode) ? st.mode : "none";
     const fx = f => {
       const x = st.faces && st.faces[f], o = x == null ? {} : typeof x === "string" ? { text: x } : x, p = o.pos;
-      const pos = p && Array.isArray(p.charm) && p.charm.length === 2 && p.charm.every(Number.isFinite) ? { charm: p.charm.slice(), centre: Array.isArray(p.centre) && p.centre.every(Number.isFinite) ? p.centre.slice() : null } : null;
+      const pos = p && Array.isArray(p.charm) && p.charm.length === 2 && p.charm.every(Number.isFinite) ? { charm: p.charm.slice(), centre: Array.isArray(p.centre) && p.centre.every(Number.isFinite) ? p.centre.slice() : null, ...(Number.isFinite(p.size) && p.size > 0 ? { size: p.size } : {}), ...(Number.isFinite(p.angle) ? { angle: p.angle } : {}), ...(Number.isFinite(p.lineGap) ? { lineGap: p.lineGap } : {}), ...(p.lineMode ? { lineMode: String(p.lineMode) } : {}) } : null;   // (STAGEHANDLES: size, angle, line gap and line mode ride with the place)
       return { text: String(o.text == null ? "" : o.text), font: String(o.font == null ? "" : o.font), pos };
     };
     const on = svChoiceFaces(choice), never = neverEngraves(job.row);
@@ -11393,7 +11594,7 @@ const Engrave = window.Engrave = (() => {
      it is not that: the work area (its face, its words, the sequence it was drawn from, a drawing of its own) and the thumbnails. The newest state is the panel's own (CharmNestEngravePanel.stageOf)
      when the panel made the stage (its stages carry the draft's seq): a draft the panel changed without a call (a commit landing, a draft made again) is taken here. A stage given by another host
      (no seq) is never replaced by the panel's. svShowStage.idleFixes counts the repaints it made. */
-  const svSig = s => (s ? JSON.stringify([s.choice, s.active, ...["front", "back"].map(f => [s.faces[f].text, s.faces[f].font, s.faces[f].pos && s.faces[f].pos.charm])]) : "");
+  const svSig = s => (s ? JSON.stringify([s.choice, s.active, ...["front", "back"].map(f => [s.faces[f].text, s.faces[f].font, s.faces[f].pos && [s.faces[f].pos.charm, s.faces[f].pos.size, s.faces[f].pos.angle, s.faces[f].pos.lineGap, s.faces[f].pos.lineMode]])]) : "");
   function svIdleArm(rec) { clearTimeout(rec.idleT); rec.idleT = setTimeout(() => svIdle(rec), 300); }
   function svIdle(rec) {
     rec.idleT = 0;
@@ -11462,10 +11663,10 @@ const Engrave = window.Engrave = (() => {
     return rec;
   }
   /** A drag let go in the work area: its place is the stage's (CharmNestEngravePanel.stagePos(key, face, pos), the panel's). */
-  function svPosOut(key, face, view, centre) {
+  function svPosOut(key, face, view, centre, extra) {
     const P = window.CharmNestEngravePanel; if (!P || typeof P.stagePos !== "function" || !view || !Array.isArray(centre)) return false;
     const charm = charmPointOf(view, centre); if (!charm) return false;
-    try { P.stagePos(key, face, { charm, centre: centre.slice() }); return true; } catch (e) { console.warn("engraving: the staged place", e); return false; }
+    try { P.stagePos(key, face, { charm, centre: centre.slice(), ...(extra || {}) }); return true; } catch (e) { console.warn("engraving: the staged place", e); return false; }
   }
   /** A cross-fade of the work area over `paint` (the drawing as it was, laid over and faded, 120 ms): words appearing or going. A fade still running is taken away at once. */
   function svFade(host, paint) {
@@ -12224,6 +12425,12 @@ const Engrave = window.Engrave = (() => {
       return lines.length ? { title: "The cut line changed", lines, proceed: "Save anyway", text: "This piece is already on a sheet. Save anyway keeps your change: that sheet keeps its old files and goes to no set until the piece is moved clear in Manual Control or the sheet is nested again. Or keep editing the shape." } : null;
     };
     const startFace = job && t.from === "card" ? faceOf(job) : "front";
+    let draft = null;
+    try {
+      const rowArt = (B.pool.rows.get(poolId) || {}).artEdit || {}, cArt = charm.artEdit || {};
+      const stamp = f => Number(rowArt[f] || (cArt[f] && cArt[f].at) || 0), baseAt = Math.max(stamp("front"), stamp("back"));
+      draft = await charmDraftOpen(poolId, by, baseAt);
+    } catch (e) { console.warn("charm edit: the draft", e); }
     let res = null, again = null, todo = [], wordsNow = {}, kept = [], wordsTodo = [], afterShown = false;
     const done = [], records = {};
     try {
@@ -12231,11 +12438,12 @@ const Engrave = window.Engrave = (() => {
         if (host) host.addEventListener("cancel", keepOpen);
         // (TYPEWORDS: what the repair found is said over the work as it opens: a line, not a dialog)
         if (!again && repair.said.length) setTimeout(() => { try { const cur = CE.current; if (cur && cur.ctx && typeof cur.ctx.say === "function") cur.ctx.say([...new Set(repair.said)].join(" · "), 9000); } catch (_) { /* the Layers say it too */ } }, 60);
-        try { res = await CE.open(Object.assign({ title: sku, subtitle, faces: again ? again.faces : docs, startFace: again ? again.face : startFace, fonts, textToPaths: charmEditText, lockRoles: ["cut"], back, host, check, hold: true }, again ? { base: docs, notice: again.notice } : {})); }   // (CETEXT: the words open unselected, as everything does: a picture imported first goes into the charm's outline, not into the words' box; a click on them shows their controls)
+        try { res = await CE.open(Object.assign({ title: sku, subtitle, faces: again ? again.faces : docs, startFace: again ? again.face : startFace, fonts, textToPaths: charmEditText, lockRoles: ["cut"], back, host, check, hold: true }, draft ? { autosave: draft.autosave } : {}, again ? { base: docs, notice: again.notice } : draft && draft.offer ? { offer: draft.offer, base: docs } : {})); }   // (CETEXT: the words open unselected, as everything does: a picture imported first goes into the charm's outline, not into the words' box; a click on them shows their controls)
         finally { if (host) setTimeout(() => host.removeEventListener("cancel", keepOpen), 0); }
         if (!res) return null;   // (Cancel, the ×, Esc, Back with nothing kept: nothing is written)
         const p = planOf(res); todo = p.todo; wordsNow = p.wordsNow; kept = p.kept; wordsTodo = p.wordsTodo;
         if (!todo.length && !wordsTodo.length) {
+          if (draft) draft.drop().catch(() => { /* CEAUTOSAVE: nothing was saved, nothing to keep */ });
           if (kept.length && job) charmEditTell(t, `The ${kept.join(" and ")} words are the engraving's: they stay on the card · to engrave none, empty its words box or press No engraving`, false);
           afterShown = charmEditAfter(x, t, tok, res, { wentBack, title: "Saved · nothing changed", lines: [kept.length ? `The ${kept.join(" and ")} words are the engraving's: they stay on the card` : "Nothing in the drawing changed, so nothing new was kept for this piece."] });   // (CES1: the card after every Save)
           return null;
@@ -12268,6 +12476,7 @@ const Engrave = window.Engrave = (() => {
         }
         break;
       }
+      if (draft) draft.drop().catch(() => { /* CEAUTOSAVE: saved: the draft is no longer needed (a copy left would only be offered again) */ });
       // DESIGNS (Paul, 28 Oct 2026: "this repository must grow with every new update or change to any charm using the charm editor"): the piece as saved is also a new version of its design
       // in the design library (charm-nest-designs.js), one design per piece (pc-<poolId>), its size its cut line's: one call of its own after the piece's save, never in its way
       const designP = window.CharmNestDesigns ? window.CharmNestDesigns.put({ id: "pc-" + poolId, name: sku, faces: res.faces, source: { kind: "piece", poolId, sku }, orderId: order || null, by }).catch(e => { console.warn("charm edit: design library", e); agent({ pool: true }, "warn", `${poolId}: its artwork is saved; the design library did not keep this version: ${(e && e.message) || e}`); return null; }) : Promise.resolve(null);
@@ -12336,6 +12545,50 @@ const Engrave = window.Engrave = (() => {
       try { if (!F_.ok) await loadFonts(); if (F_.ok && !fontSetOf(j)) await loadFontSet(fontIdOf(j)); } catch (_) { /* opened with no words for that face */ }
       try { reviveShelved(j); } catch (e) { console.warn("charm edit: the written words", e); }
     }
+  }
+  /* CEAUTOSAVE (Paul, 15 Nov 2026: "ensure that everything in the charm editor gets saved onto the cloud as well ... including when I add images and make any and all sorts of changes inside the charm
+     editor"): the order-piece editor's open document is kept in the cloud as a DRAFT (charmNestLibrary.js artDraftPut / Get / Drop: one per piece, who and when on it, never a saved edit, nothing
+     un-approved, no feed key). The editor hands the faces over ~4 s after each change (opts.autosave); Save and Cancel drop the draft; opening a piece that has one offers it back (opts.offer). Not the
+     design editor (openCharmEditorDesign): a design has no pool id to key a draft by. */
+  const draftGz = async text => { const u = new Uint8Array(await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer()); let s = ""; for (let i = 0; i < u.length; i += 32768) s += String.fromCharCode.apply(null, u.subarray(i, i + 32768)); return btoa(s); };
+  const draftUngz = async b64 => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream("gzip"))).text(); };
+  const draftClock = at => { const d = new Date(at), hm = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); return d.toDateString() === new Date().toDateString() ? hm : d.toLocaleDateString() + " " + hm; };
+  /** The draft session of one piece: { autosave (opts.autosave), drop(), offer (opts.offer | null) }. baseAt: the piece's saved art stamp the draft starts from. */
+  async function charmDraftOpen(poolId, by, baseAt) {
+    let busy = Promise.resolve(), dead = false;
+    const call = body => api("charmNestLibrary", Object.assign({ poolId }, body), { quiet: true });
+    const drop = () => { const p = busy.catch(() => null).then(() => call({ op: "artDraftDrop", by })); busy = p.catch(() => null); return p; };
+    const autosave = {
+      save: faces => {
+        if (dead) return Promise.resolve(Date.now());
+        if (!faces) return drop().then(() => 0);
+        const p = busy.catch(() => null).then(async () => {
+          const gz = await draftGz(JSON.stringify({ v: 1, faces }));
+          if (gz.length > 5500000) throw Object.assign(new Error("too large"), { final: true, say: "Draft too large to keep in the cloud" });
+          const r = await call({ op: "artDraftPut", by, baseAt, draft: gz });
+          if (!r || !r.ok) throw Object.assign(new Error((r && r.error) || "the draft was not kept"), { final: !!(r && r.status === 400) });
+          return r.at || Date.now();
+        });
+        busy = p.catch(() => null); return p;
+      },
+      drop: () => { dead = true; return drop(); }
+    };
+    let offer = null;
+    try {
+      const g = await call({ op: "artDraftGet", full: true }), d = g && g.draft;
+      if (d && d.data) {
+        const doc = JSON.parse(await draftUngz(d.data)), who = d.by || "someone", when = draftClock(d.at), mine = who === by, stale = Number(d.baseAt || 0) !== Number(baseAt || 0);
+        if (doc && doc.faces && typeof doc.faces === "object") offer = {
+          faces: doc.faces,
+          title: stale ? "Unsaved work from before a newer save" : "Unsaved Charm Editor work",
+          text: stale ? `This piece's artwork was saved again since the unsaved Charm Editor work from ${when} (by ${who}) was started. Open that work anyway, or discard it?`
+            : `${mine ? "" : `${who} is editing this piece (draft from ${when}). `}You have unsaved Charm Editor work on this piece from ${when} (by ${who}). Restore it?`,
+          yes: stale ? "Open the draft" : "Restore", no: "Discard",
+          answer: yes => { if (!yes) drop().catch(() => { /* it is offered again */ }); }
+        };
+      }
+    } catch (e) { console.warn("charm edit: the draft", e); }
+    return { autosave, drop, offer };
   }
   /** The target of `x` (charmEditTarget) with its charm made from its master when this page holds no drawing of it (a piece of an order on no sheet of this page, or not nested yet: ITEM 30), with
    *  its own artwork edits put over it, as the placement's picture makes it (mountPlacementThumbnail). null: no piece, or its design has no drawing in the master library. */
@@ -13670,7 +13923,7 @@ const Engrave = window.Engrave = (() => {
     const wordsJob = job.state !== "review" && !appView;   // (no placement drawn yet: words to settle, being read or fitted)
     /* ALWAYSBAR (Paul, 12 Nov 2026, order 4227069460): the row under the work area (Centre, Lines, the size, the turn) is always drawn. With no words placed on this face yet the controls that act on the
        words are there, disabled, saying why; the turn of the whole piece works as soon as the piece's charm is on this page (turnBare). A face engraved by the Charm Editor's parts alone keeps its note. */
-    const ctlOn = !!f && !wordsJob && !f.artOnly, ctlBar = ctlOn || !(job.text || "").trim();   // (EVERYPC, Paul 13 Nov 2026, on another computer: "why there's no grid why there's no options at the bottom of the grid" / "My computer doesn't do that"): a face with no words being fitted (None, words not typed, still being read) has the bar too, its controls disabled   // (BARREFIT: only a face waiting for words gets the bar early; a face being fitted or drawn again keeps the card as it was)
+    const ctlOn = !!f && !wordsJob && !f.artOnly, ctlBar = ctlOn || !(job.text || "").trim() || (panelOn && job.state === "words");   // (EVERYPC, Paul 13 Nov 2026, on another computer: "why there's no grid why there's no options at the bottom of the grid" / "My computer doesn't do that"): a face with no words being fitted (None, words not typed, still being read) has the bar too, its controls disabled   // (BARREFIT: only a face waiting for words gets the bar early; a face being fitted or drawn again keeps the card as it was)
     const ctlWhy = ctlOn ? "" : (job.text || "").trim() ? `The words of the ${fw} are being fitted: these act on them once they are placed` : `No words on the ${fw} yet: type them in the panel, then these act on them`;
     const turnOn = ctlOn || bareTurnable(job);
     const requests = job.requests || {};
@@ -13701,7 +13954,7 @@ const Engrave = window.Engrave = (() => {
     // ENGNOTE (Paul, 12 Oct, round 2: "I see that you removed the customer note from this view. I didn't ask for you to remove that"): in the Engrave tab the customer's own words (personalisation, buyer message,
     // staff note, and the engraving choices among the listing's options) are ALWAYS drawn, as ONE box titled "What the customer wrote", at the top of the panel's column, so it is in view without scrolling (charm-nest-engrave-said.js; nothing when they wrote and chose
     // nothing). The panel already shows the reading, the font and who decided, so the old "From the order" list (Reading / Font / Decided by) stays gone. The Review tab (no panel) keeps its own "From the order" list.
-    const said = panelOn && window.CharmNestEngraveSaid ? CharmNestEngraveSaid.html(job.row) : "";
+    const said = panelOn && window.CharmNestEngraveSaid ? CharmNestEngraveSaid.html(job.row, { applied: job.applied || null }) : "";   // (FOLLOWASK: what was asked, and whether it was applied, beside the note)
     const fromOrder = panelOn ? (window.CharmNestEngraveSaid ? "" : `${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}`)   // (the file did not load: the plain rows, never nothing)
       : `${faced ? row2("Reading", faceReadingOf(job.row)) : ""}${fontMapped ? row2("Font", fontText.replace(/^Font: /, "")) : noteFont ? row2("Font", noteFont) : ""}${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
     // HDRMETA (Paul, 18 Oct 2026, of the detail head "9 OF 9 · 9 DONE | ‹ Back | Next › | 4195215444  5X8.5 · charm  [Open order ↗]  THIN STROKES": "Remove 'Thin Strokes', 'charm', '5x8.5'
@@ -13869,7 +14122,7 @@ const Engrave = window.Engrave = (() => {
       if (!r) SV_FACES.set(k, r = { face: t.face, centre: null, size: null, view: null, mask: null });
       if (!r.mask || r.view !== fv.view) { r.text = ""; stagedFaceFit(job, t.face, fv, r); }   // (its safe area first: a place given below is kept)
       r.text = t.words.join("\n"); r.fontWord = t.x.font || ""; r._seq = t.seq;
-      if (t.x.pos) { const c = viewPointOf(fv.view, t.x.pos.charm); if (c) r.centre = c; } else if (window.CharmNestEngravePanel && CharmNestEngravePanel.stagePos) r.centre = null;   // (no stagePos on the page: a drag made here keeps its place)
+      if (t.x.pos) { const c = viewPointOf(fv.view, t.x.pos.charm); if (c) r.centre = c; const q = t.x.pos; r.size = q.size || null; r.angle = q.angle || 0; r.lineGap = q.lineGap != null ? q.lineGap : null; r.lineMode = q.lineMode || null; } else if (window.CharmNestEngravePanel && CharmNestEngravePanel.stagePos) { r.centre = null; r.size = null; r.angle = 0; r.lineGap = null; r.lineMode = null; }   // (STAGEHANDLES: the staged size, turn, line gap and mode)   // (no stagePos on the page: a drag made here keeps its place)
       r.onFont = () => { const sr = SV_STAGES.get(svPk); if (sr && sr.stage) svQueue(sr); else if (!disposed && card.isConnected && card._remountWork) card._remountWork(); };
       return r;
     };
@@ -13900,13 +14153,13 @@ const Engrave = window.Engrave = (() => {
       if (fv && fv.view) {
         const r = svFaceRec(t, fv);
         const draw = () => { const sf = stagedFaceFit(job, A, fv, r); return renderBack({ key: job.key + "~" + A, view: fv.view, mask: sf.mask, fit: sf.fit, copies: job.copies, row: job.row, _viewCharm: fv.charm }, px, { grid: true, hatch: false, editable: true, steady: true, zoom: workZoomOf(job, A), label: WORK_LABEL }); };
-        const cv = draw(); cv._editable = false; cv._paint(); cv._viewFace = A; cv._staged = true; cv._svFv = fv; cv._svRec = r; cv.tabIndex = -1; cv.style.outline = "none";
-        { const base = cv._paint; cv._paint = prov => (prov ? base(prov) : cv._svRedraw()); }   // (painted again by anyone (a job's refresh, the rulers): from the record as it is NOW, never the words it was first drawn with)   // (drawn again at once with no box or handles: the staged words are moved, never sized or turned, until they are a job)
+        const cv = draw(); cv._editable = true; cv._paint(); cv._viewFace = A; cv._staged = true; cv._svFv = fv; cv._svRec = r; cv.tabIndex = -1; cv.style.outline = "none";
+        { const base = cv._paint; cv._paint = prov => (prov ? base(prov) : cv._svRedraw()); }   // (painted again by anyone (a job's refresh, the rulers): from the record as it is NOW, never the words it was first drawn with)   // (STAGEHANDLES, Paul 15 Nov 2026: "the engraving on the bar does not automatically have the blue square around it that allows me to resize and rotate": the staged words have the box and its handles at once; moved, sized and turned they are the stage's, kept for the job Approve makes)
         // (a letter typed: only the words are laid out again (reflowAt, a few ms) and painted over the face's still layers (the canvas's own _paint): the grid, the art and the cut line are not drawn again)
         cv._svRedraw = () => { { const sr = SV_STAGES.get(svPk); if (sr && sr.stage && r._seq !== sr.seq) { svQueue(sr); return; } } try { const sf = stagedFaceFit(job, A, fv, r), f = sf.fit; cv._paint(f && f.glyphs ? { glyphs: f.glyphs, centre: f.centre, angle: f.angle || 0 } : { glyphs: [] }); } catch (_) { try { const nc = draw(), g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(nc, 0, 0, cv.width, cv.height); } catch (_) { /* the drawing it had stays */ } } queueWorkRulers(backHost._ez); };
         cv.title = t.words.length ? `the ${A} of this piece with the words staged for it · drag the words to move them` : `the ${A} of this piece`;
         backHost.appendChild(cv);
-        stagedDrag(cv, job, A, fv, r, draw, centre => svPosOut(svPk, A, fv.view, centre));
+        stagedDrag(cv, job, A, fv, r, draw, (centre, extra) => svPosOut(svPk, A, fv.view, centre, extra));
         workViewOn(backHost, cv, job, A, card);
         try { charmEditButton(backHost, cv, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }
         return cv;
@@ -13916,6 +14169,34 @@ const Engrave = window.Engrave = (() => {
       if (P && P.render) P.render(box, { row: lineOf(job.row), job: t.ja || null, slot: job.slot || null, text: t.words.join("\n"), fontWord: t.x.font || "", face: A, position: null });
       return box;
     };
+    /* STAGEHANDLES (Paul, 15 Nov 2026: "I also don't see the slider underneath the work area that allows the user to separate the distance between the 2 lines"): the row under the work area follows the STAGED words:
+       enabled for staged words (Centre, Lines, the cap height, the line-spacing slider once they have two lines), and for a placed job its slider shows as soon as the draft has a second line. */
+    const svBar = (t, el) => {
+      const ctl = card.querySelector(".ctl"); if (!ctl) return;
+      const grp = ctl.querySelector(".spacingControl"), sel = ctl.querySelector('[data-a="linecount"]'), cen = ctl.querySelector('[data-a="centre"]'), cap = ctl.querySelector("[data-cap]"), sp = ctl.querySelector('[data-a="spacing"]');
+      const r = t && t.kind === "view" && t.face === faceOf(job) && el && el._svRec, f = r && r.fitNow;
+      if (r && f && f.glyphs && f.glyphs.length && !held) {
+        card._svBarOn = true;
+        if (cen) { cen.disabled = false; cen.title = "put the text in the middle of the metal it may use"; }
+        if (sel) { sel.disabled = false; sel.title = ""; sel.value = String(r.lineMode || "auto"); }
+        if (cap) { cap.textContent = capText(f); cap.title = "cap height of the lettering"; }
+        if (grp) { grp.hidden = !((f.lines || []).length > 1); if (sp && document.activeElement !== sp) { const v = Math.round(fitOpts({ lineGap: r.lineGap ?? job.lineGap }).lineGap / .18 * 100); sp.value = String(v); const o = grp.querySelector("output"); if (o) o.textContent = v + "%"; grp.style.setProperty("--spacing", v / 100); } }
+      } else if (card._svBarOn) {
+        card._svBarOn = false;
+        if (!job.fit) { if (cen) cen.disabled = true; if (sel) sel.disabled = true; if (cap) cap.textContent = "— mm"; if (grp) grp.hidden = true; }
+      } else if (t && t.kind === "job" && t.ja === job && grp && job.fit) {
+        const d = DRAFTS.get(job.key), n = d && d.fit && !d.fit.empty ? (d.fit.lines || []).length : (job.lines || []).length; grp.hidden = !(n > 1);
+      }
+    };
+    /** A change from the bar on STAGED words: the staged record (and the stage's place with it), drawn again by the panel's stage. */
+    const svStagedSet = patch => {
+      const cv = backHost.querySelector(":scope > canvas"), r = cv && cv._svRec, fv = cv && cv._svFv; if (!r || !fv || !card._svBarOn) return false;
+      Object.assign(r, patch); const sf = stagedFaceFit(job, r.face, fv, r), c = r.centre || (sf.fit && sf.fit.centre); if (!c) return false;
+      const extra = {}; if (r.size) extra.size = r.size; if (r.angle) extra.angle = r.angle; if (r.lineGap != null) extra.lineGap = r.lineGap; if (r.lineMode) extra.lineMode = r.lineMode;
+      if (!svPosOut(svPk, r.face, fv.view, c, extra)) { if (typeof cv._svRedraw === "function") cv._svRedraw(); }
+      return true;
+    };
+    card._svStagedSet = svStagedSet;
     /** The same face drawn the same way: only what changed is painted (the draft, the staged words on the charm, the preview's words), in this frame. */
     const svInPlace = (t, el) => {
       if (!t) { if (el._paint) el._paint(); draftNote(card, DRAFTS.get(job.key)); svHooks(viewFaceOf(job), svOwnWords(), svSeqNow(), viewFaceOf(job) === faceOf(job)); return; }
@@ -13927,6 +14208,7 @@ const Engrave = window.Engrave = (() => {
         else if (el._svRedraw && el._svFv && svFaceRec(t, el._svFv) === el._svRec) el._svRedraw();
         else { card._remountWork(); return; }
       }
+      try { svBar(t, el); } catch (_) { /* the row keeps what it had */ }
       svHooks(t.face, t.words, t.seq, t.kind === "held" || (t.kind === "job" && t.ja === job) || (t.kind === "view" && t.face === faceOf(job)));
     };
     /** What the work area must show now (the idle check compares): { face, words } (the target's face and words; the card's own drawing with no target: its face, any words). */
@@ -14054,7 +14336,7 @@ const Engrave = window.Engrave = (() => {
       mounted = px; mountedBelow = band; backHost.textContent = "";
       backHost.style.paddingTop = band + "px"; backHost.style.paddingBottom = NOTE + "px"; backHost.style.boxSizing = "border-box";
       pm.classList.toggle("egWide", wide);
-      if (tgt && (tgt.kind === "view" || (tgt.kind === "job" && tgt.ja !== job))) { framed = null; svDraw(tgt, px); svHooks(tgt.face, tgt.words, tgt.seq, tgt.kind === "view" && tgt.face === faceOf(job)); card._svShape = tgt.shape; return; }   // (ALWAYSBAR: its own face drawn with no placement yet: the bar is this face's)
+      if (tgt && (tgt.kind === "view" || (tgt.kind === "job" && tgt.ja !== job))) { framed = null; svDraw(tgt, px); try { svBar(tgt, backHost.querySelector(":scope > canvas")); } catch (_) {} svHooks(tgt.face, tgt.words, tgt.seq, tgt.kind === "view" && tgt.face === faceOf(job)); card._svShape = tgt.shape; return; }   // (ALWAYSBAR: its own face drawn with no placement yet: the bar is this face's)
       if (tgt && tgt.kind === "job") svDraft(job, tgt);   // (this card's own face: drawn below as ever, the staged words its draft)
       // (FACEVIEW, Paul 28 Oct 2026: the piece's other face, chosen with the Front | Back switch or shown by a save of the Charm Editor that changed it: drawn as that face, view only; the words and
       //  the Approve block stay the face's being approved)
@@ -14088,21 +14370,22 @@ const Engrave = window.Engrave = (() => {
     if(spacing) {
       const group=spacing.closest('.spacingControl');let pending=+spacing.value,frame=0,settle=0,dirty=false;
       const apply=measure=>{
-        frame=0;if(!card.isConnected || !placeEditable(job))return;
+        frame=0;if(card._svBarOn){card._svStagedSet({lineGap:.18*Math.max(0,Math.min(300,pending))/100});const o2=group.querySelector('output');if(o2)o2.textContent=pending+'%';return;}   // (STAGEHANDLES: staged words: the stage's line gap)
+        if(!card.isConnected || !placeEditable(job))return;
         if(!setLineSpacing(job,pending,measure)) {pending=Math.round(fitOpts(job).lineGap/.18*100);spacing.value=pending;}
         const out=group.querySelector('output');out.textContent=pending+'%';
         out.title=(pending-100>=0?'+':'')+(pending-100)+'% from the original gap';
         group.style.setProperty('--spacing',pending/100);
       };
       const queue=()=>{
-        pending=+spacing.value;dirty=true;job._spacingActive=true;
+        pending=+spacing.value;dirty=true;if(card._svBarOn){if(!frame)frame=requestAnimationFrame(()=>{apply(false);dirty=false;});return;}job._spacingActive=true;
         if(!frame)frame=requestAnimationFrame(()=>apply(false));
         clearTimeout(settle);settle=setTimeout(()=>{card._flushSpacing();job._spacingActive=false;refresh(job);},180);
       };
-      card._flushSpacing=()=>{if(frame)cancelAnimationFrame(frame);frame=0;clearTimeout(settle);if(dirty){apply(true);dirty=false;}job._spacingActive=false;refresh(job);};
+      card._flushSpacing=()=>{if(card._svBarOn){if(frame)cancelAnimationFrame(frame);frame=0;if(dirty){apply(false);dirty=false;}return;}if(frame)cancelAnimationFrame(frame);frame=0;clearTimeout(settle);if(dirty){apply(true);dirty=false;}job._spacingActive=false;refresh(job);};
       spacing.addEventListener('input',queue);
       spacing.addEventListener('change',()=>card._flushSpacing());
-      group.addEventListener('wheel',e=>{if(!e.deltaY)return;e.preventDefault();spacing.value=Math.max(0,Math.min(300,(frame?pending:Math.round(fitOpts(job).lineGap/.18*100))+(e.deltaY<0?1:-1)*(e.shiftKey?1:5)));queue();},{passive:false});
+      group.addEventListener('wheel',e=>{if(!e.deltaY)return;e.preventDefault();spacing.value=Math.max(0,Math.min(300,(card._svBarOn?+spacing.value:frame?pending:Math.round(fitOpts(job).lineGap/.18*100))+(e.deltaY<0?1:-1)*(e.shiftKey?1:5)));queue();},{passive:false});
       group.style.setProperty('--spacing',pending/100);
     }
     const capOut = card.querySelector("[data-cap]");
@@ -14145,7 +14428,7 @@ const Engrave = window.Engrave = (() => {
       else if (a === "ear") { const pick = items().get(b && b.dataset.ear), same = pick && pick.slot !== job.slot && faceOf(pick) !== faceOf(job) ? jobsOf(job.row).find(j => sameSlot(j, pick) && faceOf(j) === faceOf(job)) : null, other = same || pick;   // (PICROW, 29 Oct 2026: the piece chips are the one way to another piece; like the bar pictures they replace, they keep the face shown when that piece has it)
         if (other && other !== job) { goes(job, { enter: "fade", quick: true }, card); focusOn(other.key); EG.card = null; EG.cardKey = null; render(); } }
       else if (a === "piece") { const to = b && b.dataset.piece; if (to && to !== pieceKeyOfJob(job)) openPiece(ridOfJob(job), to, undefined, { card }); }   // (ENGPIECES: the header strip of an order's pieces)
-      else if (a === "centre") centreText(job);
+      else if (a === "centre") { const cv = card._svBarOn && backHost.querySelector(":scope > canvas"); if (cv && cv._svRec && cv._svRec.mask) card._svStagedSet({ centre: maskCentroid(cv._svRec.mask) }); else centreText(job); }
       else if (a === "close") {
         if (!noGuard && leaveGuard(job, () => cardAction("close", b, true))) return;   // (ENGAPPROVE's guide: pieces of this order still to approve are said before the detail is left)
         if (job.editingBack) { goes(job, { fold: true }, card); if (!["approved", "written", "skipped"].includes(job.state)) items().delete(job.key); Review.remove("eng:" + job.key); }
@@ -14217,6 +14500,7 @@ const Engrave = window.Engrave = (() => {
     }
     const lineControl=card.querySelector('[data-a="linecount"]');
     if(lineControl) lineControl.onchange=async()=>{
+      if (card._svBarOn) { card._svStagedSet({ lineMode: lineControl.value === "auto" ? null : lineControl.value }); return; }   // (STAGEHANDLES: staged words: the stage's line mode)
       if (approvalBusy() || !startEdit(job)) return;
       card._flushSpacing?.();
       job.lineMode=lineControl.value;
@@ -16681,7 +16965,12 @@ const RunCtl = window.RunCtl = (() => {
     // (QUIETLOAD, Paul 15 Nov 2026: "The whole computer was stalling. Nothing was clickable ... This thing must happen seamlessly in the background"): a run put back on a computer read its sheets one after
     //  another and every piece of every sheet in a call of its own (about 190 calls for 170 pieces), all in one stretch the page could not answer in. The sheets' records are read six at a time, the
     //  pieces of all of them in one call (poolGet takes 300), and the page is let answer between sheets. What is restored, and in what order, is unchanged
-    const slims = (ls.sheets || []).slice().sort((a, b) => startedOf(a) - startedOf(b)), recs = new Map();
+    let slims = (ls.sheets || []).slice().sort((a, b) => startedOf(a) - startedOf(b));
+    // (SHEETSLIST: "choose sheet 1 2 3 4 in whatever order they decide": the sheets of a metal the person ordered by hand (draftOrder) come in that order, first; the others keep their start-time order after them)
+    { const out = slims.slice(), seats = new Map(); slims.forEach((x, i) => { if (!seats.has(x.metal)) seats.set(x.metal, []); seats.get(x.metal).push(i); });
+      for (const at of seats.values()) { const sub = at.map(i => slims[i]); if (!sub.some(x => x.draftOrder != null && Number.isFinite(+x.draftOrder))) continue; const has = x => x.draftOrder != null && Number.isFinite(+x.draftOrder); sub.sort((a, b) => (has(a) ? 0 : 1) - (has(b) ? 0 : 1) || (has(a) ? +a.draftOrder - +b.draftOrder : 0)); at.forEach((i, k) => { out[i] = sub[k]; }); }
+      slims = out; }
+    const recs = new Map();
     for (let i = 0; i < slims.length; i += 6) await Promise.all(slims.slice(i, i + 6).map(async x => { recs.set(x.id, (await api("charmNestLibrary", { op: "getSheet", id: x.id })).sheet || null); }));
     { const mine = new Set(), want = new Set(); for (const row of Orders.rows()) for (const id of row.poolIds || []) mine.add(id);
       for (const d of recs.values()) if (d) for (const { c: rc } of placedOfRecord(d)) if (rc && rc.poolId && mine.has(rc.poolId) && !B.pool.rows.has(rc.poolId)) want.add(rc.poolId);
@@ -16699,7 +16988,7 @@ const RunCtl = window.RunCtl = (() => {
       if (["gold10k","gold14k","rose"].includes(d.metal) && d.solidIncluded === true) pg.solidPick = true;   // a 10K/14K/Rose Gold sheet's own Include tick
       pg.leftSet = Gate.leftSetOf(d); if (pg.leftSet && ["gold10k","gold14k","rose"].includes(d.metal)) pg.solidPick = false;
       if (+d.joinedAt) pg.joinedAt = +d.joinedAt; if (d.joinedBy) pg.joinedBy = d.joinedBy; if (!pg.leftSet && d.leftSet) { pg.leftSet = d.leftSet; if (["gold10k","gold14k","rose"].includes(d.metal)) pg.solidPick = false; }   // (CLOUDMARKS, Paul 14 Nov 2026: "You must put all this in the cloud"): the set marks from the sheet's cloud record   // a sheet a person took out of a committed set stays out (and can be put back by the In current set switch)
-      pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
+      pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; if (d.draftOrder != null && Number.isFinite(+d.draftOrder)) pg.draftOrder = +d.draftOrder; pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
       // a 10K/14K sheet keeps its own size after a reload (keptStock: a cut sheet an Apply size left as it was), read from
       // the size its record was nested at; one at the metal's size now takes the metal's size (as before)
@@ -16711,8 +17000,13 @@ const RunCtl = window.RunCtl = (() => {
       if((d.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(d.metal))) && d.roseStockId && window.RoseStock)await RoseStock.restore(pg,d);
       // the pieces: each placement's pool charm from the master copy, pinned at its cut position
       // (DUPID, Paul 27 Oct 2026: a placement's charm is the one the record's own poolIds names when two pieces of a sheet made before share its id; the first of them used to be put back in a spot the record gives the other)
+      // (TAKEOFFSOLID G1, Paul, 15 Nov 2026: "make sure it's absolutely rock solid"): a piece taken off on another computer leaves the record's poolIds at once (with dirty) while its place stays in the layout until a page has written it: it is not put back here, and its absence is not a missing placement; the sheet is queued to have its files written as it stands
+      const takenOffHere = d.dirty === true && Array.isArray(d.poolIds) ? new Set(d.poolIds.map(String)) : null;
+      let staleListed = 0, kept = 0;
       for (const { p, c: rc } of placedOfRecord(d)) {
         if (!rc || !rc.poolId) continue;
+        if (takenOffHere && !takenOffHere.has(String(rc.poolId))) { staleListed++; continue; }
+        kept++;
         if (!Orders.rows().some(row => row.poolIds.includes(rc.poolId))) continue;
         const pool = B.pool.rows.get(rc.poolId) || (await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
         // (TAKEOVERSAFE2, Paul 14 Nov 2026: "Yes, fix resume first"): a custom design is in no master file: it is rebuilt from its own file, the one its sheet was cut from (the sheet record's sources, as the back editor reads it); it was left out, and its sheet nested again from scratch
@@ -16734,7 +17028,7 @@ const RunCtl = window.RunCtl = (() => {
       computeSaturation(pg); renderCard(pg);
       // (OWEDFILES, Paul 9 Nov 2026: a change saved to this sheet's record whose files were not written before the page closed, a move between sheets with Manual Control still on: its record says
       //  filesOwed. A draft is nested again below anyway; any other sheet, not laser cut, is written as it stands once the page has settled, writeOwedLater)
-      if (d.filesOwed && !pg.draft && pg.placements.length === (d.placements || []).length && !(+d.laserDoneAt > 0)) owedFiles.push(pg);
+      if (((d.filesOwed && !pg.draft) || staleListed) && pg.placements.length === (staleListed ? kept : (d.placements || []).length) && !(+d.laserDoneAt > 0)) owedFiles.push(pg);
       for (const row of Orders.rows()) { if (!row.poolIds.length) continue; if (row.poolIds.every(pid => { const pool = B.pool.rows.get(pid); return pool && pool.setId && ["written", "engraved", "labelled", "committed"].includes(pool.state); })) row.state = "written"; else if (row.poolIds.some(pid => (d.poolIds || []).includes(pid))) row.state = "pooled"; }
       for (const b of pg.backPool) { const row = Orders.rows().find(x => x.poolIds.includes(b.poolId)); if (row) { const j = Engrave.jobForRecord(row, b); j.backSaving = false; j.state = "written"; j.text = b.text; j.lines = b.lines || String(b.text).split("\n"); j.approvedBy = b.approvedBy; j.approvedAt = b.approvedAt; j.backs.push(b); j.row.engrave = { needed: true, state: "written", approved: true, text: b.text, approvedBy:b.approvedBy,approvedAt:b.approvedAt,seals:CNEngravingSeals.merge(j,b) };CNEngravingSeals.keep(j); } }
       // Cloud-only recovery has file links, not the editable output bytes. A working
@@ -16745,7 +17039,7 @@ const RunCtl = window.RunCtl = (() => {
       //  which copy it was made from and the cloud refuses it if another computer saved the sheet meanwhile (it was learned only 15 s later, and never for a sheet at work by then: such a save overwrote the other computer's)
       //  A sheet that is missing pieces and is nested again below was made from that revision too: its save is refused the same way, never written over a newer copy
       if (d.layoutRev != null && Number.isFinite(+d.layoutRev)) pg.layoutRev = +d.layoutRev;
-      if (pg.placements.length !== (d.placements || []).length) {
+      if (pg.placements.length !== (d.placements || []).length - staleListed) {
         for (const c of pg.charms) if (!c.manual) c.pinned = null;   // (a piece placed by hand, Manual Control, stays where the person put it)
         sheetDirty(pg);
         for (const j of Engrave.items().values()) if (j.copies.some(id => (d.poolIds || []).includes(id))) {
@@ -27748,6 +28042,9 @@ const Recall = window.Recall = (() => {
       for (const x of ls.sheets || []) { const k = x.fileBase || x.id; const had = byName.get(k); if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) byName.set(k, x); }
       const startedOf = x => +x.cardStartedAt || +(x.createdAt && (x.createdAt._seconds || x.createdAt.seconds)) * 1000 || Date.parse(x.createdAt) || 0;
       const sheets = [...byName.values()].sort((a, b) => startedOf(a) - startedOf(b));   // (oldest first, as a run put back here lists them: PAGEORDER)
+      // (SHEETSLIST: a metal's sheets the person ordered by hand (draftOrder) keep that order here too)
+      { const seats = new Map(); sheets.forEach((x, i) => { if (!seats.has(x.metal)) seats.set(x.metal, []); seats.get(x.metal).push(i); }); const has = x => x.draftOrder != null && Number.isFinite(+x.draftOrder), copy = sheets.slice();
+        for (const at of seats.values()) { const sub = at.map(i => copy[i]); if (!sub.some(has)) continue; sub.sort((a, b) => (has(a) ? 0 : 1) - (has(b) ? 0 : 1) || (has(a) ? +a.draftOrder - +b.draftOrder : 0)); at.forEach((i, k) => { sheets[i] = sub[k]; }); } }
       const sig = runId + "|" + sheets.map(x => x.id).sort().join("|");
       if (sig === followSig && allSheets().some(p => p.followed) && !allSheets().some(p => !p.followed && (p.charms || []).length && (p.runId || null) === runId)) { liveLater(runId); return true; }
       followSig = sig;
@@ -29394,6 +29691,9 @@ function artSheetWrite(sh) {
   ART_SHEET_WRITES.set(sh, st);
   return st.run;
 }
+/** ARTEVERYWHERE: does this page carry the run this sheet belongs to? Only that page writes the sheet's files after an artwork edit. */
+function artCarries(sh) { return !!(sh && B.run && sh.runId && sh.runId === B.run.runId); }
+window.artCarries = artCarries;
 window.artSheetWrite = artSheetWrite;   // (tests wait for it)
 /* SHAREDSHAPE (Paul, 29 Oct 2026: "if a user is changing anything on the back ... that has a cut out or a rotation or anything that would affect also the front view ... it's the same charm"; the lead: a
    piece already on a sheet whose cut line changes "changes what the laser cuts and how it sits on the sheet. Don't block the person: allow it, then make the sheet/laser side consistent the safe
@@ -29432,7 +29732,8 @@ if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
   charmOf: poolId => Pool.charmOf(poolId) || null,
   placed: poolId => !!Pool.sheetOf(poolId),
   parsedOf: c => { const s = c && sourceOf(c.sourceId); return (s && s.parsed) || null; },
-  liveCharms: () => allSheets().flatMap(sh => sh.charms || []),
+  // (ARTEVERYWHERE: a piece not nested yet is updated on every computer too: the preview charms of the orders this page has rows for are looked at as well)
+  liveCharms: () => { const out = allSheets().flatMap(sh => sh.charms || []); try { if (window.Pool && Pool.previewAll) { const seen = new Set(out.map(c => c && c.poolId)); for (const [id, c] of Pool.previewEntries()) if (!seen.has(id) && c) { seen.add(id); out.push(c.poolId === id ? c : Object.assign({}, c, { poolId: id })); } } } catch (_) { /* the sheets' pieces still sync */ } return out; },
   flag: (poolId, face, at) => { const r = B.pool.rows.get(poolId); if (r) r.artEdit = Object.assign({}, r.artEdit && typeof r.artEdit === "object" ? r.artEdit : {}, { [face]: at || null }); Session.schedule(); },
   swap: (poolId, next, prev, rec, face) => {
     const AE = window.CharmNestArtEdit; let n = 0;
@@ -29459,6 +29760,8 @@ if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
     const sh = Pool.sheetOf(poolId), rec = info && info.record;
     agent({ pool: true, ...(sh ? { metal: sh.metal } : {}) }, "info", `${poolId}: its own ${face} artwork ${rec ? `edited${rec.by ? " by " + rec.by : ""}` : "taken back to the master drawing"}${info && info.sync ? " (on another computer)" : ""}${n ? `; its ${face} engraving is fitted again and waits for Approve` : ""}${sh && sh.outputs ? `; ${sh.fileBase || "its sheet"} writes its files again` : ""}`);
     if (!sh || sh.roseCutAt || sh.laserDoneAt) return;
+    // (ARTEVERYWHERE, Paul 15 Nov 2026: "all the changes and updates automatically reflect across all the sheets": only the page that carries the run writes a sheet's files; any other page only redraws its own copy of the sheet (the piece is swapped, its thumbnail and approval handled above), so several computers never write the same sheet at once. The carrier writes when the edit arrives by sync too)
+    if (!artCarries(sh)) { try { renderCard(sh); } catch (_) { /* its card says it with the next paint */ } return; }
     sh.dirty = true;
     // (SHAREDSHAPE, Paul 29 Oct 2026: its cut line changed: checked again where the piece stands before the sheet is written; a shape that does not fit holds the sheet's files and its set)
     if (info && (info.cut || (rec && rec.cut))) {

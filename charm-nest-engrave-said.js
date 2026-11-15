@@ -72,7 +72,9 @@
   const IMG_EXT = /\.(?:jpe?g|png|webp|gif)$/i;
   const urlParts = u => { const m = /^(https?:\/\/)([^\/?#]+)([^?#]*)/i.exec(u); return m ? { host: m[2].toLowerCase().replace(/:\d+$/, ''), path: m[3] } : null; };
   const unEsc = u => u.replace(/&amp;/g, '&');
-  const isImageUrl = u => { const p = urlParts(unEsc(u)); return !!p && (p.host === 'i.etsystatic.com' || IMG_EXT.test(p.path)); };
+  // (a picture from another site cannot be drawn in this page: Cross-Origin-Embedder-Policy. An Etsy picture is shown through the site's own imageProxy, as every other Etsy picture in the app; any other picture link stays a link)
+  const isImageUrl = u => { const p = urlParts(unEsc(u)); return !!p && /(^|\.)etsystatic\.com$/i.test(p.host); };
+  const proxied = u => '/.netlify/functions/imageProxy?url=' + encodeURIComponent(unEsc(u));
   // the links of an ESCAPED text: [{ at, len, u (still escaped), tail }] (a trailing . , ; ) is not part of the link; an entity's own ";" stays)
   function scan(e) {
     const out = []; let m; const re = new RegExp(URL_RE.source, 'gi');
@@ -91,7 +93,7 @@
     for (const { at: i, len, u, tail } of scan(e)) {
       out += e.slice(at, i);
       const a = `target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"`;
-      if (isImageUrl(u)) out += `<a class="owThumb" href="${u}" ${a}><img src="${u}" loading="lazy" referrerpolicy="no-referrer" alt=""></a> `;
+      if (isImageUrl(u)) out += `<a class="owThumb" href="${u}" ${a}><img src="${esc(proxied(u))}" loading="lazy" alt=""></a> `;
       out += `<a class="owLink" href="${u}" ${a}>${u}</a>${tail}`; at = i + len;
     }
     return out + e.slice(at);

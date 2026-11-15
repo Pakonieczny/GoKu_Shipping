@@ -111,6 +111,29 @@
   }
 
   /** The change feed named sheets: each one this page shows is read again (a saved record refreshed; a live sheet rebuilt when it is not at work and newer). */
+  /* (TAKEOFFSOLID G1, Paul, 15 Nov 2026: "make sure it's absolutely rock solid ... between the cloud and all the computers"): a take-off writes the piece's row and the sheet's piece list first (poolUpdate: the record is flagged dirty and no longer lists the piece)
+     and the pressing page rewrites the sheet (layout, files) after. If that page closed or failed between the two, the record keeps the piece in its layout and files and nothing wrote it again. The computer that CARRIES
+     the run (B.run is its own; a follower never does this) completes such a sheet of its run: when the record is dirty, lists fewer pieces than its layout holds, and has been left alone for st.grace ms (no other computer's
+     working mark newer than two minutes), it reads the sheet again (the pieces no longer listed are not put back: Recall.rebuild) and writes it as it stands (SheetWin.hopKit.writeOwed), once, with a log line. */
+  const DONE = new Set(), LATER = new Set(); st.grace = 90000;
+  async function completeTakeOff(p, rec) {
+    const run = safe(() => root.B && root.B.run, null); if (!run || !run.runId || p.runId !== run.runId) return false;
+    if (rec.dirty !== true || !Array.isArray(rec.poolIds) || rec.archived || +rec.laserDoneAt > 0 || +rec.roseCutAt > 0) return false;
+    const listed = new Set(rec.poolIds.map(String)), stale = (rec.charms || []).filter(c => c && c.poolId && !listed.has(String(c.poolId)));
+    if (!stale.length) return false;
+    const key = rec.id + ":" + (+rec.layoutRev || 0) + ":" + rec.poolIds.length; if (DONE.has(key)) return false;
+    const w = rec.working, now = Date.now(), quiet = Math.max(st.grace - (now - (+rec.updatedAt || 0)), w && w.dev && w.dev !== devId() ? 120000 - (now - (+w.at || 0)) : 0);
+    if (quiet > 0) { if (!LATER.has(rec.id)) { LATER.add(rec.id); setTimeout(() => { LATER.delete(rec.id); changed(["s:" + rec.id]); }, quiet + 1000); } return true; }
+    DONE.add(key);
+    try {
+      say("cloud", `${rec.fileBase || rec.id}: a take-off of ${stale.length} piece${stale.length === 1 ? "" : "s"} was not finished on the computer that made it; this computer (it carries the run) writes the sheet as it now stands`);
+      await reload(p, "a take-off made on another computer was not finished");
+      const K = root.SheetWin && root.SheetWin.hopKit;
+      if (K && typeof K.writeOwed === "function") await K.writeOwed([p]);
+      st.completed = (st.completed || 0) + 1;
+    } catch (e) { DONE.delete(key); console.warn("[cloud-sheets] complete take-off", rec.id, e); }
+    return true;
+  }
   const PENDING = new Set(); let pendT = 0;
   async function changed(keys) {
     for (const k of keys || []) {
@@ -120,6 +143,7 @@
       let rec = null; try { rec = await getRec(id); } catch (_) { PENDING.add(id); continue; }
       if (!rec) continue;
       if (p.recalled) { p.recalled = rec; st.refreshed++; safe(() => root.CN.renderCard(p)); continue; }
+      if (await completeTakeOff(p, rec)) continue;
       const mine = revOf(p);
       if (mine === null) { st.skipped++; continue; }   // (a sheet whose copy here was not the cloud's is never refreshed by itself)
       // (only a newer revision, saved by another computer, rebuilds a sheet held here: a sheet this page is changing itself is never rebuilt under it)
@@ -148,6 +172,6 @@
     };
     go();
   }
-  root.CharmNestCloudSheets = { state: () => Object.assign({}, st, { differs: st.differs.slice() }), reload, ensureLive, learn, revOf, conflict, announce, lockOf, marks, _changed: changed };
+  root.CharmNestCloudSheets = { state: () => Object.assign({}, st, { differs: st.differs.slice() }), reload, ensureLive, learn, revOf, conflict, announce, lockOf, marks, setGrace: ms => { st.grace = +ms || 0; }, _changed: changed };
   if (root.document) { if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", boot); else boot(); }
 })(typeof self !== "undefined" ? self : this);

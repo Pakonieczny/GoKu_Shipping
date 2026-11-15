@@ -3435,7 +3435,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       paint(); endFlow(work);
       // (REFILL, Paul 11 Nov 2026: "when a user removes a given piece from a sheet ... another piece is found to take its place on that particular sheet and taken from a newer In process sheet
       //  to fill the empty gap"): the room freed on a draft sheet still filling is filled at once, as Hold did (holdKit.fill): the orders waiting for a sheet first, oldest first, then an order
-      //  moved, verified, from a newer filling sheet of the same metal. A sheet of a released set is never changed here.
+      //  moved, verified, from a newer filling sheet of the same metal. (TAKEOFFSOLID G5, Paul, 15 Nov 2026: this said a sheet of a released set is never changed here, but a SINGLE piece taken off fills even a sheet in a formed set, as he asked on 13 Nov, "released sheets too"; only a WHOLE order taken off a sheet of a formed set leaves that sheet as it is (the condition below). The comment is what changed, not the behaviour.)
       if (!opt.noFill) for (const sh of pages) {
         // (FILLSAID, Paul 15 Nov 2026: "the system should automatically try to fill the empty space with another piece from the available draft sheets of the same colour"): the fill was tried in silence: what it did, or why the spot stays empty, is now SAID
         const say = (text, tone) => { try { (window.CN && typeof CN.toast === "function" ? CN.toast : typeof toast === "function" ? toast : () => {})(text, tone || "", 9000); } catch (_) {} try { window.CN && CN.agent && CN.agent({ metal: sh.metal }, tone === "bad" ? "warn" : "info", text); } catch (_) {} };
@@ -7467,6 +7467,29 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
    *  sheet (a line comes off whole), on hold; an order is cancelled whole, never in part. A piece on a cut sheet, a set
    *  sent to the station, or a sheet this sorter does not hold stays, and is named with the reason.
    *  Resolves { ok, error?, mode, scope, removed: [{ id, sku, where }], stayed: [{ id, sku, where, why }] }. */
+  /* (TAKEOFFSOLID G2, Paul, 15 Nov 2026: "make sure it's absolutely rock solid ... between the cloud and all the computers"): pieces another computer took off (the run's lines say so: CharmNestRunFollow.applyOthers) leave the sheets
+     THIS computer carries, in memory: charms, places, rejects, backs; the rest stay where they are (Orders.keepRest). Nothing is marked dirty and nothing is written: the computer that took them off writes the sheet
+     and this copy then matches it. A sheet at work (nesting, saving, a take-off running here) or cut is left to the conflict reload (TAKENRELOAD). Returns { dropped, left: [sheetIds left to the reload] }. */
+  function dropTakenOff(idList) {
+    const ids = new Set((idList || []).map(String)), out = { dropped: 0, left: [] };
+    if (!ids.size) return out;
+    for (const sh of allSheets()) {
+      if (!sh || !Array.isArray(sh.charms) || sh.followed || !sh.charms.some(c => ids.has(String(c.poolId)))) continue;
+      if (+sh.laserDoneAt > 0 || +sh.roseCutAt > 0) continue;
+      if (busy(sh) || W.flow || sh.dirty || sh.saveOwed || sh._rebuilding) { out.left.push(sh.sheetId); continue; }
+      const gone = sh.charms.filter(c => ids.has(String(c.poolId)));
+      sh.charms = sh.charms.filter(c => !ids.has(String(c.poolId)));
+      sh.placements = (sh.placements || []).filter(p => sh.charms.some(c => c.id === p.id));
+      sh.rejects = (sh.rejects || []).filter(id => sh.charms.some(c => c.id === id));
+      if (Array.isArray(sh.feedWait)) sh.feedWait = sh.feedWait.filter(id => sh.charms.some(c => c.id === id || c.poolId === id));
+      if (sh.backPool) sh.backPool = sh.backPool.filter(b => !ids.has(String(b.poolId)));
+      try { Orders.keepRest(sh); } catch (_) {}
+      try { computeSaturation(sh); renderCard(sh); } catch (_) {}
+      out.dropped += gone.length;
+      try { agent({ metal: sh.metal, run: sh.runId }, "POOL", `${gone.length} piece${gone.length === 1 ? "" : "s"} taken off ${sheetName(sh)} on another computer; the rest stay where they are`); } catch (_) {}
+    }
+    return out;
+  }
   async function takeOffOrder(o) {
     o = o || {};
     const rid = String(o.orderId || ""), sheetId = String(o.sheetId || ""), mode = o.mode === "cancel" ? "cancel" : "hold", scope = o.scope === "sheet" ? "sheet" : "order";
@@ -7514,7 +7537,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // green line decides), not cut, recalled or sent
     const fillable = sh => !!sh && allSheets().includes(sh) && !!sh.sheetId && sh.placements.length > 0 && sh.metal !== "rose" && !sh.rosePlan && !sh.roseProtected && !sh.roseCutAt && !sh.recalled && !sh.laserDoneAt && !sentToStation(sh) && !!SV() && !!SV().makeSheetGrid;
     // "a newer sheet": a later page of the same metal (its orders are the later ones, and it is the one still filling)
-    const newer = (src, target) => src.metal === target.metal && (+src.page || 0) > (+target.page || 0);
+    const newer = (src, target) => src.metal === target.metal && (src.draftOrder != null && Number.isFinite(+src.draftOrder) ? +src.draftOrder : +src.page || 0) > (target.draftOrder != null && Number.isFinite(+target.draftOrder) ? +target.draftOrder : +target.page || 0);   // (SHEETSLIST: the order the person chose)
     // the orders that can fill a spot, in line: the ones waiting (nothing of them placed) first, oldest first, then an order from a
     // newer sheet still filling (movableFrom keeps cut, recalled, sent, released and held-in-a-set sheets out), oldest first
     function candidates(target, skip, avoid, only) {
@@ -7605,7 +7628,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   // (LOCAL: and the sheets opened last on this computer, with their designs, are read into memory: the next of them opened is drawn with no wait for the disk)
   try { (window.requestIdleCallback || (f => setTimeout(f, 1500)))(() => { try { build(); } catch (_) {} try { if (window.OrderPieces && OrderPieces.of && (S.library.rows || []).length) OrderPieces.of("0"); } catch (_) {}
     try { const St = window.CharmNestStore; if (St && St.warm && window.Pool && Pool.warmKept) St.ready().then(() => St.warm("sheetFull", 8)).then(recs => { for (const r of recs) for (const s0 of r.sources || []) if (s0 && s0.pool && s0.path && s0.hash) Pool.warmKept(s0.path, s0.hash); }).catch(() => {}); } catch (_) {} }, { timeout: 5000 }); } catch (_) {}
-  window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, pieceBase, _W: W };
+  window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, dropTakenOff, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, pieceBase, _W: W };
   /* ── the sheet hop (charm-nest-sheet-hop.js; Paul, 18 Oct 2026: on 10K and 14K sheets a person drags a charm onto the next or previous sheet
      of its metal): this window's own pieces for it, nothing new. The move itself is moveIn (o.hop: pinned where it was put, the hop's own
      guards), the room is the window's collision grid (plateGrid / variantOf: real outlines and the run's clearance). W.hop, set while a charm

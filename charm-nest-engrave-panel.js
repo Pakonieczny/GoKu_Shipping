@@ -94,8 +94,10 @@
   }
 
   const posOk = p => !!p && Array.isArray(p.charm) && p.charm.length >= 2 && p.charm.every(Number.isFinite);
-  const posOf = p => (posOk(p) ? { charm: [p.charm[0], p.charm[1]], ...(Array.isArray(p.centre) && p.centre.length >= 2 ? { centre: [p.centre[0], p.centre[1]] } : {}) } : null);
-  const samePos = (a, b) => (!posOk(a) && !posOk(b)) || (posOk(a) && posOk(b) && Math.abs(a.charm[0] - b.charm[0]) < 1e-6 && Math.abs(a.charm[1] - b.charm[1]) < 1e-6);
+  // STAGEHANDLES (Paul, 15 Nov 2026: "the engraving on the bar does not automatically have the blue square ... and I also don't see the slider"): a staged place also carries what the box and the bar changed: size, angle, lineGap, lineMode (all optional)
+  const posOf = p => (posOk(p) ? { charm: [p.charm[0], p.charm[1]], ...(Array.isArray(p.centre) && p.centre.length >= 2 ? { centre: [p.centre[0], p.centre[1]] } : {}), ...(Number.isFinite(p.size) && p.size > 0 ? { size: p.size } : {}), ...(Number.isFinite(p.angle) ? { angle: p.angle } : {}), ...(Number.isFinite(p.lineGap) ? { lineGap: p.lineGap } : {}), ...(p.lineMode != null && p.lineMode !== '' ? { lineMode: String(p.lineMode) } : {}) } : null);
+  const sameNum = (x, y) => (x == null && y == null) || (x != null && y != null && Math.abs(x - y) < 1e-6);
+  const samePos = (a, b) => (!posOk(a) && !posOk(b)) || (posOk(a) && posOk(b) && Math.abs(a.charm[0] - b.charm[0]) < 1e-6 && Math.abs(a.charm[1] - b.charm[1]) < 1e-6 && sameNum(a.size, b.size) && sameNum(a.angle, b.angle) && sameNum(a.lineGap, b.lineGap) && (a.lineMode || '') === (b.lineMode || ''));
   const cloneFaces = faces => { const o = {}; for (const f of FACES) { const x = (faces && faces[f]) || {}; o[f] = { text: str(x.text), font: str(x.font), pos: posOf(x.pos) }; } return o; };
   /** The stage of a draft as Engrave.showStage takes it: { key, choice, active, faces: { front: { text, font, pos }, back } } (+ mode and plain, for a card that still reads the old shape). */
   function stageFrom(d, line) {

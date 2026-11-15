@@ -79,7 +79,7 @@
     try {
       const res = await api({ op: "runGet", runId: run.runId }); const cr = res && (res.run || res); if (!cr || !cr.lines) return st;
       if (!cr.lineEditAt || (st.appliedAt && +cr.lineEditAt <= +st.appliedAt)) return st;
-      const O = root.Orders, B = root.B, me = dev(); let n = 0;
+      const O = root.Orders, B = root.B, me = dev(), takenOff = []; let n = 0;
       for (const row of O.rows()) {
         const l = cr.lines[row.key], lp = l && l._lp; if (!lp || lp.dev === me) continue;
         if (row._lp && +row._lp.at >= +lp.at) continue;
@@ -90,7 +90,10 @@
         for (const id of gone) safe(() => B.pool.rows.delete(id));
         if (gone.length) safe(() => { for (const j of root.Engrave.jobsOf(row)) { j.copies = (j.copies || []).filter(id => !gone.includes(id)); if (!j.copies.length) { root.Engrave.items().delete(j.key); if (root.Review) root.Review.remove("eng:" + j.key); } } });
         row._lp = lp; n++;
+        if (gone.length) takenOff.push(...gone);
       }
+      // (TAKEOFFSOLID G2, Paul, 15 Nov 2026): the pieces that left a line leave this computer's sheets too (in memory, nothing marked dirty: the computer that took them off writes the sheet)
+      if (takenOff.length) safe(() => root.SheetWin && root.SheetWin.dropTakenOff && root.SheetWin.dropTakenOff(takenOff));
       // (CLOUDALL S3, Paul 13 Nov 2026: "New orders. They join the run only on that computer" -> any computer that reads new orders writes them into the cloud run): the order lines another computer ADDED to the cloud run come into this page's run and go on as its own new orders (placed at the run's next intake)
       let added = 0; const newRids = new Set();
       for (const [k, l] of Object.entries(cr.lines)) { const lp = l && l._lp; if (!lp || !lp.added || lp.dev === me || B.orders.byKey.has(k)) continue; const row = safe(() => O.rowFromRecord(k, l), null); if (!row) continue; row._lp = lp; B.orders.rows.push(row); B.orders.byKey.set(k, row); added++; newRids.add(String(l.orderId || k.split("_")[0])); }

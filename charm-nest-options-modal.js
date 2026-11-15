@@ -451,6 +451,8 @@
       M.inc = box.querySelector('.osInclude'); const slot = M.dlg.querySelector('.osIncSlot');   // (the In current set switch rides in the title row, top right: the same element, so its handler and hooks are the Gate's own)
       if (M.inc && slot) slot.appendChild(M.inc); else if (slot) slot.remove();
       const sheetCard = box.querySelector('[data-card="sheet"]') || box; sheetCard.appendChild(M.source);
+      // (SHEETSLIST, Paul 15 Nov 2026: "control in this screen" the order, the consolidating and the deleting of sheets): the Sheets card, above the Sheet source, for 10K and 14K
+      try { const sc = root.OptionsSheets && OptionsSheets.mount(M); if (sc) { if (sheetCard === box) box.prepend(sc); else box.insertBefore(sc, sheetCard); } } catch (e) { warn('sheets card', e); }
       ALL.q = ''; ALL.metal = M.m; ALL.status = 'available'; ALL.shown = PAGE; ALL.enlarged = null;   // (the view it opens on: this sheet's metal, the available ones)
       wire(M); watchToasts(M);
       CUR = M;
@@ -459,6 +461,7 @@
       try { M.dlg.focus({ preventScroll: true }); } catch (_) {}   // (it rests on the window itself: arrows or Tab go on from here)
       stagger(M);
       if (ALL.items) { try { PUI() && PUI().items && PUI().items(M.m, ALL.items); } catch (_) {} }
+      try { root.OptionsSheets && OptionsSheets.paint(M, true); } catch (_) {}
       paintAll(M, { force: true });
       loadAll(M);   // (ONE list for this opening: a revision probe when it was read lately)
       try { const P = PS(); if (P && typeof P.loadPolicy === 'function') Promise.resolve(P.loadPolicy()).then(() => { if (!M.done) PUI() && PUI().paintPolicy && PUI().paintPolicy(M.m); }, () => {}); } catch (_) {}   // (the rule: read once per page)
@@ -483,6 +486,7 @@
     try { PUI() && PUI().unbind(M.m); PUI() && PUI().close(M.m); } catch (_) {}
     // the controls go back where the Gate drew them, hidden, exactly as they were (the Gate keeps repainting them there)
     try { M.source.remove(); } catch (_) {}
+    try { root.OptionsSheets && OptionsSheets.destroy(M); } catch (_) {}
     try { if (M.inc) M.box.prepend(M.inc); } catch (_) {}   // (the switch goes back into the box first: the Gate keeps repainting it there)
     try { M.box.hidden = true; if (M.home) M.home.appendChild(M.box); } catch (_) {}
     try { const R = root.Gate && root.Gate.state && root.Gate.state(); if (R) (R.optionsOpen || (R.optionsOpen = {}))[M.m] = false; } catch (_) {}
@@ -499,6 +503,7 @@
   function sync(sh, node, title) {
     const M = CUR; if (!M || M.done || M.node !== node) return;
     M.sh = sh;
+    try { root.OptionsSheets && OptionsSheets.paint(M); } catch (_) {}
     if (title && title !== M.title) { M.title = title; if (M.titleEl) M.titleEl.textContent = title; }
     paintAll(M);
   }

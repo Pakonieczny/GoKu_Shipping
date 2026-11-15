@@ -170,7 +170,7 @@
   }
   /** The previous and next sheet of the same metal and run, by page (only sheets with something on them, saved). */
   function neighbours(pg) {
-    const list = pages().filter(p => p.metal === pg.metal && p.sheetId && (p.runId || null) === (pg.runId || null) && (p.placements || []).length).sort((a, b) => (+a.page || 0) - (+b.page || 0));
+    const list = pages().filter(p => p.metal === pg.metal && p.sheetId && (p.runId || null) === (pg.runId || null) && (p.placements || []).length).sort((a, b) => (a.draftOrder != null && Number.isFinite(+a.draftOrder) ? +a.draftOrder : +a.page || 0) - (b.draftOrder != null && Number.isFinite(+b.draftOrder) ? +b.draftOrder : +b.page || 0));   // (SHEETSLIST: the order the person chose)
     const i = list.indexOf(pg);
     return { prev: i > 0 ? list[i - 1] : null, next: i >= 0 && i < list.length - 1 ? list[i + 1] : null };
   }

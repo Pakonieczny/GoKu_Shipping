@@ -305,7 +305,8 @@
       } });
   }
   let artT = 0;
-  const artSoon = () => { if (artT) return; artT = setTimeout(() => { artT = 0; safe(() => { const A = root.CharmNestArtEdit; if (A && typeof A.sync === "function") Promise.resolve(A.sync()).then(() => { safe(() => E().render()); safe(() => O().render()); }).catch(() => {}); }); }, 1200); };
+  // (ARTEVERYWHERE, Paul 15 Nov 2026: "all the changes and updates automatically reflect across all the sheets and all the thumbnails": the placement feed can bring a piece's new artEdit stamp after the 1.2 s look; a look that found nothing to change is made once more 5 s later, and no more (a feed event starts a new pair, there is no polling)
+  const artSoon = (again) => { if (artT) return; artT = setTimeout(() => { artT = 0; safe(() => { const A = root.CharmNestArtEdit; if (A && typeof A.sync === "function") Promise.resolve(A.sync()).then(n => { safe(() => E().render()); safe(() => O().render()); if (!n && !again) artSoon(true); }).catch(() => {}); }); }, again ? 5000 : 1200); };
   function boot() {
     let tries = 0;
     const go = () => {

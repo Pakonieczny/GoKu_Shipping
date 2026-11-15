@@ -34,6 +34,9 @@
  *                                    refusal: a second button that saves the work as it is
  *     opts.base                      { front?, back? } FaceDocs the changes are measured from (default: opts.faces): a save refused after the workspace closed is opened again with the
  *                                    work as faces and what it was opened on as base, so the changes are still changes;  opts.notice  { title?, text?, lines } said as the workspace opens
+ *     opts.autosave                  { save(faces|null) -> Promise<at ms>, drop() }  (CEAUTOSAVE, Paul 15 Nov 2026): the open work is handed to save(faces) ~4 s after the last change, one at a time, and when
+ *                                    the page is hidden or closed; null = nothing differs from what was opened. A failure is retried and said quietly in the header. drop() is called when the
+ *                                    workspace closes without a save (Cancel, Discard). opts.offer { faces, title, text, yes?, no?, answer(yes) }: asked once as the workspace opens; yes puts faces in
  *
  *   FaceDoc  { face:'front'|'back', unitPt:true, frame:{ x0, y0, wPt, hPt }, items:[Item], toCharm? }      points, y down; the frame is the charm's bounding view (shown in mm)
  *            toCharm [a,b,c,d,e,f]: this face's points -> the charm's own points (SHAREDSHAPE, Paul 29 Oct 2026: "it's like the same coin with two different sides"). When BOTH faces
@@ -1307,6 +1310,8 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
 .ce-hist__b:not(:disabled):hover{ background:var(--ai-hover); }
 .ce-hist__b:disabled{ color:var(--ai-text-disabled); cursor:default; }
 .ce-actions{ display:flex; gap:6px; flex:none; align-items:center; margin-left:4px; }
+.ce-draft{ flex:none; font-size:11px; opacity:.7; white-space:nowrap; margin-left:auto; padding-right:6px; }
+.ce-draft:empty{ display:none; }
 .ce-btn{ display:inline-flex; align-items:center; justify-content:center; gap:8px; border:1px solid var(--ink); background:var(--ink); color:#fff; cursor:pointer; font-weight:700; font-size:11.5px; text-transform:uppercase !important; letter-spacing:.26em !important; padding:11px 24px; transition:background var(--in), border-color var(--in), color var(--in), transform var(--press-t); }
 .ce-btn:active{ transform:translateY(1px); }
 .ce-btn--ghost{ background:transparent; border-color:transparent; color:var(--muted); padding:11px 12px; }
@@ -1928,6 +1933,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
       <button class="ce-hist__b" type="button" data-act="undo" data-tip="undo" aria-label="Undo" title="Undo (${esc(keyText('Mod+Z'))})" disabled>${IC.undo}</button>
       <button class="ce-hist__b" type="button" data-act="redo" data-tip="redo" aria-label="Redo" title="Redo (${esc(keyText('Mod+Shift+Z'))})" disabled>${IC.redo}</button>
     </div>
+    <span class="ce-draft" data-draft role="status" aria-live="polite"></span>
     <div class="ce-actions">
       <button class="ce-btn ce-btn--ghost" type="button" data-act="cancel" title="Close without saving (Esc)">Cancel</button>
       <button class="ce-btn ce-btn--gold" type="button" data-act="save" title="Save (${esc(keyText('Mod+S'))})">Save</button>
@@ -3983,7 +3989,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
         win.appendChild(box);
         S.ask = { done: v => { if (!S.ask) return; S.ask = null; box.remove(); try { win.focus({ preventScroll: true }); } catch (e) { /* fine */ } res(v); } };
         box.addEventListener('click', ev => { const b = ev.target.closest('[data-ask]'); if (b) S.ask.done(b.dataset.ask === 'alt' ? 'alt' : b.dataset.ask === 'yes'); else if (ev.target === box) S.ask.done(false); });
-        requestAnimationFrame(() => { const nb = box.querySelector('[data-ask="no"]'); if (nb) nb.focus(); });
+        requestAnimationFrame(() => { const nb = box.querySelector(o.focus === 'yes' ? '[data-ask="yes"]' : '[data-ask="no"]'); if (nb) nb.focus(); });
       });
     }
     async function requestClose() {
@@ -4074,6 +4080,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
     let finished = false;
     function finish(v) {
       if (finished) return; finished = true;
+      autoStop(v);
       root.removeEventListener('keydown', onKey, true); root.removeEventListener('keyup', onKeyUp, true); root.removeEventListener('resize', onResize); root.removeEventListener('blur', onBlur);
       root.removeEventListener('keydown', viewKey, true); root.removeEventListener('keyup', viewKeyUp, true);
       doc.removeEventListener('fullscreenchange', onFullscreen);
@@ -4608,6 +4615,57 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
       if (p && !(root.innerWidth && root.innerWidth <= 900)) xPanel(p.id);
     }
     Promise.resolve().then(() => { for (const fn of X.onOpen) { if (finished) break; try { fn(ectx); } catch (er) { xErr('onOpen', er); } } });
+    /* CEAUTOSAVE (Paul, 15 Nov 2026: "ensure that everything in the charm editor gets saved onto the cloud as well ... including when I add images and make any and all sorts of changes"): while the
+       workspace is open, the work is handed to opts.autosave.save() about 4 s after the last change (one save at a time, again at once when the page is hidden or closed); the header says so, quietly.
+       The trees are never changed in place, so "a change" is a face's items being another array. opts.offer: a draft found for this piece, asked once as the workspace opens. */
+    const AUTO = opts.autosave && typeof opts.autosave.save === 'function' ? opts.autosave : null;
+    let autoTimer = 0, autoBusy = false, autoDue = false, autoAt = 0, autoSeen = null, autoQuiet = false;
+    const autoSig = () => Object.keys(S.faces).sort().map(f => S.faces[f].items);
+    const autoSay = t => { const el = $('[data-draft]'); if (el && !finished) el.textContent = t; };
+    const autoClock = at => { const d = new Date(at || Date.now()); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+    async function autoSave() {
+      autoBusy = true; autoSay('Saving draft…');
+      try {
+        if (S.editing) closeEditor(true);
+        const r = dirty() ? result() : null, at = await AUTO.save(r ? r.faces : null);
+        autoSay(r ? 'Draft saved to the cloud ' + autoClock(at) : '');
+      } catch (e) {
+        if (e && e.final) autoSay(String(e.say || 'Draft too large to keep in the cloud'));
+        else { autoDue = true; autoAt = Date.now() + 6000; autoSay('Draft not saved (offline): retrying'); }
+      } finally { autoBusy = false; }
+    }
+    function autoTick(force) {
+      if (!AUTO || finished || autoQuiet) return;
+      const sig = autoSig();
+      if (!autoSeen) autoSeen = sig;
+      else if (sig.length !== autoSeen.length || sig.some((x, i) => x !== autoSeen[i])) { autoSeen = sig; autoAt = Date.now(); autoDue = true; }
+      if (!autoDue || autoBusy || S.g && S.g.live) return;
+      if (!force && Date.now() - autoAt < 4000) return;
+      autoDue = false; autoSave();
+    }
+    const autoHide = () => { if (doc.visibilityState === 'hidden') autoTick(true); }, autoPageHide = () => autoTick(true);
+    function autoStop(v) {
+      if (!AUTO) return;
+      clearInterval(autoTimer); autoTimer = 0; autoQuiet = true;
+      try { doc.removeEventListener('visibilitychange', autoHide); root.removeEventListener('pagehide', autoPageHide); } catch (e) { /* fine */ }
+      if (v === null) { try { Promise.resolve(AUTO.drop && AUTO.drop()).catch(() => { /* the draft stays: the next open offers it */ }); } catch (e) { /* fine */ } }
+    }
+    if (AUTO) {
+      autoSeen = autoSig(); autoTimer = setInterval(() => autoTick(false), 1000);
+      doc.addEventListener('visibilitychange', autoHide); root.addEventListener('pagehide', autoPageHide);
+    }
+    if (opts.offer && opts.offer.faces && typeof opts.offer.faces === 'object') root.requestAnimationFrame(async () => {
+      if (finished) return; const o = opts.offer;
+      const yes = await ask({ title: o.title || 'Unsaved work', text: o.text || '', yes: o.yes || 'Restore', no: o.no || 'Discard', focus: 'yes' });
+      if (finished) return;
+      if (yes === true) {
+        pushUndo();
+        for (const f of Object.keys(o.faces)) { const fd = o.faces[f]; if (S.faces[f] && fd && Array.isArray(fd.items)) S.faces[f].items = prepIn(fd.items, lockRoles); }
+        shareShape(S.face); for (const F of Object.values(S.faces)) F._cuts = cutLeaves(F.items, geo);
+        S.sel = []; ixFor = null; refresh();
+      }
+      try { if (typeof o.answer === 'function') o.answer(yes === true); } catch (e) { /* the caller's own */ }
+    });
     // (EDITSAVE: a save the cloud refused after the workspace had closed opens it again with the work, and says why at once: opts.notice, as refuse says it)
     if (opts.notice && Array.isArray(opts.notice.lines) && opts.notice.lines.length) root.requestAnimationFrame(() => { if (!finished && !S.ask) refuse(opts.notice); });
 
