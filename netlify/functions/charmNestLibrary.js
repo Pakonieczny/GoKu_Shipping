@@ -3467,7 +3467,7 @@ const RUN_DOC_BYTES = 1048576, RUN_DOC_ENTRIES = 40000, runSizeWarned = new Set(
 /* COST (Oct 2026): what laserStatus takes from a run record (productionReadiness, runsOfOrders): its lines (in its live parts, named by their content, or
    in the record itself for an older one), whether it has a line archive, and the orders it lists. A runPut that changes none of these touches nothing the
    Library reads, and the Library's revision is not moved for it (it was, for every save of a nesting run). */
-const runLibrarySig = d => JSON.stringify(d ? [d.liveLines && Array.isArray(d.liveLines.ids) ? d.liveLines.ids : null, d.lines && typeof d.lines === "object" ? d.lines : null, d.lineArchive || null, Array.isArray(d.orders) ? d.orders.map(String) : null] : null);
+const runLibrarySig = d => JSON.stringify(d ? [d.liveLines && Array.isArray(d.liveLines.ids) ? d.liveLines.ids : null, d.lines && typeof d.lines === "object" ? d.lines : null, d.lineArchive || null, Array.isArray(d.orders) ? d.orders.map(String) : null, d.intakeRecovery && Array.isArray(d.intakeRecovery.retire) ? d.intakeRecovery.retire.map(String).sort() : null, d.sheets && typeof d.sheets === "object" && !Array.isArray(d.sheets) ? Object.keys(d.sheets).sort() : null] : null);   // GRIDGAPS, Paul 15 Nov 2026 (also the list of the run's sheets: a sheet made by the carrier, e.g. a spill onto a new sheet, is unknown to the following computer until it hears "r:<run>"; the sheet's own "s:<id>" names nothing it shows yet): a computer that follows the run must hear that the carrier deleted an emptied sheet. The delete only adds the sheet to the run record's retire list (intakeRecovery.retire); that change used to be "nothing the Library reads", so no "r:<run>" went into the changes feed and the following computer kept listing the deleted sheet until its ten-minute check
 async function op_runPut(b) {
   const r = b.run || {}; const id = str(r.runId, 80); if (!isId(id)) return { error: "bad run id" };
   { const c = await carriedElsewhere(id, str(b.dev, 60)); if (c) return { error: `This run is carried by ${c.by} on another computer: nothing was saved from this computer, which follows it`, status: 409, notCarrier: true, carrier: c }; }   // (CARRIERONLY)
@@ -5258,9 +5258,11 @@ async function op_artPrepoolList() { const s = await col(ART).doc("_prepool").ge
    DRAFT.inline gzipped lives in the record (a record is at most 600 KB); a bigger one is a file in Storage (charmnest/[sandbox/]art-draft/<poolId>-<hash>.json.gz, the one it replaces deleted), up to
    ART_BLOB.gz as the picture's file is. */
 const DRAFT = { inline: 440000, json: 12000000 };
+/* ENGPROOF, Paul 15 Nov 2026: "check the DESIGN editor autosaves": a draft is keyed by a piece's pool id, or by DESIGN-<design id> / DESIGN-NEW-<person> for the Charm Editor opened on a design. */
+const isDraftId = s => isPoolId(s) || /^DESIGN-[A-Za-z0-9_-]{2,72}$/.test(String(s || ""));
 const artDraftPath = (poolId, key) => (PREFIX ? "charmnest/sandbox/art-draft/" : "charmnest/art-draft/") + poolId + "-" + key + ".json.gz";
 async function op_artDraftPut(b) {
-  const poolId = str(b.poolId, 80); if (!isPoolId(poolId)) return { error: "bad pool id", status: 400 };
+  const poolId = str(b.poolId, 80); if (!isDraftId(poolId)) return { error: "bad pool id", status: 400 };
   const by = str(b.by, 80).trim(); if (!by) return { error: "a draft needs the name of the signed-in person who is editing", status: 400 };
   const zlib = require("zlib"); let gz;
   if (b.draft && typeof b.draft === "object") gz = zlib.gzipSync(Buffer.from(JSON.stringify(b.draft), "utf8"));
@@ -5280,7 +5282,7 @@ async function op_artDraftPut(b) {
   return { ok: true, poolId, by, at: now, baseAt, n: rec.n, gz: rec.gz, stored: rec.blob ? "file" : "record" };
 }
 async function op_artDraftGet(b) {
-  const poolId = str(b.poolId, 80); if (!isPoolId(poolId)) return { error: "bad pool id", status: 400 };
+  const poolId = str(b.poolId, 80); if (!isDraftId(poolId)) return { error: "bad pool id", status: 400 };
   const s = await col(ART_DRAFT).doc(poolId).get(); if (!s.exists) return { draft: null };
   const d = s.data() || {}, out = { poolId, by: str(d.by, 80), at: num(d.at), baseAt: num(d.baseAt), n: num(d.n), gz: num(d.gz) };
   if (b.full === true) {
@@ -5290,7 +5292,7 @@ async function op_artDraftGet(b) {
   return { draft: out };
 }
 async function op_artDraftDrop(b) {
-  const poolId = str(b.poolId, 80); if (!isPoolId(poolId)) return { error: "bad pool id", status: 400 };
+  const poolId = str(b.poolId, 80); if (!isDraftId(poolId)) return { error: "bad pool id", status: 400 };
   const by = str(b.by, 80).trim(); if (!by) return { error: "dropping a draft needs the name of the signed-in person", status: 400 };
   const ref = col(ART_DRAFT).doc(poolId), s = await ref.get(); if (!s.exists) return { ok: true, dropped: false };
   const d = s.data() || {}; await ref.delete();
@@ -5357,7 +5359,7 @@ OPS.runCarrier = op_runCarrier; NO_GEN_BUMP.add("runCarrier");
    runCmdPut { runId, cmd: { type: reorder | consolidate | empty | delete, metal, ids?, sourceId?, targetId?, sheetId? }, by, dev } adds it to ONE document (Charm_Nest_Run_Cmds/<run>, the newest 30 kept) and touches the run's feed key r:<run>;
    runCmdList { runId } -> { cmds } newest first; runCmdDone { runId, id, ok, text, dev } is the carrier's answer. None of them writes anything a placement answer is made from (NO_GEN_BUMP). */
 const CMDS = "Charm_Nest_Run_Cmds"; SANDBOXED.add(CMDS);
-const CMD_TYPES = new Set(["reorder", "consolidate", "empty", "delete", "repicture", "seat"]);   // (ONEGRID, Paul 15 Nov 2026: "move already partially and fully nested sheets onto new nested sheets and all those charms should move over": seat = a nested sheet's pieces onto a physical sheet)
+const CMD_TYPES = new Set(["reorder", "consolidate", "empty", "delete", "repicture", "seat", "renest"]);   /* (REMOTENEST, Paul 15 Nov 2026: "you re-nest it": a draft sheet nested again on the computer that carries the run, asked from another) */   // (ONEGRID, Paul 15 Nov 2026: "move already partially and fully nested sheets onto new nested sheets and all those charms should move over": seat = a nested sheet's pieces onto a physical sheet)
 async function op_runCmdPut(b) {
   const runId = str(b.runId, 80), dev = str(b.dev, 60) || "", by = str(b.by, 80) || ""; if (!isId(runId) || !dev) return { error: "bad run or computer" };
   const c = b.cmd && typeof b.cmd === "object" ? b.cmd : null; if (!c || !CMD_TYPES.has(c.type)) return { error: "unknown command" };
