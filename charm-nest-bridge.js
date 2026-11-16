@@ -18639,6 +18639,7 @@ const CustomSheet = window.CustomSheet = (() => {
       await saveCloud(e,"sent");if(!current())return;
       e.sent={id:intent.id,at:intent.at,by:intent.by,lines:intent.lines};delete e.sendIntent;delete e.sendError;ver++;
       keepSheetSeal(e);   // (SEALSHEET: the send is through: its seal is kept on the order, never before)
+      try { if (window.CNAskPlace) window.CNAskPlace(`Place the designs sent for order ${e.rid}`); } catch (_) { /* the carrier's own look finds them */ }   // (NEVERSTRANDED)
       // (the answer it records reaches the order's timeline now, as the repool that used to follow it did: not at some later sync, which a reload in between would lose)
       if(it.onDone)try{it.onDone(e.sent.by,"sheet",e.sent.at);Review.syncOrderItems();}catch(err){console.warn("Custom send review",err);}
       // (a person's press only: a send finished again after a reload, how.recover, is not logged as new work)
@@ -19322,7 +19323,7 @@ const CustomSheet = window.CustomSheet = (() => {
   }
   function keepFlowStart(rec) {
     try {
-      if (!window.Review || !Review.relinkFlow || rec.etsyOnly || !(rec.upd > Date.now() - 20000) || !rec.sku) return false;
+      if (!window.Review || !Review.relinkFlow || rec.etsyOnly || !(rec.upd > Date.now() - 10 * 60 * 1000) || !rec.sku) return false;   // (NEVERSTRANDED: was 20 s; a save that had waited showed no pop-up at all)
       const lid = String(rec.listingId || ""), old = String((rec.line && rec.line.sku) || ""), e = keepEtsyLine(rec), ov = keepOvOf(rec);
       // (KEEPOVERRIDE: the SKU itself now draws the new design: every line that reads it is made again from it by the same sweep, its placement step and its pictures)
       if (ov && ov.via === "own" && Review.relinkOverride) { const en = Master.entryFor(rec.sku) || {}; Review.relinkOverride({ sku: rec.sku, aiPath: en.aiPath || "", hash: en.charmHash || "" }); }
@@ -19343,6 +19344,7 @@ const CustomSheet = window.CustomSheet = (() => {
   function keepFlowEnd(st) {
     if (!st || !st.tally || !st.etsy || st.ended) return; st.ended = true;
     const t = st.tally, n = t.orders.size, sh = t.sheets.size;
+    try { if (window.CNAskPlace) window.CNAskPlace("Place the pieces made again after a save to the charm repository"); } catch (_) { /* the carrier's own look finds them */ }   // (NEVERSTRANDED)
     st.fl.done(`Saved and linked: ${n} other order${n === 1 ? "" : "s"} updated, ${sh} sheet${sh === 1 ? "" : "s"} saved (none nested again)${t.setsChanged && t.setsChanged.size ? `, ${t.setsChanged.size} released set${t.setsChanged.size === 1 ? "" : "s"} changed: re-send ${t.setsChanged.size === 1 ? "its" : "their"} files` : ""}${t.held.size ? `, ${t.held.size} kept for a person` : ""}${t.failed.size ? `, ${t.failed.size} not done` : ""}`);
   }
   function keepRehearse(rec) {
@@ -30004,6 +30006,40 @@ async function placeStranded() {
   return { lines: rows.length, pieces: ids.length, placed: ids.filter(id => now.has(id)).length };
 }
 window.CNPlaceStranded = placeStranded;
+/* NEVERSTRANDED (Paul, 16 Nov 2026: "the pieces that I updated were removed from their sheet and not returned ... it must work perfectly every time and update everything in real-time"). A design sent to
+   the sheets, saved to the charm repository or linked again on a computer that FOLLOWS the run takes the old pieces off their sheet there, but only the computer that carries the run nests: the new
+   pieces waited on no sheet, and nothing told the carrier. Two things now:
+     · the computer that follows ASKS the carrier at once (CNAskPlace: the relay's `placewaiting`, charm-nest-run-follow.js), after a Send to Sheet and after a save's orders were made again;
+     · the computer that carries the run LOOKS by itself, at rest, every two minutes (and when asked): pieces counted as pooled that stand on no sheet go back to the intake (placeStranded, which asks
+       the cloud first and never touches a piece any sheet holds). The same pieces are tried once in half an hour, so a piece that cannot be placed is not tried over and over. */
+let strandedBusy = false; const strandedTried = new Map();
+async function strandedWatch(why) {
+  if (strandedBusy || !B.run || ["stopped", "abandoned", "retired"].includes(B.run.status) || S.cloud.ok !== true) return null;
+  if (allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone) || p._rebuilding)) return null;
+  const on = new Set(allSheets().flatMap(p => (p.charms || []).map(c => c && c.poolId)).filter(Boolean));
+  for (const p of allSheets()) { const rec = p.recalled; if (rec) for (const id of (rec.poolIds || [])) on.add(String(id)); }
+  const cand = Orders.rows().filter(r => r && r.state === "pooled" && !r.hold && (r.poolIds || []).length && !(r.poolIds || []).some(id => on.has(id) || (B.pool.rows.get(id) || {}).sheetId));
+  const now = Date.now(), fresh = cand.filter(r => now - (strandedTried.get(r.key) || 0) > 30 * 60 * 1000);
+  if (!fresh.length) return null;
+  strandedBusy = true; for (const r of fresh) strandedTried.set(r.key, now);
+  try { const v = await placeStranded(); if (v.pieces) agent({ run: B.run.runId, pool: true }, v.placed === v.pieces ? "ok" : "warn", `${v.placed} of ${v.pieces} piece(s) that stood on no sheet went onto a sheet${why ? " (" + why + ")" : ""}`); return v; }
+  catch (e) { console.warn("[stranded]", e && e.message); return null; }
+  finally { strandedBusy = false; }
+}
+setInterval(() => { try { if (!document.hidden || B.run) strandedWatch("the two-minute look").catch(() => {}); } catch (_) { /* the next look */ } }, 120000);
+window.CNStrandedWatch = strandedWatch;   // (tests)
+let askPlaceAt = 0;
+/** After a change that left pieces on no sheet: the carrier places them now (here, when this computer carries the run; asked through the relay when it follows one). At most every 15 s. */
+window.CNAskPlace = async function (why) {
+  try {
+    if (B.run) { setTimeout(() => strandedWatch(why || "asked").catch(() => {}), 4000); return true; }
+    const F = window.CharmNestRunFollow, runId = F && F.state && F.state().runId, dev = F && typeof F.dev === "function" ? F.dev() : (F && F.dev) || "";
+    if (!runId || !dev || Date.now() - askPlaceAt < 15000) return false;
+    askPlaceAt = Date.now();
+    await api("charmNestLibrary", { op: "runCmdPut", runId, dev, by: (typeof employeeName === "function" && employeeName()) || "", cmd: { type: "placewaiting", label: String(why || "Place the pieces that stand on no sheet").slice(0, 150) } }, { quiet: true });
+    return true;
+  } catch (e) { console.warn("[stranded] ask", e && e.message); return false; }
+};
 /** ARTEVERYWHERE: does this page carry the run this sheet belongs to? Only that page writes the sheet's files after an artwork edit. */
 function artCarries(sh) { return !!(sh && B.run && sh.runId && sh.runId === B.run.runId); }
 window.artCarries = artCarries;
