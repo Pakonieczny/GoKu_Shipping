@@ -170,6 +170,108 @@ const recs = st => st.list('Charm_Nest_Sheets').filter(s => s.metal === M14);
     if (!parts.n || !parts.items.length) say('6 seatOn preview', true, 'no physical sheet in fixtures (PartialSheets.list: ' + JSON.stringify(parts) + ')');
     else { const sh = (await page.evaluate(rowsJS))[0]; const r = await page.evaluate(([s, p]) => Gate.seatOn(s, p, { preview: true }), [sh.id, parts.items[0].id]); say('6 seatOn {preview:true}', !!(r && r.ok), r); }
 
+    /* 7 · MOVESHOW (Paul, 15 Nov 2026): the move plan, numbered sheets, progress overlay, result banner; carrier by REAL mouse drag in the Options window, follower the same through the relay.
+         Physical sheets are made the way the window's "New sheet" tile does (PartialSheets.make). The page's own module (OptionsSheets) does the drawing; nothing here fakes its output. */
+    await page.setViewportSize({ width: 1500, height: 1700 }); await p2.setViewportSize({ width: 1500, height: 1700 });   // (tall: a tile and the cards under it are on the screen together for the mouse drag)
+    const SHOTS = '/private/tmp/claude-501/move1-shots'; fs.mkdirSync(SHOTS, { recursive: true });
+    const mk = (pg, w, h) => pg.evaluate(async ([w, h]) => { const r = await PartialSheets.make({ metal: 'gold14k', wMm: w, hMm: h }); return r && r.item ? { id: r.item.id, stockId: r.item.stockId, kind: r.item.kind, status: r.item.status } : { err: JSON.stringify(r) }; }, [w, h]);
+    const NA = await mk(page, 55, 38), NB = await mk(page, 50, 50), NC = await mk(page, 60, 60), ND = await mk(page, 62, 62);
+    say('7a four new 14K physical sheets made (PartialSheets.make)', [NA, NB, NC, ND].every(x => x.id && x.kind === 'new'), [NA, NB, NC, ND]);
+    let rowsM = (await page.evaluate(rowsJS)).filter(r => r.pieces > 0).sort((a, b) => a.pieces - b.pieces);
+    if (!rowsM.length) throw new Error('no sheet with pieces left for the move test');
+    const mover = rowsM[0];
+    const pv1 = await page.evaluate(([s, a]) => Gate.seatOn(s, a, { preview: true }), [mover.id, NA.id]);
+    say('7b seatOn preview with ONE id (a string)', !!(pv1 && pv1.ok && pv1.text), pv1 && { ok: pv1.ok, text: pv1.text, why: pv1.why });
+    const pv2 = await page.evaluate(([s, a, b]) => Gate.seatOn(s, [a, b], { preview: true }), [mover.id, NA.id, NB.id]);
+    say('7c seatOn preview with an ORDERED LIST of two ids', !!(pv2 && pv2.ok && pv2.text) && (!pv2.preview.links.length || pv2.preview.links[0].partialId === NA.id), pv2 && { ok: pv2.ok, text: pv2.text, why: pv2.why, links: pv2.preview && pv2.preview.links.map(l => [l.partialId.slice(-6), l.placed]) });
+    const pv3 = await page.evaluate(([s, a, b]) => Gate.seatOn(s, [b, a], { preview: true }), [mover.id, NA.id, NB.id]);
+    say('7d the list order is the order used (B first: first link is B)', !!(pv3 && pv3.ok) && (!pv3.preview.links.length || pv3.preview.links[0].partialId === NB.id), pv3 && { text: pv3.text, links: pv3.preview && pv3.preview.links.map(l => [l.partialId.slice(-6), l.placed]) });
+
+    // the Options window of a computer (the sheet card's Options button), then a REAL mouse drag of a tile onto an Available card
+    const openWin = pg => pg.evaluate(() => { const sh = CN.pagesOf('gold14k').find(p => p.el && p.el.querySelector('.sheetOptionsBtn')); if (!sh) return false; sh.el.querySelector('.sheetOptionsBtn').click(); return true; });
+    const sampler = pg => pg.evaluate(() => { window.__seen = { ghost: false, tileOv: false, cardOv: 0, steps: [], badges: [] }; window.__iv = setInterval(() => { const q = s => document.querySelector(s), z = window.__seen; if (q('.osGhost')) z.ghost = true; if (q('.osSh .osOv')) z.tileOv = true; z.cardOv = Math.max(z.cardOv, document.querySelectorAll('article.ohc .osOv').length); for (const e of document.querySelectorAll('.osOv [data-ov-s]')) { const t = e.textContent; if (t && !z.steps.includes(t)) z.steps.push(t); } }, 80); });
+    const dragMove = async (pg, srcId, cardId) => {
+      await pg.evaluate(id => { const t = document.querySelector(`.osSh[data-id="${id}"]`); t && t.scrollIntoView({ block: 'start' }); }, srcId);   // (the tile at the top; the viewport is tall enough for the cards below it)
+      const a = await pg.evaluate(id => { const r = document.querySelector(`.osSh[data-id="${id}"] .osShPic`).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }, srcId);
+      const b = await pg.evaluate(id => { const r = [...document.querySelectorAll('article.ohc')].find(x => x.dataset.id === id).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + Math.min(r.height / 2, 90) }; }, cardId);
+      await pg.mouse.move(a.x, a.y); await pg.mouse.down(); await pg.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 8 }); await pg.mouse.move(b.x, b.y, { steps: 8 }); await sleep(150); await pg.mouse.up();
+    };
+    const clickCard = async (pg, cardId) => { const b = await pg.evaluate(id => { const r = [...document.querySelectorAll('article.ohc')].find(x => x.dataset.id === id).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 14 }; }, cardId); await pg.mouse.click(b.x, b.y); };
+    const planState = pg => pg.evaluate(() => { const pl = document.querySelector('[data-plan]'); return { open: !!pl, head: pl ? pl.querySelector('.osPlanHead').textContent : '', items: pl ? [...pl.querySelectorAll('li')].map(li => li.textContent.replace(/\s+/g, ' ').trim()) : [], words: pl ? (pl.querySelector('[data-plan-words]') || {}).textContent : '', help: pl ? (pl.querySelector('.osPlanHelp') || {}).textContent : '', rest: pl && pl.querySelector('[data-plan-rest]') ? pl.querySelector('[data-plan-rest]').textContent : '', go: pl ? !pl.querySelector('[data-plan-go]').disabled : false, badges: [...document.querySelectorAll('article.ohc .osBadge')].map(b => [b.parentNode.dataset.id, b.textContent]) }; });
+    const waitPreview = pg => until(async () => { const z = await planState(pg); return z.open && z.go ? z : null; }, 90000, 700);
+    const MOVE = async (pg, label, ids0, srcId, isFollower) => {
+      const [first, second] = ids0;
+      await sampler(pg);
+      await pg.evaluate(() => { if (!window.__steps) { window.__steps = []; const g = Gate.seatOn; Gate.seatOn = function (a, b, o) { o = o || {}; if (!o.preview) { const f = o.onStep; o = Object.assign({}, o, { onStep: st => { window.__steps.push(st && st.text); f && f(st); } }); } return g.call(this, a, b, o); }; } });
+      const opened = await openWin(pg); say(`7${label}1 Options window opens`, opened);
+      const tiles = await until(() => pg.evaluate(id => !!document.querySelector(`.osSh[data-id="${id}"]`) && document.querySelectorAll('article.ohc').length > 0, srcId), 60000, 700);
+      say(`7${label}2 tile and repository cards are drawn`, !!tiles);
+      const cardsOk = await until(() => pg.evaluate(ids => ids.every(id => [...document.querySelectorAll('article.ohc')].some(x => x.dataset.id === id)), ids0), 30000, 700);
+      say(`7${label}3 the new sheets are cards in the grid`, !!cardsOk, await pg.evaluate(() => [...document.querySelectorAll('article.ohc')].map(x => x.dataset.id.slice(-6) + ':' + x.dataset.status)));
+      await dragMove(pg, srcId, first);
+      const z1 = await until(async () => { const z = await planState(pg); return z.open ? z : null; }, 20000, 300);
+      if (!z1) { await pg.screenshot({ path: path.join(SHOTS, `drop-failed-${isFollower ? 'follower' : 'carrier'}.png`) }); console.log('DIAG after drop', JSON.stringify(await pg.evaluate(() => ({ notes: [...document.querySelectorAll('.osShNote')].map(n => n.textContent), said: (document.querySelector('[data-sh="said"]') || {}).textContent, ask: (document.querySelector('[data-sh="ask"]') || {}).textContent, drag: document.documentElement.className, tiles: [...document.querySelectorAll('.osSh')].map(t => [t.dataset.id.slice(-6), t.className, t.querySelector('.osShPic').getBoundingClientRect().top|0, t.querySelector('.osShPic').getBoundingClientRect().left|0]), cards: [...document.querySelectorAll('article.ohc')].map(c => [c.dataset.id.slice(-6), c.getBoundingClientRect().top|0, c.getBoundingClientRect().left|0, c.getBoundingClientRect().height|0]), rows: Gate.sheetsOf('gold14k').map(r => [r.id.slice(-6), r.movable, r.canSource, r.whySource, r.pieces]) })))); throw new Error('the drop did not open the plan'); }
+      say(`7${label}4 dropping the tile on an Available card opens the move plan (no yes/no ask)`, !!z1 && /1st:/.test(z1.items[0] || '') && /Move plan/.test(z1.head), z1);
+      say(`7${label}5 the plan carries the instruction words and a "1" badge on the chosen card`, !!z1 && /Click another Available sheet to add it as 2nd, 3rd/.test(z1.help) && /click a chosen sheet to take it out/.test(z1.help) && z1.badges.some(b => b[0] === first && b[1] === '1'), z1 && { help: z1.help, badges: z1.badges });
+      await clickCard(pg, second);
+      const z2 = await until(async () => { const z = await planState(pg); return z.items.length === 2 ? z : null; }, 10000, 300);
+      say(`7${label}6 clicking a second Available sheet adds it as 2nd with badge 2`, !!z2 && /2nd:/.test(z2.items[1] || '') && z2.badges.some(b => b[0] === second && b[1] === '2'), z2 && { items: z2.items, badges: z2.badges });
+      const z3 = await waitPreview(pg);
+      say(`7${label}7 the engine's preview words for the whole list arrive ("working it out…" before)`, !!z3 && !/working it out/.test(z3.words) && z3.words.length > 10, z3 && { words: z3.words, rest: z3.rest });
+      await pg.screenshot({ path: path.join(SHOTS, `plan-${isFollower ? 'follower' : 'carrier'}.png`) });
+      // reorder with the arrows: first goes down (second becomes 1st), then back
+      await pg.click('[data-plan-down]'); const zr = await until(async () => { const z = await planState(pg); return z.badges.some(b => b[0] === second && b[1] === '1') ? z : null; }, 8000, 300);
+      say(`7${label}8 ▼ swaps the order (the numbered badges follow)`, !!zr, zr && zr.badges);
+      await pg.click('[data-plan-down]'); await until(async () => { const z = await planState(pg); return z.badges.some(b => b[0] === first && b[1] === '1') ? z : null; }, 8000, 300);
+      // take the 2nd out, then add it again
+      await clickCard(pg, second); const zt = await until(async () => { const z = await planState(pg); return z.items.length === 1 ? z : null; }, 8000, 300);
+      say(`7${label}9 clicking a chosen sheet takes it out`, !!zt, zt && zt.items);
+      await clickCard(pg, second); await until(async () => { const z = await planState(pg); return z.items.length === 2 ? z : null; }, 8000, 300); await waitPreview(pg);
+      // Cancel leaves everything as it was, then drop again
+      await pg.click('[data-plan-cancel]'); const zc = await planState(pg);
+      say(`7${label}10 Cancel closes the plan and removes the badges`, !zc.open && !zc.badges.length, zc.badges);
+      await dragMove(pg, srcId, first); await until(async () => (await planState(pg)).open, 20000, 300); await clickCard(pg, second); await until(async () => (await planState(pg)).items.length === 2, 10000, 300); const zp = await waitPreview(pg);
+      say(`7${label}11 the plan is open again with two sheets and a preview`, !!zp && zp.items.length === 2, zp && zp.words);
+      const t0m = Date.now();
+      await pg.click('[data-plan-go]');
+      const ov = await until(() => pg.evaluate(() => !!document.querySelector('.osOv')), 15000, 100);
+      if (ov) await pg.screenshot({ path: path.join(SHOTS, `overlay-${isFollower ? 'follower' : 'carrier'}.png`) });
+      say(`7${label}12 Move them: overlay (progress bar, step words, seconds) appears at once`, !!ov, await pg.evaluate(() => [...document.querySelectorAll('.osOv')].map(o => o.textContent.replace(/\s+/g, ' ').trim()).slice(0, 4)));
+      const ban = await until(() => pg.evaluate(() => { const b = document.querySelector('[data-banner]'); return b ? b.textContent.replace(/\s+/g, ' ').trim() : null; }), 300000, 500);
+      const seen = await pg.evaluate(() => { clearInterval(window.__iv); return window.__seen; });
+      say(`7${label}13 the ghost picture flew (a .osGhost existed)`, !!seen.ghost, { ghost: seen.ghost });
+      say(`7${label}14 overlay on the tile and on each chosen card`, seen.tileOv && seen.cardOv >= 2, { tileOv: seen.tileOv, cardOv: seen.cardOv });
+      say(`7${label}15 at least two different step texts were shown in the overlay`, seen.steps.length >= 2, seen.steps);
+      say(`7${label}16 result banner stays until dismissed, in plain words from real values`, !!ban && /now lies? on/.test(ban) && !/NaN|undefined/.test(ban), { ban, secs: Math.round((Date.now() - t0m) / 1000) });
+      const onSel = id => pg.evaluate(id => (document.querySelector(`.osSh[data-id="${id}"] [data-sh-on]`) || {}).textContent || '', id);
+      await until(() => onSel(srcId), isFollower ? 40000 : 3000, 800);   // (a following computer learns of the new stock when the feed brings the sheet's record)
+      const after = await pg.evaluate(id => ({ plan: !!document.querySelector('[data-plan]'), overlays: document.querySelectorAll('.osOv').length, banner: !!document.querySelector('[data-banner]'), on: (document.querySelector(`.osSh[data-id="${id}"] [data-sh-on]`) || {}).textContent || '', freed: [...document.querySelectorAll('.osFreedTag')].map(x => x.textContent) }), srcId);
+      say(`7${label}17 afterwards: plan and overlays gone, banner still there, tile names its physical sheet`, !after.plan && !after.overlays && after.banner && /^on (New sheet|Partial sheet)/.test(after.on), Object.assign({ rowStock: await pg.evaluate(id => (Gate.sheetsOf('gold14k').find(r => r.id === id) || {}).stockId, srcId) }, after));
+      return { ban, seen, after };
+    };
+    const rec7 = id => st.doc('Charm_Nest_Sheets', id);
+    const m1 = await MOVE(page, 'c', [NA.id, NB.id], mover.id, false);
+    const steps = await page.evaluate(() => window.__steps);
+    say('7c18 the real seat reported >= 2 distinct onStep lines (collected from Gate.seatOn)', new Set(steps).size >= 2, steps.slice(0, 12));
+    const named = await until(() => { const r = rec7(mover.id); return r && (r.roseStockId === NA.stockId) ? r : null; }, 25000, 800);
+    say('7c19 the sheet\'s record names the physical sheet afterwards', !!named, { want: NA.stockId, got: (rec7(mover.id) || {}).roseStockId });
+    await page.click('[data-sh-dismiss]'); await sleep(300);
+    say('7c20 Dismiss removes the banner', await page.evaluate(() => !document.querySelector('[data-banner]')));
+    await page.evaluate(() => OptionsStudio.close());
+    await sleep(1500);
+
+    // ── the follower: the same panel, overlay and banner; progress comes through runCmdStep
+    const mover2 = (await page.evaluate(rowsJS)).filter(r => r.pieces > 0).sort((a, b) => a.pieces - b.pieces)[0];
+    await p2.evaluate(() => { window.__relay = { steps: [], states: [], cancel: null }; window.__riv = setInterval(async () => { try { const rid = (CN.pagesOf('gold14k')[0] || {}).runId; const r = await CN.api('charmNestLibrary', { op: 'runCmdList', runId: rid }, { quiet: true }); const c = (r.cmds || []).find(x => x.type === 'seat' && x.dev === CharmNestRunFollow.dev()); if (!c) return; const z = window.__relay; if (!z.states.includes(c.state)) z.states.push(c.state); if (c.step && !z.steps.includes(c.step)) z.steps.push(c.step); if (c.state === 'running' && !z.cancel) z.cancel = await CN.api('charmNestLibrary', { op: 'runCmdCancel', runId: rid, id: c.id, dev: CharmNestRunFollow.dev() }, { quiet: true }); } catch (_) {} }, 700); });
+    await until(async () => (await p2.evaluate(rowsJS)).some(r => r.id === mover2.id && r.pieces > 0), 30000, 700);
+    const m2 = await MOVE(p2, 'f', [NC.id, ND.id], mover2.id, true);
+    const rl = await p2.evaluate(() => { clearInterval(window.__riv); return window.__relay; });
+    say('7f18 the follower saw runCmdStep texts while the command ran (before done)', rl.steps.length >= 1 && rl.states.includes('running') && rl.states.includes('done'), rl);
+    say('7f19 runCmdCancel refused once the command was running', !!rl.cancel && rl.cancel.cancelled === false && rl.cancel.state === 'running', rl.cancel);
+    say('7f20 the follower\'s overlay showed the carrier\'s words', m2.seen.steps.some(t => /computer: /.test(t)), m2.seen.steps);
+    const named2 = await until(() => { const r = rec7(mover2.id); return r && (r.roseStockId === NC.stockId) ? r : null; }, 25000, 800);
+    say('7f21 the sheet\'s record names the physical sheet chosen first on the follower', !!named2, { want: NC.stockId, got: (rec7(mover2.id) || {}).roseStockId });
+
     const errs = [...H.errors.filter(e => !/firebase|HTTP 404|\.pdf not made|Failed to load resource/.test(e)), ...(two ? two.errors : [])];
     say('page errors', errs.length === 0, errs.slice(0, 5));
   } finally { await H.close(); }
