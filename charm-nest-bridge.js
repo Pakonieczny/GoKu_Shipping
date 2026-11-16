@@ -30207,7 +30207,9 @@ async function placeStranded() {
            still says "on sheet X" while sheet X does not hold it is on NO sheet: nothing ever looked, because the record names a sheet. It is lost in the same way and goes back on that sheet.
            Proved three ways before anything moves: this page's sheets and saved cards do not hold it (above), the page holds sheet X itself, and sheet X's record in the cloud, read now, does
            not list it. A sheet the laser has cut, or one this page does not hold, proves nothing: the piece is left as it is. */
-        const sid = String(pr.sheetId || ""), pg = sid ? allSheets().find(x => x.sheetId === sid) : null;
+        // (HOMEKNOWN, the same evening: 9 of those charms, made again, waited on a draft that was never saved and were on no sheet after a reload, their records saying only the NAME of the
+        //  sheet they came off: a piece on no sheet whose record remembers its sheet, by id or by name, goes back on that sheet, not to the newest draft as a new order does)
+        const pg = pr.sheetId ? allSheets().find(x => x.sheetId === String(pr.sheetId)) : (pr.sheetName ? allSheets().find(x => x.fileBase === String(pr.sheetName)) : null), sid = pg && pg.sheetId ? String(pg.sheetId) : "";
         if (!sid || !pg || +pg.laserDoneAt > 0 || pg.roseCutAt || ["abandoned", "committed"].includes(pr.state) || !((pg.charms || []).length || (pg.recalled && ((pg.recalled.poolIds || []).length || (pg.recalled.charms || []).length)))) { bad.add(id); continue; }
         if (!orphanSheets.has(sid)) { let rec = null; try { const g = await api("charmNestLibrary", { op: "getSheet", id: sid }, { quiet: true }); rec = g && (g.sheet || g); } catch (_) { rec = null; } orphanSheets.set(sid, rec && !rec.error && Array.isArray(rec.poolIds) && rec.poolIds.length ? new Set(rec.poolIds.map(String)) : null); }
         const listed = orphanSheets.get(sid); if (!listed || listed.has(id)) { bad.add(id); continue; }
@@ -30291,13 +30293,18 @@ window.CNSendHome = async function (keys) {
   const run = B.run; if (!run) throw new Error("this page does not carry a run");
   if (allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status))) throw new Error("a sheet is being nested: try again once it is done");
   const out = { lines: 0, moved: 0, names: [], why: [] };
+  try {   // (what this page remembers of a piece can lack the sheet it came off: the cloud's record is read once for all of them)
+    const all0 = [...new Set((keys || []).map(String))].map(k => B.orders.byKey.get(k)).filter(Boolean).flatMap(r => r.poolIds || []);
+    for (let i = 0; i < all0.length; i += 300) { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: all0.slice(i, i + 300) }, { quiet: true })).pools || {}; for (const [id, pr] of Object.entries(got)) { const loc = B.pool.rows.get(id); if (!loc) B.pool.rows.set(id, pr); else if (!loc.sheetName && pr && pr.sheetName) loc.sheetName = pr.sheetName; } }
+  } catch (e) { console.warn("[sendhome] records", e && e.message); }
   for (const k of [...new Set((keys || []).map(String))]) {
     const row = B.orders.byKey.get(k);
     if (!row || !(row.poolIds || []).length || ["gone", "committed"].includes(row.state)) { out.why.push(`${k}: no piece of it is on a sheet`); continue; }
     out.lines++;
     const homeNames = [...new Set(row.poolIds.map(id => String((B.pool.rows.get(id) || {}).sheetName || "")).filter(Boolean))];
     const nowOn = row.poolIds.map(id => Pool.sheetOf(id)).filter(Boolean), home = homeNames.map(nm => allSheets().find(p => p.fileBase === nm)).filter(Boolean).filter(p => !nowOn.includes(p));
-    if (!nowOn.length || !home.length) { out.why.push(`${row.order.receiptId}: it is on the sheet it was taken off, or that sheet is not known`); continue; }
+    if (!nowOn.length) { out.why.push(`${row.order.receiptId}: on no sheet of this page`); continue; }
+    if (!home.length) { out.why.push(`${row.order.receiptId}: ${homeNames.length ? "already on " + homeNames.join(", ") : "the sheet it came off is not known"}`); continue; }
     const cut = nowOn.concat(home).find(sh => +sh.laserDoneAt > 0 || sh.roseCutAt); if (cut) { out.why.push(`${row.order.receiptId}: ${cut.fileBase || "a sheet"} was already cut`); continue; }
     row._homeFirst = true; row.repoolChanged = true; row.changePending = true; row.replaceByDesign = true;
     try { await Review.repool(row); } finally { delete row._homeFirst; delete row.replaceByDesign; }

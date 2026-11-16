@@ -216,7 +216,7 @@
       const f = root.CNSendHome;
       if (typeof f !== "function" || !(a.ids || []).length) r = { ok: false, why: "not ready" };
       else { const step = stepper(c); step({ text: "Putting the piece back on its own sheet…" });
-        try { const v = await f(a.ids); r = v.moved ? { ok: true, text: `${v.moved} order line(s) back on ${v.names.join(" and ")}${v.why.length ? " · " + v.why.join("; ") : ""}` } : { ok: false, why: (v.why[0] || "Nothing was moved.") }; }
+        try { const v = await f(a.ids); r = v.moved ? { ok: true, text: `${v.moved} order line(s) back on ${v.names.join(" and ")}${v.why.length ? " · " + v.why.join("; ") : ""}` } : { ok: false, why: (v.why.join("; ") || "Nothing was moved.").slice(0, 380) }; }
         catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); } }
     }
     else if (c.type === "remake") r = root.Review && typeof root.Review.redrawStale === "function" ? await root.Review.redrawStale(a.ids || []) : { ok: false, why: "not ready" };   // (REMAKESTALE: open pieces that hold an older drawing of these SKUs are made up again from the library's drawing)
