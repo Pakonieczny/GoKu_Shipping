@@ -188,7 +188,7 @@
     }
     // (SETREBUILD, Paul 16 Nov 2026: "Remove that sheet from the set of sheets it was incorrectly added to"): the set's own repair ("Rebuild this set correctly", charm-nest-set-repair.js: the sheets that do not belong leave, nothing is deleted, no sheet is nested again), asked from another computer
     else if (c.type === "setrebuild") {
-      const SRp = root.CharmNestSetRepair, run = safe(() => (typeof B !== "undefined" ? B.run : root.B && root.B.run), null);
+      const SRp = root.SetRepair || root.CharmNestSetRepair, run = safe(() => (typeof B !== "undefined" ? B.run : root.B && root.B.run), null);
       if (!SRp || typeof SRp.rebuild !== "function" || !a.setId || !run) r = { ok: false, why: "not ready" };
       else { const step = stepper(c); step({ text: "Reading the set…" });
         try { const v = await SRp.rebuild({ setId: a.setId, runId: run.runId }, { skipConfirm: true, onState: (_, t) => step({ text: String(t || "Rebuilding the set…") }) });
