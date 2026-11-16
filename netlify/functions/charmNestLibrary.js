@@ -1062,6 +1062,18 @@ async function op_putSheet(b) {
       if (c) return { error: `This sheet belongs to the run ${c.by} is carrying on another computer: this computer's copy was not saved over the cloud's; it is read again`, status: 409, conflict: true, notCarrier: true, carrier: c };
     } }
   const s = b.sheet || {}; if (!isId(s.id)) return { error: "bad sheet id" };
+  /* WHOLESHEET (Paul, 16 Nov 2026: "This sheet is not working correctly on all computers ... This keeps on happening a lot on different sheets"). GF Nov 12 Set-2 Sheet-1 was saved with its layout
+     (62 placements) and an EMPTY list of pieces: its record then read "0 charms, 0 orders" on every computer, its pieces drawn as blank boxes. A page whose own copy of a sheet has lost its pieces
+     must never write that over the cloud's: a save that places pieces names every one of them, or it is refused whole and the record stays as it was. (An emptied sheet is saved with no placement
+     and no piece, as before; a save that carries neither list is not looked at.) */
+  if (Array.isArray(s.placements) && Array.isArray(s.charms) && s.placements.length) {
+    const have = new Set(s.charms.map(c => c && c.id)), lost = s.placements.filter(p => !p || !have.has(p.id)).length;
+    if (lost) return { error: `This save of ${str(s.fileBase, 80) || s.id} places ${s.placements.length} piece(s) but names only ${s.charms.length}: it was not kept, and the sheet in the cloud is as it was. Reload this page.`, status: 409, conflict: true, incomplete: true };
+  }
+  if (Array.isArray(s.charms) && !s.charms.length && !Array.isArray(s.placements)) {
+    const cur = await col(SHEETS).doc(s.id).get(), had = cur.exists ? cur.data() || {} : {};
+    if ((had.placements || []).length) return { error: `This save would leave ${str(had.fileBase, 80) || s.id} with ${(had.placements || []).length} placed piece(s) and no list of them: it was not kept. Reload this page.`, status: 409, conflict: true, incomplete: true };
+  }
   revTouch(b, ["s:" + s.id]);   // COST (Oct 2026): it writes this sheet record alone (the Library's revision names it: bumpRev)
   const doc = Object.assign({}, s, { id: s.id, archived: false, updatedAt: FV.serverTimestamp() });
   delete doc.log;
