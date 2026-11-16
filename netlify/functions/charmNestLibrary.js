@@ -5360,6 +5360,8 @@ async function op_runCmdPut(b) {
   const c = b.cmd && typeof b.cmd === "object" ? b.cmd : null; if (!c || !CMD_TYPES.has(c.type)) return { error: "unknown command" };
   const metal = ["gold10k", "gold14k"].includes(c.metal) ? c.metal : "";
   const args = { metal, ...(Array.isArray(c.ids) ? { ids: c.ids.slice(0, 80).map(x => str(x, 80)).filter(Boolean) } : {}), ...(c.sourceId ? { sourceId: str(c.sourceId, 80) } : {}), ...(c.targetId ? { targetId: str(c.targetId, 80) } : {}), ...(c.sheetId ? { sheetId: str(c.sheetId, 80) } : {}), ...(c.partialId ? { partialId: str(c.partialId, 120) } : {}), ...(c.label ? { label: str(c.label, 160) } : {}) };
+  // MOVESHOW, Paul 15 Nov 2026: "I also don't see any ability to choose which sheet I want to be first which sheet I want to be second for overflow": a seat may carry the physical sheets in the order chosen (partialIds, 8 at most, 80 characters each); partialId stays the first of them
+  if (Array.isArray(c.partialIds)) { const pids = c.partialIds.slice(0, 8).map(x => str(x, 80)).filter(Boolean); if (pids.length) { args.partialIds = pids; if (!args.partialId) args.partialId = pids[0]; } }
   if (c.type === "seat" && (!args.sheetId || !args.partialId)) return { error: "a seat names the sheet and the physical sheet" };
   const ref = col(CMDS).doc(runId), now = Date.now(), id = "c" + now.toString(36) + Math.random().toString(36).slice(2, 6).padEnd(4, "0");
   const cmd = { id, type: c.type, args, by, dev, at: now, state: "waiting" };
@@ -5381,7 +5383,7 @@ async function op_runCmdDone(b) {
   const ref = col(CMDS).doc(runId), now = Date.now();
   const got = await db.runTransaction(async tx => {
     const d = await tx.get(ref), cmds = Object.assign({}, (d.exists && d.data().cmds) || {}), c = cmds[id]; if (!c) return false;
-    cmds[id] = Object.assign({}, c, { state: b.ok ? "done" : "failed", text: str(b.text, 400) || "", doneAt: now, doneBy: str(b.dev, 60) || "" });
+    cmds[id] = Object.assign({}, c, { state: b.ok ? "done" : "failed", text: str(b.text, 400) || "", doneAt: now, doneBy: str(b.dev, 60) || "" }, b.freed ? { freed: str(b.freed, 120) } : {});   // (MOVESHOW, Paul 15 Nov 2026: the physical sheet a move gave back, so the computer that asked can mark its card)
     tx.set(ref, { runId, cmds, expireAt: new Date(now + 30 * 86400000) }); return true;
   });
   revTouch(b, ["r:" + runId]);
@@ -5400,7 +5402,21 @@ async function op_runCmdCancel(b) {
   if (got === "cancelled") revTouch(b, ["r:" + runId]);
   return { ok: true, state: got, cancelled: got === "cancelled" };
 }
-Object.assign(OPS, { runCmdPut: op_runCmdPut, runCmdList: op_runCmdList, runCmdDone: op_runCmdDone, runCmdCancel: op_runCmdCancel }); ["runCmdPut", "runCmdList", "runCmdDone", "runCmdCancel"].forEach(op => NO_GEN_BUMP.add(op));
+/* MOVESHOW, Paul 15 Nov 2026: "There was no nice animation no feedback no progress nothing": the carrier says what step a command is at, so the computer that asked can show it.
+   runCmdStep { runId, id, dev, text, pct? } only while the command is "waiting" or "running"; it becomes "running" (so it can no longer be cancelled), with step / stepAt. The carrier calls it at most once every 2.5 s. */
+async function op_runCmdStep(b) {
+  const runId = str(b.runId, 80), id = str(b.id, 40); if (!isId(runId) || !id) return { error: "bad run or command" };
+  const ref = col(CMDS).doc(runId), now = Date.now(), text = str(b.text, 160) || "", pct = b.pct != null && Number.isFinite(+b.pct) ? Math.max(0, Math.min(100, Math.round(+b.pct))) : null;
+  const got = await db.runTransaction(async tx => {
+    const d = await tx.get(ref), cmds = Object.assign({}, (d.exists && d.data().cmds) || {}), c = cmds[id]; if (!c) return "missing";
+    if (c.state !== "waiting" && c.state !== "running") return c.state;
+    cmds[id] = Object.assign({}, c, { state: "running", step: text, stepAt: now, stepBy: str(b.dev, 60) || "" }, pct == null ? {} : { stepPct: pct });
+    tx.set(ref, { runId, cmds, expireAt: new Date(now + 30 * 86400000) }); return "running";
+  });
+  if (got === "running") revTouch(b, ["r:" + runId]);
+  return { ok: true, state: got, running: got === "running" };
+}
+Object.assign(OPS, { runCmdPut: op_runCmdPut, runCmdList: op_runCmdList, runCmdDone: op_runCmdDone, runCmdCancel: op_runCmdCancel, runCmdStep: op_runCmdStep }); ["runCmdPut", "runCmdList", "runCmdDone", "runCmdCancel", "runCmdStep"].forEach(op => NO_GEN_BUMP.add(op));
 /* (CLOUDTRAY, Paul 14 Nov 2026: "You must put all this in the cloud" -> "Yes, build it"): the Nest rail's dropped files, listed for every computer. trayPut { id: the file's hash, name, path, url, state: tray | assigned | removed, metal, dev, by };
    a file claimed or removed by one computer is never put back in the tray by another that still lists it. trayList: the last three days, newest first (100 at most). */
 const TRAY = "Charm_Nest_Tray"; SANDBOXED.add(TRAY);
