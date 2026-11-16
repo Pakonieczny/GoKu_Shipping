@@ -29954,6 +29954,25 @@ function artUncutWrite(sheetId) {
   return st.run;
 }
 window.artUncutWrite = artUncutWrite;   // (tests wait for it)
+/** STRANDED (Paul, 16 Nov 2026: "I still see the 2 drafts and the bad nesting"; GF Draft 2 was nested again with a wrong clearance and placed none of its 67 pieces): order lines the run counts as
+ *  pooled whose pieces are on NO sheet of this page (and held by nobody, not gone, not cancelled) are handed back to the intake, which makes each piece up again under the pool id it has and places
+ *  it on the newest sheet with room, exactly as a new order's pieces are (LiveNest.add: the Design Station's completion record is asked first, as for any intake). Only on the page that carries the
+ *  run, never while a sheet is being nested or saved. → { lines, pieces, placed } */
+async function placeStranded() {
+  const run = B.run; if (!run || !window.LiveNest || typeof LiveNest.add !== "function") throw new Error("this page does not carry a run");
+  if (allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone))) throw new Error("a sheet is being nested or saved: try again once it is done");
+  const on = new Set(allSheets().flatMap(p => (p.charms || []).map(c => c && c.poolId)).filter(Boolean));
+  const rows = Orders.rows().filter(r => r && r.state === "pooled" && !r.hold && (r.poolIds || []).length && !(r.poolIds || []).some(id => on.has(id)) && !(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId)));
+  if (!rows.length) return { lines: 0, pieces: 0, placed: 0 };
+  const ids = rows.flatMap(r => r.poolIds || []);
+  agent({ run: run.runId, pool: true }, "warn", `${rows.length} order line(s) (${ids.length} piece(s)) are counted as pooled but stand on no sheet: they go back to the intake to be placed`);
+  for (const r of rows) { r.state = "pulled"; r.reason = null; delete r.poolTry; delete r.wait; }
+  await LiveNest.add(run);
+  try { await RunCtl.save(run); } catch (_) { /* saved with the next change */ }
+  const now = new Set(allSheets().flatMap(p => (p.charms || []).map(c => c && c.poolId)).filter(Boolean));
+  return { lines: rows.length, pieces: ids.length, placed: ids.filter(id => now.has(id)).length };
+}
+window.CNPlaceStranded = placeStranded;
 /** ARTEVERYWHERE: does this page carry the run this sheet belongs to? Only that page writes the sheet's files after an artwork edit. */
 function artCarries(sh) { return !!(sh && B.run && sh.runId && sh.runId === B.run.runId); }
 window.artCarries = artCarries;
