@@ -29967,7 +29967,13 @@ async function placeStranded() {
   const run = B.run; if (!run || !window.LiveNest || typeof LiveNest.add !== "function") throw new Error("this page does not carry a run");
   if (allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone))) throw new Error("a sheet is being nested or saved: try again once it is done");
   const on = new Set(allSheets().flatMap(p => (p.charms || []).map(c => c && c.poolId)).filter(Boolean));
-  const rows = Orders.rows().filter(r => r && r.state === "pooled" && !r.hold && (r.poolIds || []).length && !(r.poolIds || []).some(id => on.has(id)) && !(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId)));
+  // (STRANDED 2, the same day: the first send also took 16 pieces off GF Set-5 Sheet-1 and placed them on new drafts: this page held that sheet as a saved card, with none of its charms drawn, so its
+  //  pieces read "on no sheet". A piece is on a sheet when ANY of these says so: a page draws it, a saved card's record lists it, or its own pool row names a sheet. Only a piece none of them holds is stranded)
+  for (const p of allSheets()) { const rec = p.recalled; if (rec) for (const id of (rec.poolIds || []).concat((rec.charms || []).map(c => c && c.poolId))) if (id) on.add(String(id)); }
+  const named = id => { const row = B.pool.rows.get(id); return !!(row && row.sheetId && !["abandoned", "superseded"].includes(row.state)); };
+  const rows = Orders.rows().filter(r => r && r.state === "pooled" && !r.hold && (r.poolIds || []).length && !(r.poolIds || []).some(id => on.has(id) || named(id)) && !(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId)));
+  // (and the cloud is asked once more before anything moves: a piece whose row there names a sheet stays where it is)
+  if (rows.length) { const ids0 = rows.flatMap(r => r.poolIds || []), cloudOn = new Set(); for (let i = 0; i < ids0.length; i += 300) { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: ids0.slice(i, i + 300) }, { quiet: true })).pools || {}; for (const [id, pr] of Object.entries(got)) if (pr && pr.sheetId && !["abandoned", "superseded"].includes(pr.state)) cloudOn.add(id); } for (let i = rows.length - 1; i >= 0; i--) if ((rows[i].poolIds || []).some(id => cloudOn.has(id))) rows.splice(i, 1); }
   if (!rows.length) return { lines: 0, pieces: 0, placed: 0 };
   const ids = rows.flatMap(r => r.poolIds || []);
   agent({ run: run.runId, pool: true }, "warn", `${rows.length} order line(s) (${ids.length} piece(s)) are counted as pooled but stand on no sheet: they go back to the intake to be placed`);
