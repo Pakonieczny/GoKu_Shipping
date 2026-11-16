@@ -80,6 +80,8 @@
   const dev = () => { let v = safe(() => root.localStorage.getItem("cn.dev"), ""); if (!/^d[0-9a-z]{4,14}$/.test(v || "")) { v = "d" + Math.random().toString(36).slice(2, 12); safe(() => root.localStorage.setItem("cn.dev", v)); } return v; };
   const who = () => String(safe(() => root.B && root.B.employee, "") || "").trim();
   let lastApply = 0, applyT = 0;
+  /** (OTHERSLINES) The run save's answer named when another computer last touched the run's lines: a time newer than what this page has taken is read now (applyOthers keeps its own 15 s pace). */
+  function othersSaid(at) { if (!holdsRun() || !(+at > 0)) return; if (st.appliedAt && +at <= +st.appliedAt) return; applyOthers("save").catch(() => {}); }
   async function applyOthers(why) {
     const run = root.B && root.B.run; if (!run || !run.runId) return st;
     const t = Date.now(); if (t - lastApply < 15000) { if (!applyT) applyT = setTimeout(() => { applyT = 0; applyOthers("later"); }, 15000 - (t - lastApply)); return st; }
@@ -193,6 +195,6 @@
     };
     go();
   }
-  root.CharmNestRunFollow = { state: () => Object.assign({}, st), now, patchRows, applyOthers, addRows, dev };
+  root.CharmNestRunFollow = { state: () => Object.assign({}, st), now, patchRows, applyOthers, othersSaid, addRows, dev };
   if (root.document) { if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", boot); else boot(); }
 })(typeof self !== "undefined" ? self : this);

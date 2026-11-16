@@ -16469,7 +16469,8 @@ const RunCtl = window.RunCtl = (() => {
       if(moving)await archiveFinished(r,lines,hashes);
       const rec=recordOf(r,moving?null:hashes);
       sizeCheck(r,rec);
-      return api("charmNestLibrary",{op:"runPut",run:rec});
+      // (OTHERSLINES, Paul 15 Nov 2026: "Michelle's computer is showing 791 orders, whereas my computer is only showing 790"): the save's answer says when another computer last changed or added a line of this run: a newer one is read at once (it waited for the five-minute look)
+      return api("charmNestLibrary",{op:"runPut",run:rec}).then(res => { try { if (res && res.lineEditAt && window.CharmNestRunFollow && CharmNestRunFollow.othersSaid) CharmNestRunFollow.othersSaid(+res.lineEditAt); } catch (_) {} return res; });
     };
     const write=window.CharmNestOperations ? window.CharmNestOperations.run({key:'run-save:'+r.runId,label:'Saving run',resources:['run-record:'+r.runId],latest:true},persist) : saveQueue.catch(()=>{}).then(persist);
     saveQueue = write;
