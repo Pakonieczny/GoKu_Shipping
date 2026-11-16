@@ -670,7 +670,8 @@
   async function sync(o) {
     if (!host.liveCharms) return 0;
     // (ARTFRESH, Paul 16 Nov 2026: "Charm Editor save reaching the second computer": the look compared this page's pieces with this page's OWN copy of their rows, which nothing had read again, so a save made on another computer was seen only after a reload. The rows of the orders the feed names are read first: one read, only when the feed says so)
-    if (o && Array.isArray(o.orders) && o.orders.length && host.freshRows) { try { const want = new Set(o.orders.map(String)), ids = [...new Set((host.liveCharms() || []).map(c => c && c.poolId).filter(id => id && want.has(String(id).split("_")[0])))]; if (ids.length) await host.freshRows(ids); } catch (_) { /* the look is made with the rows this page has */ } }
+    // (ARTNET, Paul 16 Nov 2026: "track down why the Save in the charm editor is not always populating to the cloud and other computers in real-time. This is critical": o.all, the ten-minute net and a feed that began again: every piece on this page is looked at, so a save whose feed name this computer missed for any reason still arrives, late but surely; at most 900 pieces, 3 reads)
+    if (o && ((Array.isArray(o.orders) && o.orders.length) || o.all) && host.freshRows) { try { const want = new Set((o.orders || []).map(String)), ids = [...new Set((host.liveCharms() || []).map(c => c && c.poolId).filter(id => id && (o.all || want.has(String(id).split("_")[0]))))].slice(0, 900); if (ids.length) await host.freshRows(ids); } catch (_) { /* the look is made with the rows this page has */ } }
     const todo = new Map();
     for (const c of host.liveCharms() || []) {
       if (!c || !c.poolId || todo.has(c.poolId)) continue;

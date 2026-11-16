@@ -374,7 +374,28 @@
     const polyBez=points=>{const pts=[points[0]];for(let i=1;i<points.length;i++)pts.push(points[i-1],points[i],points[i]);pts.push(points[points.length-1],points[0],points[0]);return {pts,closed:true};};
     const entities=[];   // { kind: 'spline', layer, b, rgb?, lw? } | { kind: 'fill', layer, loops: [b], rgb }
     const lwOf=path=>{const mm100=(+path.lwPt>0?+path.lwPt:0.25)*MM*100;let best=AI_LW[0];for(const v of AI_LW)if(Math.abs(v-mm100)<Math.abs(best-mm100))best=v;return best;};
-    const fillOf=(loops,lay,c)=>{loops=loops.filter(Boolean);if(loops.length)entities.push({kind:'fill',layer:lay,loops,rgb:rgb(c)});};
+    const fillOf=(loops,lay,c,path)=>{loops=loops.filter(Boolean);if(loops.length)entities.push({kind:'fill',layer:lay,loops,rgb:rgb(c),owner:path?ownerOf(path):null,src:path||null});};
+    /* WHITEOUT (Paul, 16 Nov 2026: "The nut cracker soldier has not been saved correctly and appears with a white background on the charm. Please ensure this can not happen again"). A drawing
+       made from a traced picture paints WHITE areas over its blue ones to open them. The file carried each white area as a solid fill of its own, on the HATCH layer: laser software fills
+       every area of that layer, so the charm came out with its open areas filled in. White paint is no job for the laser: a white area is CUT OUT of every fill of the same charm drawn
+       before it (the metal shows there, as the drawing means) and is itself never written, as a fill or as a line. */
+    const white=c=>!!c&&c.length>=3&&Math.min(c[0],c[1],c[2])>=0.94;
+    const polysOf=path=>(path.subpaths||[]).map(sub=>{try{return vector().flatten(sub).points;}catch(_){return null;}}).filter(q=>q&&q.length>=3);
+    const boxOf=polys=>{let b=[Infinity,Infinity,-Infinity,-Infinity];for(const q of polys)for(const [x,y] of q){if(x<b[0])b[0]=x;if(y<b[1])b[1]=y;if(x>b[2])b[2]=x;if(y>b[3])b[3]=y;}return b;};
+    const ringArea=q=>{let s=0;for(let k=0;k<q.length;k++){const a=q[k],b=q[(k+1)%q.length];s+=a[0]*b[1]-b[0]*a[1];}return Math.abs(s)/2;};
+    const whiteOut=path=>{
+      const clip=polysOf(path);if(!clip.length)return;
+      const cb=boxOf(clip),owner=ownerOf(path),rule=String(path.paintOp||'').endsWith('*')?'evenodd':'nonzero';
+      for(let i=entities.length-1;i>=0;i--){
+        const e=entities[i];if(e.kind!=='fill'||e.owner!==owner)continue;
+        if(!e.polys)e.polys=e.src?polysOf(e.src):e.loops.map(b=>b.pts.filter((_,k)=>k%3===0));
+        if(!e.box)e.box=boxOf(e.polys);
+        if(e.box[0]>cb[2]||cb[0]>e.box[2]||e.box[1]>cb[3]||cb[1]>e.box[3])continue;
+        const left=vector().boolean(e.polys,clip,'difference',e.rule||(e.src&&String(e.src.paintOp||'').endsWith('*')?'evenodd':'nonzero'),rule).filter(r=>r.hole||ringArea(r.points)>=0.02).map(r=>r.points).filter(q=>q.length>=3);   // (a sliver the cut leaves, under 0.0025 mm², is no engraving)
+        if(!left.length){entities.splice(i,1);continue;}
+        e.polys=left;e.box=boxOf(left);e.loops=left.map(polyBez);e.src=null;e.rule='evenodd';   // (what Clipper answers: outer rings and their holes, each ring once)
+      }
+    };
     for(const path of paths) {
       // A charm's cut silhouette drawn as a FILL (productionPaths marks it) is a cut line: one closed curve, never a fill. Its filled twin beside a stroked outline adds nothing.
       const cutFill=!!path.cutSilhouette && path.fill && !path.stroke;
@@ -386,10 +407,13 @@
       }
       if(path.fill && !cutFill) {
         // blue (and black or grey) filled art is hatching; any other colour is engraving. Either way it is the filled area Illustrator writes: its curves and a solid fill in its own colour
+        if(!path.hatchBlue&&white(path.fillRGB)){whiteOut(path);if(!path.stroke||white(path.strokeRGB))continue;}
+        else{
         const role=path.hatchBlue||blueRGB(path.fillRGB)||grey(path.fillRGB)?'HATCH':'ENGRAVE';
-        fillOf((path.subpaths||[]).map(sub=>bez(sub,true)),target(path,role),path.hatchBlue?[0,0,1]:path.fillRGB);
+        fillOf((path.subpaths||[]).map(sub=>bez(sub,true)),target(path,role),path.hatchBlue?[0,0,1]:path.fillRGB,path);
+        }
       }
-      if(path.stroke || cutFill) {
+      if((path.stroke && !(white(path.strokeRGB) && !cutFill)) || cutFill) {
         const c=cutFill?path.fillRGB:path.strokeRGB, role=cutFill||grey(c)?'CUT':blueRGB(c)?'HATCH':'ENGRAVE', lay=target(path,role);
         for(const sub of path.subpaths||[]){const b=bez(sub,cutFill);if(b)entities.push({kind:'spline',layer:lay,b,rgb:rgb(c),lw:lwOf(path)});}
       }
