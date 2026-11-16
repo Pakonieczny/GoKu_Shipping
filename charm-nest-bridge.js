@@ -2152,7 +2152,7 @@ const Orders = window.Orders = (() => {
     // would leave this copy stale) and trusts nothing here. Such a line is not noDesign for that reason, so a stale record can never keep a reopened piece resolved.
     // (only a line with no pool ids: the card a person completes was never pooled, and the server looks up exactly those lines)
     const cd = row.spec && row.spec.customDone, hand = !!cd && cd.state !== "open" && cd.how !== "sheet" && !(row.poolIds || []).length;
-    return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, hold: row.hold || null, wait: row.wait || null, ...(row._lp ? { _lp: row._lp } : {}), sku: row.spec && row.spec.designSku, material: row.material || (row.spec && row.spec.material) || null, quantity: row.spec ? row.spec.quantity : 1, pieceCount: row.spec ? (row.spec.pieceCount || row.spec.quantity) : 1,
+    return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, ...(row.etsyClosed ? { etsyClosed: +row.etsyClosed } : {}), hold: row.hold || null, wait: row.wait || null, ...(row._lp ? { _lp: row._lp } : {}), sku: row.spec && row.spec.designSku, material: row.material || (row.spec && row.spec.material) || null, quantity: row.spec ? row.spec.quantity : 1, pieceCount: row.spec ? (row.spec.pieceCount || row.spec.quantity) : 1,
       engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, approvedAt:row.engrave.approvedAt || 0, approvedBy:row.engrave.approvedBy || "", decidedAt:row.engrave.decidedAt || 0, seals:row.engrave.seals || [], text: row.engrave.text || null, ...(row.engrave.pieces ? { pieces: row.engrave.pieces } : {}) } : null,
       // The server reads this record, not the row, before it records a set as complete: a line with nothing to engrave
       // must read as plain there too, including before its engraving check has run.
@@ -2222,7 +2222,11 @@ const Orders = window.Orders = (() => {
     // A committed line is cut and its order design-complete at the station, which reports it as no longer open: every
     // check read it again (an Etsy call each, towards the hourly cap that stops the run) and a later Etsy update, such
     // as its shipping, sent a finished order back to review. It is done here.
-    const settled = r => r.state === "gone" || r.state === "committed";
+    /* OURSHIPONLY (Paul, 16 Nov 2026: "when we mark an order as completed in Etsy it automatically gets marked as shipped in our system. This must be stopped, only the 3 existing shipping apps can
+       mark orders as shipped ... Only cancelled orders in Etsy must be followed on our application"). An order Etsy closed (shipped, completed) is no longer taken out of the run or off its sheet
+       for that: it is marked `etsyClosed` (so Etsy is not asked about it again, an Etsy call each time) and stays exactly where it is in production. It leaves only when a SHIPPING STATION marked
+       it shipped (the cloud's own record of that, shippedByUs: asked for the orders Etsy has closed, a small read each) or when it is cancelled. */
+    const settled = r => r.state === "gone" || r.state === "committed" || !!r.etsyClosed;
     const orders = [...new Set(rowsOf().filter(r => !settled(r)).map(r => r.order.receiptId))];
     const changed = [], gone = [];
     if (!DesignLink.etsyBudgetOk(`re-validation ${why}`)) throw new Error("Etsy call budget reached before order revalidation");
@@ -2242,7 +2246,10 @@ const Orders = window.Orders = (() => {
       if (!d || !d.order && !d.gone) throw new Error(`Etsy returned no verifiable state for order ${rid}`);
       // (KEEPSHIPPED, Paul 13 Nov 2026: the pieces of the orders marked shipped 3:11-3:31 PM were put back on their sheets: "Only since 3:19 PM"): an order a person put back on its sheet after Etsy closed it (the run's keepShipped list, kept with the run in the cloud) is not taken off again
       if (d.gone && B.run && (B.run.keepShipped || []).map(String).includes(String(rid))) { agent({ bridge: true }, "DS", `${rid} is closed on Etsy (${d.reason || (d.isShipped ? "shipped" : "gone")}) but was put back on its sheet by hand: it stays`); continue; }
-      if (d.gone) { gone.push(rid); for (const r of rows) { r.state = "gone"; r.reason = d && d.reason ? d.reason : (d && d.isShipped ? "shipped" : d && d.status ? d.status : "no longer open"); if (d.isShipped && !r.shippedAt) r.shippedAt = (+(d.order && d.order.updateTs) || 0) * (+(d.order && d.order.updateTs) < 1e12 ? 1000 : 1) || Date.now(); } continue; }   // (CMP1: Etsy's time of the change, the order's update time, is when it shipped: the seal of an order with no recorded shipped event is drawn from it)
+      if (d.gone) {
+        const cancel = (/cancel/i.test(String((d && (d.reason || d.status)) || "")) && !(d && d.isShipped)) || !!(window.Cancelled && Cancelled.has && Cancelled.has(rid));
+        if (!cancel) { for (const r of rows) r.etsyClosed = Date.now(); agent({ bridge: true }, "DS", `${rid} is ${d && d.isShipped ? "shipped" : "closed"} on Etsy: it stays in production here until a shipping station marks it shipped`); continue; }   // (OURSHIPONLY)
+        gone.push(rid); for (const r of rows) { r.state = "gone"; r.reason = d && d.reason ? d.reason : (d && d.status ? d.status : "cancelled"); } continue; }   // (CMP1: Etsy's time of the change, the order's update time, is when it shipped: the seal of an order with no recorded shipped event is drawn from it)
       if (rows.some(row=>row.order.updateTs !== d.order.updateTs)) {
         changed.push(rid);
         for (const r of rows) {
@@ -2266,6 +2273,18 @@ const Orders = window.Orders = (() => {
         }
       }
     }
+    // (OURSHIPONLY: the orders Etsy has closed: has a shipping station marked them shipped? Those leave now, as a shipped order always has; the others stay)
+    try {
+      const closedIds = [...new Set(rowsOf().filter(r => r.etsyClosed && r.state !== "gone" && r.state !== "committed" && r.order).map(r => String(r.order.receiptId)))];
+      for (let i = 0; i < closedIds.length; i += 100) {
+        const got = (await api("charmNestLibrary", { op: "shippedByUs", orders: closedIds.slice(i, i + 100) }, { quiet: true })).shipped || {};
+        for (const [rid, ev] of Object.entries(got)) {
+          gone.push(rid);
+          for (const r of rowsOf()) if (r.order && String(r.order.receiptId) === rid && r.state !== "committed") { r.state = "gone"; r.reason = "shipped"; if (!r.shippedAt) r.shippedAt = +ev.at || Date.now(); }
+          try { if (window.CNCompleted && CNCompleted.learn) CNCompleted.learn(rid, { type: "shipped", at: +ev.at || Date.now(), by: ev.by || "", src: "timeline", ev: { id: ev.id || "", type: "shipped", at: +ev.at || 0, by: ev.by || "", station: ev.station || "shipping", source: ev.source || "station", data: ev.data || null } }, rowsOf().filter(r => r.order && String(r.order.receiptId) === rid)); } catch (_) { /* the list learns it from the timeline */ }
+        }
+      }
+    } catch (e) { console.warn("[revalidate] shipped at the station", e && e.message); }
     await takeOffGone(rowsOf().filter(r => r.state === "gone" && (r.poolIds || []).length));
     if (run) { run.lines = Object.fromEntries(rowsOf().map(lineRecord)); run.revalidatedAt = Date.now(); await RunCtl.save(run); }
     agent({ bridge: true }, "DS", `Re-validated ${orders.length} order(s) ${why}: ${changed.length} changed, ${gone.length} gone`);
@@ -17084,7 +17103,7 @@ const RunCtl = window.RunCtl = (() => {
       for (const row of Orders.rows()) {
         const old = savedLines[row.key];
         if (!old || +old.updateTs !== +row.order.updateTs) continue;
-        for (const key of ["state", "poolIds", "reason", "hold", "wait", "engrave", "materialOverride", "sizeOverride", "blockOverride", "skuOverride", "releaseHold", "releaseAnyway", "engravingOverride", "changePending", "repoolChanged"]) if (old[key] != null) row[key] = old[key];
+        for (const key of ["state", "poolIds", "reason", "hold", "wait", "engrave", "materialOverride", "sizeOverride", "blockOverride", "skuOverride", "releaseHold", "releaseAnyway", "engravingOverride", "changePending", "repoolChanged", "etsyClosed"]) if (old[key] != null) row[key] = old[key];
       }
       // (TAKEOVERSAFE, Paul 14 Nov 2026: "A real run takeover between computers ... test them"): the run's lines of orders Etsy has closed (shipped orders put back on their sheets by hand: run.keepShipped) are not pulled, as only open orders are; they come back from the
       //  run's own saved lines, so their pieces are put back on their sheets and no line is dropped from the run when it is saved here

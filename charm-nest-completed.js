@@ -44,10 +44,13 @@
 
   /* ═══ what this computer knows ═══ */
   const keyOf = () => KEY + ':' + worldName;
+  const OUR_SHIP_ONLY = true;
   function load() {
     if (store) return store;
     store = new Map();
-    try { const j = JSON.parse(root.localStorage.getItem(keyOf()) || '[]'); if (Array.isArray(j)) for (const e of j) if (e && e.rid) store.set(String(e.rid), e); } catch (_) {}
+    // (OURSHIPONLY: what this computer had learned from Etsy alone is let go: an order is under Completed only by a shipping station's event)
+    const ourFact = e => !OUR_SHIP_ONLY || (e.src === 'timeline' && e.ev && String(e.ev.source || '') !== 'etsy' && String(e.ev.by || e.by || '') !== 'Etsy');
+    try { const j = JSON.parse(root.localStorage.getItem(keyOf()) || '[]'); if (Array.isArray(j)) for (const e of j) if (e && e.rid && ourFact(e)) store.set(String(e.rid), e); } catch (_) {}
     return store;
   }
   let saveT = 0;
@@ -68,7 +71,9 @@
   function factOfEvents(events) {
     if (!Array.isArray(events)) return null;
     let best = null;
-    for (const e of events) if (e && SHIP_TYPES.includes(e.type) && (!best || (+e.at || 0) < (+best.at || 0))) best = e;
+    // (OURSHIPONLY, Paul 16 Nov 2026: "only the 3 existing shipping apps can mark orders as shipped irrespective of what Etsy shows"): an event Etsy is the source of is never the shipped fact
+    const ours = e => String(e.source || '') !== 'etsy' && String(e.by || '') !== 'Etsy';
+    for (const e of events) if (e && SHIP_TYPES.includes(e.type) && ours(e) && (!best || (+e.at || 0) < (+best.at || 0))) best = e;
     if (!best) return null;
     const ev = { id: String(best.id || best.key || ''), type: best.type, at: +best.at || 0, by: String(best.by || ''), station: String(best.station || ''), source: String(best.source || '') };
     if (best.data && typeof best.data === 'object') ev.data = Object.assign({}, best.data);
@@ -76,6 +81,8 @@
   }
   /** What the row's own data says: Etsy's status on the order, or a line the orders check found gone because Etsy shipped it. */
   function factOfRow(r) {
+    // (OURSHIPONLY: what the order's own record says is what ETSY says: it is no shipped fact any more. Only a shipping station's recorded event is: factOfEvents)
+    if (OUR_SHIP_ONLY) return null;
     try {
       if (!r || !r.order) return null;
       const o = r.order, l = r.line || {};
