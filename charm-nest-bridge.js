@@ -28093,6 +28093,8 @@ const Recall = window.Recall = (() => {
         pg.placements.push({ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: Number.isFinite(+p.scale) && +p.scale > 0 ? +p.scale : man && man.size ? +((typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) * man.size).toFixed(5) : (typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) });   // (OWNSCALE, Paul 15 Nov 2026: a 14K sheet read "6 charms overlap" on the computer that follows the run): the piece is drawn at the scale ITS PLACEMENT was saved with (six pieces of that sheet were saved a little smaller); it was drawn at the standard scale, larger than it lies on the sheet
       }
       pg.recalled = null; pg.status = "complete"; pg.dirty = false;
+      // (FULLSAID, Paul 15 Nov 2026: the sheets of the computer that follows the run read "0% full" where the carrying computer reads 33%): how full the sheet is comes from its record (the free area saved with it), as the nest that made it measured it
+      try { const fp = +rec.freePt2, us = typeof usableArea === "function" ? +usableArea(pg) : 0; if (!pg.liveInfo && Number.isFinite(fp) && fp >= 0 && us > 0) pg.liveInfo = { freePt2: Math.min(fp, us), usablePt2: us, placedPt2: Math.max(0, us - fp), fromRecord: true }; } catch (_) { /* the card says less */ }
       CN.computeSaturation(pg); CN.renderCard(pg);
       agent({ metal: pg.metal }, "cloud", `${rec.fileBase || rec.id}: ${pg.charms.length} charm(s) rebuilt from the master files — the sheet can be edited and nested again`);
     } finally { if (bar) bar.end(); }
