@@ -3352,7 +3352,7 @@ const PageVersion = (() => {
       if (document.querySelector("dialog[open]")) return false;
       const ae = document.activeElement; if (ae && (/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) || ae.isContentEditable)) return false;
       if (typeof allSheets === "function" && allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone && !p.problem) || p.saveOwed)) return false;
-      const r = B.run; if (r && (!["processed", "review", "paused", "stopped", "complete"].includes(r.status) || r.arrivalBusy)) return false;
+      const r = B.run; if (r && r.arrivalBusy) return false;   // (SELFUPDATE 2, Paul 16 Nov 2026: the carrying page sat at "running" for a quarter of an hour and never found a moment: a run in Auto is taken up again by itself after a reload, as after any reload a person makes, so only work in hand holds the update back: a sheet nesting or saving, new orders going on, a window open, someone typing)
       if (r && r.status !== "complete" && S.settings.runMode !== "auto") return false;   // (a run carried here by hand would wait for Resume after the reload: only a page in Auto, which carries on by itself, updates itself while it holds a run)
       if (window.Session && Session.failure && Session.failure()) return false;
       return true;
@@ -6831,7 +6831,17 @@ const Gate = window.Gate = (() => {
       const RG1 = rgOneGroups(run, V, GH), merging = new Set();
       for (const p of allSheets().filter(p => p.runId === run.runId && goldFamily(p.metal) && autoCuts(p.metal) && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled)) {
         if (p._roseAction || p._rosePlanning || p._roseLoading || p._autoCutting || p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || !p.persistedDone || !p.verification?.ok || !p.placements.length || p._manualHold) continue;
-        const h = V && GH.get(V.idOf.get(p)); if (!h || !h.home) continue;                       // (no partner in a set yet: its set is not complete)
+        let h = V && GH.get(V.idOf.get(p)), free = false;
+        // (RGREST, Paul 15 Nov 2026: "whatever is still remaining from the last green cut line should get added to the newest set of sheets. Of course, if there is an order that connects the Rose Gold sheet to another sheet
+        //  and another set of sheets, that takes precedence"): a Rose Gold sheet that is FINISHED (it is full, or a newer Rose Gold draft of the run has taken pieces) and that NO order ties to another sheet joins the run's
+        //  newest open set by itself: its pieces past the last green line are cut into it. A sheet an order ties to other sheets keeps the rule above (its partners' set, and it waits for them).
+        if (p.metal === "rose" && (!h || !h.home) && !(h && h.partners && h.partners.length)) {
+          let done = !!p.releaseFull; if (!done) { try { done = !!(RS.full && RS.full(p)); } catch (_) { /* not full that we can tell */ } }
+          if (!done) { const pages = (S.sheets.rose && S.sheets.rose.pages) || [], at = pages.indexOf(p); done = at >= 0 && pages.slice(at + 1).some(q => q && q.runId === run.runId && !q.recalled && (q.placements || []).length > 0); }
+          const nst = done ? newestOpenOf(run.runId) : null;
+          if (nst && !approved(nst)) { h = { home: nst.setId, partners: [], split: [] }; free = true; }
+        }
+        if (!h || !h.home) continue;                       // (no partner in a set yet: its set is not complete)
         // (Paul, 12 Nov 2026: a person's own take-out wins: a Rose Gold sheet a person took out (Include off, Take out, a drop out of the set) is never put back by the automatic cut; its own press does)
         if (p.autoCutOff || (p.leftSet && !inSetNow(p) && String(p.leftSet) === String(h.home))) continue;
         // (RGONE: one Rose Gold sheet per set. A set that already holds a cut Rose Gold sheet takes no second one by itself; several uncut ones of one set are made one sheet first, then that one is cut)
@@ -6849,8 +6859,8 @@ const Gate = window.Gate = (() => {
           delete p._rgOneSaid;
         }
         if (inSetNow(p) && p.setId !== h.home) continue;                                         // (in a set that is not its one set: it leaves it first, greenAway)
-        if (!h.partners.some(i => { const q = V.page.get(i); return q && q.setId === h.home && !q.draft && SRa && SRa.isCompleted(q); })) continue;
-        const st = sets.find(x => x.setId === h.home); if (!st || approved(st) || !SRa || !SRa.closed(membersOfSet(st))) continue;
+        if (!free && !h.partners.some(i => { const q = V.page.get(i); return q && q.setId === h.home && !q.draft && SRa && SRa.isCompleted(q); })) continue;
+        const st = sets.find(x => x.setId === h.home); if (!st || approved(st) || (!free && (!SRa || !SRa.closed(membersOfSet(st))))) continue;   // (RGREST: a sheet no order ties to another joins the newest open set, formed or still collecting)
         if (rgClearStep(run, p, String(st.setId), st.name || "its set")) continue;   // (RGCLEAR: its line holds only the orders of its own set)
         const key = p.sheetId + "|" + st.setId + "|" + (p.jobId || "") + "|" + Object.keys(p.backPool || {}).length + "|" + Object.keys(p.outputs || {}).sort().join(",") + "|" + (p.label ? 1 : 0), last = autoCutTried.get(p.sheetId);
         // (refused and nothing changed on the sheet: again in ten minutes, not at every look. Paul, 12 Nov 2026: a sheet that waits IN its set is not put in and taken out by a try any more, so it is tried
