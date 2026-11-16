@@ -29958,6 +29958,8 @@ if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
   api: (fn, body, opts) => api(fn, body, opts),
   who: () => { try { return employeeName() || ""; } catch (_) { return ""; } },
   rowOf: poolId => B.pool.rows.get(poolId) || null,
+  // (ARTFRESH: the art-edit stamps of these pieces as the cloud holds them now, put on this page's rows; nothing else of a row is changed)
+  freshRows: async ids => { for (let i = 0; i < ids.length; i += 300) { const got = await api("charmNestLibrary", { op: "poolGet", poolIds: ids.slice(i, i + 300) }, { quiet: true }); for (const [id, p] of Object.entries((got && got.pools) || {})) { if (!p) continue; const mine = B.pool.rows.get(id); if (!mine) B.pool.rows.set(id, p); else { mine.artEdit = p.artEdit || null; if (p.artEditBy !== undefined) mine.artEditBy = p.artEditBy; } } } },
   charmOf: poolId => Pool.charmOf(poolId) || null,
   placed: poolId => !!Pool.sheetOf(poolId),
   parsedOf: c => { const s = c && sourceOf(c.sourceId); return (s && s.parsed) || null; },

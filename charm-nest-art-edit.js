@@ -667,8 +667,10 @@
   }
   /** After a checkpoint is restored: every piece on this page's sheets whose pool row names an edit this page's charm does not carry (made on another computer since, or taken off)
    *  is made again with it. Only those pieces' records are read. → the number of pieces changed. */
-  async function sync() {
+  async function sync(o) {
     if (!host.liveCharms) return 0;
+    // (ARTFRESH, Paul 16 Nov 2026: "Charm Editor save reaching the second computer": the look compared this page's pieces with this page's OWN copy of their rows, which nothing had read again, so a save made on another computer was seen only after a reload. The rows of the orders the feed names are read first: one read, only when the feed says so)
+    if (o && Array.isArray(o.orders) && o.orders.length && host.freshRows) { try { const want = new Set(o.orders.map(String)), ids = [...new Set((host.liveCharms() || []).map(c => c && c.poolId).filter(id => id && want.has(String(id).split("_")[0])))]; if (ids.length) await host.freshRows(ids); } catch (_) { /* the look is made with the rows this page has */ } }
     const todo = new Map();
     for (const c of host.liveCharms() || []) {
       if (!c || !c.poolId || todo.has(c.poolId)) continue;

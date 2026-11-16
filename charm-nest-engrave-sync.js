@@ -298,15 +298,17 @@
       read: (why, keys) => {
         // (CESAFE, Paul 13 Nov 2026: "make sure nothing is fucked with the charm editor"): only a save made on ANOTHER computer is put on this page's charm; this computer's own save
         //  (its tabs' writes, 'wrote') is never applied a second time over itself (that would approve the face again and write its sheet's files again)
-        if (why !== "wrote") artSoon();
         const named = (keys || []).filter(k => /^p:\d{4,30}$/.test(k)).map(k => k.slice(2));
+        if (root.__artDbg) console.log("ARTDBG read", why, JSON.stringify(keys || null));
+        if (why !== "wrote") { for (const n of named) artOrders.add(n); artSoon(); }
         if (why === "keys" && named.length && !(keys || []).includes("p:*")) return pull(named, why);
         return pull(null, why);
       } });
   }
   let artT = 0;
   // (ARTEVERYWHERE, Paul 15 Nov 2026: "all the changes and updates automatically reflect across all the sheets and all the thumbnails": the placement feed can bring a piece's new artEdit stamp after the 1.2 s look; a look that found nothing to change is made once more 5 s later, and no more (a feed event starts a new pair, there is no polling)
-  const artSoon = (again) => { if (artT) return; artT = setTimeout(() => { artT = 0; safe(() => { const A = root.CharmNestArtEdit; if (A && typeof A.sync === "function") Promise.resolve(A.sync()).then(n => { safe(() => E().render()); safe(() => O().render()); if (!n && !again) artSoon(true); }).catch(() => {}); }); }, again ? 5000 : 1200); };
+  const artOrders = new Set();
+  const artSoon = (again) => { if (artT) return; artT = setTimeout(() => { artT = 0; safe(() => { const A = root.CharmNestArtEdit; const orders = [...artOrders]; if (again) artOrders.clear(); if (A && typeof A.sync === "function") Promise.resolve(A.sync({ orders })).then(n => { if (root.__artDbg) console.log("ARTDBG sync", again, JSON.stringify(orders), n); safe(() => E().render()); safe(() => O().render()); if (!n && !again) artSoon(true); else artOrders.clear(); }).catch(err => { if (root.__artDbg) console.log("ARTDBG err", String(err && err.stack || err)); }); }); }, again ? 5000 : 1200); };
   function boot() {
     let tries = 0;
     const go = () => {
