@@ -30113,7 +30113,14 @@ async function placeStranded() {
   const rows = Orders.rows().filter(r => r && r.state === "pooled" && !r.hold && (r.poolIds || []).length && !(r.poolIds || []).some(id => on.has(id) || named(id)) && !(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId)));
   // (and the cloud is asked once more before anything moves: a piece whose row there names a sheet stays where it is)
   if (rows.length) { const ids0 = rows.flatMap(r => r.poolIds || []), cloudOn = new Set(); for (let i = 0; i < ids0.length; i += 300) { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: ids0.slice(i, i + 300) }, { quiet: true })).pools || {}; for (const [id, pr] of Object.entries(got)) if (pr && pr.sheetId && !["abandoned", "superseded"].includes(pr.state)) cloudOn.add(id); } for (let i = rows.length - 1; i >= 0; i--) if ((rows[i].poolIds || []).some(id => cloudOn.has(id))) rows.splice(i, 1); }
-  if (!rows.length) return { lines: 0, pieces: 0, placed: 0 };
+  /* CONTENDEDBACK (Paul, 16 Nov 2026: "one order on this sheet has a piece that is not nested on a silver sheet"): a line the pool refused because ANOTHER run held its piece ("claimed by run …")
+     stayed refused for good, also after that run was retired: its piece stood on no sheet and nothing asked again. Such a line goes back to the intake here; the server answers afresh, and a
+     piece a run that is still live really holds is refused again, as before. */
+  const again = Orders.rows().filter(r => r && r.state === "contended" && !r.hold && !(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId)));
+  if (!rows.length && !again.length) return { lines: 0, pieces: 0, placed: 0 };
+  for (const r of again) { r.state = "pulled"; r.reason = null; delete r.poolTry; delete r.wait; }
+  if (again.length) agent({ run: run.runId, pool: true }, "warn", `${again.length} order line(s) another run had claimed are asked for again`);
+  if (!rows.length) { await LiveNest.add(run); try { await RunCtl.save(run); } catch (_) { /* saved with the next change */ } const got = again.filter(r => (r.poolIds || []).length); return { lines: again.length, pieces: Math.max(again.length, got.flatMap(r => r.poolIds).length), placed: got.flatMap(r => r.poolIds).filter(id => allSheets().some(p => (p.charms || []).some(c => c && c.poolId === id))).length }; }
   const ids = rows.flatMap(r => r.poolIds || []);
   agent({ run: run.runId, pool: true }, "warn", `${rows.length} order line(s) (${ids.length} piece(s)) are counted as pooled but stand on no sheet: they go back to the intake to be placed`);
   for (const r of rows) { r.state = "pulled"; r.reason = null; delete r.poolTry; delete r.wait; }
@@ -30136,6 +30143,7 @@ async function strandedWatch(why) {
   const on = new Set(allSheets().flatMap(p => (p.charms || []).map(c => c && c.poolId)).filter(Boolean));
   for (const p of allSheets()) { const rec = p.recalled; if (rec) for (const id of (rec.poolIds || [])) on.add(String(id)); }
   const cand = Orders.rows().filter(r => r && r.state === "pooled" && !r.hold && (r.poolIds || []).length && !(r.poolIds || []).some(id => on.has(id) || (B.pool.rows.get(id) || {}).sheetId));
+  for (const r of Orders.rows()) if (r && r.state === "contended" && !r.hold) cand.push(r);   // (CONTENDEDBACK)
   const now = Date.now(), fresh = cand.filter(r => now - (strandedTried.get(r.key) || 0) > 30 * 60 * 1000);
   if (!fresh.length) return null;
   strandedBusy = true; for (const r of fresh) strandedTried.set(r.key, now);
