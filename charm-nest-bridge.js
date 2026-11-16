@@ -2346,7 +2346,7 @@ const Orders = window.Orders = (() => {
         sh.charms = sh.charms.filter(c => !ids.has(c.poolId)); sh.placements = sh.placements.filter(p => sh.charms.some(c => c.id === p.id)); keepRest(sh);
         off.push(...mine.map(c => c.poolId)); out.push({ sh, poolIds: mine.map(c => c.poolId), roseLines: lines.get(sh) || [] });
         if (opt.after) opt.after(sh, mine);
-        agent({ metal: sh.metal, run: sh.runId }, "POOL", `${row.order.receiptId} ${opt.why ? "was " + opt.why : `is no longer open on Etsy (${row.reason || "gone"})`}: ${mine.length} piece${mine.length === 1 ? "" : "s"} taken off ${sheetName(sh)}; the rest stay where they are`);
+        agent({ metal: sh.metal, run: sh.runId }, "POOL", `${row.order.receiptId} ${opt.why ? "was " + opt.why : `is ${row.reason === "shipped" ? "shipped at our Shipping station" : `no longer open on Etsy (${row.reason || "gone"})`}`}: ${mine.length} piece${mine.length === 1 ? "" : "s"} taken off ${sheetName(sh)}; the rest stay where they are`);
       }
       // a pair (or n discs) of this line that stays on a sheet that cannot give it up (cut, sent) is said too: the other piece came off, this one is set aside
       try {
@@ -2358,7 +2358,7 @@ const Orders = window.Orders = (() => {
       if (!off.length) continue;
       const offSet = new Set(off); row.poolIds = row.poolIds.filter(id => !offSet.has(id));
       // (an order the order check found gone says so on its timeline too: the server stamps "removed" from removedBy/At)
-      const patch = opt.patch || { removedBy: "System", removedReason: `no longer open on Etsy (${row.reason || "gone"})`, removedAt: Date.now() };
+      const patch = opt.patch || { removedBy: "System", removedReason: row.reason === "shipped" ? "shipped at our Shipping station" : `no longer open on Etsy (${row.reason || "gone"})`, removedAt: Date.now() };
       try { const res = await Pool.update(off, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); const more = ((res && res.extended) || []).filter(id => !offSet.has(id)); if (more.length) { for (const id of more) B.pool.rows.delete(id); row.poolIds = row.poolIds.filter(id => !more.includes(id)); agent({ pool: true }, "warn", `${row.order.receiptId}: the server took ${more.length === 1 ? "1 more piece" : more.length + " more pieces"} of the same order off its sheets too (a pair or group comes off whole); those sheet records are marked to be written again`); } } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); if (opt.strict) throw e; }
       for (const id of off) B.pool.rows.delete(id);
     }
@@ -3245,7 +3245,7 @@ const Orders = window.Orders = (() => {
     const cxN = window.Cancelled ? Cancelled.count() : 0, cmpN = window.CNCompleted ? CNCompleted.count() : 0;
     // (Cancelled is always there, Paul 28 Sep A5: every cancelled order, Etsy's and a person's, whatever the pull holds)
     const pills = v.querySelector("#ordChips"), pillsHtml = chip(!OV.pile,"","Open Orders",totals.orders,"","Distinct open order numbers, across all materials")
-      + chip(OV.pile === "completed","completed","Completed",cmpN,"","Every shipped order, newest shipped first, each with its SHIPPED seal: an order marked shipped (at the shipping station or on Etsy) leaves Open Orders and is placed here")
+      + chip(OV.pile === "completed","completed","Completed",cmpN,"","Every shipped order, newest shipped first, each with its SHIPPED seal: an order marked shipped at one of our shipping stations leaves Open Orders and is placed here")
       + chip(OV.pile === "cancelled","cancelled","Cancelled",cxN,"","Every cancelled order: the ones Etsy cancelled and the ones a person cancelled here, newest first");
     // on Cancelled and Completed the search reads order, buyer and SKU, and the narrowing controls of open lines step aside (Time and Sort by stay in Filters)
     { const bar = v.querySelector("#ordBar"), q = v.querySelector("#ordQ"), cx = OV.pile === "cancelled" || OV.pile === "completed"; if (bar) { bar.classList.toggle("onCx", OV.pile === "cancelled"); bar.classList.toggle("onCmp", OV.pile === "completed"); } if (q) q.placeholder = cx ? "order, buyer, SKU…" : "order, SKU, words…"; }
@@ -18640,6 +18640,18 @@ const CustomSheet = window.CustomSheet = (() => {
       // Recovery does not replay historical ink; only unfinished rows are retried under their original pool ids.
       if(how.recover)intent.pressed=true;
       if(touring && !motionOff() && window.NestHold)nestHold=NestHold.hold({lines:rows.map(r=>r.key),ms:20000});
+      /* REMOTESEND (Paul, 16 Nov 2026: "pressed the send to sheet button. The charm was removed from the sheet but the updated charm did not appear on the sheet to replace the original incorrect charm"):
+         a computer that FOLLOWS the run has no sheets of its own to put a piece on. Its send took the old piece off its own picture of the sheet, marked the piece superseded in the cloud and
+         could never make the new one; the computer that carries the run never heard of the exchange. Now the send is recorded (the designs and the decision are in the cloud), and the exchange
+         itself is done by the computer that carries the run (the relay's "customsend": applyRemote there), its steps shown here while it works. Nothing of the sheet is touched on this computer. */
+      const remoteRun=(!B.run && window.CharmNestRunFollow?.state?.().runId) || "";let remoteOut=null;
+      if(remoteRun){
+        await saveCloud(e,"sent");if(!current())return;
+        e.carrierPending={at:Date.now(),runId:remoteRun,askedAt:Date.now()};await checkpoint();
+        say("Asking the computer that carries the run…");
+        try{remoteOut=await askCarrier(e,t=>say(t));}catch(err){remoteOut={ok:false,retry:true,text:String(err?.message || err)};}
+        if(!current())return;
+      }else{
       say("Placing on the sheets…");
       for(const r of rows){
         const pcs=lines[r.key] || [],expected=pcs.map((pc,n)=>pc.removed?null:O.poolId(r.order,r.line,n+1)).filter(Boolean);
@@ -18656,6 +18668,7 @@ const CustomSheet = window.CustomSheet = (() => {
       if(intent.replace && intent.replace.length){const fresh=new Set(rows.filter(r=>intent.replace.includes(r.key)).flatMap(r=>r.poolIds || []));for(const sh of allSheets()){const mine=sh.charms.filter(c=>fresh.has(c.poolId));if(!mine.length || mine.every(c=>sh.placements.some(p=>p.id===c.id)))continue;if(sh.runHold || ["nesting","finishing","queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || (sh.persisted && !sh.persistedDone))continue;sh.status="ready";try{if(typeof window.startNest==="function")window.startNest(sh);}catch(err){console.warn("[revdrop] sheet not started:",err && err.message);}}try{Review.remadeRepaint(allSheets().filter(sh=>sh.charms.some(c=>fresh.has(c.poolId))));}catch(_){}}   /* (WRONGCHARM2, Paul 20 Oct 2026: every view of the replaced line painted now and once its sheets are nested: remadeRepaint) */
       // A cloud receipt and local checkpoint complete the same immutable decision; a lost reply leaves it retryable.
       await saveCloud(e,"sent");if(!current())return;
+      }
       e.sent={id:intent.id,at:intent.at,by:intent.by,lines:intent.lines};delete e.sendIntent;delete e.sendError;ver++;
       keepSheetSeal(e);   // (SEALSHEET: the send is through: its seal is kept on the order, never before)
       try { if (window.CNAskPlace) window.CNAskPlace(`Place the designs sent for order ${e.rid}`); } catch (_) { /* the carrier's own look finds them */ }   // (NEVERSTRANDED)
@@ -18673,6 +18686,8 @@ const CustomSheet = window.CustomSheet = (() => {
       let shutting=!!(D.dlg?.open && D.ck===ck);if(shutting && !motionOff()){await new Promise(r=>requestAnimationFrame(()=>setTimeout(r,0)));shutting=!!(D.dlg?.open && D.ck===ck);}if(shutting)shut();
       const placed=rows.filter(r=>["pooled","written","committed"].includes(r.state)),n=Object.values(lines).reduce((a,l)=>a+l.filter(pc=>!pc.removed).length,0),metals=[...new Set(files.map(F=>labelOf(F.metal)))].join(" and ");
       const sheets=`the ${metals} sheet${new Set(files.map(F=>F.metal)).size>1?"s":""}`,words=placed.length?`Order ${e.rid}: ${plural(n,"custom piece")} on ${sheets}`:`Order ${e.rid} is sent: ${n===1?"its piece goes":"its pieces go"} on ${sheets} with the next run`;
+      // (REMOTESEND: what the computer that carries the run answered is what is said here, never a guess from this computer's own lists)
+      if(remoteOut){nestHold?.releaseAll();if(snap?.ghost)snap.ghost.remove();letGo();toast(remoteOut.ok?`Order ${e.rid}: ${remoteOut.text}`:remoteOut.retry?`Order ${e.rid} is sent and saved. ${remoteOut.text} Its new piece goes onto the sheet as soon as that computer answers: nothing more is needed here.`:`Order ${e.rid}: the new piece is not on a sheet yet. ${remoteOut.text}`,remoteOut.ok?"ok":"warn",remoteOut.ok?7000:14000);return e.sent;}
       const plan=touring && tourOk()?tourPlan(rows,e):null;
       if(plan && (plan.legs.length || plan.waiting.length)){
         flying=true;const delay=shutting?480:0;if(nestHold)nestHold.arm(SendTour.limit({legs:plan.legs,waiting:plan.waiting,delay})+3000);
@@ -18683,6 +18698,82 @@ const CustomSheet = window.CustomSheet = (() => {
       if(owner[e.ck]===e){e.sendError=String(err.message || err);Session.schedule();await Session.flushNow?.().catch(()=>{});}
       if(!how.recover){humanAct("error",{orderId:String(e.rid),detail:"send to the sheets not finished, kept for retry"});toast(`${e.rid}: send saved for retry — ${err.message}`,"bad",8000);}
     }finally{keepDisarm(keepK);stampHost?.remove();busy.delete(ck);if(!flying){nestHold?.releaseAll();if(snap?.ghost)snap.ghost.remove();letGo();redraw();}}
+  }
+  /* REMOTESEND · askCarrier(e, say): on a computer that follows the run. The exchange of a sent card's pieces is asked of the computer that carries the run and its answer waited for (11 minutes at
+     most; the list is read every 3 s for the first minute, every 6 s after). → { ok, text, name }; throws when there is no carrier or no answer (the card keeps carrierPending and recover() asks again). */
+  const carrierAsks=new Map();
+  async function askCarrier(e, say=()=>{}) {
+    if(carrierAsks.has(e.ck))return carrierAsks.get(e.ck);
+    const task=(async()=>{
+      const F=window.CharmNestRunFollow,runId=F?.state?.().runId,dev=typeof F?.dev==="function"?F.dev():"";
+      if(B.run || !runId || !dev)throw new Error("No run is open on another computer to place it.");
+      const c=await api("charmNestLibrary",{op:"runCarrier",runId,dev,check:true},{quiet:true});
+      if(!c?.alive || c.mine)throw new Error("The computer that carries the run is not open right now.");
+      const name=c.carrier?.by || "the computer that carries the run";
+      const put=await api("charmNestLibrary",{op:"runCmdPut",runId,dev,by:employeeName() || "",cmd:{type:"customsend",ck:e.ck,ids:Object.keys(decisionLines(e)),label:`Place the designs sent for order ${e.rid}`.slice(0,150)}},{quiet:true});
+      if(!put?.id)throw new Error(put?.error || "The request was not sent.");
+      say(`Waiting for ${name}'s computer…`);
+      for(const t0=Date.now();Date.now()-t0<11*60000;){
+        await new Promise(r=>setTimeout(r,Date.now()-t0<60000?3000:6000));
+        let list=null;try{list=await api("charmNestLibrary",{op:"runCmdList",runId},{quiet:true});}catch(_){continue;}
+        const k=(list?.cmds || []).find(x=>x && x.id===put.id);if(!k)continue;
+        if(k.state==="cancelled" || (k.state==="failed" && /^too old$/i.test(String(k.text || ""))))throw new Error(`${name}'s computer did not get to it in time.`);
+        if(k.state==="done" || k.state==="failed"){if(all()[e.ck]===e){delete e.carrierPending;ver++;Session.schedule();}return {ok:k.state==="done",text:String(k.text || (k.state==="done"?"its new piece is on the sheet":"It could not be placed.")),name};}
+        if(k.state==="running" && k.step)say(`${name}'s computer: ${k.step}`);
+      }
+      throw new Error(`${name}'s computer did not answer.`);
+    })();
+    carrierAsks.set(e.ck,task);try{return await task;}finally{if(carrierAsks.get(e.ck)===task)carrierAsks.delete(e.ck);}
+  }
+  /* REMOTESEND · applyRemote(ck, { onStep }): on the computer that CARRIES the run. A card another computer sent (its record read from the cloud now) has its lines made up from the sent designs:
+     a line whose pieces are on an open sheet has them exchanged in place (the same exchange a send on this computer does: Review.repool with replaceByDesign; the old spot, else beside it, else
+     the latest unfinished sheet; no other charm moves and no sheet is nested again), a line with no piece yet is made up as any sent line is. A line whose pieces are already these designs is
+     left alone, so asking twice changes nothing. It answers once the new pieces lie on a sheet and that sheet is saved (6 minutes at most). → { ok, text } / { ok:false, why }. */
+  const remoteBusy=new Map();
+  async function applyRemote(ck, o={}) {
+    if(remoteBusy.has(ck))return remoteBusy.get(ck);
+    const task=applyRemoteOnce(ck,o);remoteBusy.set(ck,task);try{return await task;}finally{if(remoteBusy.get(ck)===task)remoteBusy.delete(ck);}
+  }
+  async function applyRemoteOnce(ck, o) {
+    const step=typeof o.onStep==="function"?o.onStep:()=>{},nap=ms=>new Promise(r=>setTimeout(r,ms));
+    if(!B.run)return {ok:false,why:"This computer does not carry the run."};
+    step({text:"Reading the designs that were sent…"});
+    const reply=await api("charmNestLibrary",{op:"customSheetGet",keys:[ck]},{quiet:true}),rec=reply?.records?.[ck];
+    if(!rec?.sent?.lines || rec.phase!=="sent")return {ok:false,why:"The send is not recorded in the cloud yet."};
+    for(const t0=Date.now();(tasks.has(ck) || busy.has(ck)) && Date.now()-t0<60000;)await nap(300);
+    hydrate({[ck]:rec});
+    const e=all()[ck];if(!e?.sent || e.sent.id!==rec.sent.id)return {ok:false,why:"The computer that carries the run holds another send for that order: reload it, then send again."};
+    const rid=String(e.rid),rows=currentRows(e).filter(r=>r.state!=="gone");
+    if(window.Cancelled?.has?.(rid))return {ok:false,why:`Order ${rid} was cancelled.`};
+    if(!rows.length)return {ok:false,why:`Order ${rid} is not in the run on the computer that carries it.`};
+    const isNew=id=>{const c=Pool.charmOf(id),p=B.pool.rows.get(id);return c?c.customCk===ck:!!(p && p.custom && p.sheetId && !["abandoned","superseded"].includes(p.state));};
+    const fresh=new Set();let changed=0;
+    for(const r of rows){
+      const pcs=e.sent.lines[r.key] || [],expected=pcs.map((pc,n)=>pc.removed?null:O.poolId(r.order,r.line,n+1)).filter(Boolean);
+      if(!expected.length)continue;
+      if(expected.every(isNew)){expected.forEach(id=>fresh.add(id));continue;}
+      changed++;step({text:`Order ${rid}: ${(r.poolIds || []).length?"exchanging its piece on the sheet":"making its piece"}…`});
+      if((r.poolIds || []).length){r.repoolChanged=true;r.changePending=true;r.replaceByDesign=true;try{await Review.repool(r);}finally{delete r.replaceByDesign;}}
+      else await Review.repool(r);
+      if(["held","unmatched","oversize","contended"].includes(r.state))return {ok:false,why:String(r.reason || r.hold || "One design could not join its sheet yet.").slice(0,300)};
+      (r.poolIds || []).forEach(id=>fresh.add(id));
+    }
+    const ids=[...fresh];
+    if(changed && !ids.length)return {ok:false,why:"Its piece is made with the run's next intake: the run is not placing pieces right now."};
+    // (as a send on this computer does: a sheet that now has one of the new pieces waiting is started, append-only; a sheet busy or held waits for its own turn)
+    if(changed){for(const sh of allSheets()){const mine=sh.charms.filter(c=>fresh.has(c.poolId));if(!mine.length || mine.every(c=>sh.placements.some(p=>p.id===c.id)))continue;if(sh.runHold || ["nesting","finishing","queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || (sh.persisted && !sh.persistedDone))continue;sh.status="ready";try{if(typeof window.startNest==="function")window.startNest(sh);}catch(err){console.warn("[remotesend] sheet not started:",err && err.message);}}
+      try{Review.remadeRepaint(allSheets().filter(sh=>sh.charms.some(c=>fresh.has(c.poolId))));}catch(_){}}
+    const home=id=>allSheets().find(sh=>sh.charms.some(c=>c.poolId===id && sh.placements.some(p=>p.id===c.id))) || null;
+    const working=()=>allSheets().some(sh=>sh.charms.some(c=>fresh.has(c.poolId)) && (["nesting","finishing","queued"].includes(sh.status) || sh._inplaceWrite || sh._inplaceHold || (sh.persisted && !sh.persistedDone && !sh.problem)));
+    if(changed)for(const t0=Date.now();Date.now()-t0<6*60000;){const all_on=ids.every(home);if(all_on && !working())break;step({text:all_on?"Saving the sheet…":"Placing the new piece on its sheet…"});await nap(1000);}
+    try{Session.schedule();RunCtl.poke();}catch(_){}
+    const on=ids.map(home),names=[...new Set(on.filter(Boolean).map(sh=>sh.fileBase || sheetName(sh)))],many=ids.length!==1;
+    if(on.every(Boolean)){
+      if(changed)agent({run:B.run.runId,pool:true},"ok",`${rid}: the designs sent from another computer were placed: ${ids.length} piece(s) on ${names.join(" and ")}`);
+      return {ok:true,text:changed?`${many?"its "+ids.length+" new pieces are":"its new piece is"} on ${names.join(" and ")}`:`${many?"its pieces were":"its piece was"} already on ${names.join(" and ")} with the sent design`};
+    }
+    try{if(window.CNStrandedWatch)window.CNStrandedWatch("sent designs");}catch(_){}
+    return {ok:false,why:`${on.filter(Boolean).length} of ${ids.length} new piece(s) on a sheet so far; the rest go on with the run's next intake.`};
   }
   async function syncSent(e) {
     if(e.legacy)return;
@@ -18699,7 +18790,14 @@ const CustomSheet = window.CustomSheet = (() => {
     if(window.CNWipe?.active)return 0;   // a sandbox clean-up is under way: nothing is sent or placed again from this browser's copies
     let n=0;for(const e of Object.values(all())){
       if(!e || e.legacy || tasks.has(e.ck) || busy.has(e.ck))continue;
-      if(e.sent){if(!e.sent.id && +e.sent.at>0){e.sent.id=`custom-sheet:${e.ck}:${e.sent.at}`;e.sendCloudPending=true;ver++;Session.schedule();}if(e.sendCloudPending && S.cloud.ok)await syncSent(e);continue;}
+      if(e.sent){if(!e.sent.id && +e.sent.at>0){e.sent.id=`custom-sheet:${e.ck}:${e.sent.at}`;e.sendCloudPending=true;ver++;Session.schedule();}if(e.sendCloudPending && S.cloud.ok)await syncSent(e);
+        // (REMOTESEND: a send whose exchange the carrier has not done yet is asked again, at most every two minutes; when this computer carries the run itself by now, it does it)
+        if(e.carrierPending && !e.sendCloudPending && S.cloud.ok && Date.now()-(+e.carrierPending.askedAt || 0)>120000){
+          e.carrierPending.askedAt=Date.now();
+          const done=out=>{if(out && (out.ok || !out.retry) && all()[e.ck]===e){delete e.carrierPending;ver++;Session.schedule();}if(out && out.ok)toast(`Order ${e.rid}: ${out.text}`,"ok",7000);redraw();};
+          (B.run?applyRemote(e.ck).then(r=>({ok:r.ok!==false,text:r.text || r.why || ""})):askCarrier(e)).then(done).catch(err=>console.warn("[remotesend] still to place:",err && err.message));
+        }
+        continue;}
       if(!e.sendIntent)continue;
       const rows=currentRows(e);if(!rows.length || rows.length!==Object.keys(e.sendIntent.lines).length || rows.some(r=>r.state==="gone" || window.Cancelled?.has?.(r.order.receiptId)))continue;
       const it={key:"ord:"+e.ck,rows,row:rows[0]};await send(it,{recover:true});if(e.sent)n++;
@@ -20099,7 +20197,7 @@ const CustomSheet = window.CustomSheet = (() => {
     }, delay || 0);
     return true;
   }
-  return { touched: () => { ver++; redraw(); }, add, remove, send, prepare, sentOf, decisionOf, sending, recover, load, hydrate, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, sheetStamps, sheetSealsHtml, sentButtonHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
+  return { touched: () => { ver++; redraw(); }, add, remove, send, prepare, sentOf, decisionOf, sending, recover, load, hydrate, applyRemote, askCarrier, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, sheetStamps, sheetSealsHtml, sentButtonHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════

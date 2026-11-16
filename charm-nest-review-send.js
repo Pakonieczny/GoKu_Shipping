@@ -80,14 +80,42 @@
       } catch (_) { return null; }
     },
     inReview(rid, row) { return api.marked(rid) || !!api.natural(rid, row); },
+    /* INREVIEWGO (Paul, 16 Nov 2026: "The 'In Review' button is not taking the user to the review tab to expose this order"): pressed in the order window, the window stayed open over the
+       Review tab, and an order whose card was not the marked card of Open (held another way, or its mark already decided) had no card brought up at all. Now: the order window closes first,
+       then the Review tab opens at the order's card wherever it is: the marked card in Open, else the card Open holds it under, else its held-order card (Review.showHeld), else its card in
+       Resolved, else the Review tab alone with a line saying so. Review.showCard / showHeld return nothing, so each step is checked in the list itself (#rvList, the row's mkey or order number). */
     open(rid, row) {
-      // a person's mark: the mark API's own card; one the system put there: the Review tab's own card for it
-      try { const m = MARK(); if (m && typeof m.open === "function" && api.marked(rid) && m.open(rid) !== false) return true; } catch (e) { console.warn("review send: open", e); }
-      try {
-        const it = api.natural(rid, row);
-        if (it && root.Review && Review.showCard) { Review.showCard(typeof Review.mkeyOf === "function" ? Review.mkeyOf(it) : it.kind === "customOrder" ? "cu:" + String(it.key).replace(/^[a-z]+:/, "") : String(it.key), "open"); return true; }   // (SENDREVIEW: the card's own key in the list, Review.mkeyOf)
-      } catch (e) { console.warn("review send: show", e); }
-      try { if (typeof root.setMode === "function") { root.setMode("review"); return true; } } catch (_) {}
+      rid = String(rid);
+      let shut = null;
+      try { const O = root.OrderWin; if (O && typeof O.isOpen === "function" && O.isOpen() && typeof O.close === "function") shut = O.close(); } catch (e) { console.warn("review send: close", e); }
+      // (the window flies shut, then the tab is opened behind where it stood; a close that never answers does not keep the person: 1.2 s at most)
+      if (shut && typeof shut.then === "function") return Promise.race([Promise.resolve(shut).catch(() => {}), new Promise(r => setTimeout(r, 1200))]).then(() => api.reveal(rid, row));
+      return api.reveal(rid, row);
+    },
+    reveal(rid, row) {
+      rid = String(rid);
+      const R = root.Review || null, rows = () => [...doc.querySelectorAll("#rvList .reviewListRow")];
+      const has = mk => !!mk && rows().some(n => n.dataset.mkey === mk), ofRid = () => rows().find(n => n.dataset.rid === rid) || null;
+      const step = fn => { try { return !!fn(); } catch (e) { console.warn("review send: show", e); return false; } };
+      // 1 a person's mark: the mark API's own card in Open
+      if (step(() => { const m = MARK(); return m && typeof m.open === "function" && api.marked(rid) && m.open(rid) !== false && has("ord:rvm:" + rid); })) return true;
+      if (R && typeof R.showCard === "function") {
+        // 2 one the system put there: the Review tab's own card for it (SENDREVIEW: the card's own key in the list, Review.mkeyOf)
+        if (step(() => { const it = api.natural(rid, row); if (!it) return false; const mk = typeof R.mkeyOf === "function" ? R.mkeyOf(it) : it.kind === "customOrder" ? "cu:" + String(it.key).replace(/^[a-z]+:/, "") : String(it.key); R.showCard(mk, "open"); return has(mk); })) return true;
+        // 3 held another way: its held-order card, or the card that covers it
+        if (step(() => { if (typeof R.showHeld !== "function") return false; R.showHeld(rid); return !!ofRid(); })) return true;
+        // 4 already decided: its card in Resolved (a resolved mark by its own key, so the list is drawn down to it however old; any other by its order number)
+        if (step(() => {
+          const m = MARK(), d = m && typeof m.doneSettled === "function" ? (m.doneSettled(root.Orders ? Orders.rows() : []) || []).find(x => x && x.key === "ord:rvm:" + rid) : null;
+          if (d) { const mk = "settled:" + d.key + ":" + d.t; R.showCard(mk, "done"); if (has(mk)) return true; }
+          R.showCard("", "done"); const n = ofRid(); if (!n) return false;
+          if (n.dataset.mkey) R.showCard(n.dataset.mkey, "done"); else n.scrollIntoView({ block: "center" });
+          return true;
+        })) return true;
+        // 5 no card anywhere: the Review tab, Open as it stands, and a line that says so
+        step(() => { R.showCard("", "open"); return true; });
+      } else step(() => { if (typeof root.setMode === "function") root.setMode("review"); return true; });
+      try { if (typeof root.toast === "function") root.toast(`Order ${rid} has no open Review card.`, "", 6000); } catch (_) {}
       return false;
     },
     onChange(fn) { try { const m = MARK(); if (m && typeof m.onChange === "function") return { api: m, off: m.onChange(fn) }; } catch (_) {} return null; },
@@ -272,7 +300,7 @@
     if (busyRids.has(rid)) return { ok: false, error: "busy" };
     if (!api.ready()) { say(rid, "Review is not ready on this page yet. Try again in a moment."); return { ok: false, error: "not ready" }; }
     // already in Review: open it there, never add it a second time
-    if (api.inReview(rid, row)) { api.open(rid, row); return { ok: true, opened: true }; }
+    if (api.inReview(rid, row)) { const shown = await api.open(rid, row); return { ok: true, opened: true, shown: !!shown }; }   // (INREVIEWGO: shown, whether a card of the order was brought up)
     say(rid, "");
     // a piece already released, or a sheet already cut or Completed, cannot be held: one line, nothing is marked
     const why = api.cannotHold(rid); if (why) { say(rid, why); return { ok: false, error: "cannot hold", why }; }

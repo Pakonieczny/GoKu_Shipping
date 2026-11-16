@@ -156,7 +156,9 @@
       const get = T.get;
       T.get = function (orderId) {
         const p = get.apply(this, arguments);
-        try { Promise.resolve(p).then(tl => { const f = tl && factOfEvents(tl.events); if (f) learn(orderId, f, rowsOfRid(orderId)); }, () => {}); } catch (_) {}
+        try { Promise.resolve(p).then(tl => { const f = tl && factOfEvents(tl.events); if (f) learn(orderId, f, rowsOfRid(orderId));
+          // (SHIPUNDO, Paul 16 Nov 2026: a shipped mark that was reversed: the whole timeline was read and holds no shipped step of ours any more, so the order leaves Completed here)
+          else if (tl && Array.isArray(tl.events) && !tl.truncated && !tl.unchanged && load().has(digits(orderId))) { forget(orderId); for (const g of listeners) { try { g(digits(orderId), undefined); } catch (_) {} } } }, () => {}); } catch (_) {}
         return p;
       };
     }
@@ -258,7 +260,7 @@
       const empty = doc.createElement('div'); empty.className = 'libEmpty cmpEmpty'; empty.dataset.mkey = 'cmpEmpty';
       empty.innerHTML = String(o.q || '').trim() || (o.range && o.range !== 'all')
         ? `<span>No completed order matches these filters.</span>`
-        : `<span>No order has shipped yet.</span><small>An order marked shipped (at the shipping station, or on Etsy) is placed here automatically, with its SHIPPED seal.</small>`;
+        : `<span>No order has shipped yet.</span><small>An order marked shipped at one of our shipping stations is placed here automatically, with its SHIPPED seal.</small>`;
       out.push(empty);
     }
     if (root.Motion && root.Motion.reconcile) root.Motion.reconcile(listEl, out, { animate: false, clip: host }); else listEl.replaceChildren(...out);

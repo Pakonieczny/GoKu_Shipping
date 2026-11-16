@@ -57,7 +57,7 @@
     { id: 'welded', label: 'Welded', lane: 'welding', words: 'Scanned at Welding (stud earrings)', station: true },
     { id: 'assembled', label: 'Assembled', lane: 'assembly', words: 'Scanned at Assembly', station: true },
     { id: 'packed', label: 'Packed', lane: 'shipping', words: 'Packed or its shipping label printed, not marked shipped yet', station: true },
-    { id: 'completed', label: 'Completed', lane: 'etsy', words: 'Shipped (at the shipping station, by a label, or on Etsy): the Completed tab' }
+    { id: 'completed', label: 'Completed', lane: 'etsy', words: 'Shipped at one of our shipping stations (a scan or a label): the Completed tab' }
   ];
   const AT = Object.fromEntries(STAGES.map((s, i) => [s.id, i]));
   const SORTED = AT.sorted, CUT = AT.cut, REVIEW = AT.review, DESIGN = AT.design, PACKED = AT.packed;

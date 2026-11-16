@@ -167,7 +167,7 @@
             if (DL && typeof DL.ensure === "function") { try { await DL.ensure(); } catch (_) { /* said below if the check then fails */ } }
             const v = await Or.revalidate(run, "shipped orders let go");
             const gone = (v && v.gone || []).map(String).filter(x => want.has(x));
-            r = { ok: true, text: `${let_go.length} shipped order(s) let go; Etsy says ${gone.length} of them are closed: their pieces were taken off every sheet that is still open` };
+            r = { ok: true, text: `${let_go.length} shipped order(s) let go; ${gone.length} of them were shipped at our stations or cancelled: their pieces were taken off every sheet that is still open` };
           } catch (e) { r = { ok: false, why: `The orders left the keep list, but the check against Etsy did not finish (${String((e && e.message) || e).slice(0, 160)}); it runs again at the next check of the orders.` }; }
         }
       }
@@ -179,6 +179,12 @@
       else { const step = stepper(c); step({ text: "Placing the pieces that stand on no sheet…" });
         try { const v = await f(); r = { ok: true, text: v.pieces ? `${v.placed} of ${v.pieces} stranded piece(s) (${v.lines} order line(s)) went onto a sheet` : "No piece stands outside a sheet." }; }
         catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 200) }; } }
+    }
+    // (REMOTESEND, Paul 16 Nov 2026: "The charm was removed from the sheet but the updated charm did not appear"): the designs a following computer sent for an order are put on the sheets here (charm-nest-bridge.js CustomSheet.applyRemote)
+    else if (c.type === "customsend") {
+      const CS = safe(() => (typeof CustomSheet !== "undefined" ? CustomSheet : root.CustomSheet), null);
+      if (!CS || typeof CS.applyRemote !== "function" || !a.ck) r = { ok: false, why: "not ready" };
+      else { const step = stepper(c); step({ text: "Reading the designs that were sent…" }); try { r = await CS.applyRemote(a.ck, { onStep: step }); } catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); } }
     }
     else if (c.type === "remake") r = root.Review && typeof root.Review.redrawStale === "function" ? await root.Review.redrawStale(a.ids || []) : { ok: false, why: "not ready" };   // (REMAKESTALE: open pieces that hold an older drawing of these SKUs are made up again from the library's drawing)
     // (REMOTENEST, Paul 15 Nov 2026: "you re-nest it and then check that everything is OK everywhere"): a draft sheet of the run is nested again here, exactly as its Re-nest button does (never a sheet that was cut or is in a committed set: startNest's own rules stand), and the answer waits for the nest and its save
