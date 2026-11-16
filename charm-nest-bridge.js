@@ -21550,6 +21550,21 @@ const Review = window.Review = (() => {
     if (skus.length) { agent({ pool: true }, "MASTER", `${skus.length} SKU(s) now draw another design in the library: ${skus.slice(0, 8).join(", ")}${skus.length > 8 ? " …" : ""}. Open pieces cut from the old drawing are made up again from the new one; a cut or committed piece is only noted`); redrawLater(0); for (const k of skus) heldWait.add(k); heldLater(0); }   // (HELDRECHECK: and the lines the system held for the old drawing are checked again against the new one)
     return skus.length;
   }
+  /** (REMAKESTALE, Paul 15 Nov 2026: three pieces were made up while the library held the wrong, smaller drawing of their SKU; the library was put right, and "you have to do whatever you need to do to fix everything"): the open pieces of these SKUs
+      that do NOT hold a hash of the drawing the library has NOW are queued for the same sweep a changed drawing gets (redrawSweep: a cut or committed piece is only noted, a line in Review or on hold is left). → { ok, text } */
+  async function redrawStale(skus) {
+    const said = [];
+    for (const s0 of skus || []) {
+      const sku = rdUp(s0), now = Master.entryFor(sku); if (!now) { said.push(`${sku}: not in the library`); continue; }
+      const stale = new Set();
+      for (const p of B.pool.rows.values()) { if (!p || RELINK_TAKEN.has(p.state) || p.custom || !p.charmHash || rdUp(p.sku) !== sku) continue; let ok = null; try { ok = await Pool.drawingHashes(now, p.size || null); } catch (_) { /* cannot be told: left */ } if (ok && !ok.has(String(p.charmHash))) stale.add(String(p.charmHash)); }
+      if (!stale.size) { said.push(`${sku}: every open piece already holds the drawing the library has now`); continue; }
+      const mark = k => `stale:${sku}:${k || ""}`, was = Object.assign({}, now, { charmHash: mark(""), sizeFix: null, sizes: Object.fromEntries(Object.entries(now.sizes || {}).map(([k, z]) => [k, Object.assign({}, z, { charmHash: mark(k) })])) });
+      redrawWait.set(sku, { sku, was, oldSrc: stale, at: Date.now(), tries: 0 }); said.push(`${sku}: pieces of ${stale.size} older drawing(s) are made up again`);
+    }
+    let r = { swapped: [], flagged: [], kept: [], held: [] }; try { r = (await redrawNow()) || r; } catch (e) { return { ok: false, why: String((e && e.message) || e) }; }
+    return { ok: true, text: `${said.join("; ")} · made again: ${r.swapped.length} line(s); only noted (cut or committed): ${r.flagged.length}; kept: ${r.kept.length}; held: ${r.held.length}` };
+  }
   function redrawLater(ms) { if (!redrawWait.size) return; clearTimeout(redrawTimer); redrawTimer = setTimeout(() => { redrawTimer = 0; redrawNow().catch(() => {}); }, ms || 0); }
   /** The sweep now (after any sweep under way). → { swapped, flagged, kept, held } */
   function redrawNow() { clearTimeout(redrawTimer); redrawTimer = 0; const p = redrawChain.then(redrawSweep, redrawSweep); redrawChain = p.catch(() => {}); return p; }
@@ -22955,7 +22970,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, shown, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
+  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, shown, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawStale, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
