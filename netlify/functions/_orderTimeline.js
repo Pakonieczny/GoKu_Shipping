@@ -768,4 +768,20 @@ async function shippedByUs(db, ids, prefix) {
   }));
   return out;
 }
-module.exports = { shippedByUs, RAIL, RAIL_KEYS, labelStepOf, cancelStepOf, stepId, COL, REV_COL, REV_TOKEN, touch, touchNow, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, probeRev, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };
+/** SHIPUNDO (Paul, 16 Nov 2026: "Please also reverse both orders 4224723274 and 4223413987"): a shipped mark recorded at a shipping station is taken back. The order's recorded `shipped` and
+ *  `etsyCompleted` events, and the shipping label's `labelPrinted` (it stamps the Shipped step of the rail too), stay on its timeline as plain notes (type "other", `was` keeps what they were)
+ *  that say who reversed them; nothing is deleted. The order then reads as it did before the mark: its last production step. → { ok, reversed } */
+async function unship(db, orderId, by, prefix) {
+  const id = orderIdOf(orderId); if (!id) return { error: "orderId required" };
+  const c = colOf(db, prefix), now = Date.now(), who = s(by, 80) || "a person"; let reversed = 0;
+  for (const type of ["shipped", "etsyCompleted", "labelPrinted"]) {
+    const q = await c.where("orderId", "==", id).where("type", "==", type).limit(20).get(), docs = []; q.forEach(d => docs.push(d));
+    for (const d of docs) {
+      const e = d.data() || {};
+      if (type === "labelPrinted" && !((e.data && e.data.label === "shipping") || e.station === "shipping")) continue;
+      await d.ref.update({ type: "other", was: type, text: s(`Reversed by ${who} · was: ${e.text || type}`, 200), reversedAt: now, reversedBy: who }); reversed++;
+    }
+  }
+  return { ok: true, orderId: id, reversed };
+}
+module.exports = { unship, shippedByUs, RAIL, RAIL_KEYS, labelStepOf, cancelStepOf, stepId, COL, REV_COL, REV_TOKEN, touch, touchNow, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, probeRev, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };
