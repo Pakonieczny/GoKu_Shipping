@@ -30198,7 +30198,17 @@ async function placeStranded() {
      (below): a piece whose row there is anything but superseded leaves the line as it is. */
   const lost = Orders.rows().filter(r => r && ["pooled", "written"].includes(r.state) && !r.hold && (r.poolIds || []).length && !(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId))
     && r.poolIds.every(id => !on.has(id)));   // (no page and no saved card holds any piece of it; what this page remembers of the piece records can be old, so the cloud is asked below and decides)
-  if (lost.length) { const ids1 = lost.flatMap(r => r.poolIds), bad = new Set(); try { for (let i = 0; i < ids1.length; i += 300) { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: ids1.slice(i, i + 300) }, { quiet: true })).pools || {}; for (const id of ids1.slice(i, i + 300)) { const pr = got[id]; if (!pr || pr.state !== "superseded" || pr.sheetId) bad.add(id); else B.pool.rows.set(id, pr); } } } catch (_) { ids1.forEach(id => bad.add(id)); }
+  const orphanSheets = new Map();
+  if (lost.length) { const ids1 = lost.flatMap(r => r.poolIds), bad = new Set(); try { for (let i = 0; i < ids1.length; i += 300) { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: ids1.slice(i, i + 300) }, { quiet: true })).pools || {}; for (const id of ids1.slice(i, i + 300)) { const pr = got[id]; if (!pr) { bad.add(id); continue; } if (pr.state === "superseded" && !pr.sheetId) { B.pool.rows.set(id, pr); continue; }
+        /* ORPHANED (Paul, 16 Nov 2026: "Is anything still lost/missing/incorrect" → 17 charms of 13 orders taken off GF Sheet 1 of Set 5 by a fault and never put back): a piece whose own record
+           still says "on sheet X" while sheet X does not hold it is on NO sheet: nothing ever looked, because the record names a sheet. It is lost in the same way and goes back on that sheet.
+           Proved three ways before anything moves: this page's sheets and saved cards do not hold it (above), the page holds sheet X itself, and sheet X's record in the cloud, read now, does
+           not list it. A sheet the laser has cut, or one this page does not hold, proves nothing: the piece is left as it is. */
+        const sid = String(pr.sheetId || ""), pg = sid ? allSheets().find(x => x.sheetId === sid) : null;
+        if (!sid || !pg || +pg.laserDoneAt > 0 || pg.roseCutAt || ["abandoned", "committed"].includes(pr.state) || !((pg.charms || []).length || (pg.recalled && ((pg.recalled.poolIds || []).length || (pg.recalled.charms || []).length)))) { bad.add(id); continue; }
+        if (!orphanSheets.has(sid)) { let rec = null; try { const g = await api("charmNestLibrary", { op: "getSheet", id: sid }, { quiet: true }); rec = g && (g.sheet || g); } catch (_) { rec = null; } orphanSheets.set(sid, rec && !rec.error && Array.isArray(rec.poolIds) && rec.poolIds.length ? new Set(rec.poolIds.map(String)) : null); }
+        const listed = orphanSheets.get(sid); if (!listed || listed.has(id)) { bad.add(id); continue; }
+        B.pool.rows.set(id, pr); } } } catch (_) { ids1.forEach(id => bad.add(id)); }
     for (let i = lost.length - 1; i >= 0; i--) if (lost[i].poolIds.some(id => bad.has(id))) lost.splice(i, 1); }
   for (const r of lost) { const i = rows.indexOf(r); if (i >= 0) rows.splice(i, 1); }   // (made up by its own make-up below, never a second time by the plain intake)
   let back = null;
