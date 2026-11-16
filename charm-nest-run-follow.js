@@ -117,6 +117,20 @@
   /* (SHEETSANYWHERE, Paul 15 Nov 2026: "I need that full capability ... drag the sheets from one sheet to another and amalgamate sheets as needed"): the computer that CARRIES the run does what a following computer asked for in the Sheets card
      (runCmdPut on the cloud): one at a time, in the order asked, through the Gate, then answers (runCmdDone) with the result line. Looked at when the feed names the run, at most every 3 s; a command older than 10 minutes is answered "too old". */
   let cmdAt = 0, cmdT = 0, cmdBusy = false; const cmdSeen = new Set();
+  /* MOVESHOW, Paul 15 Nov 2026: "no animation no feedback no progress nothing": while this computer does a request it says what step it is at (runCmdStep), so the computer that asked can show it.
+     The first call also marks the request as running (it can no longer be cancelled). At most one write every 2.5 s (the Firebase budget): the newest step waits for the next slot. */
+  function stepper(c) {
+    const run = root.B && root.B.run, runId = run && run.runId; let lastAt = 0, timer = 0, pend = null, sentOnce = false;
+    const send = async s => { lastAt = Date.now(); sentOnce = true; try { await api({ op: "runCmdStep", runId, id: c.id, dev: dev(), text: String((s && s.text) || "").slice(0, 160), ...(s && Number.isFinite(+s.pct) ? { pct: +s.pct } : {}) }); } catch (_) { /* progress is only shown */ } };
+    const fn = s => {
+      if (!runId || !s || !s.text) return; pend = s;
+      const wait = 2500 - (Date.now() - lastAt);
+      if (!sentOnce || wait <= 0) { if (timer) { clearTimeout(timer); timer = 0; } const x = pend; pend = null; send(x); }
+      else if (!timer) timer = setTimeout(() => { timer = 0; const x = pend; pend = null; if (x) send(x); }, wait);
+    };
+    fn.stop = () => { if (timer) { clearTimeout(timer); timer = 0; } pend = null; };
+    return fn;
+  }
   async function execCmd(c) {
     const G = root.Gate, a = c.args || {}; if (!G) return { ok: false, text: "The sheets are not ready on the computer that carries the run." };
     if (c.type === "reorder") {
@@ -126,12 +140,14 @@
     }
     let r = null;
     if (c.type === "repicture") r = root.Recall && typeof root.Recall.repicture === "function" ? await root.Recall.repicture(a.sheetId) : { ok: false, why: "not ready" };   // (REPICTURE: a sheet's saved picture drawn again, nothing else of it written)
-    else if (c.type === "consolidate") r = await G.consolidate(a.sourceId, a.targetId);
-    else if (c.type === "seat") r = typeof G.seatOn === "function" ? await G.seatOn(a.sheetId, a.partialId) : { ok: false, why: "not ready" };   // (ONEGRID: a nested sheet's pieces onto a physical sheet)
-    else if (c.type === "empty") r = await G.emptySheet(a.sheetId);
+    else if (c.type === "consolidate" || c.type === "empty") {   // (MOVESHOW: what the merge says it is doing is passed on, so the computer that asked can show it)
+      const step = stepper(c), iv = setInterval(() => { const b = safe(() => G.mergeBusy && G.mergeBusy(a.metal), null); if (b && b.text) step({ text: b.text }); }, 1000); step({ text: "Starting…" });
+      try { r = c.type === "empty" ? await G.emptySheet(a.sheetId) : await G.consolidate(a.sourceId, a.targetId); } finally { clearInterval(iv); step.stop(); }
+    }
+    else if (c.type === "seat") { const step = stepper(c); step({ text: "Reading the sheet…" }); try { r = typeof G.seatOn === "function" ? await G.seatOn(a.sheetId, Array.isArray(a.partialIds) && a.partialIds.length ? a.partialIds : a.partialId, { onStep: step, finish: true }) : { ok: false, why: "not ready" }; } finally { step.stop(); } }   // (ONEGRID: a nested sheet's pieces onto a physical sheet; MOVESHOW: the physical sheets in the order chosen, and it stays until the nest has ended so the answer says where the pieces lie)
     else if (c.type === "delete") r = await G.deleteEmpty(a.sheetId);
     else return { ok: false, text: "Unknown command" };
-    return r && r.ok !== false ? { ok: true, text: r.text || "Done" } : { ok: false, text: (r && (r.why || r.text)) || "Not done" };
+    return r && r.ok !== false ? { ok: true, text: r.text || "Done", ...(r.freed && r.freed.stockId ? { freed: r.freed.stockId } : {}) } : { ok: false, text: (r && (r.why || r.text)) || "Not done" };
   }
   async function runCommands() {
     if (cmdBusy) return; const t = Date.now();
@@ -146,7 +162,7 @@
         cmdSeen.add(next.id); let out;
         if (Date.now() - (+next.at || 0) > 600000) out = { ok: false, text: "too old" };
         else { try { out = await execCmd(next); } catch (e) { out = { ok: false, text: String((e && e.message) || e) }; } }
-        for (let k = 0; k < 3; k++) { try { await api({ op: "runCmdDone", runId: run.runId, id: next.id, ok: !!out.ok, text: String(out.text || "").slice(0, 400), dev: me }); break; } catch (_) { await new Promise(r => setTimeout(r, 1500)); } }
+        for (let k = 0; k < 3; k++) { try { await api({ op: "runCmdDone", runId: run.runId, id: next.id, ok: !!out.ok, text: String(out.text || "").slice(0, 400), ...(out.freed ? { freed: out.freed } : {}), dev: me }); break; } catch (_) { await new Promise(r => setTimeout(r, 1500)); } }
       }
     } catch (_) { /* looked at again at the next feed */ } finally { cmdBusy = false; }
   }

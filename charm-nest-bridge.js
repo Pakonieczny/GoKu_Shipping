@@ -7767,7 +7767,7 @@ const Gate = window.Gate = (() => {
       let del = ""; if (n || p.charms.length) del = `Move its ${charmsWord(n || p.charms.length).replace(" charms", " pieces").replace(" charm", " piece")} onto another sheet first`; else if (!arrange) del = whyNot(p, "target"); else if (cut) del = "already cut"; else if (inSet) del = "in a set"; else if (line) del = "has a cut line drawn"; else if (!relay && (!modern(p.runId) || !membershipEditable(p))) del = "cannot change"; else if (!relay && busyPage(p)) del = "is nesting or saving";
       const src = rc ? (rc.previewSrc || (rc.preview ? rc.preview + (rc.preview.includes("?") ? "&" : "?") + "v=" + (rc.previewAt || rc.createdAt || rc.updatedAt || 0) : "")) : "";
       return { id: sheetKey(p), runId: p.runId || runId, page: p.page, index: all.indexOf(p), name: pw(p), draft: N ? !N.numbered(p) : true, size: `${Math.round(st.wPt / 72 * 25.4)} × ${Math.round(st.hPt / 72 * 25.4)} mm`, aspect: +(st.wPt / Math.max(1, st.hPt)).toFixed(3), pieces: n, placed: p.charms.length ? p.placements.length : n, pct, live: !!p.charms.length, picture: p.charms.length ? "" : src, rev: p.layoutRev || p.placements.length || 0,
-        inSet, cutLine: line, cut, locked, lockWhy, movable: arrange && !locked && idle, canSource: !why, whySource: why, canTarget: !whyT, whyTarget: whyT, canDelete: !del, whyDelete: del, busy: !relay && busyPage(p), arrange, relay };
+        inSet, cutLine: line, cut, locked, lockWhy, movable: arrange && !locked && idle, stockId: (p.roseStock && p.roseStock.id) || (p.recalled && p.recalled.roseStockId) || p.recStockId || "" /* MOVESHOW, Paul 15 Nov 2026: "Every nested tile names the physical sheet it lies on" */, canSource: !why, whySource: why, canTarget: !whyT, whyTarget: whyT, canDelete: !del, whyDelete: del, busy: !relay && busyPage(p), arrange, relay };
     });
   }
   const orderCall = body => api("charmNestLibrary", { op: "putSheet", ...body }, { quiet: true });
@@ -7847,18 +7847,56 @@ const Gate = window.Gate = (() => {
     });
   }
   /** (ONEGRID, Paul 15 Nov 2026: "move already partially and fully nested sheets onto new nested sheets and all those charms should move over"): every piece of a nested sheet onto an Available physical sheet (the repository card's id), through the partial-sheet engine. o.preview: only the trial pack (writes nothing); o.onStep: progress. */
+  /* MOVESHOW, Paul 15 Nov 2026: "I'm not seeing the nesting process happening real time anywhere ... which sheet I want to be first which sheet I want to be second for overflow": partialIds may be ONE id or the physical sheets
+     in the order chosen (8 at most; the first takes the pieces, the rest take what does not fit); o.finish: stay until the nest and its overflow have ended, say how far it is through o.onStep (the page's own progress, never invented),
+     and answer with the whole story in words (r.text), r.freed (the sheet it lay on before) and r.lines. */
+  const SEAT_BUSY = ["nesting", "finishing", "queued"];
+  const seatRest = q => !SEAT_BUSY.includes(q.status) && !q._operationStarting && !q._partialBusy && q.persistedDone !== false && !(q.persisted && !q.persistedDone);
+  const seatChain = p => { const out = [p]; for (let g = 0; g < 30; g++) { const nx = out[out.length - 1]._partialNext; if (!nx || out.includes(nx)) break; out.push(nx); } return out; };
+  const mmWords = st => `${Math.round(st.wPt / 72 * 25.4 * 10) / 10} × ${Math.round(st.hPt / 72 * 25.4 * 10) / 10} mm`;
+  const cardWords = c => { const w = c.wMm != null ? c.wMm : c.bboxMm ? c.bboxMm.w : c.sheetWMm, h = c.hMm != null ? c.hMm : c.bboxMm ? c.bboxMm.h : c.sheetHMm; return `${c.kind === "new" ? "New sheet" : "Partial sheet"} ${Math.round(+w) || "?"} × ${Math.round(+h) || "?"} mm`; };
+  async function seatWatch(p, onStep, cards) {
+    const t0 = Date.now(), pr0 = JSON.stringify(p.progress || null); let seen = false, calm = 0, last = "";   // (pr0: the numbers the sheet still carries from its LAST nest are not shown as this one's)
+    while (Date.now() - t0 < 480000) {
+      const ch = seatChain(p), busy = ch.find(q => !seatRest(q));
+      if (busy) { seen = true; calm = 0; } else if (seen || Date.now() - t0 > 20000) calm++;
+      if (calm >= 3) break;
+      const q = busy || ch[ch.length - 1], pr = q === p && JSON.stringify(q.progress || null) === pr0 ? null : q.progress, k = ch.indexOf(q), lead = ch.length > 1 ? `${k + 1}${["st", "nd", "rd"][k] || "th"} sheet: ` : "";
+      const done = ch.reduce((n, x) => n + (x.placements || []).length, 0), all = ch.reduce((n, x) => n + piecesOf(x), 0);
+      const text = !busy ? "Saving the sheet…" : Array.isArray(pr) && +pr[1] ? `${lead}Nesting ${pr[0]} of ${pr[1]}…` : `${lead}Nesting the pieces…`;
+      if (text !== last) { last = text; try { onStep && onStep({ key: "nest", text, pct: all ? Math.round(100 * done / all) : null, placed: done, total: all }); } catch (_) { /* progress is only shown */ } }
+      await new Promise(r => setTimeout(r, 600));
+    }
+  }
   async function seatOn(sheetId, partialId, o = {}) {
     const p = pageById(sheetId), E = window.PartialNest; if (!p) return { ok: false, why: "That sheet is not here." };
+    const ids = (Array.isArray(partialId) ? partialId : [partialId]).filter(x => typeof x === "string" && x).slice(0, 8);
     if (!E || !E.seat) return { ok: false, why: "Partial sheets cannot be used on this page yet." };
-    if (!partialId) return { ok: false, why: "Choose the sheet to move onto." };
+    if (!ids.length) return { ok: false, why: "Choose the sheet to move onto." };
     if (!canArrange()) return { ok: false, why: "Sheets are moved on the computer that carries the run." };
     const can = E.canSeat(p); if (!can.ok) return { ok: false, why: can.why };
     try {
-      if (o.preview) { const r = await E.preview(p, [partialId], { onStep: o.onStep }); return r && r.ok ? { ok: true, text: r.words || "", preview: r } : { ok: false, why: (r && (r.why || r.reason)) || "That sheet cannot take them now." }; }
-      const r = await E.seat(p, [partialId], { onStep: o.onStep, confirmed: true });
+      if (o.preview) { const r = await E.preview(p, ids, { onStep: o.onStep }); return r && r.ok ? { ok: true, text: r.words || "", preview: r } : { ok: false, why: (r && (r.why || r.reason)) || "That sheet cannot take them now." }; }
+      const n = piecesOf(p), m = p.metal, name = pw(p), oldId = (p.roseStock && p.roseStock.id) || (p.recalled && p.recalled.roseStockId) || "", oldSize = mmWords(stockFor(m, p)), words = {};
+      if (o.finish) { try { for (const c of await E._cards(m)) words[c.id] = cardWords(c); } catch (_) { /* the sheets are then named by their size */ } }
+      const r = await E.seat(p, ids, { onStep: o.onStep, confirmed: true });
       if (!r || r.ok === false) return { ok: false, why: (r && (r.why || r.error)) || "The pieces were not moved." };
-      const text = `${pw(p)}'s ${piecesOf(p)} pieces are being nested on the sheet you chose` + (r.continues ? `; ${r.continues} continue on the next one` : ""); SAID[p.metal] = { text, at: Date.now() };
-      return { ok: true, text, result: r };
+      let text = `${name}'s ${n} pieces are being nested on the sheet you chose` + (r.continues ? `; ${r.continues} continue on the next one` : ""); SAID[m] = { text, at: Date.now() };
+      if (!o.finish) return { ok: true, text, result: r };
+      await seatWatch(p, o.onStep, words);
+      const ch = seatChain(p), on = ch.map(q => ({ id: q.sheetId || "", n: (q.placements || []).length, label: words[q._partialId] || (q.roseStock && q.roseStock.wPt ? `a ${mmWords(q.roseStock)} sheet` : "the next sheet") }));
+      const first = on[0], rest = on.slice(1).filter(x => x.n > 0), lost = Math.max(0, n - on.reduce((k, x) => k + x.n, 0)), pl = k => k === 1 ? "piece" : "pieces";
+      const lines = [];
+      const lie = k => k === 1 ? "lies" : "lie";
+      lines.push(!rest.length && !lost ? `${name}'s ${n} ${pl(n)} now ${lie(n)} on ${first.label}.` : `${name}'s ${first.n} of ${n} ${pl(n)}: ${first.n} now ${lie(first.n)} on ${first.label}.`);
+      if (rest.length) lines.push(`${rest.reduce((k, x) => k + x.n, 0)} did not fit and went onto ${rest.map(x => x.label).join(" and ")}.`);
+      if (lost) lines.push(`${lost} could not be placed yet and stay on ${name}.`);
+      let freed = null;
+      if (oldId && oldId !== ((p.roseStock && p.roseStock.id) || "")) {
+        try { window.PartialSheets && PartialSheets.changed && PartialSheets.changed(); const back = window.PartialSheets && PartialSheets.list ? ((await PartialSheets.list(m)).items || []).find(c => (c.stockId || c.id) === oldId && (c.status || "available") === "available") : null; if (back) { freed = { stockId: oldId, size: oldSize }; lines.push(`The sheet ${name} lay on before (${oldSize}) is back in the repository as Available: keep it or delete it.`); } } catch (_) { /* then nothing is said about it */ }
+      }
+      text = lines.join(" "); SAID[m] = { text, at: Date.now() };
+      return { ok: true, text, result: r, finished: true, freed, lines, on };
     } catch (e) { return { ok: false, why: String((e && e.message) || e) }; }
   }
   /** An empty draft goes: its stock is let go when it holds one with no line, then the sheet is removed (dropEmpty); the rest are numbered again. */
@@ -8430,7 +8468,7 @@ const Gate = window.Gate = (() => {
   }
   return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull || staysCut(sh) : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
      staysInSet, keepsPlace: sh => !!sh && !!sh.setId && !sh.draft && (committedSheet(sh) || staysInSet(sh)), followRecords, followSheet,   // (Paul, 27 Oct 2026: a sheet written again keeps its set when it may not leave it: nextSheetSeq)
-     dropEmpty, violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, undoGoldJoin, goldWaitHome, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, sheetsOf, reorder, ensureOrder, consolidate, seatOn, emptySheet, deleteEmpty, pageOf: pageById, sheetsSaid: m => SAID[m] || null, mergeFx: () => ({ live: FX.size }), state: () => R, autoCut, trimSurplus, unpair, unpairPlan, unpairLine, greenHomes: run => { const V = cardinalView(run || B.run); return V ? greenHomesOf(V, run || B.run) : new Map(); } };
+     dropEmpty, violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, undoGoldJoin, goldWaitHome, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, sheetsOf, reorder, ensureOrder, consolidate, seatOn, emptySheet, deleteEmpty, pageOf: pageById, sheetsSaid: m => SAID[m] || null, mergeFx: () => ({ live: FX.size }), mergeBusy: m => { const b = (MERGE[m] || {}).busy; return b && b.text ? { text: b.text } : null; } /* MOVESHOW, Paul 15 Nov 2026: what a combine / empty says it is doing, for the progress overlay */, state: () => R, autoCut, trimSurplus, unpair, unpairPlan, unpairLine, greenHomes: run => { const V = cardinalView(run || B.run); return V ? greenHomesOf(V, run || B.run) : new Map(); } };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */

@@ -80,7 +80,7 @@
     if (!p || !p.sheetId || !root.Recall || typeof root.Recall.rebuild !== "function") return p;
     const rec = await getRec(p.sheetId); if (!rec) return p;
     p.charms = (p.charms || []).filter(c => !c.poolId); p.placements = [];
-    p.recalled = rec;
+    p.recalled = rec; p.recStockId = rec.roseStockId || "";   // (MOVESHOW, Paul 15 Nov 2026: the physical sheet the record names, kept for the tile that says what a sheet lies on; a rebuilt sheet no longer carries the record)
     p.outputs = null; p.verification = rec.verification || null; p.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
     p.backPool = Array.isArray(rec.backPool) ? rec.backPool : p.backPool;
     await root.Recall.rebuild(p);

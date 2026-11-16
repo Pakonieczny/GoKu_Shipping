@@ -11,6 +11,9 @@
  *   and then I should be able to delete the sheet that I just dropped onto another sheet if need be, or I might wanna keep it". There is no Sheets card any more: this run's sheets are the FIRST tiles
  *   of the one grid "All <metal> sheets" (the repository's cards follow in the same grid, drawn by charm-nest-options-modal.js). A run sheet dropped on an Available repository card moves all its pieces
  *   onto it (Gate.seatOn); dropped on another run sheet it is combined and KEPT, empty. A request sent to the carrying computer shows what it was, can be cancelled while it waits (runCmdCancel).
+ *  MOVESHOW, Paul 15 Nov 2026: "I dragged draft One onto the new empty sheet ... I said yes and nothing happened ... no animation ... no feedback no progress nothing ... I also don't see any ability to choose which sheet I want to be first which sheet I want to be second for overflow":
+ *   a run sheet dropped on an Available sheet opens the MOVE PLAN (sticky, top of the grid: the chosen sheets 1st, 2nd, 3rd, numbered on their cards, the engine's own preview words); Move them flies the tile's picture to the 1st sheet, shows a progress
+ *   overlay (the engine's step words, seconds) on the tile and the chosen cards, redraws the tile as the nest changes, then a result banner stays until dismissed. A following computer gets the same through the relay (runCmdStep). Combine / Empty get the overlay and banner too.
  *  window.OptionsSheets: mount(M) -> null · place(M) · paint(M) · destroy(M) */
 (function (root) {
   'use strict';
@@ -59,7 +62,38 @@
 .osShSaid.bad{color:#b3402e}
 .osShSpin{display:inline-block;width:11px;height:11px;margin-right:7px;vertical-align:-1px;border:2px solid var(--line);border-top-color:var(--gold2,#b8913f);border-radius:50%;animation:osShSpin .8s linear infinite}
 @keyframes osShSpin{to{transform:rotate(360deg)}}
-html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!important}`;
+html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!important}
+/* MOVESHOW, Paul 15 Nov 2026: the move plan, the numbered badges, the progress overlay, the flying picture, the result banner */
+.osPlanHost{display:contents}.osPlanHost[hidden]{display:none}
+.osPlan,.osBanner{grid-column:1/-1;box-sizing:border-box;border:2px solid var(--gold2,#b8913f);border-radius:14px;background:var(--paper,#fffefb);padding:12px 16px;box-shadow:0 8px 26px rgba(30,24,16,.18)}
+.osPlan{position:sticky;top:0;z-index:7}
+.osBanner{border-width:1px;display:flex;gap:14px;align-items:flex-start;justify-content:space-between;font-size:14px;line-height:1.45}.osBanner.bad{border-color:#b3402e;color:#b3402e}
+.osBanner b{display:block;margin-bottom:2px}
+.osPlanHead{font:500 18px var(--serif,inherit);margin:0 0 6px}
+.osPlanList{list-style:none;margin:0 0 8px;padding:0;display:flex;flex-direction:column;gap:5px}
+.osPlanList li{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:4px 8px;border:1px solid var(--line);border-radius:10px;background:var(--card2,transparent)}
+.osPlanN{min-width:34px;font-weight:700;color:#7a5a1a}.osPlanTake{font-size:12.5px;color:var(--ink45,#777)}.osPlanSp{flex:1}
+.osPlanHelp,.osPlanWords,.osPlanRest,.osPlanNote{margin:4px 0;font-size:13px;line-height:1.4}.osPlanHelp{color:var(--ink45,#777)}.osPlanNote,.osPlanWords.bad{color:#b3402e}
+.osPlanBtns{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
+.ohc.osChosen{position:relative;outline:3px solid var(--gold2,#b8913f);outline-offset:1px}
+.osBadge{position:absolute;right:10px;top:10px;font-family:system-ui,-apple-system,'Segoe UI',sans-serif!important;z-index:3;min-width:38px;height:38px;padding:0 8px;box-sizing:border-box;border-radius:99px;display:grid;place-items:center;background:var(--gold2,#b8913f);color:#fff;font-size:21px;font-weight:700;line-height:1;box-shadow:0 3px 10px rgba(0,0,0,.3);pointer-events:none}
+.osFreedTag{display:block;margin:-6px 0 8px;padding:3px 10px;border-radius:99px;background:#fff3d6;border:1px solid var(--gold2,#b8913f);color:#7a5a1a;font-size:12px;font-weight:700;align-self:flex-start}
+.ohc.osFreed{box-shadow:0 0 0 2px var(--gold2,#b8913f)}
+.osOv{position:absolute;inset:0;z-index:6;border-radius:inherit;background:rgba(255,254,251,.9);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);display:flex;flex-direction:column;justify-content:center;gap:7px;padding:14px;box-sizing:border-box;text-align:center;font-size:13px}
+.osOv b{font:500 17px var(--serif,inherit)}
+.osOv>*{max-width:420px;width:100%;margin-left:auto;margin-right:auto}
+.osOvBar{display:block;height:8px;border-radius:5px;background:var(--line);overflow:hidden;position:relative}.osOvBar i{display:block;height:100%;width:0;background:var(--gold2,#b8913f);transition:width .4s}
+.osOvBar.ind i{width:35%;position:absolute;animation:osOvInd 1.4s ease-in-out infinite}
+@keyframes osOvInd{0%{left:-35%}100%{left:100%}}
+.osOvSec{font-size:12px;color:var(--ink45,#777)}
+.osGhost{position:fixed;z-index:2000;pointer-events:none;border-radius:8px;background:#fffefb;border:2px solid var(--gold2,#b8913f);box-shadow:0 12px 30px rgba(30,24,16,.35);transform-origin:center;transition:transform .6s cubic-bezier(.3,.7,.2,1),opacity .6s;overflow:hidden}
+.osGhost img{display:block;width:100%;height:100%;object-fit:contain}
+.osShOn{font-size:12.5px;color:#7a5a1a;font-weight:600}
+.osSh.osShPulse{animation:osShPulse 1.1s ease-out 1}
+@keyframes osShPulse{0%{box-shadow:0 0 0 0 rgba(184,145,63,.9)}60%{box-shadow:0 0 0 14px rgba(184,145,63,0)}100%{box-shadow:0 0 0 0 rgba(184,145,63,0)}}
+@media (prefers-reduced-motion:reduce){.osGhost{transition:none}.osSh.osShPulse{animation:none;box-shadow:0 0 0 3px var(--gold2,#b8913f)}.osOvBar.ind i{animation:none;width:100%}.osOvBar i{transition:none}}`;
+  const FREED = new Set();   // (MOVESHOW) the physical sheets freed by a move, for this window session: their repository card says so
+  const reduced = () => { try { return !!(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (_) { return false; } };
   let styled = false;
   const style = () => { if (styled) return; styled = true; const s = doc.createElement('style'); s.textContent = CSS; doc.head.appendChild(s); };
   const RF = () => root.CharmNestRunFollow || null;
@@ -74,9 +108,11 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     style();
     const head = doc.createElement('div'); head.className = 'osShHead2'; head.dataset.card = 'sheets';
     head.innerHTML = `<h4 data-sh="title"></h4><p class="osLead" data-sh="lead"></p><div class="osShAsk" data-sh="ask" hidden></div><p class="osShSaid" data-sh="said" role="status" hidden></p>`;
+    const planEl = doc.createElement('div'); planEl.hidden = true; planEl.className = 'osPlanHost'; planEl.dataset.sh = 'plan';   // (MOVESHOW: the plan and the result banner ride at the top of the grid)
+    const bannerEl = doc.createElement('div'); bannerEl.hidden = true; bannerEl.className = 'osPlanHost'; bannerEl.dataset.sh = 'banner';
     const wrap = doc.createElement('div'); wrap.className = 'osShWrap'; wrap.dataset.sh = 'list';
     const solo = doc.createElement('div'); solo.className = 'osCards ohcGrid';
-    M.sheetsUI = { el: head, wrap, solo, sig: '', drag: null, ask: null, note: {}, rel: null, say: null, sub: null, poll: 0 };
+    M.sheetsUI = { el: head, wrap, solo, sig: '', drag: null, ask: null, note: {}, rel: null, say: null, sub: null, poll: 0, planEl, bannerEl, plan: null, move: null, banner: null, tick: 0, pulse: '' };
     wrap.addEventListener('pointerdown', e => down(M, e));
     wrap.addEventListener('keydown', e => key(M, e));
     wrap.addEventListener('click', e => {
@@ -84,6 +120,8 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
       const m = e.target.closest && e.target.closest('[data-sh-empty]'); if (m) emptyAsk(M, m.closest('.osSh').dataset.id);
     });
     head.addEventListener('click', e => { if (e.target.closest && e.target.closest('[data-sh-cancel]')) cancelRel(M); });
+    planEl.addEventListener('click', e => planClick(M, e)); bannerEl.addEventListener('click', e => { if (e.target.closest && e.target.closest('[data-sh-dismiss]')) { M.sheetsUI.banner = null; renderBanner(M); } });
+    planEl.addEventListener('keydown', e => { if (e.key === 'Escape' && M.sheetsUI.plan) { e.stopPropagation(); planCancel(M); } });
     return null;
   }
   const gridOf = M => M.sheetsUI.wrap.parentNode;
@@ -92,9 +130,13 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     const S = M && M.sheetsUI; if (!S || !M.source) return;
     const res = M.source.querySelector('[data-os="results"]'), host = M.host; if (!res) return;
     if (S.el.parentNode !== res.parentNode || S.el.nextSibling !== res) res.parentNode.insertBefore(S.el, res);
-    if (host && host.parentNode === res) { if (S.solo.parentNode) S.solo.remove(); if (S.wrap.parentNode !== host || host.firstChild !== S.wrap) host.prepend(S.wrap); }
-    else { if (S.solo.parentNode !== res || res.firstChild !== S.solo) res.prepend(S.solo); if (S.wrap.parentNode !== S.solo) S.solo.appendChild(S.wrap); }
-    paint(M);
+    const lay = box => { if (S.bannerEl.parentNode !== box || box.firstChild !== S.bannerEl || S.planEl.previousSibling !== S.bannerEl || S.wrap.previousSibling !== S.planEl) { box.prepend(S.wrap); box.prepend(S.planEl); box.prepend(S.bannerEl); } };   // (MOVESHOW: the banner, the plan, then the tiles)
+    if (host && host.parentNode === res) { if (S.solo.parentNode) S.solo.remove(); lay(host); }
+    else { if (S.solo.parentNode !== res || res.firstChild !== S.solo) res.prepend(S.solo); lay(S.solo); }
+    const grid = gridOf(M); if (grid) {   // (MOVESHOW) the banner and the plan first in the grid, a click on a card while a plan is open chooses it
+      if (!grid._osPlanOn) { grid._osPlanOn = true; grid.addEventListener('click', e => cardClick(M, e), true); }
+    }
+    paint(M); decorate(M);
   }
   const rowsOf = M => { try { return G().sheetsOf(M.m); } catch (_) { return []; } };
   const relayed = M => { const r = rowsOf(M); return !!(r.length && r[0].relay); };
@@ -114,8 +156,15 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
 
   const ST = () => (root.OptionsStudio && typeof root.OptionsStudio.state === 'function' ? root.OptionsStudio.state().all : null) || {};
   const cardInfo = id => { try { return root.OptionsStudio && OptionsStudio.cardOf ? OptionsStudio.cardOf(id) : null; } catch (_) { return null; } };
-  const cardLabel = c => c ? `${c.kind === 'new' ? 'new sheet' : 'partial sheet'} ${Math.round(+c.wMm) || '?'} × ${Math.round(+c.hMm) || '?'} mm` : 'that sheet';
+  const cardLabel = c => { if (!c) return 'that sheet'; const w = c.wMm != null ? c.wMm : c.bboxMm ? c.bboxMm.w : c.sheetWMm, h = c.hMm != null ? c.hMm : c.bboxMm ? c.bboxMm.h : c.sheetHMm; return `${c.kind === 'new' ? 'new sheet' : 'partial sheet'} ${Math.round(+w) || '?'} × ${Math.round(+h) || '?'} mm`; };   // (MOVESHOW: a partial sheet's size from its outline too)
   const plural = n => `${n} piece${n === 1 ? '' : 's'}`;
+  const cap = t => t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+  /** (MOVESHOW) the physical sheet a tile lies on, in words ("New sheet 55 × 38 mm"); '' when the sheet has none */
+  const onWords = (r) => {
+    if (!r.stockId) return '';
+    const its = (ST().items || []).filter(x => (x.stockId || x.id) === r.stockId).sort((a, b) => (+b.revision || 0) - (+a.revision || 0)), c = its[0];
+    return c ? cap(cardLabel(c)) : `a ${r.size} sheet`;
+  };
   const ago = at => { const m = Math.floor((Date.now() - at) / 60000); return m < 1 ? 'just now' : m === 1 ? '1 min ago' : m + ' min ago'; };
   const relWords = r => {
     if (!r.sent) return r.text;
@@ -128,13 +177,13 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     try { if (!relayed(M) && G().ensureOrder) G().ensureOrder(M.m); } catch (_) {}   // (ORDERCLOUD: the first time the grid shows on the carrier, the order is written once so every computer numbers the drafts alike)
     const f = ST().metal, hide = !!f && f !== M.m, rows = hide ? [] : rowsOf(M);
     const said = G().sheetsSaid ? G().sheetsSaid(M.m) : null, showSaid = S.rel || S.say ? '' : said && Date.now() - said.at < 600000 ? said.text : '';
-    const sig = JSON.stringify([rows, showSaid, S.note, S.rel, S.say, S.rel && S.rel.spin ? Math.floor((Date.now() - S.rel.at) / 15000) : 0, hide, M.m]);
+    const ons = rows.map(r => onWords(r)), sig = JSON.stringify([rows, ons, showSaid, S.note, S.rel, S.say, S.rel && S.rel.spin ? Math.floor((Date.now() - S.rel.at) / 15000) : 0, hide, M.m]);
     if (!force && sig === S.sig) return; S.sig = sig;
     S.el.querySelector('[data-sh="title"]').textContent = `All ${NAMES[M.m] || ''} sheets`;
     const arrange = rows.length ? rows[0].arrange : true;
     S.el.querySelector('[data-sh="lead"]').textContent = arrange ? 'This run\'s sheets come first, then the sheets in the repository. Drag a run sheet between two run sheets to reorder, onto another run sheet to combine (the one you drop stays, empty), or onto an Available sheet to move all its pieces onto it.' : 'There is no open run to arrange sheets in.';
     const keepFocus = S.wrap.contains(doc.activeElement) && doc.activeElement.closest ? (doc.activeElement.closest('.osSh') || {}).dataset : null;
-    S.wrap.innerHTML = rows.map(r => {
+    S.wrap.innerHTML = rows.map((r, ri) => {
       const badges = [r.inSet ? 'In set' : '', r.cutLine ? 'Cut line drawn' : '', r.cut ? 'Cut' : '', r.locked ? 'Locked' : ''].filter(Boolean).map(b => `<span class="osShBadge${b === 'Locked' ? ' lock' : ''}">${b}</span>`).join('');
       const empty0 = !r.pieces, why = S.note[r.id] || (r.locked ? r.lockWhy : !r.canDelete && r.whyDelete && /^Move its/.test(r.whyDelete) ? '' : !r.movable && r.arrange ? (r.whySource || r.whyTarget || '') : '');
       const empty = r.arrange && !r.locked && r.pieces > 0 && r.canSource;
@@ -146,6 +195,7 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
         <div class="osShPic" data-pic="${esc(r.id)}" style="aspect-ratio:${r.aspect || 2}" title="${r.movable ? 'Drag to move or combine' : esc(why || 'This sheet keeps its place')}"></div>
         <div class="osShHead"><span class="osShName">${esc(r.name)}</span></div>
         <span class="osShMeta">${esc(r.size)}<br>${pieces}</span>
+        ${ons[ri] ? `<span class="osShOn" data-sh-on>on ${esc(ons[ri])}</span>` : ''}
         <span class="osShBar" aria-hidden="true"><i style="width:${r.pct == null ? 0 : r.pct}%"></i></span>
         <span class="osShBadges">${badges}</span>
         ${why ? `<span class="osShNote${S.note[r.id] ? ' bad' : ''}">${esc(why)}</span>` : keptNote}
@@ -156,6 +206,8 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     sd.hidden = !text; sd.classList.toggle('bad', !!(cur && cur.bad));
     sd.innerHTML = (cur && cur.spin ? '<span class="osShSpin" aria-hidden="true"></span>' : '') + esc(text) + (S.rel && S.rel.sent && S.rel.spin ? ' <button type="button" class="btn ghost xs" data-sh-cancel>Cancel this request</button>' : '');
     if (keepFocus && keepFocus.id) { const n = [...S.wrap.querySelectorAll('.osSh')].find(x => x.dataset.id === keepFocus.id); if (n) { try { n.focus({ preventScroll: true }); } catch (_) {} } }
+    decorate(M);
+    if (S.pulse) { const n = [...S.wrap.querySelectorAll('.osSh')].find(x => x.dataset.id === S.pulse); if (n) { n.classList.add('osShPulse'); setTimeout(() => n.classList.remove('osShPulse'), 1400); } S.pulse = ''; }
   }
   const fail = (M, id, why) => { const S = M.sheetsUI; if (!S) return; S.note[id] = why; paint(M, true); setTimeout(() => { if (S.note[id] === why) { delete S.note[id]; paint(M, true); } }, 6000); };
   const sayFor = (M, say, ms) => { const S = M.sheetsUI; if (!S) return; S.say = say; paint(M, true); if (say && !say.spin) setTimeout(() => { if (S.say === say) { S.say = null; paint(M, true); } }, ms || 90000); };
@@ -168,21 +220,28 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     const rel = S.rel; let res = null; try { res = await api({ op: 'runCmdList', runId: rel.runId }); } catch (_) { return; }
     const c = ((res && res.cmds) || []).find(x => x && x.id === rel.id);
     if (S.rel !== rel) return;
+    const mv = S.move && S.move.rid === rel.id ? S.move : null;   // (MOVESHOW: the move this request belongs to)
     if (c && (c.state === 'done' || c.state === 'failed')) {
-      const bad = c.state === 'failed'; endRel(M, { text: c.text || (bad ? 'The computer that carries the run could not do that.' : 'Done'), bad, spin: false });
+      const bad = c.state === 'failed', text = c.text || (bad ? 'The computer that carries the run could not do that.' : 'Done');
+      if (mv) { stopRel(S); S.rel = null; return void finishMove(M, mv, { text, bad, freed: !bad && /back in the repository as Available/.test(text) ? (c.freed || true) : false }); }
+      endRel(M, { text, bad, spin: false });
       if (rel.kind === 'seat' && !bad) { try { root.OptionsStudio && OptionsStudio.reload && OptionsStudio.reload(); } catch (_) {} }
-    } else if (c && c.state === 'cancelled') endRel(M, { text: `Cancelled: ${rel.label || 'the request'}. Nothing was done.`, bad: false, spin: false });
-    else if (Date.now() - rel.at > 11 * 60000) endRel(M, { text: 'The computer that carries the run did not answer. Look at the sheets again, then try once more.', bad: true, spin: false });
-    else paint(M);
+    } else if (c && c.state === 'cancelled') { if (mv) endMove(M, mv); endRel(M, { text: `Cancelled: ${rel.label || 'the request'}. Nothing was done.`, bad: false, spin: false }); }
+    else if (Date.now() - rel.at > 11 * 60000) { if (mv) endMove(M, mv); endRel(M, { text: 'The computer that carries the run did not answer. Look at the sheets again, then try once more.', bad: true, spin: false }); }
+    else {
+      if (mv && c && c.state === 'running') { rel.running = true; if (c.step) { mv.step = { text: `${rel.name}'s computer: ${c.step}`, pct: Number.isFinite(+c.stepPct) ? +c.stepPct : null }; updateOv(M); if (!mv.relayPic || mv.relayPic !== c.step) { mv.relayPic = c.step; livePic(M, mv); } } }
+      paint(M, !!mv);
+    }
   }
   async function cancelRel(M) {
     const S = M.sheetsUI, r = S && S.rel; if (!r || !r.sent || !r.spin) return;
+    if (r.running) { r.warn = 'It has already started on that computer, so it cannot be cancelled'; return paint(M, true); }
     let res = null; try { res = await api({ op: 'runCmdCancel', runId: r.runId, id: r.id, dev: devId() }); } catch (e) { r.warn = 'It could not be cancelled (' + ((e && e.message) || e) + ')'; return paint(M, true); }
     if (S.rel !== r) return;
     if (res && res.cancelled) endRel(M, { text: `Cancelled: ${r.label || 'the request'}. Nothing was done.`, bad: false, spin: false });
     else { r.warn = 'It has already started on that computer, so it cannot be cancelled'; paint(M, true); readRel(M); }
   }
-  async function send(M, cmd, label) {
+  async function send(M, cmd, label, mv) {
     const S = M.sheetsUI; if (!S) return false;
     if (S.rel && S.rel.spin) { S.rel.warn = 'Cancel it first (or wait for it to finish) before asking for something else'; paint(M, true); return false; }
     const rows = rowsOf(M), runId = (rows[0] && rows[0].runId) || (RF() && RF().state().runId), dev = devId();
@@ -194,9 +253,9 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
       const name = (c.carrier && c.carrier.by) || 'the computer that carries the run';
       const put = await api({ op: 'runCmdPut', runId, cmd: Object.assign({ metal: M.m, label }, cmd), by: who(), dev });
       if (!put || put.error || !put.id) throw new Error((put && put.error) || 'not sent');
-      S.rel = { id: put.id, runId, name, at: Date.now(), spin: true, sent: true, label, kind: cmd.type }; paint(M, true);
+      S.rel = { id: put.id, runId, name, at: Date.now(), spin: true, sent: true, label, kind: cmd.type }; if (mv) { mv.rid = put.id; mv.step = { text: `Waiting for ${name}'s computer…` }; updateOv(M); } paint(M, true);
       if (root.CNSync && typeof root.CNSync.follow === 'function' && !S.sub) { try { S.sub = root.CNSync.follow({ name: 'run-cmds', kinds: 'r', wants: k => k === 'r:' + runId, read: () => readRel(M) }); } catch (_) { S.sub = null; } }
-      if (!S.poll) S.poll = setInterval(() => readRel(M), 8000);
+      if (!S.poll) S.poll = setInterval(() => readRel(M), mv ? 4000 : 8000);   // (MOVESHOW: a move is looked at every 4 s as well as when the feed names the run)
       readRel(M); return true;
     } catch (e) { S.rel = { text: 'Not sent: ' + ((e && e.message) || e), bad: true, spin: false }; paint(M, true); return false; }
   }
@@ -207,12 +266,16 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     const r = G().reorder(M.m, ids); if (r && r.ok === false) fail(M, id, r.why); else paint(M, true);
   }
   async function doCombine(M, srcId, tgtId, label) {
-    if (relayed(M)) return void send(M, { type: 'consolidate', sourceId: srcId, targetId: tgtId }, label);
-    const r = await G().consolidate(srcId, tgtId); if (r && r.ok === false && r.why) fail(M, srcId, r.why); paint(M, true);
+    const S = M.sheetsUI, mv = startMove(M, { id: srcId, tiles: [srcId, tgtId], pulse: tgtId, title: label, kind: 'combine' }); if (!mv) return;
+    if (relayed(M)) { if (!(await send(M, { type: 'consolidate', sourceId: srcId, targetId: tgtId }, label, mv))) endMove(M, mv); return; }
+    const r = await G().consolidate(srcId, tgtId); if (r && r.ok === false && r.why) fail(M, srcId, r.why);
+    finishMove(M, mv, { text: (r && (r.text || r.why)) || 'Done', bad: !!(r && r.ok === false) });
   }
   async function doEmpty(M, id, label) {
-    if (relayed(M)) return void send(M, { type: 'empty', sheetId: id }, label);
-    const r = await G().emptySheet(id); if (r && r.ok === false && r.why) fail(M, id, r.why); paint(M, true);
+    const S = M.sheetsUI, mv = startMove(M, { id, tiles: [id], pulse: id, title: label, kind: 'empty' }); if (!mv) return;
+    if (relayed(M)) { if (!(await send(M, { type: 'empty', sheetId: id }, label, mv))) endMove(M, mv); return; }
+    const r = await G().emptySheet(id); if (r && r.ok === false && r.why) fail(M, id, r.why);
+    finishMove(M, mv, { text: (r && (r.text || r.why)) || 'Done', bad: !!(r && r.ok === false) });
   }
   async function doDelete(M, id, label) {
     if (relayed(M)) return void send(M, { type: 'delete', sheetId: id }, label);
@@ -221,30 +284,165 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
   const nameOfRow = (M, id) => { const r = rowsOf(M).find(x => x.id === id); return r ? r.name : 'a sheet'; };
 
   /* ── a run sheet onto a physical sheet of the repository: all its pieces move onto it (Gate.seatOn; PartialNest does the work) ── */
-  async function seatAsk(M, me, pid) {
-    const S = M.sheetsUI, c = cardInfo(pid), label = cardLabel(c), n = me.pieces, onStep = st => { if (st && st.text && S.say && S.say.spin) { S.say.text = st.text; paint(M, true); } };
-    let words = '';
-    sayFor(M, { text: `Checking whether ${me.name}'s ${plural(n)} fit on that ${label}…`, spin: true });
-    if (relayed(M)) {
-      const pg = G().pageOf && G().pageOf(me.id), PN = root.PartialNest;
-      if (pg && pg.charms && pg.charms.length && PN && PN.preview && PN.canSeat) {
-        try { const can = PN.canSeat(pg); if (!can.ok) return sayFor(M, { text: can.why, bad: true }); const r = await PN.preview(pg, [pid], { onStep }); if (!r || !r.ok) return sayFor(M, { text: (r && (r.why || r.reason)) || 'That sheet cannot take them now.', bad: true }); words = r.words || ''; }
-        catch (e) { return sayFor(M, { text: String((e && e.message) || e), bad: true }); }
-      }
-    } else {
-      const r = await G().seatOn(me.id, pid, { preview: true, onStep }); if (!r || !r.ok) return sayFor(M, { text: (r && r.why) || 'That sheet cannot take them now.', bad: true }); words = r.text || '';
-    }
-    S.say = null;
-    S.ask = { seat: true };
-    ask(M, `Move ${esc(me.name)}'s ${plural(n)} onto this ${esc(label)}? ${words ? esc(words) : ''}${relayed(M) && !words ? 'The computer that carries the run does it.' : ''}`, () => doSeat(M, me, pid, label, words), 'Move them', 'Cancel');
+  /* MOVESHOW: the move plan. The first sheet takes the pieces; each further one takes what does not fit, in the order shown. The engine's own preview (Gate.seatOn / PartialNest.preview, with the WHOLE list) is asked again, after a short pause, whenever the list changes. */
+  const nth = i => ['1st', '2nd', '3rd'][i] || (i + 1) + 'th';
+  function planOpen(M, me, pid) {
+    const S = M.sheetsUI; if (S.move) return;
+    S.plan = { srcId: me.id, ids: [pid], seq: 0, working: true, prev: null, bad: '', note: '', live: '', timer: 0 }; S.banner = null; renderBanner(M); closeAsk(M);
+    renderPlan(M); decorate(M); queuePreview(M, 120);
+    try { S.planEl.firstElementChild.scrollIntoView({ block: 'nearest' }); } catch (_) {}
   }
-  async function doSeat(M, me, pid, label, words) {
+  function planCancel(M) { const S = M.sheetsUI, P = S && S.plan; if (!P) return; clearTimeout(P.timer); S.plan = null; renderPlan(M); decorate(M); }
+  function queuePreview(M, ms) { const S = M.sheetsUI, P = S.plan; if (!P) return; clearTimeout(P.timer); P.seq++; P.working = true; P.live = ''; const seq = P.seq; P.timer = setTimeout(() => runPreview(M, P, seq), ms == null ? 450 : ms); renderPlan(M); }
+  async function runPreview(M, P, seq) {
+    const S = M.sheetsUI; if (S.plan !== P || P.seq !== seq) return;
+    const me = rowsOf(M).find(r => r.id === P.srcId), ids = P.ids.slice(), onStep = st => { if (S.plan === P && P.seq === seq && st && st.text) { P.live = st.text; renderPlan(M); } };
+    let prev = null, bad = '';
+    if (!me) bad = 'That sheet is not here any more.';
+    else try {
+      if (relayed(M)) {
+        const pg = G().pageOf && G().pageOf(me.id), PN = root.PartialNest;
+        if (pg && pg.charms && pg.charms.length && PN && PN.preview && PN.canSeat) { const can = PN.canSeat(pg); if (!can.ok) bad = can.why; else { const r = await PN.preview(pg, ids, { onStep }); if (!r || !r.ok) bad = (r && (r.why || r.reason)) || 'That sheet cannot take them now.'; else prev = r; } }
+      } else {
+        const r = await G().seatOn(me.id, ids, { preview: true, onStep }); if (!r || !r.ok) bad = (r && r.why) || 'That sheet cannot take them now.'; else prev = r.preview || { words: r.text };
+      }
+    } catch (e) { bad = String((e && e.message) || e); }
+    if (S.plan !== P || P.seq !== seq) return;
+    P.working = false; P.prev = prev; P.bad = bad; P.live = ''; renderPlan(M);
+  }
+  function renderPlan(M) {
+    const S = M.sheetsUI, P = S.plan, el = S.planEl;
+    if (!P) { el.hidden = true; el.innerHTML = ''; return; }
+    const me = rowsOf(M).find(r => r.id === P.srcId), prev = P.prev, name = me ? me.name : 'The sheet', n = me ? me.pieces : 0;
+    const rows = P.ids.map((id, i) => {
+      const c = cardInfo(id), link = prev && prev.links ? prev.links.find(l => l.partialId === id) : null, skip = prev && prev.skipped ? prev.skipped.find(x => x.partialId === id) : null;
+      const take = P.working ? '' : link ? `takes ${link.placed} of ${n}` : skip ? esc(skip.why || 'nothing fits') : '';
+      return `<li data-pid="${esc(id)}"><span class="osPlanN">${nth(i)}:</span><b>${esc(cap(cardLabel(c)))}</b><span class="osPlanTake">${take}</span><span class="osPlanSp"></span><button type="button" class="btn ghost xs" data-plan-up="${esc(id)}" ${i ? '' : 'disabled'} aria-label="Move ${esc(cardLabel(c))} earlier">▲</button><button type="button" class="btn ghost xs" data-plan-down="${esc(id)}" ${i < P.ids.length - 1 ? '' : 'disabled'} aria-label="Move ${esc(cardLabel(c))} later">▼</button><button type="button" class="btn ghost xs" data-plan-out="${esc(id)}">Take out</button></li>`;
+    }).join('');
+    let words = '', rest = '';
+    if (P.working) words = 'working it out…' + (P.live ? ' ' + P.live : '');
+    else if (P.bad) words = P.bad;
+    else if (prev) {
+      words = String(prev.words || '').replace(/\bthis partial sheet\b/g, 'this sheet').replace(/\bpartial sheets\b/g, 'sheets').replace(/\bpartial sheet\b/g, 'sheet');   // (MOVESHOW polish: a new sheet is not a 'partial sheet' to the person reading)
+      if (prev.continues && prev.continues.n > 0) rest = `Pieces that still do not fit (${prev.continues.n}): ${prev.continues.words || prev.words}`;
+      else if (prev.fitsAll) rest = 'Everything fits on the sheets chosen.';
+    }
+    el.hidden = false;
+    el.innerHTML = `<div class="osPlan" role="group" aria-label="Move plan" data-plan><p class="osPlanHead">Move plan: ${esc(name)}'s ${esc(plural(n))}</p><ol class="osPlanList">${rows}</ol>
+      <p class="osPlanHelp">Click another Available sheet to add it as ${nth(P.ids.length)}${P.ids.length < 2 ? ', 3rd …' : ' …'} for the pieces that do not fit; click a chosen sheet to take it out; use ▲ ▼ to change their order.</p>
+      <p class="osPlanWords${P.bad && !P.working ? ' bad' : ''}" data-plan-words role="status">${esc(words)}</p>${rest ? `<p class="osPlanRest" data-plan-rest>${esc(rest)}</p>` : ''}${P.note ? `<p class="osPlanNote" role="alert">${esc(P.note)}</p>` : ''}
+      <div class="osPlanBtns"><button type="button" class="btn ghost xs" data-plan-cancel>Cancel</button><button type="button" class="btn sage xs" data-plan-go ${P.working || P.bad ? 'disabled' : ''}>Move them</button></div></div>`;
+  }
+  function planNote(M, P, text) { P.note = text; renderPlan(M); setTimeout(() => { if (P.note === text) { P.note = ''; if (M.sheetsUI.plan === P) renderPlan(M); } }, 6000); }
+  function planChanged(M) { renderPlan(M); decorate(M); queuePreview(M); }
+  function planClick(M, e) {
+    const S = M.sheetsUI, P = S.plan, t = e.target.closest && e.target.closest('button'); if (!P || !t) return;
+    if (t.hasAttribute('data-plan-cancel')) return planCancel(M);
+    if (t.hasAttribute('data-plan-go')) return void planGo(M);
+    const at = id => P.ids.indexOf(id);
+    if (t.hasAttribute('data-plan-out')) { if (P.ids.length < 2) return planNote(M, P, 'It is the only chosen sheet. Press Cancel to stop, or click another Available sheet first.'); P.ids.splice(at(t.getAttribute('data-plan-out')), 1); return planChanged(M); }
+    for (const [attr, d] of [['data-plan-up', -1], ['data-plan-down', 1]]) if (t.hasAttribute(attr)) { const i = at(t.getAttribute(attr)), j = i + d; if (i < 0 || j < 0 || j >= P.ids.length) return; const x = P.ids[i]; P.ids[i] = P.ids[j]; P.ids[j] = x; return planChanged(M); }
+  }
+  function cardClick(M, e) {
+    const S = M.sheetsUI, P = S && S.plan; if (!P) return;
+    const card = e.target.closest && e.target.closest('article.ohc'); if (!card || !gridOf(M).contains(card)) return;
+    if (e.target.closest('button, a, input, select, textarea, label')) return;
+    e.preventDefault(); e.stopPropagation();
+    if (S.move) return;
+    const id = card.dataset.id, at = P.ids.indexOf(id), me = rowsOf(M).find(r => r.id === P.srcId);
+    if (at >= 0) { if (P.ids.length < 2) return planNote(M, P, 'It is the only chosen sheet. Press Cancel to stop, or click another Available sheet first.'); P.ids.splice(at, 1); return planChanged(M); }
+    const why = me ? whyCard(M, me, cardInfo(id)) : 'That sheet is not here any more.';
+    if (why) return planNote(M, P, why);
+    if (P.ids.length >= 8) return planNote(M, P, 'Eight sheets is the most for one move.');
+    P.ids.push(id); planChanged(M);
+  }
+  function planGo(M) {
+    const S = M.sheetsUI, P = S.plan; if (!P || P.working || P.bad) return;
+    const me = rowsOf(M).find(r => r.id === P.srcId); if (!me) return planCancel(M);
+    const ids = P.ids.slice(), labels = ids.map(id => cap(cardLabel(cardInfo(id))));
+    clearTimeout(P.timer); S.plan = null; renderPlan(M);
+    doSeat(M, me, ids, labels);
+  }
+  async function doSeat(M, me, ids, labels) {
     const S = M.sheetsUI, n = me.pieces, head = `${me.name}'s ${plural(n)}`;
-    if (relayed(M)) return void send(M, { type: 'seat', sheetId: me.id, partialId: pid }, `Move ${head} onto a ${label}`);
-    sayFor(M, { text: `${head} are being nested on this ${label}…`, spin: true });
-    const r = await G().seatOn(me.id, pid, { onStep: st => { if (st && st.text && S.say && S.say.spin) { S.say.text = `${head}: ${st.text}`; paint(M, true); } } });
-    if (r && r.ok) { sayFor(M, { text: `${head} are being nested on this ${label}. ${words || ''}`.trim() }); try { root.OptionsStudio && OptionsStudio.reload && OptionsStudio.reload(); } catch (_) {} }
-    else sayFor(M, { text: (r && r.why) || 'The pieces were not moved.', bad: true });
+    const mv = startMove(M, { id: me.id, tiles: [me.id], cards: ids, pulse: me.id, title: `Moving ${head} onto ${labels[0]}${ids.length > 1 ? ` (and ${ids.length - 1} more for the overflow)` : ''}`, kind: 'seat', stockId: me.stockId || '', size: me.size }); if (!mv) return;
+    flyGhost(M, me.id, ids[0]);
+    if (relayed(M)) { if (!(await send(M, { type: 'seat', sheetId: me.id, partialId: ids[0], partialIds: ids }, `Move ${head} onto ${labels[0]}`, mv))) endMove(M, mv); return; }
+    const r = await G().seatOn(me.id, ids, { finish: true, onStep: st => { if (st && st.text && S.move === mv) { mv.step = { text: st.text, pct: Number.isFinite(+st.pct) ? +st.pct : null }; updateOv(M); livePic(M, mv); } } });
+    if (r && r.ok) finishMove(M, mv, { text: r.text, freed: r.freed || false });
+    else finishMove(M, mv, { text: (r && r.why) || 'The pieces were not moved.', bad: true });
+  }
+
+  /* MOVESHOW: a move in progress (local or relayed): the overlay on the tile(s) and the chosen cards, the seconds, the picture drawn again as the nest changes; the result banner at the end */
+  function startMove(M, o) {
+    const S = M.sheetsUI; if (!S || S.move) return null;
+    const mv = Object.assign({ t0: Date.now(), step: { text: 'Starting…', pct: null }, ids: o.cards || [], cards: o.cards || [], relay: relayed(M) }, o); S.move = mv; S.banner = null; renderBanner(M);
+    decorate(M); if (!S.tick) S.tick = setInterval(() => tick(M), 500); return mv;
+  }
+  function stopTick(S) { if (S.tick) { clearInterval(S.tick); S.tick = 0; } }
+  function endMove(M, mv) { const S = M.sheetsUI; if (!S || S.move !== mv) return; S.move = null; stopTick(S); decorate(M); paint(M, true); }
+  function tick(M) {
+    const S = M.sheetsUI, mv = S && S.move; if (!mv) return stopTick(S || {});
+    if (!mv.relay && (mv.kind === 'combine' || mv.kind === 'empty')) { const b = G().mergeBusy && G().mergeBusy(M.m); if (b && b.text) mv.step = { text: b.text, pct: null }; }
+    updateOv(M); if (!mv.relay && Date.now() - (mv.picAt || 0) > 900) livePic(M, mv);
+  }
+  /** the tile's picture drawn again (the sheet's own layout as the nest changes; on a following computer, as the copy of the sheet changes) */
+  function livePic(M, mv) { const S = M.sheetsUI; if (!S) return; mv.picAt = Date.now(); try { const rows = rowsOf(M).filter(r => (mv.tiles || [mv.id]).includes(r.id)); if (rows.length) pictures(S, rows); } catch (_) {} }
+  function ovHtml(mv) { return `<b data-ov-t></b><span class="osOvBar ind" aria-hidden="true"><i></i></span><span data-ov-s></span><span class="osOvSec" data-ov-sec></span>`; }
+  function decorate(M) {
+    const S = M.sheetsUI, grid = S && gridOf(M); if (!S || !grid) return;
+    for (const n of grid.querySelectorAll('.osBadge,.osFreedTag')) n.remove();
+    for (const c of grid.querySelectorAll('article.ohc.osChosen, article.ohc.osFreed')) c.classList.remove('osChosen', 'osFreed');
+    const ids = S.plan ? S.plan.ids : S.move ? (S.move.cards || []) : [], cardOf2 = id => grid.querySelector(`:scope > article.ohc[data-id="${CSS_ESC(id)}"]`);
+    ids.forEach((id, i) => { const c = cardOf2(id); if (!c) return; c.classList.add('osChosen'); const b = doc.createElement('span'); b.className = 'osBadge'; b.textContent = String(i + 1); b.setAttribute('aria-label', nth(i) + ' sheet'); c.prepend(b); });
+    for (const c of grid.querySelectorAll(':scope > article.ohc[data-status="available"]')) if (FREED.has(c.dataset.stock)) { c.classList.add('osFreed'); const t = doc.createElement('span'); t.className = 'osFreedTag'; t.textContent = 'Just freed — Delete or keep'; c.prepend(t); }
+    const mv = S.move, want = new Set();
+    if (mv) {
+      const targets = [];
+      for (const id of mv.tiles || []) { const t = [...S.wrap.querySelectorAll('.osSh')].find(x => x.dataset.id === id); if (t) targets.push([t, id === mv.id ? mv.title : `Receiving from ${(rowsOf(M).find(r => r.id === mv.id) || {}).name || 'the other sheet'}…`]); }
+      (mv.cards || []).forEach((id, i) => { const c = cardOf2(id); if (c) targets.push([c, i === 0 ? `Receiving the pieces (${nth(0)} sheet)` : `${nth(i)} sheet: takes what does not fit`]); });
+      for (const [el, title] of targets) { want.add(el); let ov = el.querySelector(':scope > .osOv'); if (!ov) { ov = doc.createElement('div'); ov.className = 'osOv'; ov.setAttribute('role', 'status'); ov.innerHTML = ovHtml(mv); if (getComputedStyle(el).position === 'static') el.style.position = 'relative'; el.appendChild(ov); } ov.querySelector('[data-ov-t]').textContent = title; }
+    }
+    for (const ov of doc.querySelectorAll('.osOv')) if (!want.has(ov.parentNode) && (S.wrap.contains(ov) || grid.contains(ov))) ov.remove();
+    updateOv(M);
+  }
+  function updateOv(M) {
+    const S = M.sheetsUI, mv = S && S.move; if (!mv) return;
+    const sec = Math.floor((Date.now() - mv.t0) / 1000), pct = mv.step && Number.isFinite(+mv.step.pct) ? Math.max(0, Math.min(100, +mv.step.pct)) : null;
+    for (const ov of (gridOf(M) || S.wrap).querySelectorAll('.osOv')) {
+      const st = ov.querySelector('[data-ov-s]'), se = ov.querySelector('[data-ov-sec]'), bar = ov.querySelector('.osOvBar'); if (!st) continue;
+      if (st.textContent !== mv.step.text) st.textContent = mv.step.text; se.textContent = sec + ' s';
+      bar.classList.toggle('ind', pct == null); if (pct != null) bar.firstElementChild.style.width = pct + '%'; else bar.firstElementChild.style.width = '';
+    }
+  }
+  function flyGhost(M, srcId, pid) {
+    if (reduced()) return;
+    try {
+      const S = M.sheetsUI, pic = S.wrap.querySelector(`[data-pic="${CSS_ESC(srcId)}"]`), card = gridOf(M).querySelector(`:scope > article.ohc[data-id="${CSS_ESC(pid)}"]`); if (!pic || !card) return;
+      try { card.scrollIntoView({ block: 'nearest' }); } catch (_) {}
+      const a = pic.getBoundingClientRect(), b = card.getBoundingClientRect(); if (!a.width || !b.width) return;
+      const g = doc.createElement('div'); g.className = 'osGhost'; g.setAttribute('aria-hidden', 'true'); g.style.cssText = `left:${a.left}px;top:${a.top}px;width:${a.width}px;height:${a.height}px`;
+      const cv = pic.querySelector('canvas'), im = pic.querySelector('img'), img = doc.createElement('img'); img.alt = '';
+      try { if (cv) img.src = cv.toDataURL(); else if (im && im.src) img.src = im.src; } catch (_) {}
+      g.appendChild(img); (S.wrap.closest('dialog') || doc.body).appendChild(g);   // (inside the Options window: a modal window is above everything outside it)
+      const k = Math.min(1, (b.width * 0.7) / a.width), dx = (b.left + b.width / 2) - (a.left + a.width / 2), dy = (b.top + b.height / 2) - (a.top + a.height / 2);
+      g.getBoundingClientRect();
+      requestAnimationFrame(() => { g.style.transform = `translate(${dx}px,${dy}px) scale(${k})`; g.style.opacity = '.3'; });
+      setTimeout(() => g.remove(), 900);
+    } catch (_) { /* the picture is only for the eye */ }
+  }
+  function finishMove(M, mv, res) {
+    const S = M.sheetsUI; if (!S) return;
+    if (S.move === mv) { S.move = null; stopTick(S); }
+    { const fid = (res.freed && res.freed.stockId) || (typeof res.freed === 'string' && res.freed) || mv.stockId; if (res.freed && fid) FREED.add(fid); }
+    S.banner = { text: res.text || (res.bad ? 'It was not done.' : 'Done'), bad: !!res.bad, title: res.bad ? mv.title : '' };
+    decorate(M); renderBanner(M); paint(M, true);
+    if (!res.bad) { const after = () => { if (M.sheetsUI === S) { S.pulse = mv.pulse || mv.id; paint(M, true); decorate(M); } }; try { Promise.resolve(root.OptionsStudio && OptionsStudio.reload && OptionsStudio.reload()).then(after, after); } catch (_) { after(); } }
+  }
+  function renderBanner(M) {
+    const S = M.sheetsUI, B = S.banner, el = S.bannerEl; if (!B) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false; el.innerHTML = `<div class="osBanner${B.bad ? ' bad' : ''}" role="status" data-banner><div>${B.title ? `<b>${esc(B.bad ? 'Not done: ' + B.title : B.title)}</b>` : ''}${esc(B.text)}</div><button type="button" class="btn ghost xs" data-sh-dismiss>Dismiss</button></div>`;
+    try { el.firstElementChild.scrollIntoView({ block: 'nearest' }); } catch (_) {}
   }
   const whyCard = (M, me, c) => {
     if (!c) return 'That sheet is not in the list. Press Refresh.';
@@ -272,6 +470,7 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
   function down(M, e) {
     if (e.button != null && e.button > 0) return;
     const li = e.target.closest && e.target.closest('.osSh'); if (!li || (e.target.closest && e.target.closest('button'))) return;
+    if (M.sheetsUI.move) return;   // (MOVESHOW: one move at a time)
     const row = rowsOf(M).find(r => r.id === li.dataset.id); if (!row || !row.movable) return;
     const S = M.sheetsUI, st = { li, id: row.id, x: e.clientX, y: e.clientY, on: false, rows: null, over: null, mode: null, pid: e.pointerId, last: null, tick: 0 };
     const grip = !!(e.target.closest && e.target.closest('.osShPic'));
@@ -326,7 +525,7 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     const S = M.sheetsUI;
     if (mode && mode.startsWith('refused:')) return fail(M, st.id, mode.slice(8));
     const src = st.rows.find(r => r.id === st.id);
-    if (mode === 'seat') return void seatAsk(M, src, overId);
+    if (mode === 'seat') return void planOpen(M, src, overId);   // (MOVESHOW: the move plan opens; Move them is pressed there)
     if (mode === 'onto') {
       const tgt = st.rows.find(r => r.id === overId);
       S.ask = { src, tgt };
@@ -349,6 +548,6 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     M.sheetsUI.ask = { del: id };
     ask(M, `Delete ${esc(row.name)}? It is empty. The sheets after it move up one.`, a => doDelete(M, a.del, `Delete ${row.name}`), 'Delete this sheet');
   }
-  function destroy(M) { try { if (M && M.sheetsUI) { stopRel(M.sheetsUI); doc.documentElement.classList.remove('osShDrag'); M.sheetsUI.el.remove(); M.sheetsUI.wrap.remove(); M.sheetsUI.solo.remove(); M.sheetsUI = null; } } catch (_) {} }
+  function destroy(M) { try { if (M && M.sheetsUI) { stopRel(M.sheetsUI); stopTick(M.sheetsUI); if (M.sheetsUI.plan) clearTimeout(M.sheetsUI.plan.timer); M.sheetsUI.planEl.remove(); M.sheetsUI.bannerEl.remove(); doc.documentElement.classList.remove('osShDrag'); M.sheetsUI.el.remove(); M.sheetsUI.wrap.remove(); M.sheetsUI.solo.remove(); M.sheetsUI = null; } } catch (_) {} }
   root.OptionsSheets = { mount, place, paint, destroy };
 })(window);
