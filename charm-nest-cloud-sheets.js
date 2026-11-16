@@ -134,7 +134,7 @@
     } catch (e) { DONE.delete(key); console.warn("[cloud-sheets] complete take-off", rec.id, e); }
     return true;
   }
-  const PENDING = new Set(); let pendT = 0;
+  const PENDING = new Set(); let pendT = 0; let orderT = 0;
   async function changed(keys) {
     for (const k of keys || []) {
       const id = String(k).slice(2); if (!id || id === "*") continue;
@@ -142,6 +142,8 @@
       if (atWork(p) || p.dirty) { PENDING.add(id); continue; }
       let rec = null; try { rec = await getRec(id); } catch (_) { PENDING.add(id); continue; }
       if (!rec) continue;
+      // (ORDERCLOUD 2, Paul 15 Nov 2026: the carrier's new draft order never reached the computer that follows): a followed sheet whose order changed in the cloud has this computer list the run's sheets again
+      if (p.followed && rec.draftOrder != null && Number.isFinite(+rec.draftOrder) && +rec.draftOrder !== +p.draftOrder) { clearTimeout(orderT); orderT = setTimeout(() => safe(() => { const R = root.Recall, F = root.CharmNestRunFollow, id = (F && F.state().runId) || p.runId; if (R && R.follow && id) Promise.resolve(R.follow(id, { force: true })).catch(() => {}); }), 1500); }
       if (p.recalled) { p.recalled = rec; st.refreshed++; safe(() => root.CN.renderCard(p)); continue; }
       if (await completeTakeOff(p, rec)) continue;
       const mine = revOf(p);

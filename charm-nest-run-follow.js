@@ -64,7 +64,11 @@
       st.changed += changed; st.gone += gone; st.added += added; st.last = { at: Date.now(), why, changed, gone, added };
       if (changed || gone || added) { safe(() => root.Review && root.Review.syncOrderItems()); safe(() => O.render()); safe(() => root.Session && root.Session.schedule()); }
       // (CLOUDFIRST, Paul 15 Nov 2026: "The library tab is the correct one. The nesting on the nest tab is incorrect"): and the run's sheets, as the cloud has them, on this computer's Nest cards (Recall.follow: read only, at most every ten minutes)
-      safe(() => { const f = root.Recall && root.Recall.follow; if (typeof f === "function") Promise.resolve(f(id)).catch(() => {}); });
+      // (ORDERCLOUD 2: a sheet added to the run or taken out of it on the carrying computer is shown here at once, not at the next ten-minute look)
+      // (GONESHEET, Paul 15 Nov 2026: a sheet deleted on the carrying computer stayed on the computer that follows until the run's next checkpoint archived it): the sheets the run has let go of are not shown here
+      st.retired = ((run.intakeRecovery && run.intakeRecovery.retire) || []).map(String);
+      { const sk = Object.keys(run.sheets || {}).sort().join("|") + "#" + st.retired.slice().sort().join("|"), force = st.sheetSig !== undefined && st.sheetSig !== sk; st.sheetSig = sk;
+        safe(() => { const f = root.Recall && root.Recall.follow; if (typeof f === "function") Promise.resolve(f(id, force ? { force: true } : undefined)).catch(() => {}); }); }
       return st;
     } catch (e) { st.last = { at: Date.now(), why, error: String(e && e.message || e) }; return st; }
     finally { st.busy = false; }

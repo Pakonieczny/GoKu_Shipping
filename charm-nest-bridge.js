@@ -7578,6 +7578,8 @@ const Gate = window.Gate = (() => {
     if (inSetNow(sh)) { try { await leaveSet(sh.sheetId); } catch (e) { agent({ metal: sh.metal, run: run.runId }, "warn", `${name} is empty but could not leave its set (${e && e.message}); it stays until it does`); return false; } }
     const m = sh.metal;
     retirePage(run, sh);
+    // (FIRSTEMPTY, Paul 15 Nov 2026: deleting the first sheet of a card left a blank "Draft 1" beside the real one): the next sheet takes the first seat, and the empty one is removed like any other
+    if (solid(m)) { const all = pagesOf(m), prim = S.sheets[m]; if (all.indexOf(sh) === 0 && all.length > 1 && prim && Array.isArray(prim.pages)) { const i0 = prim.pages.indexOf(sh), i1 = prim.pages.indexOf(all[1]); if (i0 >= 0 && i1 >= 0) { prim.pages[i0] = all[1]; prim.pages[i1] = sh; if (prim.active === i0) prim.active = i1; else if (prim.active === i1) prim.active = i0; } } }
     if (pagesOf(m).indexOf(sh) > 0) removePage(sh);
     else { sh.charms = []; sh.placements = []; sh.rejects = []; sh.sheetId = null; sh.fileBase = null; sh.setId = null; sh.seq = null; sh.sheetIndex = null; sh.draft = false; sh.releaseFull = false; sh.label = null; sh.cloud = null; sh.persisted = null; sh.outputs = null; sh.verification = null; sh.backPool = []; sh.status = "idle"; delete sh.roseStock; delete sh.roseProtected; delete sh.rosePlan; sh._roseLoaded = false; }
     agent({ metal: m, run: run.runId }, "nest", `${name} was left empty when its last order came off, and was removed`);
@@ -28115,14 +28117,14 @@ const Recall = window.Recall = (() => {
     following = (async () => {
       const ls = await api("charmNestLibrary", { op: "listSheets", limit: 200, runId }, { quiet: true, all: "sheets" });
       if (B.run || on() || ownWork()) return false;   // (a run was opened, or work begun, here while the list was on its way)
-      const byName = new Map();
-      for (const x of ls.sheets || []) { const k = x.fileBase || x.id; const had = byName.get(k); if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) byName.set(k, x); }
+      const byName = new Map(), gone = new Set((window.CharmNestRunFollow && CharmNestRunFollow.state().retired) || []);   // (GONESHEET: a sheet the run let go of (deleted on the carrying computer) is not listed, though its record is archived only at the run's next checkpoint)
+      for (const x of ls.sheets || []) { if (gone.has(String(x.id))) continue; const k = x.fileBase || x.id; const had = byName.get(k); if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) byName.set(k, x); }
       const startedOf = x => +x.cardStartedAt || +(x.createdAt && (x.createdAt._seconds || x.createdAt.seconds)) * 1000 || Date.parse(x.createdAt) || 0;
       const sheets = [...byName.values()].sort((a, b) => startedOf(a) - startedOf(b));   // (oldest first, as a run put back here lists them: PAGEORDER)
       // (SHEETSLIST: a metal's sheets the person ordered by hand (draftOrder) keep that order here too)
       { const seats = new Map(); sheets.forEach((x, i) => { if (!seats.has(x.metal)) seats.set(x.metal, []); seats.get(x.metal).push(i); }); const has = x => x.draftOrder != null && Number.isFinite(+x.draftOrder), copy = sheets.slice();
         for (const at of seats.values()) { const sub = at.map(i => copy[i]); if (!sub.some(has)) continue; sub.sort((a, b) => (has(a) ? 0 : 1) - (has(b) ? 0 : 1) || (has(a) ? +a.draftOrder - +b.draftOrder : 0)); at.forEach((i, k) => { sheets[i] = sub[k]; }); } }
-      const sig = runId + "|" + sheets.map(x => x.id).sort().join("|");
+      const sig = runId + "|" + sheets.map(x => x.id).sort().join("|") + "#" + sheets.filter(x => x.draftOrder != null).map(x => x.id + ":" + x.draftOrder).join("|");   // (ORDERCLOUD 2, Paul 15 Nov 2026: a draft order changed on the carrying computer is a change here too: the cards are listed again in that order)
       if (sig === followSig && allSheets().some(p => p.followed) && !allSheets().some(p => !p.followed && (p.charms || []).length && (p.runId || null) === runId)) { liveLater(runId); return true; }
       followSig = sig;
       for (const m of METALS) {
