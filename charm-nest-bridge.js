@@ -29100,6 +29100,9 @@ const Arrivals = window.Arrivals = (() => {
   }
   let softFails = 0;   // (STATIONOPEN: intakes in a row that failed for a passing cause)
   async function processPending({checkpoint=false}={}) {
+    // (PULLEDWAITS, Paul 15 Nov 2026: "Michelle's computer is showing 791 orders, whereas my computer is only showing 790"): an order another computer read and wrote into the cloud run reached this page only as a line (state "pulled"); "pending" was set
+    //  only by this page's own check for new orders, so that line was never placed, even after a reload. A line of the open run that is still only "pulled" IS pending, whoever read it
+    if (!state.pending && B.run && !["complete", "abandoned"].includes(B.run.status) && S.settings.runMode === "auto" && !Recall.on() && Orders.rows().some(x => x && x.state === "pulled" && !x.parentRow && x.order && x.order.receiptId != null)) { state.pending = true; save(); }
     if (!state.pending || S.settings.runMode !== "auto" || Recall.on()) return;
     const r = B.run;
     if (!r || ["complete", "abandoned"].includes(r.status)) {
@@ -29124,6 +29127,7 @@ const Arrivals = window.Arrivals = (() => {
       //  is opened here before the orders are checked with it (it is mounted only when its tab is first visited, or by Auto at page load: a page that had neither stopped the run at every intake)
       try { await DesignLink.ensure(); } catch (_) { /* said below if the check then fails */ }
       if(state.revalidate){await Orders.revalidate(r,"during intake");state.revalidate=false;}
+      if (Orders.rows().some(x => x && x.state === "pulled" && !x.spec)) { try { Orders.interpretAll(); } catch (_) { /* read by the intake below */ } }   // (PULLEDWAITS: a line that came from the cloud is read before it is placed)
       await LiveNest.add(r);
       softFails = 0;
       // the new lines' words are read and fitted beside the next orders (Engrave.background): the next charm never waits
