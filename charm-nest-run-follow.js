@@ -186,6 +186,15 @@
       if (!CS || typeof CS.applyRemote !== "function" || !a.ck) r = { ok: false, why: "not ready" };
       else { const step = stepper(c); step({ text: "Reading the designs that were sent…" }); try { r = await CS.applyRemote(a.ck, { onStep: step }); } catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); } }
     }
+    // (SETREBUILD, Paul 16 Nov 2026: "Remove that sheet from the set of sheets it was incorrectly added to"): the set's own repair ("Rebuild this set correctly", charm-nest-set-repair.js: the sheets that do not belong leave, nothing is deleted, no sheet is nested again), asked from another computer
+    else if (c.type === "setrebuild") {
+      const SRp = root.CharmNestSetRepair, run = safe(() => (typeof B !== "undefined" ? B.run : root.B && root.B.run), null);
+      if (!SRp || typeof SRp.rebuild !== "function" || !a.setId || !run) r = { ok: false, why: "not ready" };
+      else { const step = stepper(c); step({ text: "Reading the set…" });
+        try { const v = await SRp.rebuild({ setId: a.setId, runId: run.runId }, { skipConfirm: true, onState: (_, t) => step({ text: String(t || "Rebuilding the set…") }) });
+          r = v && v.ok ? { ok: true, text: String((v.words) || (v.plan && v.plan.words && v.plan.words.summary) || "The set was rebuilt") } : { ok: false, why: String((v && ((v.refused && v.refused.reason) || v.error || (v.still && v.still[0]))) || "The set was not rebuilt").slice(0, 380) }; }
+        catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); } }
+    }
     else if (c.type === "remake") r = root.Review && typeof root.Review.redrawStale === "function" ? await root.Review.redrawStale(a.ids || []) : { ok: false, why: "not ready" };   // (REMAKESTALE: open pieces that hold an older drawing of these SKUs are made up again from the library's drawing)
     // (REMOTENEST, Paul 15 Nov 2026: "you re-nest it and then check that everything is OK everywhere"): a draft sheet of the run is nested again here, exactly as its Re-nest button does (never a sheet that was cut or is in a committed set: startNest's own rules stand), and the answer waits for the nest and its save
     else if (c.type === "renest") {

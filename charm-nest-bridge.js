@@ -6333,7 +6333,11 @@ const Gate = window.Gate = (() => {
   const openSetsOf = runId => Sets.ofRun(runId).filter(s => s.group === "dispatch" && !s.committedAt);
   const membersOfSet = set => allSheets().filter(p => p.runId === set.runId && p.setId === set.setId && !p.draft);
   /** True when a set has formed and takes no sheet on its own any more (charm-nest-set-rules.js closed(): the one closing rule). A page without the module never closes a set (as before). */
-  const closedSet = set => !!set && !!window.CharmNestSetRules && window.CharmNestSetRules.closed(membersOfSet(set));
+  /* SETSTAYSCLOSED (Paul, 16 Nov 2026: "why this sheet was allowed to be added to an existing set ... This breaks my rules"): a set that HAS formed stays closed for good. It was closed only while its
+     sheets still read as a completed GF and a completed SS sheet; when GF Sheet 1 of Set 2 was saved empty by a fault (16 Nov, 2:41 PM) the set read as "short", was opened again and took the next
+     completed GF sheet. The time a set formed (set.formedAt) is now kept with the set in the cloud and never taken back: a formed set takes no sheet by itself, whatever its sheets read as later. A
+     person's own move, a sheet that shares an order with it and a 10K / 14K / Rose Gold sheet's own press are as before. */
+  const closedSet = set => !!set && (+set.formedAt > 0 || (!!window.CharmNestSetRules && window.CharmNestSetRules.closed(membersOfSet(set))));
   /** The set the run's next completed sheets join on their own: its newest open set while that has not formed; none when there is no open set or the newest has formed (a new set forms then). */
   function collectingOf(runId) { const open = openSetsOf(runId), last = open[open.length - 1]; return last && !closedSet(last) ? last : null; }
   /** The run's newest open set, formed or not: the set a 10K, 14K or Rose Gold sheet is ticked into. (SETFIX: no rule reads its number any more; the former even-numbered rule for Rose Gold is gone.) */
@@ -6626,7 +6630,7 @@ const Gate = window.Gate = (() => {
     for (const p of allSheets()) if (p.runId === run.runId) delete p.setWait;
     // (audit A, 25 Oct 2026: the set the free sheets complete is the EARLIEST open set left short of a class, a sheet of it having gone back to filling; only the newest was
     //  ever completed, so an older set that went short stayed short for good, R1)
-    const last = open.find(s => membersOfSet(s).length && !SR.closed(formMembers(s))) || open[open.length - 1] || null, lastClosed = !!last && SR.closed(formMembers(last));   // (STUCKSPIN: formMembers, a member being written again counts as its record)
+    const last = open.find(s => membersOfSet(s).length && !(+s.formedAt > 0) && !SR.closed(formMembers(s))) || open[open.length - 1] || null, lastClosed = !!last && (+last.formedAt > 0 || SR.closed(formMembers(last)));   // (SETSTAYSCLOSED: a set that has formed is never the one the free sheets complete)   // (STUCKSPIN: formMembers, a member being written again counts as its record)
     let target = null, addTarget = null, formed = 0, apart = new Set(), joinNow = null;       // target: the set the free sheets join now · addTarget: the set 10K, 14K and Rose Gold may join now · formed: sheets it takes · apart: partners that wait for another set
     {
       const free = pages.filter(p => !inOpen(p) && !p.cardinalHome && !handOf(p) && !adder(p) && release(p, last && !lastClosed ? last.seq : 0).include);
@@ -6634,7 +6638,8 @@ const Gate = window.Gate = (() => {
       // (SETFIX, Paul 19 Oct 2026: the units never tie through a sheet in a set, a cut one or an uncut Rose Gold / 10K / 14K one: formationOf(V, true). They did, so Set 2 took every unit that had one order
       //  on a sheet of Set 1)
       const V = cardinalView(run), pagesOfIds = ids => (ids || []).map(id => V.page.get(id)).filter(Boolean), links = V ? formationOf(V, true, choices).groups.map(g => ({ ids: pagesOfIds(g.ids), anchors: pagesOfIds(g.anchors), ends: pagesOfIds(g.ends) })) : [];
-      const f = SR.form(last ? formMembers(last) : [], free, !!last, last && last.name, links);
+      const lastOpen = !!last && !(+last.formedAt > 0);   // (SETSTAYSCLOSED: a formed set is not offered to the rules as a set to complete: the free sheets form the NEXT set)
+      const f = SR.form(lastOpen ? formMembers(last) : [], free, lastOpen, last && last.name, links);
       for (const w of f.wait) w.sheet.setWait = w.why;
       if (f.where === "last") target = last;
       else if (f.where === "new") {
@@ -7126,7 +7131,7 @@ const Gate = window.Gate = (() => {
       RunCtl.onSheetDone(sh);
       set.touched = true;
     }
-    if (SRt) { if (!SRt.validSet(membersOfSet(set)).ok) delete set.formedAt; else if (!set.formedAt) set.formedAt = at; }      // (a set that lost a member and holds no valid minimum any more is forming again: its sheets that rejoin are no late joiners) it formed in this look: from now on it is closed to automatic joining (charm-nest-set-rules.js closed)
+    if (SRt && !set.formedAt && SRt.validSet(membersOfSet(set)).ok) { set.formedAt = at; set.touched = true; }   // (SETSTAYSCLOSED: the time is never taken back: a formed set that reads short later, a member saved empty or back to filling, is NOT forming again)      // (a set that lost a member and holds no valid minimum any more is forming again: its sheets that rejoin are no late joiners) it formed in this look: from now on it is closed to automatic joining (charm-nest-set-rules.js closed)
   }
   function editable(sh) {
     // Stock dimensions are shared only by pages of this material. Independent
@@ -15936,7 +15941,7 @@ const Sets = window.Sets = (() => {
     agent({ metal: sh.metal, run: sh.runId }, "cloud", `${sh.fileBase}: ${files.length} label${files.length === 1 ? "" : "s"} saved (${ids.length} order${ids.length === 1 ? "" : "s"}) · set ${set.name} now ${set.sheetIds.length} sheet(s)`);
     Orders.render();
   }
-  async function save(set, context) { if(window.CharmNestOperations && !context)return window.CharmNestOperations.run({key:'set-save:'+set.setId,label:'Saving set record',resources:['set-record:'+set.setId],latest:true},token=>save(set,token)); if (!S.cloud.ok || set.offline) return; const orders = {}; for (const [rid, o] of Object.entries(set.orders)) orders[rid] = { held: o.held || null, lines: Object.values(o.lines) }; await api("charmNestLibrary", { op: "setUpdate", setId: set.setId, patch: { runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheetIds: set.sheetIds, orders, status: set.status, labels: set.labels || null, labelFiles: set.labelFiles.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, sheetId: f.sheetId, part: f.part, parts: f.parts, orders: f.orders, payload:f.payload || null, metal:f.metal || null, ecc:f.ecc || null, label: f.label })), committed: set.committed || null, refused: set.refused || null, completedAt: set.completedAt || null, completionDay: set.completionDay || null, committedAt: set.committedAt || null, backCount: set.backCount || 0, ...(set.sheetNos && Object.keys(set.sheetNos).length ? { sheetNos: set.sheetNos } : {}) } }); if (set.committedAt) set.savedCommit = set.committedAt; }
+  async function save(set, context) { if(window.CharmNestOperations && !context)return window.CharmNestOperations.run({key:'set-save:'+set.setId,label:'Saving set record',resources:['set-record:'+set.setId],latest:true},token=>save(set,token)); if (!S.cloud.ok || set.offline) return; const orders = {}; for (const [rid, o] of Object.entries(set.orders)) orders[rid] = { held: o.held || null, lines: Object.values(o.lines) }; await api("charmNestLibrary", { op: "setUpdate", setId: set.setId, patch: { runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheetIds: set.sheetIds, orders, status: set.status, labels: set.labels || null, labelFiles: set.labelFiles.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, sheetId: f.sheetId, part: f.part, parts: f.parts, orders: f.orders, payload:f.payload || null, metal:f.metal || null, ecc:f.ecc || null, label: f.label })), committed: set.committed || null, refused: set.refused || null, completedAt: set.completedAt || null, completionDay: set.completionDay || null, committedAt: set.committedAt || null, backCount: set.backCount || 0, ...(+set.formedAt > 0 ? { formedAt: +set.formedAt } : {}), ...(set.sheetNos && Object.keys(set.sheetNos).length ? { sheetNos: set.sheetNos } : {}) } }); if (set.committedAt) set.savedCommit = set.committedAt; }
   const sheetsOf = set => allSheets().filter(sh => sh.setId === set.setId);
   /** Which orders of the set travel, which are held and why (design §5.4, §8.4). */
   function evaluate(set) {
@@ -17142,7 +17147,7 @@ const RunCtl = window.RunCtl = (() => {
     const sets = [];
     for (const sid of setIds) {
       const sr = await api("charmNestLibrary", { op: "setGet", setId: sid }); const sd = sr.set; if (!sd) continue;
-      const set = { setId: sd.setId, seq: sd.seq, day: sd.day, runId: rec.runId, group: sd.group || null, name: sd.name || O.setLabel(sd.seq), folder: sd.folder || O.setFolder(sd.day, sd.seq), orders: Object.fromEntries(Object.entries(sd.orders || {}).map(([rid, o]) => [rid, { held: o.held || null, lines: Object.fromEntries((o.lines || []).map(l => [l.transactionId, l])) }])), sheetIds: sd.sheetIds || [], materials: sd.materials || [], labelFiles: sd.labelFiles || [], labels: sd.labels || null, status: sd.status || "open", committedAt: sd.committedAt || null, completedAt: sd.completedAt || null, completionDay: sd.completionDay || null, committed: sd.committed || null, refused: sd.refused || null, backCount: sd.backCount || 0, sheetNos: sd.sheetNos || {} };
+      const set = { setId: sd.setId, seq: sd.seq, day: sd.day, runId: rec.runId, group: sd.group || null, name: sd.name || O.setLabel(sd.seq), folder: sd.folder || O.setFolder(sd.day, sd.seq), orders: Object.fromEntries(Object.entries(sd.orders || {}).map(([rid, o]) => [rid, { held: o.held || null, lines: Object.fromEntries((o.lines || []).map(l => [l.transactionId, l])) }])), sheetIds: sd.sheetIds || [], materials: sd.materials || [], labelFiles: sd.labelFiles || [], labels: sd.labels || null, status: sd.status || "open", committedAt: sd.committedAt || null, completedAt: sd.completedAt || null, completionDay: sd.completionDay || null, committed: sd.committed || null, refused: sd.refused || null, backCount: sd.backCount || 0, sheetNos: sd.sheetNos || {}, ...(+sd.formedAt > 0 ? { formedAt: +sd.formedAt } : {}) };   // (SETSTAYSCLOSED: the time the set formed comes back with it)
       set.committedAt = sd.committedAt || null; set.completedAt = sd.completedAt || null; set.completionDay = sd.completionDay || null; set.savedCommit = set.committedAt;
       sets.push(set);
     }

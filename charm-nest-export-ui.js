@@ -8,6 +8,16 @@
   const revision=sheet=>JSON.stringify({updatedAt:sheet.updatedAt,rosePlanHash:sheet.rosePlanHash,front:sheet.outputs?.ai,poolIds:sheet.poolIds,placements:sheet.placements,backs:(sheet.backPool||[]).map(b=>[b.poolId,b.approvedAt,b.outputs?.ai?.url])});
   // (front + back engraving, 11 Oct 2026: the sheet's flat list holds the records of both faces; a front record says face:"front", a back says nothing)
   const isFront=r=>!!r&&r.face==='front';
+  /* BACKSMISSING (Paul, 16 Nov 2026: a downloaded DXF "does not save some of the back engraving that was already approved on the sheet"). A download holds the sheet's saved drawing and the back
+     files its record lists (backPool), nothing else: a back the sheet needs whose file is not saved (an approval still waiting to be written, or one withdrawn and waiting for Approve again) is
+     not in it, and nothing said so. The cloud's own word for each piece (sheet.engraving, as getSheet answers it) is read against the record's list: every piece whose BACK is needed and has no
+     saved record is named. A front is not looked at (a front made only of the charm editor's parts is in the sheet's drawing). A sheet with no such word (one not saved yet) names none. → [{ poolId, order, sku, approved }] */
+  function missingBacks(sheet) {
+    const eng=sheet&&sheet.engraving&&typeof sheet.engraving==='object'?sheet.engraving:null;if(!eng)return [];
+    const saved=new Set((sheet.backPool||sheet.backs||[]).filter(r=>r&&!isFront(r)&&!r.invalidated&&!r.pending&&(r.outputs?.ai||r.ai)).map(r=>String(r.poolId)));
+    const on=Array.isArray(sheet.poolIds)?new Set(sheet.poolIds.map(String)):null,skuOf=new Map((sheet.charms||[]).filter(c=>c&&c.poolId).map(c=>[String(c.poolId),c.sku||'']));
+    return Object.keys(eng).filter(id=>(!on||on.has(id))&&!saved.has(id)).map(id=>{const e=eng[id]||{},back=e.faces&&typeof e.faces==='object'?e.faces.back:e;return back&&back.needed?{poolId:id,order:id.split('_')[0],sku:skuOf.get(id)||'',approved:!!back.approved}:null;}).filter(Boolean);
+  }
   async function build(sheet,format) {
     const records=sheet.backPool||sheet.backs||[];
     const backs=CharmNestBacks.forSheet(sheet,records.filter(r=>!isFront(r)));
@@ -26,6 +36,7 @@
     const earPieces=(sheet.charms||[]).filter(c=>c&&(c.side==='L'||c.side==='R')&&(sheet.placements||[]).some(p=>p.id===c.id)).length;
     // (front engravings: the manifest lists each one and whether it sits on its charm or above the sheet; a sheet with none has no such key)
     let data=composed.ai,metadata={sheetId:sheet.id||sheet.sheetId,fileBase:sheet.fileBase,units:'mm',backs:composed.layout,...(earPieces?{pairPieces:earPieces}:{}),...(composed.frontLayout?{fronts:composed.frontLayout}:{}),...(composed.contourMissing?{contourMissing:composed.contourMissing}:{})};
+    const noBack=missingBacks(sheet);if(noBack.length)metadata.backsMissing=noBack;
     if(format==='dxf') {
       const result=CharmNestExport.productionDxf ? await CharmNestExport.productionDxf(composed.ai) : await (async()=>{const parsed=await CharmNestPDF.parseSource(composed.ai,'Production sheet');return CharmNestExport.dxf(CharmNestExport.productionPaths(parsed),CharmNestExport.layerNames(parsed));})();
       data=new TextEncoder().encode(result.text);
@@ -78,6 +89,9 @@
       // (DLALWAYS: a sheet downloaded before its separation contour was prepared says so: the file has no contour layer)
       const noContour=files.filter(f=>f.metadata.contourMissing);
       if(noContour.length)CN.toast((noContour.length===1?'Downloaded without its ':'Downloaded '+noContour.length+' sheets without their ')+noContour[0].metadata.contourMissing+' separation contour: prepare it before laser cutting','bad',12000);
+      // (BACKSMISSING: a back engraving the sheet needs that is not in the file is named, never left out in silence)
+      const noBacks=files.flatMap(f=>f.metadata.backsMissing||[]);
+      if(noBacks.length)CN.toast(noBacks.length+' back engraving'+(noBacks.length===1?' this sheet needs is':'s this sheet needs are')+' NOT in this download: '+noBacks.slice(0,6).map(m=>m.order+(m.sku?' '+m.sku:'')+(m.approved?' (approved, its file is not saved yet)':' (waiting for Approve)')).join(' · ')+(noBacks.length>6?' · and '+(noBacks.length-6)+' more':'')+'. Approve or save them in Engrave, then download again','bad',20000);
       if(aboveFronts)CN.toast(aboveFronts+' front engraving'+(aboveFronts===1?' is':'s are')+' above the sheet, not on '+(aboveFronts===1?'its charm':'their charms')+' (see IMPORT.txt or the layers named FRONT)','bad',12000);
     } catch(e){CN.toast('Export stopped: '+e.message,'bad',12000);}
     finally{busy=false;refresh();}
@@ -108,6 +122,6 @@
     },true);
     let queued=false;const seen=new MutationObserver(()=>{if(!queued){queued=true;requestAnimationFrame(()=>{queued=false;sync();});}});for(const body of bodies())seen.observe(body,{childList:true,subtree:true});sync();
   }
-  window.ProductionExports={run,live:(sheet,format)=>run([],format,sheet),sheetControls,build};
+  window.ProductionExports={run,live:(sheet,format)=>run([],format,sheet),sheetControls,build,missingBacks};
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mount);else mount();
 })();
