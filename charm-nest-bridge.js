@@ -16393,7 +16393,7 @@ const RunCtl = window.RunCtl = (() => {
   /* (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"): the computer that carries the run says so in the cloud (runCarrier, renewed every 20 s); a computer whose run was taken over by another one reloads and follows it;
      Resume on a computer while another, alive, carries the run asks the person first; a computer coming back with its saved copy of a run another computer carries now follows it. */
   const carrierDev = () => { try { return window.CharmNestRunFollow && typeof CharmNestRunFollow.dev === "function" ? CharmNestRunFollow.dev() : ""; } catch (_) { return ""; } };
-  async function carrier(runId, o = {}) { const dev = carrierDev(); if (!dev || !runId) return null; return api("charmNestLibrary", Object.assign({ op: "runCarrier", runId, dev, by: String((B && B.employee) || "").trim() }, o), { quiet: true }); }
+  async function carrier(runId, o = {}) { const dev = carrierDev(); if (!dev || !runId) return null; return api("charmNestLibrary", Object.assign({ op: "runCarrier", runId, dev, by: String((B && B.employee) || "").trim() }, o), { quiet: true }).then(res => { try { if (res && res.cmdsWaiting && B.run && window.CharmNestRunFollow) CharmNestRunFollow.now("cmds"); } catch (_) {} return res; }); }   // (CMDBEAT: the heartbeat's answer says a request from another computer waits: it is looked at now)
   let carrierLost = false;
   async function carrierBeat() {
     const r = B.run; if (!r || !r.runId || carrierLost || !(S.cloud && S.cloud.ok)) return;
