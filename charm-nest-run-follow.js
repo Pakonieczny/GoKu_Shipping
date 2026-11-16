@@ -195,6 +195,14 @@
           r = v && v.ok ? { ok: true, text: String((v.words) || (v.plan && v.plan.words && v.plan.words.summary) || "The set was rebuilt") } : { ok: false, why: String((v && ((v.refused && v.refused.reason) || v.error || (v.still && v.still[0]))) || "The set was not rebuilt").slice(0, 380) }; }
         catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); } }
     }
+    // (PAIRNOW: lines that wait for the sheet still filling are sent on now: charm-nest-bridge.js CNPairNow)
+    else if (c.type === "pairnow") {
+      const f = root.CNPairNow;
+      if (typeof f !== "function" || !(a.ids || []).length) r = { ok: false, why: "not ready" };
+      else { const step = stepper(c); step({ text: "Placing the waiting piece…" });
+        try { const v = await f(a.ids); r = v.placed ? { ok: true, text: `${v.placed} piece(s) placed on ${v.names.join(" and ")}` } : { ok: false, why: v.lines ? `Not placed: ${(v.waiting && v.waiting[0]) || "the intake did not take it"}` : "That line does not wait for a sheet to fill." }; }
+        catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); } }
+    }
     else if (c.type === "remake") r = root.Review && typeof root.Review.redrawStale === "function" ? await root.Review.redrawStale(a.ids || []) : { ok: false, why: "not ready" };   // (REMAKESTALE: open pieces that hold an older drawing of these SKUs are made up again from the library's drawing)
     // (REMOTENEST, Paul 15 Nov 2026: "you re-nest it and then check that everything is OK everywhere"): a draft sheet of the run is nested again here, exactly as its Re-nest button does (never a sheet that was cut or is in a committed set: startNest's own rules stand), and the answer waits for the nest and its save
     else if (c.type === "renest") {

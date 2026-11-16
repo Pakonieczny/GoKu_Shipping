@@ -5632,7 +5632,7 @@ const Pool = window.Pool = (() => {
           // (PAIRFIX, Paul 12 Nov 2026: "one sheet at a time for everything". The sheet still filling is used only when it pairs; when it does not, a one-colour line WAITS for it to fill and
           //  then goes on the next sheet (pairResume). A new sheet only when none is filling, or for a line of several colours)
           const home16 = typeof LN.orderHome === "function" ? LN.orderHome(metal, run, rid, { skip: list }) : null;
-          const nx = alt || home16 || addPage(metal, { ok: p => LN.pairFits(p, [rid], run), wait: byMetal.size === 1 && S.settings.onesheet !== "off" });
+          const nx = alt || home16 || addPage(metal, { ok: p => LN.pairFits(p, [rid], run), wait: byMetal.size === 1 && S.settings.onesheet !== "off" && !row.pairNow });   // (PAIRNOW: a line a person sent on now does not wait for the sheet still filling: it opens the next sheet)
           if (!nx) {
             const f = typeof fillingPage === "function" ? fillingPage(metal) : was, nm = greenName(f || was), other = metal === "gold" ? "Sterling Silver" : "Gold Filled";
             pairWaits.set(row.key, { page: f || was, metal, at: Date.now() });
@@ -30158,6 +30158,21 @@ async function strandedWatch(why) {
 }
 setInterval(() => { try { if (!document.hidden || B.run) strandedWatch("the two-minute look").catch(() => {}); } catch (_) { /* the next look */ } }, 120000);
 window.CNStrandedWatch = strandedWatch;   // (tests)
+/* PAIRNOW (Paul, 16 Nov 2026: "make sure that the silver piece that was holding the sheet back is actually added to a Silver sheet so then they can be made into a set after"): a Gold Filled /
+   Sterling Silver line that waits for the sheet still filling ("waits for Draft 1 to fill, then goes on the next SS sheet") is sent on NOW by a person: it goes on a sheet that keeps the pairing
+   rule (one GF sheet and one SS sheet share an order), a new one when no open sheet does. Only on the computer that carries the run; only lines that wait for that reason. → { lines, placed, names } */
+window.CNPairNow = async function (keys) {
+  const run = B.run; if (!run || !window.LiveNest || typeof LiveNest.add !== "function") throw new Error("this page does not carry a run");
+  if (allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone))) throw new Error("a sheet is being nested or saved: try again once it is done");
+  const rows = [...new Set((keys || []).map(String))].map(k => B.orders.byKey.get(k)).filter(r => r && r.state === "waiting" && r.wait && r.wait.kind === "pair" && !r.hold && !(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId)));
+  if (!rows.length) return { lines: 0, placed: 0, names: [] };
+  for (const r of rows) { r.pairNow = true; r.state = "pulled"; r.reason = null; r.wait = null; delete r.poolTry; }
+  agent({ run: run.runId, pool: true }, "warn", `${rows.length} order line(s) that waited for the sheet still filling are sent on now by a person`);
+  try { await LiveNest.add(run); } finally { for (const r of rows) delete r.pairNow; }
+  try { await RunCtl.save(run); } catch (_) { /* saved with the next change */ }
+  const on = id => allSheets().find(p => (p.charms || []).some(c => c && c.poolId === id)), ids = rows.flatMap(r => r.poolIds || []), homes = ids.map(on).filter(Boolean);
+  return { lines: rows.length, placed: homes.length, pieces: ids.length, names: [...new Set(homes.map(p => p.fileBase || sheetName(p)))], waiting: rows.filter(r => r.state === "waiting").map(r => String(r.reason || "")) };
+};
 let askPlaceAt = 0;
 /** After a change that left pieces on no sheet: the carrier places them now (here, when this computer carries the run; asked through the relay when it follows one). At most every 15 s. */
 window.CNAskPlace = async function (why) {
