@@ -5637,7 +5637,7 @@ const Pool = window.Pool = (() => {
           // (PAIRFIX, Paul 12 Nov 2026: "one sheet at a time for everything". The sheet still filling is used only when it pairs; when it does not, a one-colour line WAITS for it to fill and
           //  then goes on the next sheet (pairResume). A new sheet only when none is filling, or for a line of several colours)
           const home16 = typeof LN.orderHome === "function" ? LN.orderHome(metal, run, rid, { skip: list }) : null;
-          const nx = alt || home16 || addPage(metal, { ok: p => LN.pairFits(p, [rid], run), wait: byMetal.size === 1 && S.settings.onesheet !== "off" && !row.pairNow });   // (PAIRNOW: a line a person sent on now does not wait for the sheet still filling: it opens the next sheet)
+          const nx = alt || home16 || addPage(metal, { ok: p => LN.pairFits(p, [rid], run), wait: byMetal.size === 1 && S.settings.onesheet !== "off" });
           if (!nx) {
             const f = typeof fillingPage === "function" ? fillingPage(metal) : was, nm = greenName(f || was), other = metal === "gold" ? "Sterling Silver" : "Gold Filled";
             pairWaits.set(row.key, { page: f || was, metal, at: Date.now() });
@@ -20663,10 +20663,15 @@ const Review = window.Review = (() => {
      sheet, as a new order does. Its pieces' own records still name the sheet they were taken off (sheetName, kept when a piece leaves): that sheet is the line's home again. The new pieces go
      on it in its free space, every other charm where it stands and nothing nested again (Pool's inPlaceAttach, as for a piece exchanged in place); only when that sheet was cut by the laser,
      is busy or has no room do they go to the latest unfinished sheet, else a new draft (inPlaceTarget). The home sheet is written again only when a piece really went onto it. */
-  const lastHomeOf = row => { try {
+  const lastHomeOf = (row, force) => { try {
     const n = Math.max(1, Math.min(12, Math.round(+(row.spec && row.spec.pieceCount) || +(row.line && row.line.quantity) || 1)));
     const ids = row.poolIds && row.poolIds.length ? row.poolIds.slice() : Array.from({ length: n }, (_, k) => O.poolId(row.order, row.line, k + 1)), out = [];
-    for (const id of ids) { if (Pool.charmOf(id)) return []; const pr = B.pool.rows.get(id); if (pr && (pr.sheetName || pr.sheetId)) out.push({ poolId: id, name: String(pr.sheetName || ""), sheetId: pr.sheetId ? String(pr.sheetId) : "" }); }
+    for (const id of ids) {
+      const onNow = Pool.sheetOf(id) || null; if (onNow && !force) return [];
+      const pr = B.pool.rows.get(id); if (!pr || !(pr.sheetName || pr.sheetId)) continue;
+      if (onNow && ((pr.sheetName && onNow.fileBase === pr.sheetName) || (pr.sheetId && onNow.sheetId === pr.sheetId))) continue;   // (SENDHOME: it is on its own sheet already)
+      out.push({ poolId: id, name: String(pr.sheetName || ""), sheetId: pr.sheetId ? String(pr.sheetId) : "" });
+    }
     return out; } catch (_) { return []; } };
   async function homeAgain(row, last) {
     if (!last || !last.length || !B.run) return null;
@@ -20687,7 +20692,7 @@ const Review = window.Review = (() => {
   }
   async function repoolLine(row) {
     CNListActivity.touch(row);
-    const old0=new Set(row.poolIds || []), lastHome=lastHomeOf(row);   // (HOMEAGAIN: read before anything of the line is changed)
+    const old0=new Set(row.poolIds || []), lastHome=lastHomeOf(row, !!row._homeFirst);   // (HOMEAGAIN: read before anything of the line is changed)
     // A piece on a sheet the laser has CUT is not taken off its sheet (as for a cancelled order, takeOffGone): it is cut
     // already. A changed line whose piece is there waits for a person, who makes the difference by hand or skips it;
     // releasing the hold then keeps the piece on that sheet (the path below for a line whose pieces are on sheets).
@@ -20762,7 +20767,10 @@ const Review = window.Review = (() => {
       for(const id of old)B.pool.rows.delete(id);
       row.poolIds=[];row.repoolChanged=false;
     }
-    if (!row._vacated && lastHome.length) { try { const V2 = await homeAgain(row, lastHome); if (V2) row._vacated = V2; } catch (e) { console.warn("[homeagain]", e && e.message); } }   // (HOMEAGAIN)
+    if (lastHome.length && (!row._vacated || row._homeFirst)) { try { const V2 = await homeAgain(row, lastHome); if (V2) {   // (HOMEAGAIN)
+      // (SENDHOME: a piece that stands on ANOTHER sheet goes home: the sheet it leaves is written as it stands, without it, and is not its spot any more; its own sheet is tried first)
+      if (row._vacated) { const V1 = row._vacated; row._vacated = { spots: V2.spots, homes: [...new Set((V1.homes || []).concat(V2.homes))], results: [], at: Date.now(), committed: false, lostHomes: new Set(V2.homes) }; }
+      else row._vacated = V2; } } catch (e) { console.warn("[homeagain]", e && e.message); } }
     const keptHold = row.userSwap && row.hold ? String(row.hold) : null; delete row.userSwap;   // (IPL2: a line a person holds keeps its hold; only its piece is exchanged)
     try {
     row.changePending=false; row.problems = []; row.state = "pulled"; row.reason = null; row.hold = null; Orders.interpretAll(); if (row.problems.length) { Orders.render(); return; } if (B.run && O.stepIndex(B.run.step) >= O.stepIndex("pool")) { try { await Pool.poolAdd(row, B.run); } catch (e) { row.state = "held"; row.reason = e.message; } if (row.state === "pooled" && row.spec.engraveCandidate) Engrave.classify(row).catch(() => {}); }
@@ -20812,7 +20820,7 @@ const Review = window.Review = (() => {
       delete sh._inplaceHold; const asked = !!sh._inplaceAsked; delete sh._inplaceAsked;
       try {
         if (!allSheets().includes(sh)) continue;
-        if (V.lost && !(V.results || []).some(r => r.placed && r.home === sh)) { try { renderCard(sh); } catch (_) { /* drawn at the next look */ } continue; }   // (HOMEAGAIN: nothing went back onto it: it is as it was, and is not written again)
+        if ((V.lost || (V.lostHomes && V.lostHomes.has(sh))) && !(V.results || []).some(r => r.placed && r.home === sh)) { try { renderCard(sh); } catch (_) { /* drawn at the next look */ } continue; }   // (HOMEAGAIN: nothing went back onto it: it is as it was, and is not written again)
         const waiting = activeCharms(sh).some(c => !sh.placements.some(p => p.id === c.id));
         if (sh.roseRedraw) sh.roseRedraw.written = true;   // (IPL2: a green line set aside for the exchange is drawn again once the sheet is saved: RoseStock.redraw waits for that)
         if (waiting || !sh.placements.length) {
@@ -29604,10 +29612,16 @@ const LiveNest = window.LiveNest = (() => {
       return Orders.rows().some(r => r && r.order && ids.has(String(r.order.receiptId)) && r.spec && r.spec.material === m && !["gone", "noDesign", "skipped", "committed", "abandoned"].includes(r.state) && !(r.poolIds || []).some(id => on.has(id)));
     } catch (_) { return false; }
   }
+  /* PAIRFREE (Paul, 16 Nov 2026: "This order needs a resolution, the SS piece must be added to an existing SS draft sheet"): an order a PERSON sent on although its Gold Filled and Sterling
+     Silver pieces are not on one pair of sheets (the run's pairFree list, kept with the run in the cloud) is not judged by the pairing rule any more, on any sheet and at any later look: it goes
+     on the sheet still filling, it is never passed on for the rule, and it does not count as that sheet's partner for the other orders. Every other order is judged exactly as before. */
+  const pairFreeOf = run => { try { const r = run || (typeof B !== "undefined" && B.run) || null; return new Set(((r && r.pairFree) || []).map(String)); } catch (_) { return new Set(); } };
   function pairFits(page, orderIds, run, o = {}) {
     const other = page && PAIR_OF[page.metal]; if (!other) return true;
-    const ids = new Set([].concat(orderIds == null ? [] : orderIds).map(String).filter(Boolean)); if (!ids.size) return true;
-    const skip = o.skip || null, mine = sheetsHolding(other, ordersHeld(page, skip), run, skip), theirs = sheetsHolding(other, ids, run, skip);
+    const free = pairFreeOf(run);
+    const ids = new Set([].concat(orderIds == null ? [] : orderIds).map(String).filter(x => x && !free.has(x))); if (!ids.size) return true;
+    const skip = o.skip || null, heldHere = ordersHeld(page, skip); for (const x of free) heldHere.delete(x);
+    const mine = sheetsHolding(other, heldHere, run, skip), theirs = sheetsHolding(other, ids, run, skip);
     if (new Set([...mine, ...theirs]).size > 1) return false;          // (a second partner of the other metal)
     // (will go to: the order's lines of the other metal not on a sheet yet go to this sheet's one partner; when that partner takes nothing any more, they could not, so this sheet does not take the order)
     if (mine.size === 1 && !theirs.size && closed([...mine][0]) && linesToCome(ids, other)) return false;
@@ -30183,8 +30197,8 @@ async function placeStranded() {
      nobody was shown, or for nothing at all. Nothing of it is on a sheet, so there is nothing to accept or to take off: it is made up now, from what the line reads as. Asked of the cloud first
      (below): a piece whose row there is anything but superseded leaves the line as it is. */
   const lost = Orders.rows().filter(r => r && ["pooled", "written"].includes(r.state) && !r.hold && (r.poolIds || []).length && !(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId))
-    && r.poolIds.every(id => { const pr = B.pool.rows.get(id); return !on.has(id) && (!pr || (pr.state === "superseded" && !pr.sheetId)); }));   // (a piece record this page never loaded is asked of the cloud below, never guessed)
-  if (lost.length) { const ids1 = lost.flatMap(r => r.poolIds), bad = new Set(); try { for (let i = 0; i < ids1.length; i += 300) { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: ids1.slice(i, i + 300) }, { quiet: true })).pools || {}; for (const id of ids1.slice(i, i + 300)) { const pr = got[id]; if (!pr || pr.state !== "superseded" || pr.sheetId) bad.add(id); else if (!B.pool.rows.get(id)) B.pool.rows.set(id, pr); } } } catch (_) { ids1.forEach(id => bad.add(id)); }
+    && r.poolIds.every(id => !on.has(id)));   // (no page and no saved card holds any piece of it; what this page remembers of the piece records can be old, so the cloud is asked below and decides)
+  if (lost.length) { const ids1 = lost.flatMap(r => r.poolIds), bad = new Set(); try { for (let i = 0; i < ids1.length; i += 300) { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: ids1.slice(i, i + 300) }, { quiet: true })).pools || {}; for (const id of ids1.slice(i, i + 300)) { const pr = got[id]; if (!pr || pr.state !== "superseded" || pr.sheetId) bad.add(id); else B.pool.rows.set(id, pr); } } } catch (_) { ids1.forEach(id => bad.add(id)); }
     for (let i = lost.length - 1; i >= 0; i--) if (lost[i].poolIds.some(id => bad.has(id))) lost.splice(i, 1); }
   for (const r of lost) { const i = rows.indexOf(r); if (i >= 0) rows.splice(i, 1); }   // (made up by its own make-up below, never a second time by the plain intake)
   let back = null;
@@ -30247,7 +30261,7 @@ async function strandedWatch(why) {
   for (const p of allSheets()) { const rec = p.recalled; if (rec) for (const id of (rec.poolIds || [])) on.add(String(id)); }
   const cand = Orders.rows().filter(r => r && r.state === "pooled" && !r.hold && (r.poolIds || []).length && !(r.poolIds || []).some(id => on.has(id) || (B.pool.rows.get(id) || {}).sheetId));
   for (const r of Orders.rows()) if (r && r.state === "contended" && !r.hold) cand.push(r);   // (CONTENDEDBACK)
-  for (const r of Orders.rows()) if (r && ["pooled", "written"].includes(r.state) && !r.hold && (r.poolIds || []).length && r.poolIds.every(id => { const pr = B.pool.rows.get(id); return !on.has(id) && (!pr || (pr.state === "superseded" && !pr.sheetId)); }) && !cand.includes(r)) cand.push(r);   // (NEVERMADE)
+  for (const r of Orders.rows()) if (r && ["pooled", "written"].includes(r.state) && !r.hold && (r.poolIds || []).length && r.poolIds.every(id => !on.has(id)) && !cand.includes(r)) cand.push(r);   // (NEVERMADE)
   const now = Date.now(), fresh = cand.filter(r => now - (strandedTried.get(r.key) || 0) > 30 * 60 * 1000);
   if (!fresh.length) return null;
   strandedBusy = true; for (const r of fresh) strandedTried.set(r.key, now);
@@ -30257,6 +30271,30 @@ async function strandedWatch(why) {
 }
 setInterval(() => { try { if (!document.hidden || B.run) strandedWatch("the two-minute look").catch(() => {}); } catch (_) { /* the next look */ } }, 120000);
 window.CNStrandedWatch = strandedWatch;   // (tests)
+/* SENDHOME (Paul, 16 Nov 2026: "that charm must immediately be put back on the same sheet it was removed from"): a line whose piece was put on ANOTHER sheet than the one it was taken off (it
+   was placed before the rule above existed) is sent home: its piece comes off the sheet it is on (written as it stands, nothing else on it moving) and goes back on its own sheet, in that
+   sheet's free space; with no room there it stays on the latest unfinished sheet. Only on the computer that carries the run. → { lines, moved, names, why } */
+window.CNSendHome = async function (keys) {
+  const run = B.run; if (!run) throw new Error("this page does not carry a run");
+  if (allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone))) throw new Error("a sheet is being nested or saved: try again once it is done");
+  const out = { lines: 0, moved: 0, names: [], why: [] };
+  for (const k of [...new Set((keys || []).map(String))]) {
+    const row = B.orders.byKey.get(k);
+    if (!row || !(row.poolIds || []).length || ["gone", "committed"].includes(row.state)) { out.why.push(`${k}: no piece of it is on a sheet`); continue; }
+    out.lines++;
+    const homeNames = [...new Set(row.poolIds.map(id => String((B.pool.rows.get(id) || {}).sheetName || "")).filter(Boolean))];
+    const nowOn = row.poolIds.map(id => Pool.sheetOf(id)).filter(Boolean), home = homeNames.map(nm => allSheets().find(p => p.fileBase === nm)).filter(Boolean).filter(p => !nowOn.includes(p));
+    if (!nowOn.length || !home.length) { out.why.push(`${row.order.receiptId}: it is on the sheet it was taken off, or that sheet is not known`); continue; }
+    const cut = nowOn.concat(home).find(sh => +sh.laserDoneAt > 0 || sh.roseCutAt); if (cut) { out.why.push(`${row.order.receiptId}: ${cut.fileBase || "a sheet"} was already cut`); continue; }
+    row._homeFirst = true; row.repoolChanged = true; row.changePending = true; row.replaceByDesign = true;
+    try { await Review.repool(row); } finally { delete row._homeFirst; delete row.replaceByDesign; }
+    const on2 = (row.poolIds || []).map(id => allSheets().find(p => (p.charms || []).some(c => c && c.poolId === id))).filter(Boolean);
+    if (on2.length && on2.every(p => home.includes(p))) { out.moved++; out.names.push(...new Set(on2.map(p => p.fileBase || sheetName(p)))); }
+    else out.why.push(`${row.order.receiptId}: ${home[0].fileBase || "its sheet"} had no room for it; it is on ${on2.map(p => p.fileBase || sheetName(p)).join(" and ") || "no sheet yet"}`);
+  }
+  try { await RunCtl.save(run); } catch (_) { /* saved with the next change */ }
+  return out;
+};
 /* PAIRNOW (Paul, 16 Nov 2026: "make sure that the silver piece that was holding the sheet back is actually added to a Silver sheet so then they can be made into a set after"): a Gold Filled /
    Sterling Silver line that waits for the sheet still filling ("waits for Draft 1 to fill, then goes on the next SS sheet") is sent on NOW by a person: it goes on a sheet that keeps the pairing
    rule (one GF sheet and one SS sheet share an order), a new one when no open sheet does. Only on the computer that carries the run; only lines that wait for that reason. → { lines, placed, names } */
@@ -30265,9 +30303,10 @@ window.CNPairNow = async function (keys) {
   if (allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone))) throw new Error("a sheet is being nested or saved: try again once it is done");
   const rows = [...new Set((keys || []).map(String))].map(k => B.orders.byKey.get(k)).filter(r => r && r.state === "waiting" && r.wait && r.wait.kind === "pair" && !r.hold && !(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId)));
   if (!rows.length) return { lines: 0, placed: 0, names: [] };
-  for (const r of rows) { r.pairNow = true; r.state = "pulled"; r.reason = null; r.wait = null; delete r.poolTry; }
+  run.pairFree = [...new Set((run.pairFree || []).map(String).concat(rows.map(r => String(r.order.receiptId))))].slice(-400);   // (PAIRFREE: a person's own exemption, kept with the run)
+  for (const r of rows) { r.state = "pulled"; r.reason = null; r.wait = null; delete r.poolTry; }
   agent({ run: run.runId, pool: true }, "warn", `${rows.length} order line(s) that waited for the sheet still filling are sent on now by a person`);
-  try { await LiveNest.add(run); } finally { for (const r of rows) delete r.pairNow; }
+  await LiveNest.add(run);
   try { await RunCtl.save(run); } catch (_) { /* saved with the next change */ }
   const on = id => allSheets().find(p => (p.charms || []).some(c => c && c.poolId === id)), ids = rows.flatMap(r => r.poolIds || []), homes = ids.map(on).filter(Boolean);
   return { lines: rows.length, placed: homes.length, pieces: ids.length, names: [...new Set(homes.map(p => p.fileBase || sheetName(p)))], waiting: rows.filter(r => r.state === "waiting").map(r => String(r.reason || "")) };
