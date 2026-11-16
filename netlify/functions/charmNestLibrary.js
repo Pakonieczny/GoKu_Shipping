@@ -2958,7 +2958,11 @@ async function op_artPut(b) {
     if (b.expectedAt != null && b.expectedAt !== "" && num(b.expectedAt) !== num(old && old.at)) return { error: "This piece's artwork was edited elsewhere. Reopen it before saving your changes.", status: 409, conflict: true, art: artOut(old) };
     const sid = row.sheetId && !Placement.TAKE_OFF_STATES.has(row.state) ? str(row.sheetId, 80) : "", sheetRef = sid && isId(sid) ? col(SHEETS).doc(sid) : null;
     const sheet = sheetRef ? await tx.get(sheetRef).then(s => (s.exists ? s.data() : null)) : null, onSheet = !!sheet && !sheet.archived && Array.isArray(sheet.poolIds) && sheet.poolIds.map(String).includes(poolId);
-    if (onSheet && (sheet.laserDoneAt || sheet.roseCutAt)) return { error: `${sheetLabel(sheet) || "Its sheet"} was already cut by the laser: this piece's artwork is no longer changed`, status: 409 };
+    if (onSheet && num(sheet.laserDoneAt) > 0) return { error: `${sheetLabel(sheet) || "Its sheet"} was already cut by the laser: this piece's artwork is no longer changed`, status: 409 };
+    /* ARTUNCUT (Paul, 16 Nov 2026: "the Charm Editor is not allowing me to save a pasted and vectorized image. This sheet was NOT laser cut"). A recorded green line cut (roseCutAt) is the Cut Sheet
+       press, not the laser: the sheet is cut only when it is marked so (laserDoneAt, refused above). Until then a piece's ARTWORK may still change; its CUT LINE may not (the green line and the
+       metal left over were measured from it), in this save or in the one it replaces. The page that saved writes the sheet's files again from its record, the cut and its plan untouched. */
+    if (onSheet && sheet.roseCutAt && ((!clear && art && art.cut) || (!clear && cutKey) || (old && (old.cut || old.cutKey)))) return { error: `${sheetLabel(sheet) || "Its sheet"} has its green line cut recorded: this piece's cut line can no longer change (its artwork still can, until the laser has cut the sheet)`, status: 409 };
     // (SHAREDSHAPE, Paul 29 Oct 2026: "Don't block the person"): a piece on a sheet changes its cut line too. Its sheet was nested with the old shape, so the sheet says so (cutCheck: the piece,
     // when, by whom) besides owing its files: the page checks the new shape where the piece stands before it writes the sheet again, and a sheet with a cut line not checked again goes to no
     // laser (the same cut edit sent again is no change)
