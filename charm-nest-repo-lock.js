@@ -130,6 +130,25 @@
     loadSession(); if (sess && !sess.emp) return false;   // (a password unlock opens more: it stands)
     sess = { t: o.t, e: +o.e, p: personKey(), emp: true }; empKeep(sess); changed(); return true;
   }
+  /* REPOSIGNED (Paul, 16 Nov 2026: "why is it still asking me for a password? I told you to remove this password"): a person who is signed in and holds no door yet (signed in before the door
+     existed, or it ran out at midnight while they stayed signed in) gets it by themselves: the page asks the server once for the name signed in, the answer is adopted as a sign-in's is, and
+     everything that waited for the password goes on (changed()). Never for nobody signed in; a refusal is asked again at most once a minute. Delete and Settings still ask the password. */
+  let empAsk = null, empAskAt = 0;
+  function empAuto() {
+    try {
+      const E = root.CNEmployee, name = E && typeof E.name === "function" ? String(E.name() || "").trim() : "";
+      if (!name || typeof root.fetch !== "function") return Promise.resolve(false);
+      if (sess && sess.e > Date.now() + MARGIN && (sess.p === undefined || sess.p === personKey())) return Promise.resolve(true);
+      if (empStored()) { loadSession(); return Promise.resolve(true); }
+      if (empAsk) return empAsk;
+      if (Date.now() - empAskAt < 60000) return Promise.resolve(false);
+      empAskAt = Date.now(); const who = personKey();
+      empAsk = root.fetch("/.netlify/functions/firebaseOrders", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", body: JSON.stringify({ repoDoorFor: name }) })
+        .then(r => r.json()).then(j => !!(j && j.ok === true && typeof j.repoToken === "string" && who === personKey() && adopt({ t: j.repoToken, e: +j.repoExp })))
+        .catch(() => false).then(v => { empAsk = null; return v; });
+      return empAsk;
+    } catch (_) { return Promise.resolve(false); }
+  }
   function loadSession() {
     if (sess && (!(sess.e > Date.now() + MARGIN) || (sess.p !== undefined && sess.p !== personKey()))) { if (sess.carry) dropCarry(); if (sess.emp) empKeep(null); sess = null; }
     if (!sess) { const o = empStored(); if (o) sess = { t: o.t, e: +o.e, p: o.p, emp: true }; }
@@ -168,6 +187,7 @@
     const s = sess && sess.p !== undefined && sess.p !== now ? sess : null; if (s) { sess = null; dropCarry(); } if (!s || s.emp) { const o = empStoredAny(); if (o && o.p !== now) empKeep(null); }
     load(); for (const k of Object.keys(mem)) if (mem[k] && mem[k].p !== undefined && mem[k].p !== now) delete mem[k]; save(); changed();
     if (s && s.t && !s.emp) callOp("repoLock", { sessionToken: s.t }).catch(() => {});
+    try { if (now && root.setTimeout) root.setTimeout(() => { empAskAt = 0; empAuto(); }, 300); } catch (_) { /* the first save asks */ }   // (REPOSIGNED: the person who just signed in gets the door at once)
   }
 
   function drop(info) {
@@ -325,7 +345,7 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
   /* ── the way in ── */
   async function ensureNow(action, ask) {
     // (ask.fresh: the password is asked even when an unlock is held: Settings, every time it is opened, PERSON 26 Oct 2026)
-    if (!ONCE.has(action) && !(ask && ask.fresh)) { const f = find(action); if (f) return f; }
+    if (!ONCE.has(action) && !(ask && ask.fresh)) { const f = find(action); if (f) return f; if (action !== "settings" && await empAuto()) { const g = find(action); if (g) return g; } }   // (REPOSIGNED: a signed-in person is not asked the password for an upload, a change or a download)
     return openDialog(action, ask, ONCE.has(action) && !!loadSession());
   }
   /** A token for `action`, from the ones held or from the dialog; null when the person cancels. Asks one at a time: a second caller waits and then finds the token the first one got. */
@@ -411,6 +431,8 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
     el.addEventListener("mousedown", block, true); el.addEventListener("keydown", block, true);
   }
 
+  // (REPOSIGNED: asked once the page and the sign-in are up, again whenever the person changes, and every two minutes while a signed-in person holds no door: what waits for the password goes on by itself)
+  try { if (root.setTimeout) { root.setTimeout(() => { empAuto(); }, 2500); root.setInterval(() => { empAuto(); }, 120000); } } catch (_) { /* no timers: the first save asks */ }
   load(); endLegacySession(); pickCarry();   // (PERSON: no unlock is shared between tabs or kept across a reload any more, so no storage listener either)
   if (doc) { try { if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", () => { css(); changed(); }); else { css(); changed(); } } catch (_) { /* no page */ } }
   const api = { ensure, call, unlocked, find, forget, mark, gate, onChange, isRepoLocked, lockNow, status, verify, untilText, submitInline, personChanged, adopt, carry, messages: SAY, cancelled: e => !!e && e.cancelled === true, configure: h => { hook = h || null; }, KEY, _held: () => { load(); return Object.keys(mem); } };
