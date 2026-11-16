@@ -5324,7 +5324,7 @@ async function op_runCarrier(b) {
   const runId = str(b.runId, 80), dev = str(b.dev, 60) || "", by = str(b.by, 80) || ""; if (!isId(runId) || !dev) return { error: "bad run or computer" };
   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud" / "Make Firebase and Etsy cheaper without losing any real-time function"): the carrier is kept in a small document of its own (Charm_Nest_Run_Carrier/<run>): renewed every 20 s on the run record, it moved the run's revision every 20 s, and every read of the run by revision answered in full
   const ref = col(CARRIER).doc(runId), now = Date.now(), FRESH = 90000;
-  return db.runTransaction(async tx => {
+  const res = await db.runTransaction(async tx => {
     const d = await tx.get(ref);
     const c = (d.exists && d.data().carrier) || null, alive = !!(c && c.dev && now - (num(c.at) || 0) < FRESH);
     if (b.check) return { ok: true, mine: !!(c && c.dev === dev), alive, carrier: c };
@@ -5334,6 +5334,9 @@ async function op_runCarrier(b) {
     tx.set(ref, { runId, carrier: n, expireAt: new Date(now + 30 * 86400000) });
     return { ok: true, mine: true, alive: true, took: alive, carrier: n };
   });
+  // (CMDBEAT, Paul 15 Nov 2026: a combine sent from the computer that follows waited five minutes: the carrying computer looked for requests only when the change feed named the run, and that can be missed): the carrier's own 20 s heartbeat says how many requests wait for it (one small read)
+  if (res && res.ok && res.mine && !b.check) { try { const d = await col(CMDS).doc(runId).get(), n = Object.values((d.exists && d.data().cmds) || {}).filter(c => c && c.state === "waiting").length; if (n) res.cmdsWaiting = n; } catch (_) { /* told by the feed, or at the next beat */ } }
+  return res;
 }
 const CARRIER = "Charm_Nest_Run_Carrier"; SANDBOXED.add(CARRIER);
 /* (ONECHECK, Paul 14 Nov 2026: "Build the first row only for now" -> one new-order check for the whole shop instead of one per computer). While a run is open, ONE computer asks Etsy for new orders (they reach every other computer through the cloud run); every computer asked it on its own timer.
