@@ -2949,6 +2949,23 @@ async function op_artPut(b) {
   }
   const key = Faces.recKey(poolId, face), ref = col(ART).doc(key), poolRef = col(POOL).doc(poolId);
   // (ARTEVERYWHERE, Paul 15 Nov 2026: "all the changes and updates automatically reflect across all the sheets and all the thumbnails": the feed names the piece's order (p:<order>) and, when it stands on a sheet, that sheet (s:<id>), so the other computers react at once and to this piece only)
+  /* SHIPPEDFIXED (Paul, 16 Nov 2026: "How did this order end up on the RG sheet when it's already been shipped? This is a serious problem and needs a permanent solution"). An order Etsy has
+     shipped, completed or cancelled is finished: its pieces may still stand on a sheet whose cut was recorded before it shipped (they were cut with it), but nothing of them is changed any
+     more. One read of the order's Etsy record; an order a person put back on its sheet on purpose after Etsy closed it (the run's keepShipped list) is still worked on. Not in the sandbox
+     (its orders are replayed ones), and an order the mirror does not hold is as before. */
+  if (!PREFIX && !clear) {
+    const rid = (/^(\d{6,30})_/.exec(poolId) || [])[1];
+    if (rid) {
+      let closed = "";
+      try { const rs = await db.collection("EtsyMail_Receipts").doc(rid).get(), rc = rs.exists ? rs.data() || {} : null, status = String((rc && rc.status) || "").toLowerCase();
+        if (rc) closed = /cancel/.test(status) ? "cancelled" : rc.is_shipped || (rc.raw && rc.raw.is_shipped) || status === "completed" ? "shipped" : ""; } catch (_) { closed = ""; }
+      if (closed) {
+        let kept = false;
+        try { const pr = await col(POOL).doc(poolId).get(), runId = pr.exists ? str((pr.data() || {}).runId, 80) : ""; if (runId && isId(runId)) { const rn = await col(RUNS).doc(runId).get(); kept = rn.exists && (((rn.data() || {}).keepShipped) || []).map(String).includes(rid); } } catch (_) { kept = false; }
+        if (!kept) return { error: `Order ${rid} was already ${closed} on Etsy: this piece's artwork is no longer changed`, status: 409, orderClosed: closed };
+      }
+    }
+  }
   feedOrders(b, [[poolId]]);
   return db.runTransaction(async tx => {
     const snap = await tx.get(ref), pool = await tx.get(poolRef);
