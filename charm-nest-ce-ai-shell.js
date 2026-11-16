@@ -225,6 +225,10 @@
     xe('fx.exclude', 'ops.exclude', 'Exclude', null, { sub: 'Pathfinder' }),
     xe('fx.divide', 'ops.divide', 'Divide', null, { sub: 'Pathfinder' }),
     xe('fx.trim', 'ops.trim', 'Trim', null, { sub: 'Pathfinder' }),
+    xe('fx.merge', 'ops.merge', 'Merge', null, { sub: 'Pathfinder' }),
+    xe('fx.crop', 'ops.crop', 'Crop', null, { sub: 'Pathfinder' }),
+    xe('fx.pfOutline', 'ops.pfOutline', 'Outline', null, { sub: 'Pathfinder' }),
+    xe('fx.minusBack', 'ops.minusBack', 'Minus Back', null, { sub: 'Pathfinder' }),
     xe('fx.offset', 'ops.offsetFx', 'Offset Path…', null, { sub: 'Path', icon: true }),   // (OFS1: Illustrator's Effect ▸ Path ▸ Offset Path…, live: it opens again on what it made)
     xe('fx.round', 'ops.round', 'Round Corners…', null, { sub: 'Stylize' }),
     xe('fx.warp', 'cw-warp', 'Warp…', null, { sub: 'Warp' })

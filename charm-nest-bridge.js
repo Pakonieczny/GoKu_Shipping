@@ -12034,10 +12034,30 @@ const Engrave = window.Engrave = (() => {
       return o;
     });
     const out = layers.find(i => i.id === outlineId) || layers.find(i => i.role === "cut"), b = out ? window.CharmEditor.model.bboxOf(out.subpaths) : null;
+    /* GROUPSBACK (Paul, 16 Nov 2026: "in the Charm Editor the Pathfinder grouping and ungrouping options are not working"). A piece's record keeps each added part with the name of the group it was
+       in (CharmNestArtEdit leavesOf: `group`), but the editor was handed those parts FLAT when the piece was opened again: every group a person had made (and a traced image's parts) had come apart,
+       so Group looked as if it had not been kept and there was nothing left to Ungroup. The added parts that share a group name come back as that group (in the place of its topmost part); a part with
+       a name nobody shares, and every part of the master, stays as it is. Saved again, each part keeps the same name, so the record does not change by being opened. */
+    let items = layers;
+    try {
+      const byName = new Map(); layers.forEach((it, i) => { if (it.source === "added" && typeof it.group === "string" && it.group && it.role !== "cut") { const g = byName.get(it.group) || { at: i, kids: [] }; g.at = i; g.kids.push(it); byName.set(it.group, g); } });
+      const groups = [...byName].filter(([, g]) => g.kids.length >= 2);
+      if (groups.length) {
+        const inGroup = new Set(), atEnd = new Map();
+        for (const [name, g] of groups) {
+          const roles = {}; g.kids.forEach(k => { roles[k.role] = (roles[k.role] || 0) + 1; inGroup.add(k); });
+          const traced = g.kids.some(k => k.artGrey === true);
+          // (the name is the group's: a part taken out of it by Ungroup is saved with no name and stays out; a traced image's greys keep theirs, which says where their picture is kept)
+          if (!traced) g.kids = g.kids.map(k => { const o = Object.assign({}, k); delete o.group; return o; });
+          atEnd.set(layers[g.at], { id: "grp-" + name, kind: "group", role: Object.keys(roles).sort((x, y) => roles[y] - roles[x])[0] || "art", source: "added", origin: "added", editable: true, name: traced ? "Image" : "Group", group: name, hidden: false, locked: false, tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, children: g.kids });
+        }
+        items = []; for (const it of layers) { if (atEnd.has(it)) items.push(atEnd.get(it)); else if (!inGroup.has(it)) items.push(it); }
+      }
+    } catch (_) { items = layers; }
     // (SHAREDSHAPE, Paul 29 Oct 2026: "it's the same charm it's like the same coin with two different sides": each face says how its points stand on the charm (the view's frame, AE.frame: y down,
     //  then the view undone), so the editor keeps ONE shape for both faces, the back's mirrored as the back always is)
     const Mx = window.CharmEditor.model, fr = AE.frame(view), toCharm = Mx.mul(fr.Fi, [1, 0, 0, -1, 0, 0]);
-    return { face, unitPt: true, frame: b ? { x0: b[0], y0: b[1], wPt: b[2] - b[0], hPt: b[3] - b[1] } : null, items: layers, toCharm };
+    return { face, unitPt: true, frame: b ? { x0: b[0], y0: b[1], wPt: b[2] - b[0], hPt: b[3] - b[1] } : null, items, toCharm };
   }
   /* ARTHANDLES (CES3, Paul 9 Nov 2026: "when I add an image in the charm editor, and then I returned back to the engraving modal. All of the changes I made in the charm editor are not clickable
      or editable in the engraving Modal ... If I add an image in the charm editor, then I should be able to click that image in the engraving modal and rotate, resize it, position it just like I

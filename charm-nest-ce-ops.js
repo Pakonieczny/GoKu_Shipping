@@ -309,6 +309,34 @@
       }
       return { pieces };
     }
+    /* PFALL (Paul, 16 Nov 2026: "Please ensure all of the Illustrator pathfinder options are working"): Illustrator's other four.
+       Minus Back   the frontmost less everything behind it.
+       Crop         the frontmost is the window: what shows of every other shape inside it, each less what is in front of it; the window itself goes.
+       Merge        Trim, then the pieces of one paint that touch or overlap are made one (operand.key says the paint; no key: its own).
+       Outline      every face of the overlap as its own outline, to be drawn as a line with no fill (placePathfinder paints it). */
+    if (op === 'minusBack') { const n = shapes.length; return { subpaths: rebuild(bool('difference', shapes[n - 1], [].concat(...shapes.slice(0, n - 1))), tags) }; }
+    if (op === 'crop') {
+      const n = shapes.length, win = shapes[n - 1], pieces = [];
+      for (let i = 0; i < n - 1; i++) {
+        const above = [].concat(...shapes.slice(i + 1, n - 1));
+        const seen = above.length ? bool('difference', shapes[i], above) : shapes[i];
+        const inn = bool('intersection', seen, win);
+        if (Math.abs(areaOfRings(inn)) > MIN_AREA) for (const isl of islands(boolNodes('union', inn, []))) { const sps = rebuild(isl, tags); if (sps.length) pieces.push({ subpaths: sps, of: i }); }
+      }
+      return { pieces };
+    }
+    if (op === 'merge') {
+      const left = shapes.map((sh, i) => { const above = [].concat(...shapes.slice(i + 1)); return above.length ? bool('difference', sh, above) : sh; });
+      const groups = new Map();   // paint -> { rings, of }
+      operands.forEach((o, i) => { const k = o && o.key != null ? 'k:' + o.key : 'i:' + i; const g = groups.get(k) || { rings: [], of: i }; g.rings = g.rings.concat(left[i]); g.of = i; groups.set(k, g); });
+      const pieces = [];
+      for (const g of [...groups.values()].sort((a, b) => a.of - b.of)) {
+        if (!(Math.abs(areaOfRings(g.rings)) > MIN_AREA)) continue;
+        for (const isl of islands(boolNodes('union', g.rings, []))) { const sps = rebuild(isl, tags); if (sps.length) pieces.push({ subpaths: sps, of: g.of }); }
+      }
+      return { pieces };
+    }
+    if (op === 'outline') { const r = pathfinder(operands, 'divide'); return { pieces: r.pieces, outline: true }; }
     throw new Error('pathfinder: unknown op ' + op);
   }
 
@@ -858,13 +886,16 @@
   const foldAll = (it, geo, M) => (it.kind === 'group' ? (() => { const ch = it.children.map(c => foldAll(c, geo, M)); return ch.every((c, i) => c === it.children[i]) ? it : Object.assign({}, it, { children: ch }); })() : M.foldTextScale(it, geo));
 
   /* ── Pathfinder ── */
-  const PF = { unite: 'Unite', minus: 'Minus Front', intersect: 'Intersect', exclude: 'Exclude', divide: 'Divide', trim: 'Trim' };
+  const PF = { unite: 'Unite', minus: 'Minus Front', intersect: 'Intersect', exclude: 'Exclude', divide: 'Divide', trim: 'Trim', merge: 'Merge', crop: 'Crop', outline: 'Outline', minusBack: 'Minus Back' };
+  const PF_GROUP = { divide: 'Divided', trim: 'Trimmed', merge: 'Merged', crop: 'Cropped', outline: 'Outlined' };
+  /** What a shape is painted with, as one word (Merge joins the pieces of one paint). */
+  const paintKeyOf = (it, M) => { const p = paintOf(it, M); return JSON.stringify([p.role || '', !!p.fill, !!p.stroke, p.fillRGB || p.fillColor || null, p.strokeRGB || p.strokeColor || null, p.grey == null ? null : p.grey, p.level == null ? null : p.level]); };
   /** The operands of a Pathfinder op on the selection (and what is needed to put the answer back), or { error }. */
   function pathfinderJob(items, sel, op, geo) {
     const M = MD(), pk = picked(items, sel, geo, M);
     const one = pk.entries.length === 1 && op === 'unite' && pk.entries[0].it.kind !== 'text';
     if (pk.entries.length < 2 && !one) return { error: `${PF[op] || op} needs two things selected or more` };
-    return { pk, op, operands: pk.entries.map(e => operandOf(e, geo, M)) };
+    return { pk, op, operands: pk.entries.map(e => (op === 'merge' ? Object.assign(operandOf(e, geo, M), { key: paintKeyOf(e.it, M) }) : operandOf(e, geo, M))) };
   }
   /** A Pathfinder answer (kernel.pathfinder's) put in place of its operands: one path (Unite, Intersect, Exclude: the paint of the frontmost, where it was; Minus Front: the
    *  backmost's paint, in its place, as Illustrator does), or a group of pieces (Divide, Trim: each piece painted as the operand it came from), where the frontmost was. */
@@ -877,8 +908,10 @@
       made = newPath(paintOf(src, M), r.subpaths, nameOf(src), M);
     } else {
       if (!r.pieces.length) return { error: 'Nothing is left of the shapes' };
-      const kids = r.pieces.map((p, i) => newPath(paintOf(es[p.of].it, M), p.subpaths, nameOf(es[p.of].it) + ' ' + (i + 1), M));
-      made = kids.length === 1 ? kids[0] : newGroup(kids, job.op === 'divide' ? 'Divided' : 'Trimmed', M);
+      // (Outline: each face as a line with no fill, as Illustrator's Outline leaves them)
+      const paintFor = it => (job.op === 'outline' ? Object.assign({}, paintOf(it, M), { role: 'line', fill: false, stroke: true }) : paintOf(it, M));
+      const kids = r.pieces.map((p, i) => newPath(paintFor(es[p.of].it), p.subpaths, nameOf(es[p.of].it) + ' ' + (i + 1), M));
+      made = kids.length === 1 ? kids[0] : newGroup(kids, PF_GROUP[job.op] || 'Pieces', M);
     }
     const map = new Map(job.pk.ids.map(id => [id, []])); map.set((job.op === 'minus' ? es[0] : front).it.id, [made]);
     return { items: spliceIn(job.pk.items, map), sel: [made.id] };
@@ -1327,6 +1360,10 @@
     exclude: SV(`<path d="M4 4h10v6h-4v4H4z M14 10h6v10H10v-6h4z" fill="currentColor" fill-opacity=".85"/><path d="M10 10h4v4h-4z"/>`),
     divide: SV(`<path d="M4 4h10v6h-4v4H4z" fill="currentColor" fill-opacity=".45"/><path d="M10 10h4v4h-4z" fill="currentColor"/><path d="M14 10h6v10H10v-6h4z" fill="currentColor" fill-opacity=".7"/><path d="${SQ_A}"/><path d="${SQ_B}"/>`),
     trim: SV(`<path d="M4 4h10v6h-4v4H4z" fill="currentColor" fill-opacity=".45"/><path d="${SQ_B}" fill="currentColor" fill-opacity=".85"/>`),
+    merge: SV(`<path d="M4 4h10v6h6v10H10v-6H4z" fill="currentColor" fill-opacity=".6"/><path d="M4 4h10v6h6v10H10v-6H4z"/>`),
+    crop: SV(`<path d="${SQ_A}" stroke-dasharray="2 2"/><path d="${SQ_B}" stroke-dasharray="2 2"/><path d="M10 10h4v4h-4z" fill="currentColor" fill-opacity=".85"/>`),
+    outline: SV(`<path d="${SQ_A}"/><path d="${SQ_B}"/><path d="M10 10h4v4h-4z"/>`),
+    minusBack: SV(`<path d="${SQ_A}" stroke-dasharray="2 2"/><path d="M14 10h6v10H10v-6h4z" fill="currentColor" fill-opacity=".85"/>`),
     alignL: SV('<path d="M4 3v18"/><rect x="7" y="6" width="11" height="4"/><rect x="7" y="14" width="7" height="4"/>'),
     alignC: SV('<path d="M12 3v18"/><rect x="5.5" y="6" width="13" height="4"/><rect x="8" y="14" width="8" height="4"/>'),
     alignR: SV('<path d="M20 3v18"/><rect x="6" y="6" width="11" height="4"/><rect x="10" y="14" width="7" height="4"/>'),
@@ -1456,7 +1493,7 @@
       const two = n >= 2;
       const lb = (id, icon, label, title, on) => `<button class="cops-b cops-b--lab" type="button" data-ops="${id}" title="${esc(title)}"${on ? '' : ' disabled'}>${icon}<span>${esc(label)}</span></button>`;
       el.innerHTML = `<div class="ce-menu__head">Shape modes</div><div class="cops-grid cops-grid--4">${lb('pf:unite', IC.unite, 'Unite', 'Unite: one shape of them all', two || canUniteOne(ctx))}${lb('pf:minus', IC.minus, 'Minus front', 'Minus Front: the backmost less everything in front of it', two)}${lb('pf:intersect', IC.intersect, 'Intersect', 'Intersect: only where they all overlap', two)}${lb('pf:exclude', IC.exclude, 'Exclude', 'Exclude: where they overlap becomes a hole', two)}</div>`
-        + `<div class="ce-menu__head">Pathfinders</div><div class="cops-grid cops-grid--4">${lb('pf:divide', IC.divide, 'Divide', 'Divide: every overlap its own piece', two)}${lb('pf:trim', IC.trim, 'Trim', 'Trim: each shape less what is in front of it', two)}</div>`
+        + `<div class="ce-menu__head">Pathfinders</div><div class="cops-grid cops-grid--4">${lb('pf:divide', IC.divide, 'Divide', 'Divide: every overlap its own piece', two)}${lb('pf:trim', IC.trim, 'Trim', 'Trim: each shape less what is in front of it', two)}${lb('pf:merge', IC.merge, 'Merge', 'Merge: Trim, and the pieces of one colour that touch become one', two)}${lb('pf:crop', IC.crop, 'Crop', 'Crop: what shows of the others inside the frontmost shape', two)}${lb('pf:outline', IC.outline, 'Outline', 'Outline: every piece as a line with no fill', two)}${lb('pf:minusBack', IC.minusBack, 'Minus back', 'Minus Back: the frontmost less everything behind it', two)}</div>`
         + `<div class="cops-note">Curves stay curves. The answer is one step: ⌘Z takes it back.</div>`;
       return;
     }
@@ -1721,6 +1758,10 @@
     'ops.exclude': { title: 'Exclude', group: 'Pathfinder', icon: IC.exclude, enabled: two, context: false, run: ctx => runPathfinder(ctx, 'exclude') },
     'ops.divide': { title: 'Divide', group: 'Pathfinder', icon: IC.divide, enabled: two, context: false, run: ctx => runPathfinder(ctx, 'divide') },
     'ops.trim': { title: 'Trim', group: 'Pathfinder', icon: IC.trim, enabled: two, context: false, run: ctx => runPathfinder(ctx, 'trim') },
+    'ops.merge': { title: 'Merge', group: 'Pathfinder', icon: IC.merge, enabled: two, context: false, run: ctx => runPathfinder(ctx, 'merge') },
+    'ops.crop': { title: 'Crop', group: 'Pathfinder', icon: IC.crop, enabled: two, context: false, run: ctx => runPathfinder(ctx, 'crop') },
+    'ops.pfOutline': { title: 'Outline', group: 'Pathfinder', icon: IC.outline, enabled: two, context: false, run: ctx => runPathfinder(ctx, 'outline') },
+    'ops.minusBack': { title: 'Minus Back', group: 'Pathfinder', icon: IC.minusBack, enabled: two, context: false, run: ctx => runPathfinder(ctx, 'minusBack') },
     'ops.offset': { title: 'Offset Path…', group: 'Path', icon: IC.offset, enabled: ctx => any(ctx) || charmHere(ctx), run: ctx => offsetDialog(ctx, false) },
     'ops.offsetFx': { title: 'Offset Path… (Effect)', group: 'Path', icon: IC.offset, context: false, enabled: ctx => any(ctx) || charmHere(ctx), run: ctx => offsetDialog(ctx, true) },
     'ops.expandFx': { title: 'Expand Appearance', group: 'Path', icon: IC.offset, context: false, enabled: ctx => fxIds(ctx).length > 0, run: ctx => land(ctx, ops.expandOffsetItems(ctx.items(), fxIds(ctx), ctx.geo), 'expandAppearance') },

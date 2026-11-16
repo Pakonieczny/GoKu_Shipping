@@ -153,6 +153,10 @@
     pfExclude: S18(`<path d="M2.5 2.5h8.5v8.5H2.5z M7 7h8.5v8.5H7z" fill="currentColor" fill-rule="evenodd" stroke="none"/><path d="M7 7h4v4H7z"/>`),
     pfDivide: S18(`<path d="M2.5 2.5h8.5V7H7v4H2.5z" fill="currentColor" fill-opacity=".45" stroke="none"/><path d="M7 7h4v4H7z" ${F}/><path d="M11 7h4.5v8.5H7V11h4z" fill="currentColor" fill-opacity=".75" stroke="none"/><path d="${SQA}"/><path d="${SQB}"/>`),
     pfTrim: S18(`<path d="M2.5 2.5h8.5V7H7v4H2.5z" fill="currentColor" fill-opacity=".45"/><path d="${SQB}" ${F}/>`),
+    pfMerge: S18(`<path d="M2.5 2.5h8.5V7h4.5v8.5H7V11H2.5z" fill="currentColor" fill-opacity=".6"/>`),
+    pfCrop: S18(`<path d="${SQA}" stroke-dasharray="1.6 1.4"/><path d="${SQB}" stroke-dasharray="1.6 1.4"/><path d="M7 7h4v4H7z" ${F}/>`),
+    pfOutline: S18(`<path d="${SQA}"/><path d="${SQB}"/><path d="M7 7h4v4H7z"/>`),
+    pfMinusBack: S18(`<path d="${SQA}" stroke-dasharray="1.6 1.4"/><path d="M11 7h4.5v8.5H7V11h4z" ${F}/>`),
     // Paragraph alignment
     pL: S18('<path d="M3 4h12M3 7.3h8M3 10.6h12M3 13.9h8"/>'),
     pC: S18('<path d="M3 4h12M5 7.3h8M3 10.6h12M5 13.9h8"/>'),
@@ -400,7 +404,7 @@
   const ALIGN_BTNS = () => `<div class="aip-ibs">${ib('data-aim="al:left"', IC.alL, 'Horizontal Align Left')}${ib('data-aim="al:hcenter"', IC.alC, 'Horizontal Align Center')}${ib('data-aim="al:right"', IC.alR, 'Horizontal Align Right')}${ib('data-aim="al:top"', IC.alT, 'Vertical Align Top')}${ib('data-aim="al:vcenter"', IC.alM, 'Vertical Align Center')}${ib('data-aim="al:bottom"', IC.alB, 'Vertical Align Bottom')}</div>`;
   const DIST_BTNS = () => `<div class="aip-ibs">${ib('data-aim="di:top"', IC.diT, 'Vertical Distribute Top')}${ib('data-aim="di:vcenter"', IC.diM, 'Vertical Distribute Center')}${ib('data-aim="di:bottom"', IC.diB, 'Vertical Distribute Bottom')}${ib('data-aim="di:left"', IC.diL, 'Horizontal Distribute Left')}${ib('data-aim="di:hcenter"', IC.diC, 'Horizontal Distribute Center')}${ib('data-aim="di:right"', IC.diR, 'Horizontal Distribute Right')}</div>`;
   const PF_SHAPE = [['ops.unite', IC.pfUnite, 'Unite'], ['ops.minus', IC.pfMinus, 'Minus Front'], ['ops.intersect', IC.pfIntersect, 'Intersect'], ['ops.exclude', IC.pfExclude, 'Exclude']];
-  const PF_FIND = [['ops.divide', IC.pfDivide, 'Divide'], ['ops.trim', IC.pfTrim, 'Trim']];
+  const PF_FIND = [['ops.divide', IC.pfDivide, 'Divide'], ['ops.trim', IC.pfTrim, 'Trim'], ['ops.merge', IC.pfMerge, 'Merge'], ['ops.crop', IC.pfCrop, 'Crop'], ['ops.pfOutline', IC.pfOutline, 'Outline'], ['ops.minusBack', IC.pfMinusBack, 'Minus Back']];   // (PFALL, Paul 16 Nov 2026: Illustrator's whole Pathfinder row)
   /** OFS1: an extension command's own icon, small, before a Quick Actions button's words (Offset Path's: a shape with its offset round it). */
   const xIcon = id => { const c = root && root.CharmEditor && root.CharmEditor.commands && root.CharmEditor.commands[id]; return c && typeof c.icon === 'string' && c.icon.startsWith('<svg') ? `<span class="cops-ic" aria-hidden="true">${c.icon}</span>` : ''; };
   const pfBtns = list => `<div class="aip-ibs">${list.map(([id, icon, t]) => ib(`data-aim="x:${id}"`, icon, t)).join('')}</div>`;
