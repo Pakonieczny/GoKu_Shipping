@@ -7854,7 +7854,7 @@ const Gate = window.Gate = (() => {
   const seatRest = q => !SEAT_BUSY.includes(q.status) && !q._operationStarting && !q._partialBusy && q.persistedDone !== false && !(q.persisted && !q.persistedDone);
   const seatChain = p => { const out = [p]; for (let g = 0; g < 30; g++) { const nx = out[out.length - 1]._partialNext; if (!nx || out.includes(nx)) break; out.push(nx); } return out; };
   const mmWords = st => `${Math.round(st.wPt / 72 * 25.4 * 10) / 10} × ${Math.round(st.hPt / 72 * 25.4 * 10) / 10} mm`;
-  const cardWords = c => { const w = c.wMm != null ? c.wMm : c.bboxMm ? c.bboxMm.w : c.sheetWMm, h = c.hMm != null ? c.hMm : c.bboxMm ? c.bboxMm.h : c.sheetHMm; return `${c.kind === "new" ? "New sheet" : "Partial sheet"} ${Math.round(+w) || "?"} × ${Math.round(+h) || "?"} mm`; };
+  const cardWords = c => { const w = c.wMm != null ? c.wMm : c.bboxMm ? c.bboxMm.w : c.sheetWMm, h = c.hMm != null ? c.hMm : c.bboxMm ? c.bboxMm.h : c.sheetHMm; return `${c.kind === "new" ? "New sheet" : "Partial sheet"} ${(Math.round(+w * 10) / 10) || "?"} × ${(Math.round(+h * 10) / 10) || "?"} mm`; };
   async function seatWatch(p, onStep, cards) {
     const t0 = Date.now(), pr0 = JSON.stringify(p.progress || null); let seen = false, calm = 0, last = "";   // (pr0: the numbers the sheet still carries from its LAST nest are not shown as this one's)
     while (Date.now() - t0 < 480000) {
@@ -7863,7 +7863,7 @@ const Gate = window.Gate = (() => {
       if (calm >= 3) break;
       const q = busy || ch[ch.length - 1], pr = q === p && JSON.stringify(q.progress || null) === pr0 ? null : q.progress, k = ch.indexOf(q), lead = ch.length > 1 ? `${k + 1}${["st", "nd", "rd"][k] || "th"} sheet: ` : "";
       const done = ch.reduce((n, x) => n + (x.placements || []).length, 0), all = ch.reduce((n, x) => n + piecesOf(x), 0);
-      const text = !busy ? "Saving the sheet…" : Array.isArray(pr) && +pr[1] ? `${lead}Nesting ${pr[0]} of ${pr[1]}…` : `${lead}Nesting the pieces…`;
+      const text = !busy ? "Saving the sheet…" : Array.isArray(pr) && +pr[1] ? (+pr[0] >= +pr[1] ? `${lead}All ${pr[1]} placed · trying a tighter layout…` : `${lead}Nesting ${pr[0]} of ${pr[1]}…`) : `${lead}Nesting the pieces…`;   // (MOVESHOW polish, Paul 15 Nov 2026: "Nesting 16 of 16…" stood for a minute and read as stuck: the nest goes on trying tighter layouts, and says so)
       if (text !== last) { last = text; try { onStep && onStep({ key: "nest", text, pct: all ? Math.round(100 * done / all) : null, placed: done, total: all }); } catch (_) { /* progress is only shown */ } }
       await new Promise(r => setTimeout(r, 600));
     }
