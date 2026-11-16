@@ -156,7 +156,8 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
 
   const ST = () => (root.OptionsStudio && typeof root.OptionsStudio.state === 'function' ? root.OptionsStudio.state().all : null) || {};
   const cardInfo = id => { try { return root.OptionsStudio && OptionsStudio.cardOf ? OptionsStudio.cardOf(id) : null; } catch (_) { return null; } };
-  const cardLabel = c => { if (!c) return 'that sheet'; const w = c.wMm != null ? c.wMm : c.bboxMm ? c.bboxMm.w : c.sheetWMm, h = c.hMm != null ? c.hMm : c.bboxMm ? c.bboxMm.h : c.sheetHMm; return `${c.kind === 'new' ? 'new sheet' : 'partial sheet'} ${Math.round(+w) || '?'} × ${Math.round(+h) || '?'} mm`; };   // (MOVESHOW: a partial sheet's size from its outline too)
+  const mm1 = v => { const n = Math.round(+v * 10) / 10; return Number.isFinite(n) && n > 0 ? String(n) : '?'; };   // (MOVESHOW polish: the size as the sheet's own card writes it, 50.5 not 51)
+  const cardLabel = c => { if (!c) return 'that sheet'; const w = c.wMm != null ? c.wMm : c.bboxMm ? c.bboxMm.w : c.sheetWMm, h = c.hMm != null ? c.hMm : c.bboxMm ? c.bboxMm.h : c.sheetHMm; return `${c.kind === 'new' ? 'new sheet' : 'partial sheet'} ${mm1(w)} × ${mm1(h)} mm`; };   // (MOVESHOW: a partial sheet's size from its outline too)
   const plural = n => `${n} piece${n === 1 ? '' : 's'}`;
   const cap = t => t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
   /** (MOVESHOW) the physical sheet a tile lies on, in words ("New sheet 55 × 38 mm"); '' when the sheet has none */
