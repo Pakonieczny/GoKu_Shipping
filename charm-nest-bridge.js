@@ -3344,7 +3344,35 @@ const PageVersion = (() => {
     if (now !== base) { stale = true; if (!said || force) { said = true; try { toast(MSG, "bad", 20000, "page-stale"); } catch (_) {} } }
     return stale;
   }
-  function start() { if (timer) return; setTimeout(() => check(false), 4000); timer = setInterval(() => { if (!document.hidden) check(false); }, 15 * 60000);   /* COST (Oct 2026): not while hidden; looked at again, it checks */ document.addEventListener("visibilitychange", () => { if (!document.hidden) check(false); }); }
+  /* (SELFUPDATE, Paul 15 Nov 2026: "This thing must happen seamlessly in the background" / "I'm not doing any of that"): a page that is out of date loads the new version BY ITSELF, at a quiet moment: no sheet nesting or saving, the run not in the middle of a step,
+     no window open, nobody typing. Asked every three minutes, seen or not (one HEAD of the page's own address: no cloud read). The workspace and the run come back as after any reload. A person never has to reload. */
+  let quiet = 0, upT = null;
+  function restful() {
+    try {
+      if (document.querySelector("dialog[open]")) return false;
+      const ae = document.activeElement; if (ae && (/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) || ae.isContentEditable)) return false;
+      if (typeof allSheets === "function" && allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone && !p.problem) || p.saveOwed)) return false;
+      const r = B.run; if (r && (!["processed", "review", "paused", "stopped", "complete"].includes(r.status) || r.arrivalBusy)) return false;
+      if (r && r.status !== "complete" && S.settings.runMode !== "auto") return false;   // (a run carried here by hand would wait for Resume after the reload: only a page in Auto, which carries on by itself, updates itself while it holds a run)
+      if (window.Session && Session.failure && Session.failure()) return false;
+      return true;
+    } catch (_) { return false; }
+  }
+  function selfUpdate() {
+    if (upT) return;
+    upT = setInterval(async () => {
+      if (!stale) { await check(false); if (!stale) return; }
+      quiet = restful() ? quiet + 1 : 0;
+      if (quiet < 2) return;   // (quiet at two looks in a row, 20 s apart)
+      clearInterval(upT);
+      try { toast("Loading the new version of the app…", "ok", 4000, "page-stale"); } catch (_) {}
+      try { if (window.Session) { Session.schedule(); if (Session.flushNow) await Session.flushNow(); } } catch (_) {}
+      setTimeout(() => { try { location.reload(); } catch (_) {} }, 1200);
+    }, 20000);
+  }
+  let headN = 0;
+  setInterval(() => { headN++; if (!stale && headN % 9 === 0) check(false); }, 20000);   // (every three minutes, hidden or not)
+  function start() { selfUpdate(); if (timer) return; setTimeout(() => check(false), 4000); timer = setInterval(() => { if (!document.hidden) check(false); }, 15 * 60000);   /* COST (Oct 2026): not while hidden; looked at again, it checks */ document.addEventListener("visibilitychange", () => { if (!document.hidden) check(false); }); }
   return { start, check, message: MSG, isStale: () => stale, _set: v => { base = v; stale = false; said = false; } };   // (tests: a known starting point)
 })();
 window.PageVersion = PageVersion; PageVersion.start();
@@ -7700,7 +7728,7 @@ const Gate = window.Gate = (() => {
     for (const p of [...b.pages].reverse()) if (p !== b.target && pagesOf(m).includes(p) && !p.charms.length && !busyPage(p) && pagesOf(m).indexOf(p) > 0 && (!b.retire || b.retire.has(p))) { gone.push(p.page); if (b.retire && window.RoseStock && RoseStock.letGo) { try { await RoseStock.letGo(p); } catch (_) { /* its stock is let go at the next look */ } } retirePage(run, p); removePage(p); }
     // (SHEETSLIST: the result of a drop, said in numbers: "12 moved onto Draft 1, 3 onto Draft 2, none left on Draft 4")
     let said = null;
-    if (b.movingIds && b.source) { const nm = p => b.names.get(p) || pw(p), parts = []; for (const p of b.pages) { if (p === b.source) continue; const n = p.charms.filter(c => b.movingIds.has(c.id)).length; if (n) parts.push(parts.length ? `${n} onto ${nm(p)}` : `${n} moved onto ${nm(p)}`); } const left = b.source.charms.filter(c => b.movingIds.has(c.id)).length; parts.push(left ? `${left} left on ${nm(b.source)}` : `none left on ${nm(b.source)}`); said = parts.join(", "); SAID[m] = { text: said, at: Date.now() }; }
+    if (b.movingIds && b.source) { const nm = p => b.names.get(p) || pw(p), parts = []; for (const p of [...b.pages, ...pagesOf(m).filter(q => !b.before.has(q))]) { if (p === b.source) continue;   /* GRIDGAPS, Paul 15 Nov 2026: a spill onto a NEW sheet (the full target had no room, no later sheet took it) was missing from this line: it said "3 left on Draft 2" and not where the 4th piece went. Sheets made by the merge are counted too. */ const n = p.charms.filter(c => b.movingIds.has(c.id)).length; if (n) parts.push(parts.length ? `${n} onto ${nm(p)}` : `${n} moved onto ${nm(p)}`); } const left = b.source.charms.filter(c => b.movingIds.has(c.id)).length; parts.push(left ? `${left} left on ${nm(b.source)}` : `none left on ${nm(b.source)}`); said = parts.join(", "); SAID[m] = { text: said, at: Date.now() }; }
     const left = mine().filter(p => p.charms.length), trouble = left.find(p => p.problem), waiting = left.find(held);
     st.busy = null;
     st.done = { at: Date.now(), bad: !!trouble, text: trouble ? `${pw(trouble)} needs a look: ${trouble.problem}` : said ? said : waiting ? `${pw(waiting)} waits for Resume` : ["Done", ...left.map(p => `${pw(p)}: ${charmsWord(p.charms.length)}`)].join(" · ") };
@@ -12759,7 +12787,7 @@ const Engrave = window.Engrave = (() => {
     if (!window.CharmEditor) return Promise.reject(new Error("the charm editor did not load: reload the page"));
     return charmEditFonts(null).catch(() => []).then(fonts => window.CharmEditor.open(Object.assign({ fonts, textToPaths: charmEditText, lockRoles: [] }, opts)));
   }
-  window.CharmEditDesign = { open: openCharmEditorDesign, fonts: () => charmEditFonts(null), textToPaths: (text, fontKey, sizePt, o) => charmEditText(text, fontKey, sizePt, o) };
+  window.CharmEditDesign = { draft: (key, by, baseAt) => charmDraftOpen(key, by, baseAt), open: openCharmEditorDesign,   /* (ENGPROOF, Paul 15 Nov 2026: the design editor keeps its open work in the cloud as a draft too: charm-nest-ce-masters.js edit) */  fonts: () => charmEditFonts(null), textToPaths: (text, fontKey, sizePt, o) => charmEditText(text, fontKey, sizePt, o) };
   function renderFront(charm, px, opts) {
     if (!charm?.outline || !Array.isArray(charm.bbox) || charm.bbox.length !== 4 || !charm.bbox.every(Number.isFinite))
       return el("div", "noPic", "The charm preview is still loading.");

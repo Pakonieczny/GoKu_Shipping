@@ -139,6 +139,7 @@
     if (m.t === 'verify') { deliver({ verify: true, at: m.at }); return; }
     const gap = !m.reset && n != null && m.from != null && m.from !== n && m.n !== n;
     if (gap) stats.gaps++;
+    if (m.reset) seenN.clear();   // GRIDGAPS, Paul 15 Nov 2026: after a reset (the cloud's counts began again, a sandbox reset) the counts this computer noted from its own writes are from the old series; kept, they would hide another computer's later write of the same name (its new count is lower)
     if (m.n != null) n = m.n;
     if (m.cg != null) cg = m.cg;
     if (m.first && !gap) return;   // (the first answer of a fresh computer names nothing: what the tabs read at start is what the cloud holds)

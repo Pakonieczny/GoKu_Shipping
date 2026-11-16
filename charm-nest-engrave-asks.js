@@ -67,13 +67,24 @@
     t = t.replace(BRACKET, (all, inner) => { const c = clause(inner); if (c && c.strong) { c.asks.forEach(a => asks.push({ ...a, quote: all.trim() })); removed.push(all.trim()); return ' '; } return all; });
     t = t.replace(/\s+/g, ' ').trim();
     if (!t) return { text: '', asks, removed, weak };
+    /* ENGPROOF, Paul 15 Nov 2026: "Name: Anna — on the left side, small": the form's own label ("Name:") in front of the words is not engraved. */
+    { const lab = /^(?:name|names|text|words?|initials?|personali[sz]ation|engraving)\s*:\s*(?=\S)/i.exec(t); if (lab && t.length > lab[0].length) { removed.push(lab[0].trim()); t = t.slice(lab[0].length); } }
     const whole = clause(t);
     if (whole) { if (whole.strong) { whole.asks.forEach(a => asks.push({ ...a, quote: t })); removed.push(t); return { text: '', asks, removed, weak }; } return { text: t, asks, removed, weak: true }; }
     // clauses set off by punctuation, from both ends
     const parts = t.split(SEP);   // [seg, sep, seg, sep, seg]
     const popped = [];
-    while (parts.length > 1) { const c = clause(parts[parts.length - 1]); if (c && c.strong) { popped.push(parts[parts.length - 1]); c.asks.forEach(a => asks.push({ ...a, quote: parts[parts.length - 1].trim() })); parts.pop(); parts.pop(); } else { if (c) weak = true; break; } }
-    while (parts.length > 1) { const c = clause(parts[0]); if (c && c.strong) { popped.push(parts[0]); c.asks.forEach(a => asks.push({ ...a, quote: parts[0].trim() })); parts.shift(); parts.shift(); } else { if (c) weak = true; break; } }
+    /* ENGPROOF, Paul 15 Nov 2026: "Name: Anna — on the left side, small": a bare "small" is only a weak ask on its own, but beside a strong one in the same chain of clauses ("on the left side, small") it is the same instruction: the chain is taken from the end (and the start) as far as it is all instruction, when at least one of it is strong. */
+    const chain = (at, step) => { const got = []; let i = at; while (i >= 0 && i < parts.length) { const c = clause(parts[i]); if (!c) break; got.push({ c, i }); i += 2 * step; if (parts.length - got.length * 2 < 1) break; } return got; };
+    for (const [at, step] of [[parts.length - 1, -1], [0, 1]]) {
+      if (parts.length < 3) break;
+      const got = chain(at, step), cut = got.map(g => g.c.strong).lastIndexOf(true);
+      if (cut < 0) { if (got.length) weak = true; continue; }
+      for (const g of got.slice(0, cut + 1)) { popped.push(parts[g.i]); g.c.asks.forEach(a => asks.push({ ...a, quote: parts[g.i].trim() })); }
+      const drop = new Set(); got.slice(0, cut + 1).forEach(g => { drop.add(g.i); drop.add(g.i + step); });
+      for (let k = parts.length - 1; k >= 0; k--) if (drop.has(k)) parts.splice(k, 1);
+      if (got.length > cut + 1) weak = true;
+    }
     removed.push(...popped.map(x => x.trim()));
     t = parts.join('').replace(/\s+/g, ' ').trim();
     if (popped.length) return { text: t, asks, removed, weak };

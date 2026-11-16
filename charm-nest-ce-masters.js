@@ -533,8 +533,12 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
     if (!fonts && host && typeof host.fonts === 'function') { note('Opening the editor…'); try { fonts = await host.fonts(); } catch (e) { console.warn('masters: fonts', e); } }
     if (!mine() || E.current) { drop(); if (!E.current) letGo(); return null; }   // (another design was asked for meanwhile, or an editor opened under us)
     note('');
+    /* ENGPROOF, Paul 15 Nov 2026: "ensure that everything in the charm editor gets saved onto the cloud as well" - the design editor too: its open work is a cloud draft (CEAUTOSAVE: charmNestLibrary artDraftPut), one per design (or per person for a new design), offered back when the design is opened again, dropped by a Save. */
+    let draft = null;
+    if (host && typeof host.draft === 'function' && by) { try { const who = String(by).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40), dk = start.id ? 'DESIGN-' + String(start.id).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 60) : 'DESIGN-NEW-' + (who || 'x'); draft = await host.draft(dk, by, Number(start.version) || 0); } catch (e) { console.warn('masters: the draft', e); } }
     const opts = Object.assign({ title: start.title || start.name, subtitle: start.subtitle || '', faces: start.faces, startFace: 'front', lockRoles: [] },
-      Array.isArray(fonts) && fonts.length ? { fonts } : {}, textToPaths ? { textToPaths } : {}, start.back ? { back: Object.assign({}, start.back) } : {}, { hold: true });   // (CES3 hold: the workspace stays under the windows after Save)   // (the way back: the editor's head, CharmEditor opts.back)
+      Array.isArray(fonts) && fonts.length ? { fonts } : {}, textToPaths ? { textToPaths } : {}, start.back ? { back: Object.assign({}, start.back) } : {}, { hold: true },
+      draft ? { autosave: draft.autosave } : {}, draft && draft.offer ? { offer: draft.offer, base: start.faces } : {});   // (CES3 hold: the workspace stays under the windows after Save)   // (the way back: the editor's head, CharmEditor opts.back)
     let shown;
     try { shown = E.open(opts); }
     catch (e) { drop(); letGo(); note(`The charm editor could not open · ${(e && e.message) || e}`, true); return null; }
@@ -542,7 +546,7 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
     let res;
     try { res = await shown; } catch (e) { drop(); note(`The charm editor could not open · ${(e && e.message) || e}`, true); return null; }
     if (!res) { drop(); return null; }   // (Cancel, the ×, Esc: nothing is saved; a master or a design picked in the library panel closes it this way too)
-    try { return await saved(start, res, by, () => opened !== my || pending > 0 || !mine()); }
+    try { const out = await saved(start, res, by, () => opened !== my || pending > 0 || !mine()); if (draft && out) draft.drop().catch(() => { /* ENGPROOF: the next open offers it */ }); return out; }   // (a design kept: its draft is no longer needed)
     finally { drop(); }
   }
   /** The editor's result saved as a version of the design (none when nothing changed since the version it was opened on), then the card: Send to sheet, Keep editing, Done.

@@ -26,7 +26,7 @@
   const JOB_FIELDS = ["face", "slot", "rowKey", "groupKey", "linked", "pre", "state", "reason", "text", "lines", "lineInput", "lineMode", "splitIndex", "lineGap", "decision", "source", "quote",
     "confidence", "requests", "questions", "claudeReasoning", "ignored", "wordsSource", "claudeJob", "claude", "fontKey", "fontAsked", "fontName", "fontStyle", "faceFontWord", "fontLocked",
     "fontMapped", "fontListing", "fontSubstituted", "wantSize", "nudged", "turnUp", "upSystem", "orientVersion", "approvedBy", "approvedAt", "engravingSeals", "decidedAt", "decidedBy",
-    "stagedFrom", "copyOverrides", "archived"];
+    "stagedFrom", "copyOverrides", "archived", "asks", "applied"];   // (ENGPROOF, Paul 15 Nov 2026: what the buyer asked for and what was applied of it (FOLLOWASK) travel with the line, so every computer lists the same instructions)
   const FIT_STATES = new Set(["review", "approved", "written", "ready", "fitting"]);
   const safe = (f, d) => { try { const v = f(); return v === undefined ? d : v; } catch (_) { return d; } };
   const fnv = s => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(36); };

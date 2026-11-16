@@ -124,6 +124,9 @@
   const SAY = { position: v => v + ' side', size: v => v + ' text', case: v => v, layout: v => v, side: v => v, font: v => v };
   const SAY_POS = { top: 'at the top', bottom: 'at the bottom', centre: 'in the centre' };
 
+  /* ENGPROOF, Paul 15 Nov 2026 ("1. I love you best  2. center": the instruction listed as an instruction and applied): an ask is named as the shop's reader (charm-nest-engrave-asks.js) and the fit say it (center, large, upper, lower, one-line, two-lines), so what was applied is found beside it */
+  const canon = v => CANON[String(v).toLowerCase()] || String(v).toLowerCase();
+  const CANON = { centre: 'center', big: 'large', 'all caps': 'upper', lowercase: 'lower', 'one line': 'one-line', 'two lines': 'two-lines' };
   /** The note, itemized: [{ kind, label, text, urls, note, type?, value? }] - kinds: option | file | personalisation | message | staff | instruction. */
   function itemsOf(row) {
     const L = lineOf(row), sp = L.spec || (row && row.spec) || {}, line = L.line || (row && row.line) || {}, o = O();
@@ -144,12 +147,13 @@
     const bm = visible(sp.buyerMessage); if (bm) { items.push(mk('message', 'Buyer message', bm)); texts.push(bm); }
     const sn = visible(sp.staffNote); if (sn) { items.push(mk('staff', 'Staff note', sn)); texts.push(sn); }
     // the asks, read from the free words only (the options already say their own)
-    const asks = [], seen = new Set(), add = (type, value, text) => { const k = type + '\n' + value; if (!seen.has(k)) { seen.add(k); asks.push(mk('instruction', 'Asked', text, { type, value })); } };
+    const asks = [], seen = new Set(), add = (type, value, text) => { const k = type + '\n' + canon(value); if (!seen.has(k)) { seen.add(k); asks.push(mk('instruction', 'Asked', text, { type, value })); } };
     const free = texts.join('\n');
     if (free) {
       try { const fr = o && typeof o.fontReadText === 'function' ? o.fontReadText(free) : null; const r = fr && fr.requests && fr.requests.find(q => q.asked); if (r) add('font', r.asked, r.asked + ' font'); } catch (_) { /* no font read */ }
       try { const m = o && typeof o.engravingModeIn === 'function' ? o.engravingModeIn(free, true) : ''; if (m) add('side', m, m === 'both' ? 'both sides' : m + ' side'); } catch (_) { /* no side read */ }
       for (const t of texts) for (const { type, value } of phrasesIn(t)) add(type, value, type === 'position' ? (SAY_POS[value] || value + ' side') : SAY[type](value));
+      try { const A = typeof CharmNestEngraveAsks !== 'undefined' ? CharmNestEngraveAsks : null; if (A && typeof A.asksOf === 'function') for (const a of A.asksOf(pers.join('\n')).asks) if (a.type !== 'reference') add(a.type, a.value, a.type === 'position' ? (SAY_POS[a.value === 'center' ? 'centre' : a.value] || a.value + ' side') : SAY[a.type] ? SAY[a.type](a.value) : String(a.value)); } catch (_) { /* the phrases above stay */ }   // (the numbered answer "2. center" and the like)
     }
     return items.concat(asks);
   }
@@ -160,7 +164,7 @@
     const applied = o && Array.isArray(o.applied) ? o.applied : null;
     const status = it => {
       if (!applied || it.kind !== 'instruction') return '';
-      const a = applied.find(x => x && x.type === it.type && (x.value == null || norm(x.value) === norm(it.value)));
+      const a = applied.find(x => x && x.type === it.type && (x.value == null || canon(x.value) === canon(it.value)));
       return a ? (a.ok ? ' <span class="owOk">applied</span>' : ` <span class="owNo">could not apply${a.why ? ': ' + esc(a.why) : ''}</span>`) : '';
     };
     const box = `<div class="owSaid">${items.map(it => `<div class="owI" data-kind="${it.kind}"${it.was ? ` title="${esc('As ordered:\n' + it.was)}"` : ''}><span class="lbl">${esc(it.label)}</span> <span class="owT">${linkify(it.text)}${status(it)}</span></div>`).join('')}</div>`;
