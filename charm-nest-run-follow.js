@@ -203,6 +203,14 @@
         try { const v = await f(a.ids); r = v.placed ? { ok: true, text: `${v.placed} piece(s) placed on ${v.names.join(" and ")}` } : { ok: false, why: v.lines ? `Not placed: ${(v.waiting && v.waiting[0]) || "the intake did not take it"}` : "That line does not wait for a sheet to fill." }; }
         catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); } }
     }
+    // (LEAVESET, Paul 16 Nov 2026: "Remove that sheet from the set of sheets it was incorrectly added to"): one sheet taken out of the set it is in, as a person's own take-out does (Gate.leaveSet: nothing deleted, nothing nested again); it may join the NEXT set by the usual rules
+    else if (c.type === "leaveset") {
+      const pages = safe(() => (typeof allSheets === "function" ? allSheets() : root.allSheets()), []) || [], pg = pages.find(x => x && x.sheetId === a.sheetId);
+      if (!G || typeof G.leaveSet !== "function" || !pg) r = { ok: false, why: pg ? "not ready" : "That sheet is not on the computer that carries the run." };
+      else { const step = stepper(c), was = pg.fileBase || pg.sheetId; step({ text: "Taking the sheet out of its set…" });
+        try { await G.leaveSet(a.sheetId); if (pg.setId && !pg.draft) r = { ok: false, why: "The sheet is still in its set." }; else { delete pg.leftSet; r = { ok: true, text: `${was} was taken out of its set; it is ${pg.fileBase || "a draft"} now and waits for the next set` }; } }
+        catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); } }
+    }
     else if (c.type === "remake") r = root.Review && typeof root.Review.redrawStale === "function" ? await root.Review.redrawStale(a.ids || []) : { ok: false, why: "not ready" };   // (REMAKESTALE: open pieces that hold an older drawing of these SKUs are made up again from the library's drawing)
     // (REMOTENEST, Paul 15 Nov 2026: "you re-nest it and then check that everything is OK everywhere"): a draft sheet of the run is nested again here, exactly as its Re-nest button does (never a sheet that was cut or is in a committed set: startNest's own rules stand), and the answer waits for the nest and its save
     else if (c.type === "renest") {

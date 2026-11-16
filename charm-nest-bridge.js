@@ -6342,7 +6342,11 @@ const Gate = window.Gate = (() => {
      sheets still read as a completed GF and a completed SS sheet; when GF Sheet 1 of Set 2 was saved empty by a fault (16 Nov, 2:41 PM) the set read as "short", was opened again and took the next
      completed GF sheet. The time a set formed (set.formedAt) is now kept with the set in the cloud and never taken back: a formed set takes no sheet by itself, whatever its sheets read as later. A
      person's own move, a sheet that shares an order with it and a 10K / 14K / Rose Gold sheet's own press are as before. */
-  const closedSet = set => !!set && (+set.formedAt > 0 || (!!window.CharmNestSetRules && window.CharmNestSetRules.closed(membersOfSet(set))));
+  /* SETSTAYSCLOSED 2 (Paul, 16 Nov 2026, the same evening: GF Sheet 2, taken out of Set 2, went straight into Set 1): a set formed before the time was kept has no time saved, and right after a
+     reload any of its sheets being written again reads "not completed" for a moment: Set 1 read as short of a GF sheet and took the free one. A set that HOLDS a Gold Filled sheet and a Sterling
+     Silver sheet has formed at some time (a partial sheet never joins a set, so both came in completed): it is closed, whatever its sheets read as now. */
+  const formedOnce = set => { if (!set) return false; if (+set.formedAt > 0) return true; const SRx = window.CharmNestSetRules; if (!SRx || typeof SRx.metalClass !== "function") return false; const cls = membersOfSet(set).map(p => SRx.metalClass(p)); return cls.includes("GF") && cls.includes("SS"); };
+  const closedSet = set => !!set && (formedOnce(set) || (!!window.CharmNestSetRules && window.CharmNestSetRules.closed(membersOfSet(set))));
   /** The set the run's next completed sheets join on their own: its newest open set while that has not formed; none when there is no open set or the newest has formed (a new set forms then). */
   function collectingOf(runId) { const open = openSetsOf(runId), last = open[open.length - 1]; return last && !closedSet(last) ? last : null; }
   /** The run's newest open set, formed or not: the set a 10K, 14K or Rose Gold sheet is ticked into. (SETFIX: no rule reads its number any more; the former even-numbered rule for Rose Gold is gone.) */
@@ -6635,7 +6639,7 @@ const Gate = window.Gate = (() => {
     for (const p of allSheets()) if (p.runId === run.runId) delete p.setWait;
     // (audit A, 25 Oct 2026: the set the free sheets complete is the EARLIEST open set left short of a class, a sheet of it having gone back to filling; only the newest was
     //  ever completed, so an older set that went short stayed short for good, R1)
-    const last = open.find(s => membersOfSet(s).length && !(+s.formedAt > 0) && !SR.closed(formMembers(s))) || open[open.length - 1] || null, lastClosed = !!last && (+last.formedAt > 0 || SR.closed(formMembers(last)));   // (SETSTAYSCLOSED: a set that has formed is never the one the free sheets complete)   // (STUCKSPIN: formMembers, a member being written again counts as its record)
+    const last = open.find(s => membersOfSet(s).length && !formedOnce(s) && !SR.closed(formMembers(s))) || open[open.length - 1] || null, lastClosed = !!last && (formedOnce(last) || SR.closed(formMembers(last)));   // (SETSTAYSCLOSED: a set that has formed is never the one the free sheets complete)   // (STUCKSPIN: formMembers, a member being written again counts as its record)
     let target = null, addTarget = null, formed = 0, apart = new Set(), joinNow = null;       // target: the set the free sheets join now · addTarget: the set 10K, 14K and Rose Gold may join now · formed: sheets it takes · apart: partners that wait for another set
     {
       const free = pages.filter(p => !inOpen(p) && !p.cardinalHome && !handOf(p) && !adder(p) && release(p, last && !lastClosed ? last.seq : 0).include);
@@ -6643,7 +6647,7 @@ const Gate = window.Gate = (() => {
       // (SETFIX, Paul 19 Oct 2026: the units never tie through a sheet in a set, a cut one or an uncut Rose Gold / 10K / 14K one: formationOf(V, true). They did, so Set 2 took every unit that had one order
       //  on a sheet of Set 1)
       const V = cardinalView(run), pagesOfIds = ids => (ids || []).map(id => V.page.get(id)).filter(Boolean), links = V ? formationOf(V, true, choices).groups.map(g => ({ ids: pagesOfIds(g.ids), anchors: pagesOfIds(g.anchors), ends: pagesOfIds(g.ends) })) : [];
-      const lastOpen = !!last && !(+last.formedAt > 0);   // (SETSTAYSCLOSED: a formed set is not offered to the rules as a set to complete: the free sheets form the NEXT set)
+      const lastOpen = !!last && !formedOnce(last);   // (SETSTAYSCLOSED: a formed set is not offered to the rules as a set to complete: the free sheets form the NEXT set)
       const f = SR.form(lastOpen ? formMembers(last) : [], free, lastOpen, last && last.name, links);
       for (const w of f.wait) w.sheet.setWait = w.why;
       if (f.where === "last") target = last;
@@ -7065,7 +7069,7 @@ const Gate = window.Gate = (() => {
   /** One open set of the run, kept as the rules say: a sheet that no longer qualifies goes back out, the set's lists follow, a sheet the set takes now joins with its number and QR label. */
   async function tendSet(run, set, pages, choices, release, admits) {
     const SRt = window.CharmNestSetRules, before = joinTick(), at = joinTick();
-    if (SRt && !set.formedAt && SRt.validSet(membersOfSet(set)).ok) set.formedAt = before;      // (a set that had formed before this look, a reload: its time is not known, so it counts from now: a sheet that joins it in this look is a late joiner)
+    if (SRt && !set.formedAt && (SRt.validSet(membersOfSet(set)).ok || formedOnce(set))) { set.formedAt = before; set.touched = true; }   // (SETSTAYSCLOSED 2: and kept with the set from now on)      // (a set that had formed before this look, a reload: its time is not known, so it counts from now: a sheet that joins it in this look is a late joiner)
     // (a sheet being rewritten by hand in the sheet window keeps its place and gets its new label once it is written)
     // (NOSETPULL, Paul 13 Nov 2026: "nothing is allowed to pull a set apart ... the system must not be allowed to remove sheets from a set just because orders are being shipped ... delete it now"; "I never even allowed this to happen"): a sheet is NEVER taken out of its set by the system: the rule that sent a sheet "that no longer qualifies" back to the drafts is deleted (only a person moves a sheet out of a set)
     // (PERSONOUT, Paul 16 Nov 2026: "Remove that sheet from the set of sheets it was incorrectly added to"): NOSETPULL switched the whole let-go off, and with it the only way a PERSON's own
@@ -18692,6 +18696,15 @@ const CustomSheet = window.CustomSheet = (() => {
       try { if (window.CNAskPlace) window.CNAskPlace(`Place the designs sent for order ${e.rid}`); } catch (_) { /* the carrier's own look finds them */ }   // (NEVERSTRANDED)
       // (the answer it records reaches the order's timeline now, as the repool that used to follow it did: not at some later sync, which a reload in between would lose)
       if(it.onDone)try{it.onDone(e.sent.by,"sheet",e.sent.at);Review.syncOrderItems();}catch(err){console.warn("Custom send review",err);}
+      /* SENDRELEASES (Paul, 16 Nov 2026: "If the user presses the Send to Sheet button ... then it must be automatically released from all Holds"): a Send to Sheet IS the release. The order's
+         Review hold (Hold Order) is answered if it was still open, and the order gets its ORDER RELEASED seal, kept in the cloud as a Release Hold press is (ReviewRelease.keep: the seal on the
+         order's own Review record, on its lines, on every computer). Its lines' own holds are lifted where the pieces are made (the line's make-up clears them). A person's press only. */
+      if(!how.recover)try{
+        const rid2=String(e.rid),M2=window.CharmNestReviewMark,at2=Date.now(),who2=e.sent.by || who;
+        if(M2 && M2.isMarked && M2.isMarked(rid2) && M2.resolve)await M2.resolve(rid2,{by:who2,how:"other"});
+        for(const r of rows)if(r.hold && B.run && !["gone","committed"].includes(r.state)){r.hold=null;if(r.state==="held" && (r.poolIds || []).length)r.state="pooled";}
+        if(window.ReviewRelease && typeof ReviewRelease.keep==="function")await ReviewRelease.keep([rid2],{how:"releaseHold",at:at2,by:who2,id:`releaseHold:${rid2}:${at2}`},"sheet");
+      }catch(err){console.warn("[sendreleases]",err && err.message);}
       // (a person's press only: a send finished again after a reload, how.recover, is not logged as new work)
       if(!how.recover)try{humanAct("complete",{orderId:String(e.rid),parts:Object.values(lines).reduce((a,l)=>a+l.filter(pc=>!pc.removed).length,0),orders:1,detail:"custom designs sent to the sheets"});}catch(_){}
       for(const r of rows)TL.line(r,"designSent",{id:`${r.key}.${e.sent.at}`,at:e.sent.at,by:e.sent.by,text:`Custom design${files.length===1?"":"s"} sent to the sheets by ${e.sent.by}: ${files.map(F=>`${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`.slice(0,200),data:{decisionId:e.sent.id,files:files.map(F=>({name:F.name,qty:F.qty,metal:F.metal,pieces:F.pieces})).slice(0,12),pieces:(lines[r.key] || []).length,placed:["pooled","written","committed"].includes(r.state)}});
@@ -30170,8 +30183,8 @@ async function placeStranded() {
      nobody was shown, or for nothing at all. Nothing of it is on a sheet, so there is nothing to accept or to take off: it is made up now, from what the line reads as. Asked of the cloud first
      (below): a piece whose row there is anything but superseded leaves the line as it is. */
   const lost = Orders.rows().filter(r => r && ["pooled", "written"].includes(r.state) && !r.hold && (r.poolIds || []).length && !(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId))
-    && r.poolIds.every(id => { const pr = B.pool.rows.get(id); return !on.has(id) && !!pr && pr.state === "superseded" && !pr.sheetId; }));
-  if (lost.length) { const ids1 = lost.flatMap(r => r.poolIds), bad = new Set(); try { for (let i = 0; i < ids1.length; i += 300) { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: ids1.slice(i, i + 300) }, { quiet: true })).pools || {}; for (const id of ids1.slice(i, i + 300)) { const pr = got[id]; if (!pr || pr.state !== "superseded" || pr.sheetId) bad.add(id); } } } catch (_) { ids1.forEach(id => bad.add(id)); }
+    && r.poolIds.every(id => { const pr = B.pool.rows.get(id); return !on.has(id) && (!pr || (pr.state === "superseded" && !pr.sheetId)); }));   // (a piece record this page never loaded is asked of the cloud below, never guessed)
+  if (lost.length) { const ids1 = lost.flatMap(r => r.poolIds), bad = new Set(); try { for (let i = 0; i < ids1.length; i += 300) { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: ids1.slice(i, i + 300) }, { quiet: true })).pools || {}; for (const id of ids1.slice(i, i + 300)) { const pr = got[id]; if (!pr || pr.state !== "superseded" || pr.sheetId) bad.add(id); else if (!B.pool.rows.get(id)) B.pool.rows.set(id, pr); } } } catch (_) { ids1.forEach(id => bad.add(id)); }
     for (let i = lost.length - 1; i >= 0; i--) if (lost[i].poolIds.some(id => bad.has(id))) lost.splice(i, 1); }
   for (const r of lost) { const i = rows.indexOf(r); if (i >= 0) rows.splice(i, 1); }   // (made up by its own make-up below, never a second time by the plain intake)
   let back = null;
@@ -30179,7 +30192,9 @@ async function placeStranded() {
     agent({ run: run.runId, pool: true }, "warn", `${lost.length} order line(s) whose pieces were taken off to be made again and never were are made up now`);
     const ids2 = [];
     for (const r of lost) {   // (the line's own make-up, one at a time: its home sheet first, HOMEAGAIN; a hold on the order does not keep its piece off a sheet)
-      r.repoolChanged = true; r.changePending = true; r.replaceByDesign = true; try { Review.remove("chg:" + r.key); } catch (_) { /* no card */ }
+      r.repoolChanged = true; r.changePending = true; r.replaceByDesign = true;
+      // (ONECARD, Paul 16 Nov 2026: "How can one order have two history cards"): the "Accept the new order" question nobody was to answer is taken down without a card of its own under Resolved: the order keeps the ONE card of what a person did (Sent to Sheet)
+      try { if (B.review && Array.isArray(B.review.items)) B.review.items = B.review.items.filter(x => x.key !== "chg:" + r.key); } catch (_) { /* no card */ }
       try { await Review.repool(r); ids2.push(...(r.poolIds || [])); } catch (e) { console.warn("[nevermade]", r.key, e && e.message); } finally { delete r.replaceByDesign; }
     }
     back = { lines: lost.length, pieces: Math.max(ids2.length, lost.length), placed: ids2.filter(id => allSheets().some(p => (p.charms || []).some(c => c && c.poolId === id))).length };
@@ -30205,14 +30220,34 @@ window.CNPlaceStranded = placeStranded;
      · the computer that carries the run LOOKS by itself, at rest, every two minutes (and when asked): pieces counted as pooled that stand on no sheet go back to the intake (placeStranded, which asks
        the cloud first and never touches a piece any sheet holds). The same pieces are tried once in half an hour, so a piece that cannot be placed is not tried over and over. */
 let strandedBusy = false; const strandedTried = new Map();
+/* SENTISRELEASED (Paul, 16 Nov 2026: "All of these orders were resolved and therefore must always be released and nested if not already nested"): an order resolved by Send to Sheet before that
+   press released it by itself still showed ORDER HELD and no ORDER RELEASED. On the computer that carries the run, once per order and page: its Review hold is answered if it is still open and
+   it gets the ORDER RELEASED seal of its send (who sent it, when), kept in the cloud as a Release Hold press is. Its nesting is the look below (a piece on no sheet goes onto one). */
+const sentReleasedSeen = new Set();
+function sentReleased() {
+  try {
+    const CS = window.CustomSheet, M = window.CharmNestReviewMark, RR = window.ReviewRelease; if (!CS || !M || !RR || typeof RR.keep !== "function" || typeof CS.entries !== "function") return 0;
+    let n = 0;
+    for (const e of Object.values(CS.entries() || {})) {
+      if (!e || e.legacy || !e.sent || !(+e.sent.at > 0) || !e.sent.by || e.sendCloudPending) continue;
+      const rid = String(e.rid || ""); if (!rid || sentReleasedSeen.has(rid)) continue; sentReleasedSeen.add(rid);
+      if (window.Cancelled && Cancelled.has && Cancelled.has(rid)) continue;
+      const rel = typeof M.released === "function" ? M.released(rid) : null; if (rel && +rel.at >= +e.sent.at) continue;
+      const go = async () => { if (M.isMarked && M.isMarked(rid) && M.resolve) await M.resolve(rid, { by: e.sent.by, how: "other" }); await RR.keep([rid], { how: "releaseHold", at: +e.sent.at, by: e.sent.by, id: `releaseHold:${rid}:${+e.sent.at}` }, "sheet"); };
+      go().catch(err => console.warn("[sentreleased]", rid, err && err.message)); n++;
+    }
+    return n;
+  } catch (e) { console.warn("[sentreleased]", e && e.message); return 0; }
+}
 async function strandedWatch(why) {
   if (strandedBusy || !B.run || ["stopped", "abandoned", "retired"].includes(B.run.status) || S.cloud.ok !== true) return null;
+  sentReleased();
   if (allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone) || p._rebuilding)) return null;
   const on = new Set(allSheets().flatMap(p => (p.charms || []).map(c => c && c.poolId)).filter(Boolean));
   for (const p of allSheets()) { const rec = p.recalled; if (rec) for (const id of (rec.poolIds || [])) on.add(String(id)); }
   const cand = Orders.rows().filter(r => r && r.state === "pooled" && !r.hold && (r.poolIds || []).length && !(r.poolIds || []).some(id => on.has(id) || (B.pool.rows.get(id) || {}).sheetId));
   for (const r of Orders.rows()) if (r && r.state === "contended" && !r.hold) cand.push(r);   // (CONTENDEDBACK)
-  for (const r of Orders.rows()) if (r && ["pooled", "written"].includes(r.state) && !r.hold && (r.poolIds || []).length && r.poolIds.every(id => { const pr = B.pool.rows.get(id); return !on.has(id) && !!pr && pr.state === "superseded" && !pr.sheetId; }) && !cand.includes(r)) cand.push(r);   // (NEVERMADE)
+  for (const r of Orders.rows()) if (r && ["pooled", "written"].includes(r.state) && !r.hold && (r.poolIds || []).length && r.poolIds.every(id => { const pr = B.pool.rows.get(id); return !on.has(id) && (!pr || (pr.state === "superseded" && !pr.sheetId)); }) && !cand.includes(r)) cand.push(r);   // (NEVERMADE)
   const now = Date.now(), fresh = cand.filter(r => now - (strandedTried.get(r.key) || 0) > 30 * 60 * 1000);
   if (!fresh.length) return null;
   strandedBusy = true; for (const r of fresh) strandedTried.set(r.key, now);
