@@ -5025,7 +5025,11 @@ const Pool = window.Pool = (() => {
     // a custom line whose QR label is being printed (Custom Orders) waits: printed, it is completed by hand, not cut
     if (window.CustomPrint && CustomPrint.printing(row.key)) return null;
     // a custom order sent from its card is cut from its own designs, each on the metal picked for it (CustomSheet)
-    if (sp && !sp.customDone && window.CustomSheet && CustomSheet.sentOf(row)) return CustomSheet.prepare(row, run);
+    /* KEPTWINS (Paul, 16 Nov 2026: "now that the charm repository has correctly updated this needs to go on a sheet"): the card's own design was saved to the charm repository and the listing
+       linked to it (Save to the charm repository and link this listing), so the line now reads as that repository charm: it is made from the repository, as every other order of the listing
+       is (a pair as its two ears), not from the card's file a second way. Only when the line reads clean from a saved link AND that repository charm was made from a file this card sent. */
+    const keptFromCard = () => { try { if (!sp || sp.skuSource !== "alias" || !sp.designSku || sp.noDesign || sp.ownDesign || (sp.problems || []).length) return false; const en = Master.entryFor(sp.designSku), e = CustomSheet.sentOf(row); if (!en || !e || !/^charmnest\/master\/custom\//.test(String(en.masterPath || en.aiPath || ""))) return false; const nm = String(en.masterName || "").trim().toLowerCase(); return !!nm && (e.files || []).some(F => String(F.name || "").trim().toLowerCase() === nm); } catch (_) { return false; } };
+    if (sp && !sp.customDone && window.CustomSheet && CustomSheet.sentOf(row) && !keptFromCard()) return CustomSheet.prepare(row, run);
     if (!sp || sp.noDesign) { row.state = "noDesign"; return null; }
     // an add-on listing's line (specialOf: own) has no master design: the one its SKU happens to match is not its design. It waits, asked nothing, for the order's own designs
     // (Send to Sheet) or a person's Complete Order, and its order waits with it
@@ -5440,7 +5444,7 @@ const Pool = window.Pool = (() => {
     let why = "";
     for (let k = 0; k < list.length; k++) {
       const c = list[k], s = spots[Math.min(k, spots.length - 1)];
-      let fit; try { fit = M.freeSpot(sh, c, { cxPt: s.cxPt, cyPt: s.cyPt }, { angles: inPlaceAngles(s.angle) }); } catch (e) { fit = { ok: false, why: "verify", reason: (e && e.message) || String(e) }; }
+      let fit; try { fit = M.freeSpot(sh, c, s.lost ? null : { cxPt: s.cxPt, cyPt: s.cyPt }, { angles: s.lost ? [0, 90, 180, 270] : inPlaceAngles(s.angle) }); } catch (e) { fit = { ok: false, why: "verify", reason: (e && e.message) || String(e) }; }
       if (!fit || !fit.ok || !fit.pose) {
         const big = list.reduce((b, x) => (+x.widthPt || 0) * (+x.heightPt || 0) > (+b.widthPt || 0) * (+b.heightPt || 0) ? x : b, c), w = Math.max(+big.widthPt || 0, +big.heightPt || 0), h = Math.min(+big.widthPt || 0, +big.heightPt || 0);
         const room = fit && fit.room, n = list.length;
@@ -5532,7 +5536,8 @@ const Pool = window.Pool = (() => {
       const shut = inPlaceShut(sh, run);
       if (shut) { whys.push(`${ipName(sh)} cannot change now (${shut})`); continue; }
       // 1 · the old spots: at full size, then (INPLACE SHRINK) the SAME spots with the pieces shrunk by one size, 99 % down to 90 %
-      const fitIn = list.length <= ss.length ? inPlaceFit(sh, ss, list) : null;
+      const lostSpot = ss.some(s => s.lost);   // (HOMEAGAIN: the piece left this sheet earlier and its old spot is not known: the sheet's free space is tried, never a spot)
+      const fitIn = !lostSpot && list.length <= ss.length ? inPlaceFit(sh, ss, list) : null;
       let got = fitIn && fitIn.got, where = "spot", size = fitIn ? fitIn.size : 1;
       // 2 · IPL2: anywhere free on the same sheet, nothing else on it moving (at full size, never shrunk)
       if (!got) { size = 1; const any = inPlaceAnywhere(sh, ss, list); if (any.got) { got = any.got; where = "beside"; } else { whys.push(any.why); continue; } }
@@ -5548,7 +5553,7 @@ const Pool = window.Pool = (() => {
       }
       const shrunk = size < 1 ? `, shrunk to ${inPlacePct(size)} to fit` : "";
       res.placed = true; res.where = where; res.home = sh; res.to = sh; res.why = ""; if (size < 1) res.size = size;
-      res.say = where === "spot" ? `back in its old spot on ${ipName(sh)}${shrunk}` : `on ${ipName(sh)} beside its old spot (the new design did not fit the old spot itself)`;
+      res.say = where === "spot" ? `back in its old spot on ${ipName(sh)}${shrunk}` : lostSpot ? `back on ${ipName(sh)}, the sheet it was taken off, in its free space` : `on ${ipName(sh)} beside its old spot (the new design did not fit the old spot itself)`;
       agent({ metal, pool: true }, "POOL", `${row.order.receiptId} · the new ${pieces} ${where === "spot" ? `went back into the old spot${got.length === 1 ? "" : "s"} on ${ipName(sh)}${shrunk}` : `did not fit the old spot, so ${n === 1 ? "it went" : "they went"} on ${ipName(sh)} beside it, in its free space`}: nothing else on it moved, no nest`);
       return { page: sh, placed: true };
     }
@@ -20639,9 +20644,37 @@ const Review = window.Review = (() => {
     try { return await repoolLine(row); }
     finally { if (was && row && !row.hold && row.state !== "gone") TL.line(row, "restored", { id: `${row.key}.${Date.now()}`, text: `Back in line · was ${String(was).replace(/^(?:line|piece) /, "")}`.slice(0, 200), data: { was: String(was).slice(0, 300) } }); }
   }
+  /* HOMEAGAIN (Paul, 16 Nov 2026: "If an order's charm has been removed from a sheet, and then the user updated the charm repository/sku or ... simply decided to release the hold on a given
+     order, then that order should automatically be put back on the sheet it was taken off from ... if it doesn't fit ... then it needs to be put onto a new draft sheet. We cannot have pieces
+     be missing from sheets"). A line made up again while NONE of its pieces is on a sheet (they were taken off earlier: a hold, a send whose new piece was never placed) used to go to the newest
+     sheet, as a new order does. Its pieces' own records still name the sheet they were taken off (sheetName, kept when a piece leaves): that sheet is the line's home again. The new pieces go
+     on it in its free space, every other charm where it stands and nothing nested again (Pool's inPlaceAttach, as for a piece exchanged in place); only when that sheet was cut by the laser,
+     is busy or has no room do they go to the latest unfinished sheet, else a new draft (inPlaceTarget). The home sheet is written again only when a piece really went onto it. */
+  const lastHomeOf = row => { try {
+    const n = Math.max(1, Math.min(12, Math.round(+(row.spec && row.spec.pieceCount) || +(row.line && row.line.quantity) || 1)));
+    const ids = row.poolIds && row.poolIds.length ? row.poolIds.slice() : Array.from({ length: n }, (_, k) => O.poolId(row.order, row.line, k + 1)), out = [];
+    for (const id of ids) { if (Pool.charmOf(id)) return []; const pr = B.pool.rows.get(id); if (pr && (pr.sheetName || pr.sheetId)) out.push({ poolId: id, name: String(pr.sheetName || ""), sheetId: pr.sheetId ? String(pr.sheetId) : "" }); }
+    return out; } catch (_) { return []; } };
+  async function homeAgain(row, last) {
+    if (!last || !last.length || !B.run) return null;
+    const pageOf = h => allSheets().find(p => (h.sheetId && p.sheetId === h.sheetId) || (h.name && p.fileBase === h.name)) || null, homes = [], spots = [];
+    for (const h of last) {
+      const sh = pageOf(h); if (!sh || (sh.runId && sh.runId !== B.run.runId) || replaceLaserWhy(sh)) continue;
+      if (!homes.includes(sh)) {
+        if (sh.recalled && !(sh.charms || []).length && window.Recall && typeof Recall.rebuild === "function") { try { await Recall.rebuild(sh); } catch (e) { console.warn("[homeagain] sheet not drawn:", e && e.message); } }
+        if (!(sh.charms || []).length || inPlaceHoldsWhy(sh)) continue;
+        homes.push(sh);
+      }
+      spots.push({ sh, metal: sh.metal, id: null, poolId: h.poolId, cxPt: NaN, cyPt: NaN, angle: 0, lost: true });
+    }
+    if (!spots.length) return null;
+    for (const sh of homes) { sh._inplaceHold = true; try { renderCard(sh); } catch (_) { /* drawn at the next look */ } }
+    agent({ run: B.run.runId, pool: true }, "info", `${row.order.receiptId}: its piece${spots.length === 1 ? "" : "s"} go${spots.length === 1 ? "es" : ""} back on ${homes.map(sh => sh.fileBase || sheetName(sh)).join(" and ")}, the sheet ${spots.length === 1 ? "it was" : "they were"} taken off`);
+    return { spots, homes, results: [], at: Date.now(), committed: false, lost: true };
+  }
   async function repoolLine(row) {
     CNListActivity.touch(row);
-    const old0=new Set(row.poolIds || []);
+    const old0=new Set(row.poolIds || []), lastHome=lastHomeOf(row);   // (HOMEAGAIN: read before anything of the line is changed)
     // A piece on a sheet the laser has CUT is not taken off its sheet (as for a cancelled order, takeOffGone): it is cut
     // already. A changed line whose piece is there waits for a person, who makes the difference by hand or skips it;
     // releasing the hold then keeps the piece on that sheet (the path below for a line whose pieces are on sheets).
@@ -20716,6 +20749,7 @@ const Review = window.Review = (() => {
       for(const id of old)B.pool.rows.delete(id);
       row.poolIds=[];row.repoolChanged=false;
     }
+    if (!row._vacated && lastHome.length) { try { const V2 = await homeAgain(row, lastHome); if (V2) row._vacated = V2; } catch (e) { console.warn("[homeagain]", e && e.message); } }   // (HOMEAGAIN)
     const keptHold = row.userSwap && row.hold ? String(row.hold) : null; delete row.userSwap;   // (IPL2: a line a person holds keeps its hold; only its piece is exchanged)
     try {
     row.changePending=false; row.problems = []; row.state = "pulled"; row.reason = null; row.hold = null; Orders.interpretAll(); if (row.problems.length) { Orders.render(); return; } if (B.run && O.stepIndex(B.run.step) >= O.stepIndex("pool")) { try { await Pool.poolAdd(row, B.run); } catch (e) { row.state = "held"; row.reason = e.message; } if (row.state === "pooled" && row.spec.engraveCandidate) Engrave.classify(row).catch(() => {}); }
@@ -20765,6 +20799,7 @@ const Review = window.Review = (() => {
       delete sh._inplaceHold; const asked = !!sh._inplaceAsked; delete sh._inplaceAsked;
       try {
         if (!allSheets().includes(sh)) continue;
+        if (V.lost && !(V.results || []).some(r => r.placed && r.home === sh)) { try { renderCard(sh); } catch (_) { /* drawn at the next look */ } continue; }   // (HOMEAGAIN: nothing went back onto it: it is as it was, and is not written again)
         const waiting = activeCharms(sh).some(c => !sh.placements.some(p => p.id === c.id));
         if (sh.roseRedraw) sh.roseRedraw.written = true;   // (IPL2: a green line set aside for the exchange is drawn again once the sheet is saved: RoseStock.redraw waits for that)
         if (waiting || !sh.placements.length) {
@@ -30130,7 +30165,27 @@ async function placeStranded() {
      stayed refused for good, also after that run was retired: its piece stood on no sheet and nothing asked again. Such a line goes back to the intake here; the server answers afresh, and a
      piece a run that is still live really holds is refused again, as before. */
   const again = Orders.rows().filter(r => r && r.state === "contended" && !r.hold && !(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId)));
-  if (!rows.length && !again.length) return { lines: 0, pieces: 0, placed: 0 };
+  /* NEVERMADE (Paul, 16 Nov 2026: "nothing should be holding this order back other than just a hold that could be released manually after"): a line whose pieces were ALL taken off to be made
+     up again (every pool row known and "superseded": a design sent or a charm changed) and whose new pieces were never made stood on no sheet for good, waiting for an "Accept the new order"
+     nobody was shown, or for nothing at all. Nothing of it is on a sheet, so there is nothing to accept or to take off: it is made up now, from what the line reads as. Asked of the cloud first
+     (below): a piece whose row there is anything but superseded leaves the line as it is. */
+  const lost = Orders.rows().filter(r => r && ["pooled", "written"].includes(r.state) && !r.hold && (r.poolIds || []).length && !(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId))
+    && r.poolIds.every(id => { const pr = B.pool.rows.get(id); return !on.has(id) && !!pr && pr.state === "superseded" && !pr.sheetId; }));
+  if (lost.length) { const ids1 = lost.flatMap(r => r.poolIds), bad = new Set(); try { for (let i = 0; i < ids1.length; i += 300) { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: ids1.slice(i, i + 300) }, { quiet: true })).pools || {}; for (const id of ids1.slice(i, i + 300)) { const pr = got[id]; if (!pr || pr.state !== "superseded" || pr.sheetId) bad.add(id); } } } catch (_) { ids1.forEach(id => bad.add(id)); }
+    for (let i = lost.length - 1; i >= 0; i--) if (lost[i].poolIds.some(id => bad.has(id))) lost.splice(i, 1); }
+  for (const r of lost) { const i = rows.indexOf(r); if (i >= 0) rows.splice(i, 1); }   // (made up by its own make-up below, never a second time by the plain intake)
+  let back = null;
+  if (lost.length) {
+    agent({ run: run.runId, pool: true }, "warn", `${lost.length} order line(s) whose pieces were taken off to be made again and never were are made up now`);
+    const ids2 = [];
+    for (const r of lost) {   // (the line's own make-up, one at a time: its home sheet first, HOMEAGAIN; a hold on the order does not keep its piece off a sheet)
+      r.repoolChanged = true; r.changePending = true; r.replaceByDesign = true; try { Review.remove("chg:" + r.key); } catch (_) { /* no card */ }
+      try { await Review.repool(r); ids2.push(...(r.poolIds || [])); } catch (e) { console.warn("[nevermade]", r.key, e && e.message); } finally { delete r.replaceByDesign; }
+    }
+    back = { lines: lost.length, pieces: Math.max(ids2.length, lost.length), placed: ids2.filter(id => allSheets().some(p => (p.charms || []).some(c => c && c.poolId === id))).length };
+    try { await RunCtl.save(run); } catch (_) { /* saved with the next change */ }
+  }
+  if (!rows.length && !again.length) return back || { lines: 0, pieces: 0, placed: 0 };
   for (const r of again) { r.state = "pulled"; r.reason = null; delete r.poolTry; delete r.wait; }
   if (again.length) agent({ run: run.runId, pool: true }, "warn", `${again.length} order line(s) another run had claimed are asked for again`);
   if (!rows.length) { await LiveNest.add(run); try { await RunCtl.save(run); } catch (_) { /* saved with the next change */ } const got = again.filter(r => (r.poolIds || []).length); return { lines: again.length, pieces: Math.max(again.length, got.flatMap(r => r.poolIds).length), placed: got.flatMap(r => r.poolIds).filter(id => allSheets().some(p => (p.charms || []).some(c => c && c.poolId === id))).length }; }
@@ -30157,6 +30212,7 @@ async function strandedWatch(why) {
   for (const p of allSheets()) { const rec = p.recalled; if (rec) for (const id of (rec.poolIds || [])) on.add(String(id)); }
   const cand = Orders.rows().filter(r => r && r.state === "pooled" && !r.hold && (r.poolIds || []).length && !(r.poolIds || []).some(id => on.has(id) || (B.pool.rows.get(id) || {}).sheetId));
   for (const r of Orders.rows()) if (r && r.state === "contended" && !r.hold) cand.push(r);   // (CONTENDEDBACK)
+  for (const r of Orders.rows()) if (r && ["pooled", "written"].includes(r.state) && !r.hold && (r.poolIds || []).length && r.poolIds.every(id => { const pr = B.pool.rows.get(id); return !on.has(id) && !!pr && pr.state === "superseded" && !pr.sheetId; }) && !cand.includes(r)) cand.push(r);   // (NEVERMADE)
   const now = Date.now(), fresh = cand.filter(r => now - (strandedTried.get(r.key) || 0) > 30 * 60 * 1000);
   if (!fresh.length) return null;
   strandedBusy = true; for (const r of fresh) strandedTried.set(r.key, now);
