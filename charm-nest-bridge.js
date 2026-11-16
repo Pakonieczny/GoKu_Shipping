@@ -7063,7 +7063,10 @@ const Gate = window.Gate = (() => {
     if (SRt && !set.formedAt && SRt.validSet(membersOfSet(set)).ok) set.formedAt = before;      // (a set that had formed before this look, a reload: its time is not known, so it counts from now: a sheet that joins it in this look is a late joiner)
     // (a sheet being rewritten by hand in the sheet window keeps its place and gets its new label once it is written)
     // (NOSETPULL, Paul 13 Nov 2026: "nothing is allowed to pull a set apart ... the system must not be allowed to remove sheets from a set just because orders are being shipped ... delete it now"; "I never even allowed this to happen"): a sheet is NEVER taken out of its set by the system: the rule that sent a sheet "that no longer qualifies" back to the drafts is deleted (only a person moves a sheet out of a set)
-    for (const sh of []) {
+    // (PERSONOUT, Paul 16 Nov 2026: "Remove that sheet from the set of sheets it was incorrectly added to"): NOSETPULL switched the whole let-go off, and with it the only way a PERSON's own
+    //  take-out (Gate.leaveSet) and the set's own repair ("Rebuild this set correctly", SetRepair) had to take a sheet out: both mark the sheet (leftSet = this set, draft) and ask the assembly,
+    //  which then answered "the run keeps it" every time. A sheet a person marked to leave THIS set leaves it; the system still takes no sheet out by itself, whatever the sheet reads as.
+    for (const sh of pages.filter(p => p.setId === set.setId && p.draft === true && p.leftSet === set.setId && !release(p, set.seq).include)) {
       const previous = {draft:sh.draft,setId:sh.setId,seq:sh.seq,sheetIndex:sh.sheetIndex,label:sh.label};
       if (window.CharmNestSheetName) set.sheetNos = CharmNestSheetName.raise(set.sheetNos, [sh]);   // (the number it had is retired for this set: nobody else is given it, charm-nest-sheet-name.js)
       if (window.CharmNestSheetName && CharmNestSheetName.fileTag(sh)) sh.leftFileBase = sh.fileBase;   // (the set's file name it leaves with: a later save renames it working_, and claim reads this one to give its own old number back when it returns. Diagnostic, 26 Oct 2026)
