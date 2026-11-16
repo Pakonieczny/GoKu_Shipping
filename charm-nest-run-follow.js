@@ -156,12 +156,15 @@
       else if (!want.size) r = { ok: false, why: "No order was named." };
       else {
         const step = stepper(c), was = (run.keepShipped || []).map(String), let_go = was.filter(x => want.has(x));
-        if (!let_go.length) r = { ok: true, text: "None of these orders was being kept on its sheet." };
-        else {
+        {
+          // (UNKEEP 2: the first send took the orders off the list and then could not ask Etsy, "the Design Station frame is not open": the station's frame is opened first, as an intake does (STATIONOPEN),
+          //  and a send for orders already off the list still runs the check, so it can be sent again)
           run.keepShipped = was.filter(x => !want.has(x));
-          step({ text: `${let_go.length} order(s) no longer kept: checking them against Etsy…` });
+          step({ text: `${let_go.length ? let_go.length + " order(s) no longer kept: " : ""}checking the orders against Etsy…` });
           try {
-            await RC.save(run);
+            if (let_go.length) await RC.save(run);
+            const DL = safe(() => (typeof DesignLink !== "undefined" ? DesignLink : root.DesignLink), null);
+            if (DL && typeof DL.ensure === "function") { try { await DL.ensure(); } catch (_) { /* said below if the check then fails */ } }
             const v = await Or.revalidate(run, "shipped orders let go");
             const gone = (v && v.gone || []).map(String).filter(x => want.has(x));
             r = { ok: true, text: `${let_go.length} shipped order(s) let go; Etsy says ${gone.length} of them are closed: their pieces were taken off every sheet that is still open` };
