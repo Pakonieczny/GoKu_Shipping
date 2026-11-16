@@ -118,8 +118,21 @@
   function save() { try { const s = store(); if (s) s.setItem(KEY, JSON.stringify(mem)); } catch (_) { /* the tab still holds it in memory */ } }
   const shared = () => { try { return root.localStorage || null; } catch (_) { return null; } };
   /** Settings' unlock, held in this tab's memory while the menu is open (PERSON: never in localStorage; an ended one, or one given to another person, is dropped). */
+  /* EMPDOOR (Paul, 16 Nov 2026: "Someone has to always be logged in to perform this, but it can be anyone that has a login"): the token the server gives with a right Employee Number (adopt) opens the
+     repo's upload, change and download for that person, with no password asked. It is kept beside the sign-in itself (localStorage, as the signed-in name is), for that person only, until it runs out or
+     the person changes; it never opens Settings or a delete (the server refuses it there too). */
+  const EKEY = "cn.repo.emp";
+  function empStored() { try { const st = shared(), raw = st && st.getItem(EKEY), o = raw ? JSON.parse(raw) : null; return o && typeof o.t === "string" && o.t && +o.e > Date.now() + MARGIN && o.p === personKey() ? o : null; } catch (_) { return null; } }
+  function empKeep(o) { try { const st = shared(); if (!st) return; if (o) st.setItem(EKEY, JSON.stringify({ t: o.t, e: o.e, p: o.p })); else st.removeItem(EKEY); } catch (_) { /* this tab keeps it */ } }
+  function empStoredAny() { try { const st = shared(), raw = st && st.getItem(EKEY); return raw ? JSON.parse(raw) : null; } catch (_) { return null; } }
+  function adopt(o) {
+    if (!o || typeof o.t !== "string" || !o.t || !(+o.e > Date.now() + MARGIN)) return false;
+    loadSession(); if (sess && !sess.emp) return false;   // (a password unlock opens more: it stands)
+    sess = { t: o.t, e: +o.e, p: personKey(), emp: true }; empKeep(sess); changed(); return true;
+  }
   function loadSession() {
-    if (sess && (!(sess.e > Date.now() + MARGIN) || (sess.p !== undefined && sess.p !== personKey()))) { if (sess.carry) dropCarry(); sess = null; }
+    if (sess && (!(sess.e > Date.now() + MARGIN) || (sess.p !== undefined && sess.p !== personKey()))) { if (sess.carry) dropCarry(); if (sess.emp) empKeep(null); sess = null; }
+    if (!sess) { const o = empStored(); if (o) sess = { t: o.t, e: +o.e, p: o.p, emp: true }; }
     return sess;
   }
   function saveSession() { /* PERSON (26 Oct 2026): nothing is kept for the computer any more; see the header */ }
@@ -136,7 +149,7 @@
   }
   function find(need) {
     need = norm(need); load();
-    if (SESSION_NEEDS.has(need)) { const s = loadSession(); if (s && (!s.carry || need === "settings")) return { action: "session", token: s.t, expiresAt: s.e, once: false, session: true }; }   // (a carried unlock serves Settings' ops only)
+    if (SESSION_NEEDS.has(need)) { const s = loadSession(); if (s && (!s.carry || need === "settings") && !(s.emp && need === "settings")) return { action: "session", token: s.t, expiresAt: s.e, once: false, session: true }; }   // (a carried unlock serves Settings' ops only)
     for (const a of COVERS[need] || []) { const x = mem[a]; if (x) return { action: a, token: x.t, expiresAt: +x.e, once: false }; }
     return null;
   }
@@ -152,14 +165,14 @@
     const norm2 = x => String(x || "").trim().toLowerCase().replace(/\s+/g, " "), now = norm2(after);
     if (norm2(before) === now) return;
     // (only what belongs to somebody else ends: the name a page restores when it opens is the same person again, and keeps the unlock it carried across Settings' reload)
-    const s = sess && sess.p !== undefined && sess.p !== now ? sess : null; if (s) { sess = null; dropCarry(); }
+    const s = sess && sess.p !== undefined && sess.p !== now ? sess : null; if (s) { sess = null; dropCarry(); } if (!s || s.emp) { const o = empStoredAny(); if (o && o.p !== now) empKeep(null); }
     load(); for (const k of Object.keys(mem)) if (mem[k] && mem[k].p !== undefined && mem[k].p !== now) delete mem[k]; save(); changed();
-    if (s && s.t) callOp("repoLock", { sessionToken: s.t }).catch(() => {});
+    if (s && s.t && !s.emp) callOp("repoLock", { sessionToken: s.t }).catch(() => {});
   }
 
   function drop(info) {
     if (!info) return;
-    if (info.session || info.action === "session") { loadSession(); if (sess && sess.t === info.token) { sess = null; saveSession(); } changed(); return; }
+    if (info.session || info.action === "session") { loadSession(); if (sess && sess.t === info.token) { if (sess.emp) empKeep(null); sess = null; saveSession(); } changed(); return; }
     load(); if (mem[info.action] && mem[info.action].t === info.token) { delete mem[info.action]; save(); }
     changed();
   }
@@ -400,7 +413,7 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
 
   load(); endLegacySession(); pickCarry();   // (PERSON: no unlock is shared between tabs or kept across a reload any more, so no storage listener either)
   if (doc) { try { if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", () => { css(); changed(); }); else { css(); changed(); } } catch (_) { /* no page */ } }
-  const api = { ensure, call, unlocked, find, forget, mark, gate, onChange, isRepoLocked, lockNow, status, verify, untilText, submitInline, personChanged, carry, messages: SAY, cancelled: e => !!e && e.cancelled === true, configure: h => { hook = h || null; }, KEY, _held: () => { load(); return Object.keys(mem); } };
+  const api = { ensure, call, unlocked, find, forget, mark, gate, onChange, isRepoLocked, lockNow, status, verify, untilText, submitInline, personChanged, adopt, carry, messages: SAY, cancelled: e => !!e && e.cancelled === true, configure: h => { hook = h || null; }, KEY, _held: () => { load(); return Object.keys(mem); } };
   root.CharmNestRepoLock = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

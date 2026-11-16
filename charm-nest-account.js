@@ -549,7 +549,7 @@
     try {
       const ctl = typeof AbortController === "function" ? new AbortController() : null, t = ctl ? setTimeout(() => ctl.abort(), PIN_MS) : 0;
       try {
-        const res = await root.fetch("/.netlify/functions/firebaseOrders", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", body: JSON.stringify({ pinLogin: num }), signal: ctl ? ctl.signal : undefined });
+        const res = await root.fetch("/.netlify/functions/firebaseOrders", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", body: JSON.stringify({ pinLogin: num, repoDoor: true }), signal: ctl ? ctl.signal : undefined });
         try { r = await res.json(); } catch (_) { r = null; }
       } finally { if (t) clearTimeout(t); }
     } catch (_) { r = null; }
@@ -557,7 +557,7 @@
     if (r.tooMany === true) return { ok: false, tooMany: true, error: "Too many tries. Wait a minute, then try again." };
     const name = r.ok === true && typeof r.name === "string" ? normalize(r.name.replace(/\s+/g, " ").trim()) : "";
     if (!name) return { ok: false, error: "That Employee Number is not on the list. Check the 6 digits and try again." };
-    return { ok: true, name };
+    return Object.assign({ ok: true, name }, typeof r.repoToken === "string" && r.repoToken && +r.repoExp > 0 ? { repo: { t: r.repoToken, e: +r.repoExp } } : {});   // (EMPDOOR: the repo door's token that came with the right number; handed to the lock once this person is signed in)
   }
   /** the panel's field, the name bar (CNEmployee), any press that needs a person: the server checks the number, and the person it names is signed in
       (the same person again: nothing changes). Never throws; the number is not kept. */
@@ -572,8 +572,9 @@
         const cur = nameNow();
         if (cur && keyOf(cur) === keyOf(out.name)) { picked = ""; if (isOpen && view().ready) close({ focus: true }); }
         else { grant(out.name); signingIn = true; picked = ""; if (root.B) root.B.employee = out.name; passes.delete(keyOf(out.name)); }
+        const door = out.repo || null;
         if (!nameNow() || keyOf(nameNow()) !== keyOf(out.name)) out = { ok: false, error: "That person could not be signed in. Try again." };
-        else out = { ok: true, name: nameNow() };
+        else { out = { ok: true, name: nameNow() }; try { if (door && root.CharmNestRepoLock && typeof root.CharmNestRepoLock.adopt === "function") root.CharmNestRepoLock.adopt(door); } catch (_) { /* the repo asks as before */ } }
       }
     } catch (e) { out = { ok: false, error: "Your Employee Number could not be checked right now. Try again in a moment." }; try { console.warn("[CNAccount] signInNumber:", e); } catch (_) {} }
     finally { checkingNum = false; }
