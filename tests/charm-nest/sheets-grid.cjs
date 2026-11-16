@@ -86,6 +86,18 @@ const recs = st => st.list('Charm_Nest_Sheets').filter(s => s.metal === M14);
     const names1 = rows.map(r => r.name);
     say('1f names follow positions (Draft 1 stays "Draft 1")', JSON.stringify(names1) === JSON.stringify(names0), { before: names0, after: names1 });
     const fAfter = await until(async () => { const f = await fol(); return same(f, rows) ? f : null; }, 30000) || await fol();
+    if (process.env.DIAG) {
+      const d1 = await p2.evaluate(() => ({ vis: document.visibilityState, cs: CharmNestCloudSheets.state(), follow: CharmNestRunFollow.state(), sync: (window.CNSync && CNSync.state) ? JSON.stringify(CNSync.state()).slice(0, 900) : null, pages: CN.pagesOf('gold14k').map(p => [(p.sheetId || '').slice(-6), p.draftOrder, p.followed, !!p.recalled, p.dirty, p.status, !!p._rebuilding, !!p.saveOwed, !!(p.persisted && !p.persistedDone)]) }));
+      console.log('DIAG natural', same(fAfter, rows), JSON.stringify(d1).slice(0, 2400));
+      await p2.evaluate(ids => CharmNestCloudSheets._changed(ids.map(id => 's:' + id)), want);
+      const f2 = await until(async () => { const f = await fol(); return same(f, rows) ? f : null; }, 15000) || await fol();
+      const d2 = await p2.evaluate(() => ({ cs: CharmNestCloudSheets.state(), pages: CN.pagesOf('gold14k').map(p => [(p.sheetId || '').slice(-6), p.draftOrder, p.followed]) }));
+      console.log('DIAG after manual _changed', same(f2, rows), JSON.stringify(d2).slice(0, 1200));
+      const r3 = await p2.evaluate(async () => { const id = CharmNestRunFollow.state().runId; let r; try { r = await Recall.follow(id, { force: true }); } catch (e) { r = 'ERR ' + e.message; } return r; });
+      const f3 = await until(async () => { const f = await fol(); return same(f, rows) ? f : null; }, 15000) || await fol();
+      console.log('DIAG after manual follow(force)', r3, same(f3, rows), JSON.stringify(f3.map(r => [r.id.slice(-6), r.name])));
+      process.exit(0);
+    }
     say('2b follower sheetsOf = carrier after the carrier reorder', same(fAfter, rows), { carrier: rows.map(r => [r.id.slice(-6), r.name]), follower: fAfter.map(r => [r.id.slice(-6), r.name]), followerPages: await p2.evaluate(() => CN.pagesOf('gold14k').map(p => [(p.sheetId || '').slice(-6), p.draftOrder, p.page, p.layoutRev])), cloud: rows.map(r => doOf(r.id)) });
 
     /* 3 · follower relays a reorder (what OptionsSheets.send does: runCarrier check, runCmdPut, then runCmdList until done) */
