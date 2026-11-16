@@ -28237,6 +28237,8 @@ const Recall = window.Recall = (() => {
         }
         followIds = idSig; }
       followSig = sig;
+      // (OPTSTAYS, Paul 16 Nov 2026: after a move with overflow, a combine or a delete, the Options window of the computer that follows closed under the person's hands: the card it belonged to was built again). The window that was open is opened again once the cards are back
+      const reopen = (() => { try { return window.OptionsStudio && typeof OptionsStudio.isOpen === "function" ? (METALS.map(x => x.key).find(k => OptionsStudio.isOpen(k)) || null) : null; } catch (_) { return null; } })();
       for (const m of METALS) {
         const prim = S.sheets[m.key], mine = sheets.filter(x => x.metal === m.key);
         if (keepsCard(prim, runId)) continue;   // (something is in hand on this card: it is looked at again at the next read)
@@ -28257,6 +28259,7 @@ const Recall = window.Recall = (() => {
       }
       CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub();
       agent({ run: runId }, "cloud", `${sheets.length} sheet(s) of the open run shown on the Nest cards as the cloud has them: nothing is nested on this computer`);
+      if (reopen) setTimeout(() => { try { if (!OptionsStudio.isOpen(reopen)) { const prim = S.sheets[reopen], el = prim && (prim.cardEl || prim.el), btn = el && el.querySelector(".sheetOptionsBtn"); if (btn) btn.click(); } } catch (_) { /* the person opens it again */ } }, 700);
       liveLater(runId);
       return true;
     })();
