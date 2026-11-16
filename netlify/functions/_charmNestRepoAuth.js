@@ -33,7 +33,7 @@ const ACTIONS = new Set(["upload", "delete", "download", "modify", "history", "o
 const TTL_MS = { upload: 15 * MIN, modify: 5 * MIN, download: 5 * MIN, other: 5 * MIN, settings: 5 * MIN, delete: 2 * MIN, history: 2 * MIN };   // (settings and any unlock asked with session:true get a SESSION token instead: sessionEnd below)
 const ONCE = new Set(["delete", "history"]);
 /* what each kind of token opens: the needs below are upload | modify | download | delete-file | delete-sku */
-const OPENS = { upload: ["upload", "modify"], modify: ["modify"], download: ["download"], other: ["upload", "modify", "download"], delete: ["delete-file", "delete-sku"], history: ["delete-file"], session: ["settings", "upload", "modify", "download"] };
+const OPENS = { upload: ["upload", "modify"], modify: ["modify"], download: ["download"], other: ["upload", "modify", "download"], delete: ["delete-file", "delete-sku"], history: ["delete-file"], session: ["settings", "upload", "modify", "download"], employee: ["upload", "modify", "download"] };   // (employee: EMPDOOR below)
 const WINDOW_MS = 10 * MIN, LOCK_MS = 15 * MIN, SRC_MAX = 5, ALL_MAX = 20;
 const OPERATOR_CACHE_MS = 30000, TOKEN_CACHE_MS = 30000, SESSION_CACHE_MS = 5000, SESSION_MAX_MS = 12 * 60 * MIN, ALERT_LIST = 100, ALERT_READ = 300;
 /* COST (Oct 2026): the master admin's open Sorter asks for the Alert list once a minute, and every ask read up to ALERT_READ documents (300 reads a minute for as long as
@@ -106,6 +106,15 @@ async function issue(db, o) {
   const kind = session ? "session" : action, exp = session ? sessionEnd(now) : now + TTL_MS[action];
   await db.collection(C.TOKENS).doc(sha256(token)).set(Object.assign({ exp, action: kind, once: ONCE.has(kind), used: false, at: now, by: str(o && o.by, 80), tab: str(o && o.tab, 24) }, session ? { for: action } : {}));
   return { token, exp, once: ONCE.has(kind), action, session };
+}
+/* EMPDOOR (Paul, 16 Nov 2026: "Please remove the password requirements to update charm repository" ... "Someone has to always be logged in to perform this, but it can be anyone that has a login").
+   A person who signs in with their Employee Number (firebaseOrders { pinLogin }, _stationPinLogin.js: the server checks the number) is given, with the same answer, a token that opens the repo's
+   upload, change and download for that person until the next Toronto midnight (when every sign-in ends) or 12 hours, whichever is first. It opens nothing else: deleting from the repo and the Settings
+   buttons still ask Paul's password, as before. Only its sha256 is stored, with the name it was given to; it is never given for a name alone, only with a right number. */
+async function issueEmployee(db, name) {
+  const now = deps.now(), token = mint(), exp = Math.min(now + SESSION_MAX_MS, nextTorontoHour(now, 24));
+  await db.collection(C.TOKENS).doc(sha256(token)).set({ exp, action: "employee", once: false, used: false, at: now, by: str(name, 80), tab: "" });
+  return { token, exp };
 }
 const deny = (need, why, status) => ({ status: status || 401, body: status === 503 ? { error: "repo-unavailable" } : { error: "repo-locked", need: needWord(need), once: need.startsWith("delete"), why } });
 /**
@@ -404,4 +413,4 @@ async function handle(db, event, body) {
   }
 }
 
-module.exports = { C, ACTIONS, TTL_MS, ONCE, OPENS, LIBRARY, SETTINGS_OPS, sessionEnd, WINDOW_MS, LOCK_MS, SRC_MAX, ALL_MAX, deps, requirement, authorize, unlock, alerts, alertClose, masterDownload, owns, handle, issue, forget: () => { tokenCache.clear(); } };
+module.exports = { issueEmployee, C, ACTIONS, TTL_MS, ONCE, OPENS, LIBRARY, SETTINGS_OPS, sessionEnd, WINDOW_MS, LOCK_MS, SRC_MAX, ALL_MAX, deps, requirement, authorize, unlock, alerts, alertClose, masterDownload, owns, handle, issue, forget: () => { tokenCache.clear(); } };

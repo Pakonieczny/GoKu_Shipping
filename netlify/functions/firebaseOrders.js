@@ -231,6 +231,9 @@ exports.handler = async (event) => {
          is never logged, and a guesser is slowed and locked out for a minute. An answer carries `ok`; anything else is a failure. */
       if (body && typeof body === "object" && body.pinLogin !== undefined) {
         const out = await require("./_stationPinLogin").pinLogin(db, event, body.pinLogin);
+        // (EMPDOOR, Paul 16 Nov 2026: a right number, asked by the sorter (repoDoor), also opens the charm repo's upload / change / download for that person: _charmNestRepoAuth.js issueEmployee. A failure
+        //  here never keeps the person out: they are signed in without it, and the repo asks as before)
+        if (body.repoDoor === true && out && out.body && out.body.ok === true && out.body.name) { try { const t = await require("./_charmNestRepoAuth").issueEmployee(db, out.body.name); out.body = Object.assign({}, out.body, { repoToken: t.token, repoExp: t.exp }); } catch (e) { console.warn("[pinLogin] repo door:", String((e && e.message) || e).slice(0, 120)); } }
         return { statusCode: out.statusCode, headers: Object.assign({}, CORS, out.headers), body: JSON.stringify(out.body) };
       }
       /* "is this name an Admin?" (_stationAdmins.js): a page asks about ONE name once per sign-in and gets { ok, admin } and nothing
