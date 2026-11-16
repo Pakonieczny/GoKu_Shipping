@@ -14809,12 +14809,17 @@ const Engrave = window.Engrave = (() => {
      a charm's face changed under its words ("This charm's front changed since the words were approved — fit the words again"). Its approved file is withdrawn (revokeBacks: that face's
      record only; the piece's other face keeps its own) and the face goes back to be fitted and wait for Approve. A face not decided yet is fitted again too. The words, the font and a
      person's turn stay. → how many faces were sent back. */
-  function artChanged(poolId, face, why) {
-    face = face === "front" ? "front" : "back";
+  function artChanged(poolId, face, why, since) {
+    face = face === "front" ? "front" : "back"; since = +since > 0 ? +since : 0;
     const said = why || `This charm's ${face} changed since the words were approved — fit the words again`;
     let n = 0, busy = false;
     for (const j of [...items().values()]) {
       if (!j || j.editingBack || !(j.copies || []).includes(poolId) || faceOf(j) !== face) continue;
+      /* APPROVEDAFTER (Paul, 16 Nov 2026: the DXF "does not save some of the back engraving that was already approved on the sheet"): an artwork edit read again from the cloud (another
+         computer's, or this page's own after a reload) took an approval back even when that approval was made AFTER the edit, on the edited drawing: "Untamed" was approved 3:55 PM on art
+         edited 2:28 PM, and a computer that reloaded at 4:23 PM withdrew its approved file, so the 4:30 PM download had no back for it. An approval or a cut-plain decision made after the edit
+         it is told of already covers that edit: it stands. (`since` is the edit's own time; an edit made here and now passes none, and un-approves as ever.) */
+      if (since && Math.max(+j.approvedAt || 0, +j.decidedAt || 0) > since) continue;
       /* (RELIT, Paul 15 Nov 2026: "every time I make any changes the approved button needs to be re-lit again"). Two changes that left Approve calm:
          · a face decided "cut plain" (no engraving: state none / skipped, its CUT PLAIN seal) whose drawing or cut line was then changed in the Charm Editor kept its seal, and the card went on saying Approved.
            The seal is of the piece as it WAS: it is taken off, so the card's Approve is lit and the piece is approved again as it now is;
@@ -14853,7 +14858,7 @@ const Engrave = window.Engrave = (() => {
       } else continue;
       try { Review.remove("eng:" + j.key); } catch (_) { /* nothing to take down */ }
     }
-    if (busy) { const k = poolId + "|" + face, t = (artChanged._again.get(k) || 0) + 1; if (t <= 40) { artChanged._again.set(k, t); setTimeout(() => { try { artChanged(poolId, face, why); } catch (_) {} }, 1500); } else artChanged._again.delete(k); } else artChanged._again.delete(poolId + "|" + face);
+    if (busy) { const k = poolId + "|" + face, t = (artChanged._again.get(k) || 0) + 1; if (t <= 40) { artChanged._again.set(k, t); setTimeout(() => { try { artChanged(poolId, face, why, since); } catch (_) {} }, 1500); } else artChanged._again.delete(k); } else artChanged._again.delete(poolId + "|" + face);
     if (n) { try { Session.schedule(); render(); } catch (_) { /* drawn with the next render */ } }
     return n;
   }
@@ -30255,7 +30260,8 @@ if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
   },
   changed: async (poolId, face, info) => {
     if (info && info.sync) { try { window.CharmNestMadeThumb?.adopt([poolId]); } catch (_) { /* THUMBSYNC: an edit made on another computer is shown here, and sent from there */ } }
-    let n = 0; try { n = Engrave.artChanged(poolId, face); if (info && info.cut) n += Engrave.artChanged(poolId, face === "front" ? "back" : "front", `This charm's cut line changed since the words were approved — fit the words again`); } catch (e) { console.warn("artwork edit: engraving", e); }   // (a cut line is both faces' edge)
+    const since = info && info.sync && info.record ? +info.record.at || 0 : 0;   // (APPROVEDAFTER: an edit read from the cloud says when it was made)
+    let n = 0; try { n = Engrave.artChanged(poolId, face, undefined, since); if (info && info.cut) n += Engrave.artChanged(poolId, face === "front" ? "back" : "front", `This charm's cut line changed since the words were approved — fit the words again`, since); } catch (e) { console.warn("artwork edit: engraving", e); }   // (a cut line is both faces' edge)
     const sh = Pool.sheetOf(poolId), rec = info && info.record;
     agent({ pool: true, ...(sh ? { metal: sh.metal } : {}) }, "info", `${poolId}: its own ${face} artwork ${rec ? `edited${rec.by ? " by " + rec.by : ""}` : "taken back to the master drawing"}${info && info.sync ? " (on another computer)" : ""}${n ? `; its ${face} engraving is fitted again and waits for Approve` : ""}${sh && sh.outputs ? `; ${sh.fileBase || "its sheet"} writes its files again` : ""}`);
     // (ARTUNCUT, Paul 16 Nov 2026: a piece on a sheet whose green line cut is recorded but that the laser has not cut: no page nests or writes such a sheet (its layout is fixed), so the page that SAVED
