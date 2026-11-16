@@ -140,7 +140,8 @@
     const gap = !m.reset && n != null && m.from != null && m.from !== n && m.n !== n;
     if (gap) stats.gaps++;
     if (m.reset) seenN.clear();   // GRIDGAPS, Paul 15 Nov 2026: after a reset (the cloud's counts began again, a sandbox reset) the counts this computer noted from its own writes are from the old series; kept, they would hide another computer's later write of the same name (its new count is lower)
-    if (m.n != null) n = m.n;
+    if (m.reset) { for (const k of Object.keys(ownRun)) delete ownRun[k]; }
+    if (m.n != null) { n = m.n; polledN(m.n); }
     if (m.cg != null) cg = m.cg;
     if (m.first && !gap) return;   // (the first answer of a fresh computer names nothing: what the tabs read at start is what the cloud holds)
     let keys = Array.isArray(m.keys) ? m.keys : [];
@@ -351,9 +352,16 @@
   }
   // (the shard of a name, as charmNestLibrary.js FEED_SHARDS keeps them)
   const shardOf = k => (k === '*' || 'strc'.includes(k[0]) ? 'lib' : k[0] === 'p' ? 'p' : k[0] === 'o' ? 'o' : 'x');
+  const ownRun = {}, taint = {}, SHARD_AT = ['lib', 'p', 'o', 'x'];   // (OWNONLY: per shard, the last count known to be the feed's answer or this computer's own run after it; taint: a count was missing)
+  function polledN(nStr) { const ns = String(nStr == null ? '' : nStr).split('.').map(Number); SHARD_AT.forEach((sh, i) => { const v = ns[i]; if (!Number.isFinite(v)) return; if (ownRun[sh] == null || v >= ownRun[sh]) { ownRun[sh] = v; taint[sh] = false; } }); }
   function noteSeen(keys, counts) {
     if (!counts) return;
-    for (const k of keys) { const c = +counts[shardOf(k)] || 0; if (c > (seenN.get(k) || 0)) { seenN.delete(k); seenN.set(k, c); } }
+    // (OWNONLY, Paul 16 Nov 2026: "Charm Editor save reaching the second computer": a name this computer wrote was skipped in the feed's next answer even when ANOTHER computer had written the same name
+    //  a moment before (two computers on one order within one question): that computer's change was then never read here. A write of this computer is noted as its own only while every count
+    //  of its shard since the last answer is this computer's; one count missing means somebody else wrote in between, and nothing is noted until the next answer: a name is then read once more, never missed)
+    const ok = {};
+    for (const sh of new Set(keys.map(shardOf))) { const c = +counts[sh] || 0; if (!c) continue; if (!taint[sh] && ownRun[sh] != null && c === ownRun[sh] + 1) { ownRun[sh] = c; ok[sh] = true; } else if (ownRun[sh] == null || c > ownRun[sh]) taint[sh] = true; }
+    for (const k of keys) { const sh = shardOf(k), c = +counts[sh] || 0; if (ok[sh] && c > (seenN.get(k) || 0)) { seenN.delete(k); seenN.set(k, c); } }
     while (seenN.size > 3000) seenN.delete(seenN.keys().next().value);
   }
   const NAME = /^(\*|[strcpxomadg]:(?:[\w\-]{1,80}|\*))$/;
