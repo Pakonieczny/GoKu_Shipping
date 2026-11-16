@@ -148,16 +148,16 @@
     else if (c.type === "delete") r = await G.deleteEmpty(a.sheetId);
     // (REMOTENEST, Paul 15 Nov 2026: "you re-nest it and then check that everything is OK everywhere"): a draft sheet of the run is nested again here, exactly as its Re-nest button does (never a sheet that was cut or is in a committed set: startNest's own rules stand), and the answer waits for the nest and its save
     else if (c.type === "renest") {
-      const all = safe(() => root.allSheets(), []) || [], pg = all.find(p => p && p.sheetId === a.sheetId);
+      const all = safe(() => (typeof allSheets === "function" ? allSheets() : root.allSheets()), []) || [], nest = safe(() => (typeof startNest === "function" ? startNest : root.startNest), null), pg = all.find(p => p && p.sheetId === a.sheetId);   // (the page's own functions, by their names: they are not properties of the window)
       if (!pg) r = { ok: false, why: "That sheet is not on the computer that carries the run." };
       else if (pg.roseCutAt || +pg.laserDoneAt > 0) r = { ok: false, why: "That sheet was already cut: it is not nested again." };
       else if (["nesting", "finishing", "queued"].includes(pg.status)) r = { ok: false, why: "That sheet is being nested right now." };
-      else if (typeof root.startNest !== "function") r = { ok: false, why: "not ready" };
+      else if (typeof nest !== "function") r = { ok: false, why: "not ready" };
       else {
         const step = stepper(c), name = pg.fileBase || pg.sheetId, t0 = Date.now(); step({ text: "Starting the nest…" });
         try {
           if (pg.recalled && !(pg.charms || []).length && root.Recall && root.Recall.rebuild) await root.Recall.rebuild(pg);
-          pg._byHand = true; root.startNest(pg);
+          pg._byHand = true; nest(pg);
           await new Promise(res => setTimeout(res, 1500));
           while (Date.now() - t0 < 9 * 60000 && (["nesting", "finishing", "queued"].includes(pg.status) || (pg.persisted && !pg.persistedDone && !pg.problem))) { step({ text: pg.status === "nesting" ? `Nesting ${(pg.placements || []).length} of ${(pg.charms || []).length}…` : "Saving the sheet…" }); await new Promise(res => setTimeout(res, 1000)); }
           const ok = ["complete", "partial"].includes(pg.status) && !pg.problem;
