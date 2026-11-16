@@ -28142,7 +28142,7 @@ const Recall = window.Recall = (() => {
      the cloud has them, each drawn from its saved record and picture as a recalled sheet is (read only: nothing is nested, rebuilt or written; one read of the run's sheet list, at most every ten minutes; a sheet the
      changes feed names is refreshed by charm-nest-cloud-sheets.js). Only on a computer with no run of its own, no set opened on purpose, and no piece of its own on any card: this computer's own work is never replaced.
      unfollow() takes them off again before a run is started here (a run resumed here builds its sheets on those same pages: restoreRunSheets). */
-  let followAt = 0, following = null, followSig = "";
+  let followAt = 0, following = null, followSig = "", followIds = "";
   /* (CACHEONLY, Paul 15 Nov 2026: "Computers are only fed the truth ... never duplicating the truth in their own way"): what this computer holds of the run it follows is a COPY, and the cloud's replaces it: a page of
      that run (or one holding only what was shown from the cloud) is given up to the cloud's sheets, whatever this computer's saved workspace says. A card is left alone only while something is really in hand on it:
      a nest at work, an uncut contour planned here, or pieces of no run at all (files a person dropped here). */
@@ -28167,6 +28167,20 @@ const Recall = window.Recall = (() => {
         for (const at of seats.values()) { const sub = at.map(i => copy[i]); if (!sub.some(has)) continue; sub.sort((a, b) => (has(a) ? 0 : 1) - (has(b) ? 0 : 1) || (has(a) ? +a.draftOrder - +b.draftOrder : 0)); at.forEach((i, k) => { sheets[i] = sub[k]; }); } }
       const sig = runId + "|" + sheets.map(x => x.id).sort().join("|") + "#" + sheets.filter(x => x.draftOrder != null).map(x => x.id + ":" + x.draftOrder).join("|");   // (ORDERCLOUD 2, Paul 15 Nov 2026: a draft order changed on the carrying computer is a change here too: the cards are listed again in that order)
       if (sig === followSig && allSheets().some(p => p.followed) && !allSheets().some(p => !p.followed && (p.charms || []).length && (p.runId || null) === runId)) { liveLater(runId); return true; }
+      // (ORDERINPLACE, Paul 15 Nov 2026: a reorder made the computer that follows build its whole card again, which closed the Options window it was looking at): when the run's sheets are the same and only their order changed, the sheets here are put in that order where they stand; nothing is emptied or built again
+      { const idSig = runId + "|" + sheets.map(x => x.id).sort().join("|");
+        if (idSig === followIds && allSheets().some(p => p.followed)) {
+          let all = true;
+          for (const m of METALS) {
+            const prim = S.sheets[m.key], mine = sheets.filter(x => x.metal === m.key); if (!mine.length) continue;
+            const by = new Map(prim.pages.filter(p => p.sheetId).map(p => [p.sheetId, p])); if (!mine.every(x => by.has(x.id))) { all = false; break; }
+            const arr = mine.map(x => by.get(x.id)), slots = arr.map(p => prim.pages.indexOf(p)).sort((x, y) => x - y), act = prim.pages[prim.active];
+            mine.forEach((x, k) => { const p = arr[k]; if (x.draftOrder != null && Number.isFinite(+x.draftOrder)) { p.draftOrder = +x.draftOrder; p._savedDO = p.draftOrder; } if (Number.isFinite(+x.page)) p.page = +x.page; });
+            if (slots.some((at, k) => prim.pages[at] !== arr[k])) { slots.forEach((at, k) => { prim.pages[at] = arr[k]; }); prim.active = Math.max(0, prim.pages.indexOf(act)); }
+          }
+          if (all) { followSig = sig; try { CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub(); } catch (_) { /* drawn at the next look */ } liveLater(runId); return true; }
+        }
+        followIds = idSig; }
       followSig = sig;
       for (const m of METALS) {
         const prim = S.sheets[m.key], mine = sheets.filter(x => x.metal === m.key);
