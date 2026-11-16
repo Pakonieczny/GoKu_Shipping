@@ -34,6 +34,10 @@
  *                        { "SKU": charmIndex }; "SKU__S" pins a sized line. { "SKU": "elsewhere" } leaves the SKU to
  *                        another master: every charm of this sheet loses it (a SKU read from two masters has one home). Without a pin the first charm of the page keeps the SKU
  *                        (the one labelCharms reports as kept: the label highest on the page), the same on every run.
+ *    --twin-first        TWINPICK, Paul 15 Nov 2026: give a SKU written under more than one charm to the FIRST charm of the page again (the old rule). Without it the owner is
+ *                        decided by rules, in this order, and the run's report says which rule decided each twin SKU: a --pin; the charm whose label is the SKU with EXACT case
+ *                        ("KANGAROO") over one whose label differs only by case ("Kangaroo"); a charm with a hoop over one without (not for a Huggie SKU); equal sizes (< 0.5 mm): the
+ *                        first on the page; anything else is NOT guessed: the SKU is left out ("blocked: undecided twin") and listed with each candidate's charm number, size and label.
  *    --out-dir DIR       STAGE instead of upload: write every per-SKU .ai / .png and records.json (the exact entries that
  *                        would be sent to masterPutIndex) under DIR and touch no server (no --origin needed). Review the
  *                        count, the sizes and a few files, then run again without --out-dir to write the same thing.
@@ -76,6 +80,8 @@ function args(argv) {
     else if (a === "--only") { o.only = String(v || ""); i++; }
     else if (a === "--new-hash") o.newHash = true;
     else if (a === "--pin") { o.pin = String(v || ""); i++; }
+    else if (a === "--twin-first") o.twinFirst = true;
+    else if (a === "--assign-only") o.assignOnly = true;
     else if (a === "--out-dir") { o.outDir = String(v || ""); i++; }
     else if (a === "--work-dir") { o.workDir = String(v || ""); i++; }
     else if (a === "--no-pairs") o.noPairs = true;
@@ -167,6 +173,85 @@ function pinMap(spec) {
   for (const [k, v] of Object.entries(src || {})) m.set(String(k).trim().toUpperCase().replace(/\s*[·•]\s*([A-Z0-9]{1,3})$/, "__$1"), v);
   return m;
 }
+/* TWINPICK, Paul 15 Nov 2026: "when the same SKU is written under more than one drawing, do not take the first on the page; decide it by rules, say which rule, and do not guess".
+ * A master draws many names three times in a column: the Huggie version, a SMALLER middle drawing with no hoop whose label is mixed-case ("Kangaroo"), and the FULL-SIZE charm with
+ * a hoop whose label block carries the exact upper-case SKU ("KANGAROO"). Taking the first on the page gave the small one. twinDecide is the pure rule (tests/sku/twin-pick.cjs runs it). */
+const TWIN_SIZE_MM = 0.5;                  // candidates that differ by less than this in both sides are the same size
+const HEADING_RATIO = 2.5;                 // a label whose text is this many times taller than the sheet's usual SKU label is a section heading ("LEMON", "MISCELLANEOUS"), not a SKU
+/** cands: [{ index, exact: label text equals the SKU in exact case, hoop: the drawing carries a hoop/ring, mm: [w, h] }] in page order. opts: { huggie }.
+ *  Returns { owner, rule } or { undecided: true, rule: "undecided" }. Rule order: exact case, then a hoop (not for a Huggie SKU), then equal sizes (first on the page); nothing else decides. */
+function twinDecide(cands, opts) {
+  opts = opts || {}; let pool = cands.slice(), why = [];
+  if (pool.length < 2) return { owner: pool[0] ? pool[0].index : null, rule: "single candidate" };
+  const ex = pool.filter(c => c.exact);
+  if (ex.length && ex.length < pool.length) { pool = ex; why.push("exact case"); if (pool.length === 1) return { owner: pool[0].index, rule: why.join(", then ") }; }
+  if (!opts.huggie) {
+    const hp = pool.filter(c => c.hoop);
+    if (hp.length && hp.length < pool.length) { pool = hp; why.push("hoop beats no hoop"); if (pool.length === 1) return { owner: pool[0].index, rule: why.join(", then ") }; }
+  }
+  const same = pool.every(a => pool.every(b => a.mm && b.mm && Math.abs(a.mm[0] - b.mm[0]) < TWIN_SIZE_MM && Math.abs(a.mm[1] - b.mm[1]) < TWIN_SIZE_MM));
+  if (same) return { owner: pool[0].index, rule: (why.length ? why.join(", then ") + ", then " : "") + "equal size (< 0.5 mm): first on the page" };
+  return { undecided: true, owner: null, rule: "undecided" };
+}
+/** The SKU lines of the sheet read again with where each stands, to know which charm every line of a SKU is under (labelCharms keeps only the first line of a SKU per charm and
+ *  drops the later charms' lines, so the exact-case line of "Kangaroo / KANGAROO" is not kept anywhere). The attachment is labelCharms' own measure (the nearest outline above
+ *  within gapPt, else the list of a line already attached). Returns { lines: [{ key, str, bbox, h, charm }], median }. */
+function readLines(P, parsed, charms, pattern, gapPt, widen) {
+  const runs = parsed.segments.concat(parsed.nested || []).filter(s => s.kind === "text"), texts = [];
+  for (const r of runs) { if (r.pieces && r.pieces.length > 1) { for (const p of r.pieces) if (!p.outlined) texts.push(p); } else if (!r.outlined) texts.push(r); }
+  const lines = [];
+  for (const t of texts) { if (t.undecodable || t.str == null || t.caption || !t.bbox) continue; const lab = P.parseSkuLabel(t.str, pattern); if (!lab) continue; lines.push({ t, lab, cx: (t.bbox[0] + t.bbox[2]) / 2, top: t.bbox[3], bottom: t.bbox[1], h: Math.max(1, t.bbox[3] - t.bbox[1]) }); }
+  const hs = lines.map(x => x.h).sort((a, b) => a - b), median = hs.length ? hs[hs.length >> 1] : 0;
+  const live = charms.filter(c => c.mergedInto == null && c.outline && c.outline.bbox);
+  const under = (cx, c) => { const b = c.outline.bbox, w = b[2] - b[0]; return cx >= b[0] - w * widen && cx <= b[2] + w * widen; };
+  const attached = [], out = [];
+  for (const L of lines.sort((a, b) => b.top - a.top)) {
+    const heading = median > 0 && L.h >= HEADING_RATIO * median;
+    let best = null, bestGap = Infinity, bestDx = Infinity;
+    for (const c of live) { const gap = c.outline.bbox[1] - L.top; if (gap < -1 || gap > gapPt || !under(L.cx, c)) continue; const dxc = Math.abs(L.cx - (c.outline.bbox[0] + c.outline.bbox[2]) / 2); if (best === null || gap < bestGap - 0.5 || (gap <= bestGap + 0.5 && dxc < bestDx)) { bestGap = Math.min(gap, bestGap); best = c; bestDx = dxc; } }
+    if (!best) { let cg = Infinity; for (const a of attached) { const gap = a.line.bottom - L.top; if (gap < -0.5 * L.h || gap > 1.8 * L.h || !under(L.cx, a.charm)) continue; if (Math.abs(a.line.cx - L.cx) > Math.max(a.line.t.bbox[2] - a.line.t.bbox[0], L.t.bbox[2] - L.t.bbox[0])) continue; if (gap < cg) { cg = gap; best = a.charm; } } }
+    if (!best) { let dep = Infinity; for (const c of live) { const gap = c.outline.bbox[1] - L.top; if (gap >= -1 || gap < -3 || !under(L.cx, c)) continue; if (-gap < dep) { dep = -gap; best = c; } } }
+    if (!best) continue;
+    attached.push({ line: L, charm: best });
+    out.push({ key: L.lab.size ? `${L.lab.sku}__${L.lab.size}` : L.lab.sku, sku: L.lab.sku, size: L.lab.size, str: L.t.str, bbox: L.t.bbox, h: L.h, heading, charm: best.index });
+  }
+  return { lines: out, median };
+}
+/** A section heading ("LEMON", "MISCELLANEOUS": text several times taller than the sheet's SKU labels) is no SKU of the drawing above it when another normally-sized label already
+ *  names that drawing: its line is taken off. A heading that is the only label of a drawing stays (it may be that drawing's name) and is only reported. Returns the report rows. */
+function dropHeadings(lab, charms, heads) {
+  const rows = [], gone = new Set(), isHead = x => !!x.bbox && heads.some(h => h.bbox.every((v, i) => Math.abs(v - x.bbox[i]) < 0.01));
+  const keyOf = x => { const sk = String(x.sku || "").toUpperCase(); return x.size ? `${sk}__${String(x.size).toUpperCase()}` : sk; };
+  for (const [i, l] of [...lab.labels]) {
+    const lines = [l].concat(l.extra || []), hl = lines.filter(isHead); if (!hl.length) continue;
+    const rest = lines.filter(x => !isHead(x)), c = charms.find(x => x.index === i);
+    if (!rest.length) { for (const x of hl) rows.push({ str: String(x.str).trim(), sku: x.sku, charm: i, action: "kept: it is the only label of the drawing" }); continue; }
+    for (const x of hl) { rows.push({ str: String(x.str).trim(), sku: x.sku, charm: i, action: `dropped: ${rest[0].sku} already names the drawing`, namedBy: rest[0].sku }); gone.add(i + "|" + keyOf(x)); }
+    const f = rest[0]; l.sku = f.sku; l.size = f.size; l.str = f.str; l.bbox = f.bbox; l.extra = rest.slice(1);
+    if (c) { c.sku = l.sku; c.skuSize = l.size; c.extraSkus = l.extra; }
+  }
+  let n = 0; for (const l of lab.labels.values()) n += 1 + (l.extra || []).length; lab.skuCount = n;
+  return { rows, gone };
+}
+/** The evidence settleTwins reads for one SKU on one charm (exact-case label line, hoop, size in mm), from the lines read again by readLines. */
+function twinContext(P, G, read, lab, charms, gone, first) {
+  let V = null; try { V = require(path.join(root, "charm-nest-vector.js")); } catch (_) {}
+  const MMs = 25.4 / 72, linesOf = l => [l].concat(l.extra || []);
+  const exactOf = s => { const n = String(s || "").replace(/\s+/g, " ").trim(); return n !== "" && n === n.toUpperCase(); };
+  const fromRead = (k, i) => read.lines.filter(x => x.key === k && x.charm === i && !x.heading);
+  return {
+    first: !!first, gone,
+    candidate(k, i, c) {
+      let lines = fromRead(k, i), strs = lines.map(x => x.str);
+      if (!lines.length) { const l = lab.labels.get(i); const own = l ? linesOf(l).filter(x => `${String(x.sku).toUpperCase()}${x.size ? "__" + String(x.size).toUpperCase() : ""}` === k) : []; strs = own.map(x => x.str); }
+      let hoop = false; try { hoop = !!(V && P.findHoops && P.findHoops(c, V).length); } catch (_) {}
+      const b = c.bbox || c.outline.bbox;
+      return { index: i, label: strs.map(s => String(s).trim()).join(" | "), exact: strs.some(exactOf), hoop, mm: [+((b[2] - b[0]) * MMs).toFixed(2), +((b[3] - b[1]) * MMs).toFixed(2)] };
+    },
+    proto(k, i) { const x = read.lines.find(y => y.key === k && y.charm === i && !y.heading) || read.lines.find(y => y.key === k && y.charm === i); return x ? { sku: x.sku, size: x.size, str: x.str, bbox: x.bbox } : null; },
+  };
+}
+
 /** A SKU read under more than one charm of the sheet ("twins") belongs to ONE of them. labelCharms reports every later charm in
  *  `duplicates` and means to drop the SKU from it, but its drop removes only the first line it finds: a charm whose label text
  *  repeats the SKU on a second line (or a stack that lists it twice) keeps it, so both charms were built under one file name and one
@@ -174,7 +259,7 @@ function pinMap(spec) {
  *  index took first. Here the owner is settled before anything is built, the same on every run: the charm a pin names, else the first
  *  charm of the page (the one labelCharms kept). Every other charm loses every line of that SKU (it keeps its other SKUs, or becomes
  *  unlabelled), and a SKU written twice under one charm is kept once. Returns the decisions, for the report. */
-function settleTwins(lab, charms, pins) {
+function settleTwins(lab, charms, pins, tw) {   // (tw: TWINPICK, Paul 15 Nov 2026 — the twin rules' evidence, see twinContext; without it the owner is the first charm of the page, as it was)
   const keyOf = x => { const sk = String(x.sku || "").toUpperCase(); return x.size ? `${sk}__${String(x.size).toUpperCase()}` : sk; };
   const linesOf = l => [l].concat(l.extra || []);
   const cOf = i => charms.find(c => c.index === i);
@@ -196,14 +281,22 @@ function settleTwins(lab, charms, pins) {
     if (lines.length !== 1 + (l.extra || []).length) setLines(i, lines);
   }
   const claims = new Map(), kept = new Map(), add = (k, i) => { if (!claims.has(k)) claims.set(k, new Set()); claims.get(k).add(i); };
+  const gone = (k, i) => !!(tw && tw.gone && tw.gone.has(i + "|" + k));      // a section heading taken off a charm (dropHeadings) no longer claims the SKU for it
   for (const [i, l] of lab.labels) for (const x of linesOf(l)) add(keyOf(x), i);
-  for (const d of lab.duplicates || []) { const k = keyOf(d); add(k, d.charmIndex); add(k, d.firstIndex); if (!kept.has(k)) kept.set(k, d.firstIndex); }
+  for (const d of lab.duplicates || []) { const k = keyOf(d); if (!gone(k, d.charmIndex)) add(k, d.charmIndex); if (!gone(k, d.firstIndex)) add(k, d.firstIndex); if (!kept.has(k) && !gone(k, d.firstIndex)) kept.set(k, d.firstIndex); }
   const out = [];
   for (const [k, set] of claims) {
     const pin = pins && pins.get(k), away = pin === "elsewhere" || (pin && pin.elsewhere === true);   // "elsewhere": another master owns this SKU
     if (set.size < 2 && !away) continue;
     const idx = [...set].sort((a, b) => a - b); let owner = kept.has(k) && set.has(kept.get(k)) ? kept.get(k) : idx[0], rule = "first on the page";
     if (away) { for (const i of idx) { const l = lab.labels.get(i); if (l) setLines(i, linesOf(l).filter(x => keyOf(x) !== k)); } out.push({ key: k, owner: null, others: idx, rule: "elsewhere" }); continue; }
+    let cands = null;
+    if (pin == null && tw && !tw.first) {                                   // TWINPICK, Paul 15 Nov 2026: exact case, then a hoop, else a tie of equal sizes; anything else is not guessed
+      cands = idx.map(i => tw.candidate(k, i, cOf(i)));
+      const dec = twinDecide(cands, { huggie: /HUGGIE/.test(k) });
+      if (dec.undecided) { for (const i of idx) { const l = lab.labels.get(i); if (l) setLines(i, linesOf(l).filter(x => keyOf(x) !== k)); } out.push({ key: k, owner: null, others: idx, rule: "undecided", cands }); continue; }
+      owner = dec.owner; rule = dec.rule;
+    } else if (pin == null && tw && tw.first) rule = "first on the page (--twin-first)";
     if (pin != null) {
       let want = typeof pin === "number" ? pin : pin && pin.index != null ? +pin.index : null;
       if (want == null && pin && Array.isArray(pin.at)) {
@@ -216,11 +309,11 @@ function settleTwins(lab, charms, pins) {
     }
     // an owner that lost the line to labelCharms' duplicate rule (another charm was first on the page, so this one's line was dropped) gets it back
     if (!(lab.labels.get(owner) && linesOf(lab.labels.get(owner)).some(x => keyOf(x) === k))) {
-      const proto = idx.map(i => lab.labels.get(i)).filter(Boolean).flatMap(linesOf).find(x => keyOf(x) === k);
+      const proto = idx.map(i => lab.labels.get(i)).filter(Boolean).flatMap(linesOf).find(x => keyOf(x) === k) || (tw && tw.proto ? tw.proto(k, owner) : null);
       if (proto) giveLine(owner, proto);
     }
     for (const i of idx) if (i !== owner) { const l = lab.labels.get(i); if (l) setLines(i, linesOf(l).filter(x => keyOf(x) !== k)); }
-    out.push({ key: k, owner, others: idx.filter(i => i !== owner), rule });
+    out.push(Object.assign({ key: k, owner, others: idx.filter(i => i !== owner), rule }, cands ? { cands } : {}));
   }
   let n = 0; for (const l of lab.labels.values()) n += 1 + (l.extra || []).length; lab.skuCount = n;
   return out;
@@ -282,7 +375,19 @@ async function main(argv, log = console.log) {
   const g = P.groupCharms(parsed, { minPt: o.minPt });
   const pattern = o.pattern ? new RegExp(o.pattern) : P.SKU_PATTERN_DEFAULT;
   const lab = P.labelCharms(parsed, g.charms, { pattern, gapPt: o.gapMm / MM, widen: 0.25 });
-  const twins = settleTwins(lab, g.charms, pinMap(o.pin));
+  // TWINPICK, Paul 15 Nov 2026: section headings come off the drawing above them, then the twins are decided by rule (see twinDecide); --twin-first keeps the first on the page
+  let tw = null, headings = [], headingRows = [];
+  if (!o.twinFirst) {
+    const read = readLines(P, parsed, g.charms, pattern, o.gapMm / MM, 0.25);
+    headings = read.lines.filter(x => x.heading);
+    const dh = dropHeadings(lab, g.charms, headings); headingRows = dh.rows;
+    tw = twinContext(P, G, read, lab, g.charms, dh.gone, false);
+    const seen = new Set(headingRows.map(r => r.str + "|" + r.charm));
+    for (const h of read.lines.filter(x => x.heading)) if (!seen.has(String(h.str).trim() + "|" + h.charm)) headingRows.push({ str: String(h.str).trim(), sku: h.sku, charm: h.charm, action: "left as it was (not a label of that drawing)" });
+    if (headingRows.length) log(`  ${headingRows.length} section heading(s) (text >= ${HEADING_RATIO}x the usual label, sheet median ${read.median.toFixed(1)} pt): ${headingRows.filter(r => /^dropped/.test(r.action)).length} taken off the drawing above, the rest kept or not attached: ${headingRows.slice(0, 30).map(r => `${r.str} (#${r.charm}, ${r.action.split(":")[0]})`).join(", ")}${headingRows.length > 30 ? " ..." : ""}`);
+  }
+  const undecided = [];
+  const twins = settleTwins(lab, g.charms, pinMap(o.pin), tw);
   const liveCharms = g.charms.filter(c => c.mergedInto == null).length;      // (a part that joined its charm is no charm of its own: labelCharms, absorbLooseParts)
   log(`${liveCharms} charm outline(s) · ${lab.labels.size} labelled (${lab.skuCount} SKU line(s)) · ${lab.unlabelled.length} unlabelled · ${lab.orphans.length} orphan label(s) · ${lab.duplicates.length} duplicate(s)${lab.undecodable.length ? ` · ${lab.undecodable.length} text run(s) unreadable (outlined or CID font without ToUnicode)` : ""}`);
   for (const n of (P.liveTextNotes ? P.liveTextNotes(parsed) : [])) log(`  ${n.kind === "warn" ? "! " : ""}${n.text}`);   // (live text drawn as outlines, or a font that could not be: MONOGRAMFILE, 15 Oct 2026)
@@ -300,8 +405,21 @@ async function main(argv, log = console.log) {
   if ((lab.inlays || []).length) log(`  ${lab.inlays.length} letter(s) set inside their design are welded into its cut line, as outlines: ${lab.inlays.slice(0, 30).map(x => `${x.char} in ${x.sku}`).join(", ")}${lab.inlays.length > 30 ? " …" : ""}`);
   if (lab.unlabelled.length) log(`  unlabelled charms (by index): ${lab.unlabelled.slice(0, 40).join(", ")}${lab.unlabelled.length > 40 ? " …" : ""}`);
   if (lab.duplicates.length) log(`  duplicates: ${lab.duplicates.slice(0, 40).map(d => `${d.sku}/${d.also}`).join(", ")}`);
-  if (twins.length) log(`  ${twins.length} SKU(s) settled: read under more than one charm and kept on one, or left to another master (${twins.filter(t => t.rule === "pinned").length} pinned, ${twins.filter(t => t.rule === "elsewhere").length} elsewhere, the rest the first on the page): ${twins.slice(0, 30).map(t => `${t.key} -> ${t.owner == null ? "elsewhere" : "#" + t.owner}`).join(", ")}${twins.length > 30 ? " …" : ""}`);
+  if (twins.length) {
+    log(`  ${twins.length} SKU(s) settled: read under more than one charm and kept on one, or left to another master or undecided (${twins.filter(t => t.rule === "pinned").length} pinned, ${twins.filter(t => t.rule === "elsewhere").length} elsewhere, ${twins.filter(t => t.rule === "undecided").length} undecided and left out): ${twins.slice(0, 30).map(t => `${t.key} -> ${t.owner == null ? t.rule : "#" + t.owner}`).join(", ")}${twins.length > 30 ? " ..." : ""}`);
+    // TWINPICK: which rule decided each twin SKU
+    const byRule = {}; for (const t of twins) byRule[t.rule] = (byRule[t.rule] || 0) + 1;
+    log(`  twin rules: ${Object.entries(byRule).map(([r, n]) => `${n} by ${r}`).join("; ")}`);
+    for (const t of twins) log(`    twin ${t.key}: ${t.owner == null ? (t.rule === "undecided" ? "BLOCKED: undecided twin" : t.rule) : "#" + t.owner} [${t.rule}]${t.cands ? " candidates " + t.cands.map(c => `#${c.index} ${c.mm[0]}x${c.mm[1]} mm "${c.label}"${c.exact ? " exact" : ""}${c.hoop ? " hoop" : ""}`).join("; ") : ""}`);
+    for (const t of twins) if (t.rule === "undecided") undecided.push({ sku: t.key, reason: "blocked: undecided twin", cands: t.cands });
+  }
 
+  if (o.assignOnly && o.outDir) {                                          // --assign-only (TWINPICK analysis): which charm owns each SKU after the twins are settled, written to <out-dir>/assign.json; nothing is built
+    const bySku = {}, byCharm = {}; for (const [i, l] of lab.labels) { byCharm[i] = [l].concat(l.extra || []).map(x => ({ sku: x.sku, size: x.size, str: x.str })); for (const x of byCharm[i]) bySku[x.size ? `${x.sku}__${x.size}` : x.sku] = i; }
+    const sz = c => { const b = c.bbox || c.outline.bbox; return [+((b[2] - b[0]) * MM).toFixed(2), +((b[3] - b[1]) * MM).toFixed(2)]; };
+    fs.writeFileSync(path.join(o.outDir, "assign.json"), JSON.stringify({ rule: o.twinFirst ? "first on the page (--twin-first)" : "twinpick", bySku, byCharm, mm: Object.fromEntries([...lab.labels.keys()].map(i => [i, sz(g.charms.find(c => c.index === i))])), twins: twins.map(t => ({ key: t.key, owner: t.owner, others: t.others, rule: t.rule, cands: t.cands })), undecided, headings: headingRows }));
+    log(`assignment written: ${Object.keys(bySku).length} SKU(s)`); return { assignOnly: true };
+  }
   let masterUp = null;
   if (net && o.uploadMaster) { masterUp = await upload(o.origin, o.passcode, `charmnest/master/files/${masterHash.slice(0, 12)}-${name.replace(/[^\w.\-]+/g, "_")}`, buf, "application/pdf"); log(`master stored at ${masterUp.path}`); }
 
@@ -357,6 +475,7 @@ async function main(argv, log = console.log) {
     if (!items.length) { log("nothing new on this sheet"); return { file: name, masterHash, charms: liveCharms, written: 0, held: before, dry: false, at: new Date().toISOString() }; }
   }
   const entries = [], blocked = [], skus = [], kept = [], ringsLeft = [], islands = [];   // kept: pair designs left as they were (see one()); ringsLeft: a hoop that could not join its charm, by SKU
+  for (const u of undecided) blocked.push({ sku: u.sku, reason: u.reason });   // TWINPICK, Paul 15 Nov 2026: a twin no rule can decide is left out of the upload, never guessed
   const keyOf = fileKeys(items, held);                                          // one file name per charm, whatever the server does to the characters
   // a row of bodies under one label that is surely a mismatched pair is built as ONE design (both bodies in its file); every other charm is the object it was
   const pairs = pairLayer(P, G, Pair, g, lab, items, o, log);
@@ -432,6 +551,7 @@ async function main(argv, log = console.log) {
   let conflicts = [], sizeMoved = [], keptAtServer = [], rejected = [], replaced = [], written = 0;
   if (stage) {
     written = new Set(entries.map(e => String(e.sku).toUpperCase())).size;
+    fs.writeFileSync(path.join(o.outDir, "twins.json"), JSON.stringify({ rule: o.twinFirst ? "first on the page (--twin-first)" : "pin, exact case, hoop, equal size, else undecided", twins, undecided, headings: headingRows }, null, 1));
     fs.writeFileSync(path.join(o.outDir, "records.json"), JSON.stringify({ masterHash, masterName: name, hashSource: "local", replaces: [...new Set(o.replaces)], only: only ? [...only] : null, entries, blocked }, null, 1));
     log(`staged ${written} SKU record(s) and ${new Set(entries.map(e => e.aiPath)).size} design file(s) in ${o.outDir} (records.json, files/) — nothing was sent anywhere`);
   }
@@ -473,9 +593,9 @@ async function main(argv, log = console.log) {
   }
   log(`index written: ${written} SKU(s) on ${o.origin} — the Master tab shows them after Reload index`);
   }
-  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: liveCharms, labelled: lab.labels.size, unlabelled: lab.unlabelled, absorbed: lab.absorbed || [], titles: lab.titles || [], onDesign: lab.onDesign || [], sized: sized.filter(x => x.r && x.r.k).map(x => ({ sku: x.sku, fromMm: x.r.fromMm, toMm: x.r.toMm })), sizeKept: sized.filter(x => x.r && x.r.skipped && x.r.skipped !== "off" && x.r.skipped !== "fits" && x.r.fromMm > o.maxMm).map(x => ({ sku: x.sku, mm: x.r.fromMm, why: x.r.skipped })), inlays: lab.inlays || [], islands, looseRings: lab.looseRings || [], ringsLeft, slashLabels: [...lab.labels.values()].flatMap(l => [l].concat(l.extra || [])).filter(x => x.slash).map(x => ({ typed: String(x.str).trim(), sku: x.sku })), orphans: lab.orphans, duplicates: lab.duplicates, unlabelledWhy, joinedLabels: lab.joined || [], ignoredText: lab.ignoredText || [], liveText: (P.liveTextNotes ? P.liveTextNotes(parsed) : []).map(n => n.text), captions: (lab.captions || []).map(c => c.str), pageCount: parsed.pageCount || 1, twins, pairs: pairs.rows, pairsKept: kept, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, replaced, pairsKeptAtServer: keptAtServer, rejected, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
+  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: liveCharms, labelled: lab.labels.size, unlabelled: lab.unlabelled, absorbed: lab.absorbed || [], titles: lab.titles || [], onDesign: lab.onDesign || [], sized: sized.filter(x => x.r && x.r.k).map(x => ({ sku: x.sku, fromMm: x.r.fromMm, toMm: x.r.toMm })), sizeKept: sized.filter(x => x.r && x.r.skipped && x.r.skipped !== "off" && x.r.skipped !== "fits" && x.r.fromMm > o.maxMm).map(x => ({ sku: x.sku, mm: x.r.fromMm, why: x.r.skipped })), inlays: lab.inlays || [], twinRule: o.twinFirst ? "first on the page (--twin-first)" : "pin, exact case, hoop, equal size, else undecided", twins: twins.map(t => ({ sku: t.key, owner: t.owner, others: t.others, rule: t.rule, cands: t.cands })), undecidedTwins: undecided, headings: headingRows, islands, looseRings: lab.looseRings || [], ringsLeft, slashLabels: [...lab.labels.values()].flatMap(l => [l].concat(l.extra || [])).filter(x => x.slash).map(x => ({ typed: String(x.str).trim(), sku: x.sku })), orphans: lab.orphans, duplicates: lab.duplicates, unlabelledWhy, joinedLabels: lab.joined || [], ignoredText: lab.ignoredText || [], liveText: (P.liveTextNotes ? P.liveTextNotes(parsed) : []).map(n => n.text), captions: (lab.captions || []).map(c => c.str), pageCount: parsed.pageCount || 1, twins, pairs: pairs.rows, pairsKept: kept, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, replaced, pairsKeptAtServer: keptAtServer, rejected, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
   try { fs.writeFileSync(workBase + ".index-report.json", JSON.stringify(report, null, 1)); log(`report: ${workBase}.index-report.json`); } catch (_) {}
   return report;
 }
-module.exports = { main, api, upload, onlySet, settleTwins, pinMap, fileKeys, thumbnailPng, pairLayer, symLevel };
+module.exports = { main, api, upload, onlySet, settleTwins, twinDecide, dropHeadings, pinMap, fileKeys, thumbnailPng, pairLayer, symLevel };
 if (require.main === module) main(process.argv).catch(e => { console.error("index-master:", e.message); process.exit(1); });
