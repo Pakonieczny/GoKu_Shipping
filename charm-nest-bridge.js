@@ -8808,7 +8808,12 @@ const Engrave = window.Engrave = (() => {
     const raw = flat(rd.raw || (sp.personalization || []).join(" "));
     return !!raw && flat(w.join(" ")) === raw;
   };
-  const sheetFor = (job, poolId) => job.editingBack ? (allSheets().find(p=>p.sheetId === job.editSheet.sheetId && p.charms.some(c=>c.poolId === poolId)) || job.editSheet) : Pool.sheetOf(poolId);
+  /* SAVEDSHEET (Paul, 16 Nov 2026: "Why is another computer not allowing the user to approve the engraving but on my computer it was approved without any issues ... This must be super robust"). A piece
+     on a sheet this page holds only as a saved card (a sheet with a recorded cut is never built live on a computer that follows the run, or after a reload) had no sheet here: Approve answered "The charm
+     needs its current sheet and outline before approval". Its sheet is the card its pool row names: the approval is recorded on that sheet, whose list of backs is then read from the cloud (as the
+     back editor of a saved sheet does), so the list this page holds is never a part of it. */
+  const savedSheetOf = poolId => { try { const row = B.pool.rows.get(poolId), sid = row && row.sheetId; return (sid && !["abandoned", "superseded"].includes(row.state) && allSheets().find(p => p.sheetId === sid)) || null; } catch (_) { return null; } };
+  const sheetFor = (job, poolId) => job.editingBack ? (allSheets().find(p=>p.sheetId === job.editSheet.sheetId && p.charms.some(c=>c.poolId === poolId)) || job.editSheet) : Pool.sheetOf(poolId) || savedSheetOf(poolId);
   let openingBack = null, openingBackId = null;
   /** The face ("front" | "back") of a saved record or a job; anything that does not say it is the front is the back (this block stands alone: charm-nest-engrave-faces.js is the one place that reads a face). */
   const faceOfRec = x => (window.CharmNestEngraveFaces ? window.CharmNestEngraveFaces.faceOf(x) : "back");
@@ -12965,7 +12970,7 @@ const Engrave = window.Engrave = (() => {
         if (!recorded) return;
         agent({ metal: sh.metal, engrave: true }, "ENGRAVE", `${isFront(job) ? "Front" : "Back"} file written and re-verified: ${name}.ai (${rec.reference?.redrawn ? "cut reference redrawn from the exact transformed paths" : "original cut bytes under the mirror matrix"})`);
       }
-      if(job.editingBack) {const {sheet:latest}=await api("charmNestLibrary",{op:"getSheet",id:sh.sheetId});sh.backPool=latest.backPool || [];}
+      if(job.editingBack || !(sh.charms || []).some(c => poolIds.includes(c.poolId))) {const {sheet:latest}=await api("charmNestLibrary",{op:"getSheet",id:sh.sheetId});sh.backPool=(latest && latest.backPool) || [];}   // (SAVEDSHEET: a sheet held here as a saved card: its backs as the cloud has them)
       scheduleBackOutputs(sh);
     }
     } finally { if (shown) refreshBacks(); }
