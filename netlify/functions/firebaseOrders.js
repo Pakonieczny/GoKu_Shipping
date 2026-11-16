@@ -236,6 +236,18 @@ exports.handler = async (event) => {
         if (body.repoDoor === true && out && out.body && out.body.ok === true && out.body.name) { try { const t = await require("./_charmNestRepoAuth").issueEmployee(db, out.body.name); out.body = Object.assign({}, out.body, { repoToken: t.token, repoExp: t.exp }); } catch (e) { console.warn("[pinLogin] repo door:", String((e && e.message) || e).slice(0, 120)); } }
         return { statusCode: out.statusCode, headers: Object.assign({}, CORS, out.headers), body: JSON.stringify(out.body) };
       }
+      /* REPOSIGNED (Paul, 16 Nov 2026: "why is it still asking me for a password? I told you to remove this password"): the repo's no-password door was given only AT sign-in (EMPDOOR), so a
+         person already signed in when it went live, or whose door ran out while they stayed signed in, was still asked for the password. A signed-in person's page now asks for the door by the
+         name it is signed in as: a name on the sign-in list gets the same token a sign-in gives (upload / change / download only, never delete or Settings); any other name gets nothing. Slowed
+         and locked like the number door. Someone still has to be signed in: the page asks only while a person is. */
+      if (body && typeof body === "object" && body.repoDoorFor !== undefined) {
+        const PL = require("./_stationPinLogin"), no = (code, o) => ({ statusCode: code, headers: Object.assign({ "Cache-Control": "no-store" }, CORS), body: JSON.stringify(o) });
+        if (PL.admit(event)) return no(429, { ok: false, error: "too many tries: wait a minute" });
+        let name = ""; try { name = await PL.nameOnRoster(db, body.repoDoorFor); } catch (e) { return no(503, { error: "the sign-in list is not available" }); }
+        if (!name) { PL.failed(event); return no(200, { ok: false, error: "that name is not signed in" }); }
+        try { const t = await require("./_charmNestRepoAuth").issueEmployee(db, name); return no(200, { ok: true, name, repoToken: t.token, repoExp: t.exp }); }
+        catch (e) { return no(503, { error: "repo-unavailable" }); }
+      }
       /* "is this name an Admin?" (_stationAdmins.js): a page asks about ONE name once per sign-in and gets { ok, admin } and nothing
          else (never the list, never a PIN). Read-only; rate limited like the PIN door with counters of its own. Admins are exempt from
          the auto sign-out after 10 minutes without input and at 5:00 pm Toronto time; midnight still ends everybody. */

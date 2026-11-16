@@ -179,4 +179,11 @@ async function rosterGate(db, event, EP) {
 }
 function resetGate() { keyFails.clear(); }
 
-module.exports = { isRosterId, rosterGate, resetGate, pinLogin, admit, failed, lockedNow, tidyName, clientIp, reset, deps, ROSTER_COLL, ROSTER_DOC, LIMITS_COLL, LIMITS_DOC, WINDOW_MS, LOCK_MS, IP_MAX_FAILS, IP_MAX_REQS, GLOBAL_MAX_FAILS, FAIL_MIN_MS, MAX_BODY_CHARS, TOO_MANY };
+/** REPOSIGNED: is this name one of the people on the sign-in list? The list's numbers are never returned or compared with anything the caller sent. → the name as a login answers it, or "". */
+async function nameOnRoster(db, rawName) {
+  const want = tidyName(String(rawName == null ? "" : rawName)).toLowerCase(); if (!want || want.length > 80) return "";
+  const snap = await db.collection(ROSTER_COLL).doc(ROSTER_DOC).get(); if (!snap || !snap.exists) return "";
+  for (const v of Object.values(snap.data() || {})) { const nm = tidyName(v); if (!nm) continue; const login = loginName(nm); if (String(login).toLowerCase() === want || nm.toLowerCase() === want) return login; }
+  return "";
+}
+module.exports = { nameOnRoster, isRosterId, rosterGate, resetGate, pinLogin, admit, failed, lockedNow, tidyName, clientIp, reset, deps, ROSTER_COLL, ROSTER_DOC, LIMITS_COLL, LIMITS_DOC, WINDOW_MS, LOCK_MS, IP_MAX_FAILS, IP_MAX_REQS, GLOBAL_MAX_FAILS, FAIL_MIN_MS, MAX_BODY_CHARS, TOO_MANY };
