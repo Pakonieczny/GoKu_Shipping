@@ -2970,11 +2970,13 @@ async function op_artPut(b) {
     if (rid) {
       let closed = "";
       try { const rs = await db.collection("EtsyMail_Receipts").doc(rid).get(), rc = rs.exists ? rs.data() || {} : null, status = String((rc && rc.status) || "").toLowerCase();
-        if (rc) closed = /cancel/.test(status) ? "cancelled" : rc.is_shipped || (rc.raw && rc.raw.is_shipped) || status === "completed" ? "shipped" : ""; } catch (_) { closed = ""; }
+        if (rc) closed = /cancel/.test(status) ? "cancelled" : ""; } catch (_) { closed = ""; }
+      // (OURSHIPONLY, Paul 16 Nov 2026: what Etsy shows of shipping is not followed; an order is shipped when a shipping station marked it so)
+      if (!closed) { try { const ours = await Timeline.shippedByUs(db, [rid], PREFIX); if (ours[rid]) closed = "shipped"; } catch (_) { /* not known: not closed */ } }
       if (closed) {
         let kept = false;
         try { const pr = await col(POOL).doc(poolId).get(), runId = pr.exists ? str((pr.data() || {}).runId, 80) : ""; if (runId && isId(runId)) { const rn = await col(RUNS).doc(runId).get(); kept = rn.exists && (((rn.data() || {}).keepShipped) || []).map(String).includes(rid); } } catch (_) { kept = false; }
-        if (!kept) return { error: `Order ${rid} was already ${closed} on Etsy: this piece's artwork is no longer changed`, status: 409, orderClosed: closed };
+        if (!kept) return { error: closed === "cancelled" ? `Order ${rid} was cancelled on Etsy: this piece's artwork is no longer changed` : `Order ${rid} was already shipped at the shipping station: this piece's artwork is no longer changed`, status: 409, orderClosed: closed };
       }
     }
   }
@@ -5231,6 +5233,9 @@ async function cancelSteps(b) {
 /* ── the order timeline (_orderTimeline.js): the sorter's own events, and the whole timeline of one order ── */
 const Timeline = require("./_orderTimeline");
 async function op_timelineAdd(b) { feedOrders(b, [(Array.isArray(b.events) ? b.events : [b.events]).map(e => e && orderIdOf(e.orderId))], "o"); return Timeline.add(db, FV, b.events, { prefix: PREFIX, source: "sorter" }); }   // (FEED: o:<order>, the order windows' name)
+/** OURSHIPONLY: { orders: [ids] } -> { shipped: { <id>: { at, by, id } } }: the orders a shipping station marked shipped (never what Etsy says). Read only. */
+async function op_shippedByUs(b) { return { shipped: await Timeline.shippedByUs(db, Array.isArray(b.orders) ? b.orders : [], PREFIX) }; }
+if (typeof NO_GEN_BUMP !== "undefined" && NO_GEN_BUMP.add) NO_GEN_BUMP.add("shippedByUs");
 async function op_timelineGet(b) { return Timeline.get(db, b.orderId, { prefix: PREFIX, sandboxed: SANDBOXED, derive: b.derive !== false, ifRev: typeof b.ifRev === "string" && Timeline.REV_TOKEN.test(b.ifRev) ? b.ifRev : "", wantRev: b.wantRev === true, verify: b.verify === true, netMs: +b.netMs || 0 }); }   // recorded + derived from the records already kept (COST, Oct 2026: verify / netMs, the Order_Rev shortcut: see _orderTimeline get)
 // (full: each whole record, its lines, fates and removals, for an order read long after it left the pull)
 async function op_cancelCheck(b) { return Timeline.cancelCheck(db, b.orderIds || b.orderId, { prefix: PREFIX, full: b.full === true }); }
@@ -5272,7 +5277,7 @@ const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneL
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, masterRemoveSkus: op_masterRemoveSkus, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxPullLimitSet: op_sandboxPullLimitSet, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
-  cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
+  cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, shippedByUs: op_shippedByUs, cancelCheck: op_cancelCheck,
   listingSkus: op_listingSkus, aliasGet: op_aliasGet, aliasPut: op_aliasPut, listingKindPut: op_listingKindPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
   customSheetGet: op_customSheetGet, customSheetPut: op_customSheetPut, customGet: op_customGet, customPut: op_customPut, reviewMarkPut: op_reviewMarkPut, reviewMarkOpen: op_reviewMarkOpen, customReopen: op_customReopen, customDelete: op_customReopen };
 OPS.customPiecePut = op_customPiecePut;

@@ -453,11 +453,12 @@ async function deriveEvents(db, id, opts) {
   if (arrival) ev("arrived", msOf(arrival.seenAt) || msOf(arrival.firstSeenAt), { id: "d-first-seen", by: "System", source: "sorter", station: "sorter", text: "First seen by the sorter", milestone: false, data: msOf(arrival.seenAt) ? { clock: "real", firstSeenAt: msOf(arrival.firstSeenAt) } : null });
   const ships = rc ? (rc.raw && Array.isArray(rc.raw.shipments) ? rc.raw.shipments : []).map(x => ({ at: msOf(x.shipment_notification_timestamp || x.notification_date), carrier: s(x.carrier_name, 40), tracking: s(x.tracking_code, 60) }))
     : arch && Array.isArray(arch.shipments) ? arch.shipments.map(x => ({ at: msOf(x.notificationTs), carrier: s(x.carrier, 40), tracking: s(x.trackingCode, 60) })) : [];
-  ships.filter(x => x.at).slice(0, 5).forEach((x, i) => ev("shipped", x.at, { id: `d-etsy-shipped-${i}`, by: "Etsy", source: "etsy", station: "shipping", text: `Shipped${x.carrier ? " with " + x.carrier : ""}${x.tracking ? " · " + x.tracking : ""}`, data: { carrier: x.carrier, tracking: x.tracking } }));
+  /* OURSHIPONLY (Paul, 16 Nov 2026: "when we mark an order as completed in Etsy it automatically gets marked as shipped in our system. This must be stopped, only the 3 existing shipping apps can
+     mark orders as shipped irrespective of what Etsy shows. Only our own softwares can be used to progress an order through its production processes ... Only cancelled orders in Etsy must be
+     followed"). What Etsy says of shipping and completion is NO step here any more: no `shipped`, no `etsyCompleted` is made from it. A shipped step comes only from the event a shipping station recorded. Etsy's CANCEL is still followed, below. */
   if (rc) {
     const status = String(rc.status || "").toLowerCase(), upd = msOf(rc.updated_timestamp), firstShip = ships.map(x => x.at).filter(Boolean).sort((a, b) => a - b)[0] || 0;
-    if (rc.is_shipped && !firstShip) ev("shipped", upd, { id: "d-etsy-shipped", by: "Etsy", source: "etsy", station: "shipping", text: "Marked shipped on Etsy", data: { approx: true } });
-    if (status === "completed") ev("etsyCompleted", firstShip || upd, { id: "d-etsy-completed", by: "Etsy", source: "etsy", text: "Completed on Etsy", data: firstShip ? null : { approx: true } });
+    // (OURSHIPONLY: nothing is made of what Etsy shows of shipping or completion: no step, no seal, no note among the Team's stamps)
     // (the cancel rule of _orderCancel.isCancelled: refunded after shipping is a return, not a cancel)
     if (/cancel/.test(status) || (/fully\s*refund/.test(status) && !(rc.is_shipped || (rc.raw && rc.raw.is_shipped)))) ev("etsyCancelled", upd, { id: "d-etsy-cancelled", by: "Etsy", source: "etsy", text: `Etsy says: ${s(rc.status, 40)}`, data: { etsyStatus: s(rc.status, 40), approx: true } });
   }
@@ -757,4 +758,14 @@ function whereOf(events, cancelled, hint = {}) {
   const held = Array.isArray(hint.sheets) ? hint.sheets : null, partial = held && held.length > 1 && held.some(x => x.cut) && held.some(x => !x.cut) ? { sheets: held.length, cut: held.filter(x => x.cut).length } : null;
   return Object.assign({ stage, label, text: s(bits.join(" · "), 200), sheet, sheetId, setId, station, device, by, at, since, cut, designed, cancelled: isCancelled, step, rail: RAIL }, partial ? { partial } : {});
 }
-module.exports = { RAIL, RAIL_KEYS, labelStepOf, cancelStepOf, stepId, COL, REV_COL, REV_TOKEN, touch, touchNow, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, probeRev, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };
+/** OURSHIPONLY: which of these orders a SHIPPING STATION has marked shipped (a recorded `shipped` event that is not Etsy's): { <orderId>: { at, by, id } }. One small query an order, 100 at most. */
+async function shippedByUs(db, ids, prefix) {
+  const out = {}, list = [...new Set((ids || []).map(orderIdOf).filter(Boolean))].slice(0, 100), c = colOf(db, prefix);
+  await Promise.all(list.map(async id => {
+    try { const q = await c.where("orderId", "==", id).where("type", "==", "shipped").limit(10).get(); let best = null;
+      q.forEach(d => { const e = d.data() || {}; if (String(e.source || "") === "etsy" || String(e.by || "") === "Etsy") return; if (!best || n(e.at) < n(best.at)) best = { at: n(e.at), by: s(e.by, 80), id: d.id, station: s(e.station, 20), source: s(e.source, 20), data: small(e.data) }; });
+      if (best) out[id] = best; } catch (_) { /* not known: the order stays as it is */ }
+  }));
+  return out;
+}
+module.exports = { shippedByUs, RAIL, RAIL_KEYS, labelStepOf, cancelStepOf, stepId, COL, REV_COL, REV_TOKEN, touch, touchNow, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, probeRev, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };
