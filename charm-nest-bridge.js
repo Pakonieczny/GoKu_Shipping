@@ -30195,14 +30195,28 @@ async function placeStranded() {
      stayed refused for good, also after that run was retired: its piece stood on no sheet and nothing asked again. Such a line goes back to the intake here; the server answers afresh, and a
      piece a run that is still live really holds is refused again, as before. */
   const again = Orders.rows().filter(r => r && r.state === "contended" && !r.hold && !(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId)));
+  /* STALECARD (Paul, 16 Nov 2026, the same evening: 9 charms on no sheet in the cloud, while this page answered "No piece stands outside a sheet"): a saved card's copy of its sheet record, kept
+     by this page, still listed pieces the sheet no longer holds, so they counted as "on a sheet" for good. A piece only a saved card lists is on that sheet only if the sheet's record IN THE
+     CLOUD, read now, lists it too. */
+  const drawn = new Set(allSheets().flatMap(p => (p.charms || []).map(c => c && c.poolId)).filter(Boolean));
+  const cardIndex = new Map(); for (const p of allSheets()) { const rec = p.recalled; if (!rec) continue; for (const id of (rec.poolIds || []).map(String).concat((rec.charms || []).map(c => c && c.poolId).filter(Boolean).map(String))) { if (drawn.has(id)) continue; const a = cardIndex.get(id); if (a) { if (!a.includes(p)) a.push(p); } else cardIndex.set(id, [p]); } }
+  const cardsListing = id => cardIndex.get(String(id)) || [];
   /* NEVERMADE (Paul, 16 Nov 2026: "nothing should be holding this order back other than just a hold that could be released manually after"): a line whose pieces were ALL taken off to be made
      up again (every pool row known and "superseded": a design sent or a charm changed) and whose new pieces were never made stood on no sheet for good, waiting for an "Accept the new order"
      nobody was shown, or for nothing at all. Nothing of it is on a sheet, so there is nothing to accept or to take off: it is made up now, from what the line reads as. Asked of the cloud first
      (below): a piece whose row there is anything but superseded leaves the line as it is. */
-  const lost = Orders.rows().filter(r => r && ["pooled", "written"].includes(r.state) && !r.hold && (r.poolIds || []).length && !(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId))
-    && r.poolIds.every(id => !on.has(id)));   // (no page and no saved card holds any piece of it; what this page remembers of the piece records can be old, so the cloud is asked below and decides)
+  let lost = Orders.rows().filter(r => r && ["pooled", "written"].includes(r.state) && !r.hold && (r.poolIds || []).length && !(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId))
+    && r.poolIds.every(id => !drawn.has(id)));   // (no page DRAWS any piece of it; a saved card that lists one, and what this page remembers of the piece records, can both be old: the cloud is asked below and decides)
   const orphanSheets = new Map();
-  if (lost.length) { const ids1 = lost.flatMap(r => r.poolIds), bad = new Set(); try { for (let i = 0; i < ids1.length; i += 300) { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: ids1.slice(i, i + 300) }, { quiet: true })).pools || {}; for (const id of ids1.slice(i, i + 300)) { const pr = got[id]; if (!pr) { bad.add(id); continue; } if (pr.state === "superseded" && !pr.sheetId) { B.pool.rows.set(id, pr); continue; }
+  // (STALECARD: the lines a saved card lists are judged by ONE read of the sheets' lists in the cloud: a line every piece of which its card's sheet really lists is on a sheet and is asked nothing more)
+  if (lost.some(r => r.poolIds.some(id => cardsListing(id).length))) {
+    let lists = null; try { const ls = await api("charmNestLibrary", { op: "listSheets" }, { quiet: true }); if (ls && Array.isArray(ls.sheets)) lists = new Map(ls.sheets.map(s => [String(s.id), new Set((s.poolIds || []).map(String))])); } catch (_) { lists = null; }
+    if (lists) for (const [sid, set] of lists) if (set.size) orphanSheets.set(sid, set);
+    lost = lost.filter(r => r.poolIds.every(id => { const cards = cardsListing(id); if (!cards.length) return true; if (!lists) return false; return cards.every(c => { const set = lists.get(String(c.sheetId || "")); return !!set && set.size > 0 && !set.has(String(id)); }); }));
+  }
+  if (lost.length) { const ids1 = lost.flatMap(r => r.poolIds), bad = new Set(); try { for (let i = 0; i < ids1.length; i += 300) { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: ids1.slice(i, i + 300) }, { quiet: true })).pools || {}; for (const id of ids1.slice(i, i + 300)) { const pr = got[id]; if (!pr) { bad.add(id); continue; }
+        if (cardsListing(id).some(card => { const ls = orphanSheets.get(String(card.sheetId || "")); return !ls || ls.has(id); })) { bad.add(id); continue; }   // (STALECARD: a saved card whose sheet really lists it in the cloud, or could not be read: the piece is on a sheet)
+        if (pr.state === "superseded" && !pr.sheetId) { B.pool.rows.set(id, pr); continue; }
         /* ORPHANED (Paul, 16 Nov 2026: "Is anything still lost/missing/incorrect" → 17 charms of 13 orders taken off GF Sheet 1 of Set 5 by a fault and never put back): a piece whose own record
            still says "on sheet X" while sheet X does not hold it is on NO sheet: nothing ever looked, because the record names a sheet. It is lost in the same way and goes back on that sheet.
            Proved three ways before anything moves: this page's sheets and saved cards do not hold it (above), the page holds sheet X itself, and sheet X's record in the cloud, read now, does
@@ -30276,7 +30290,8 @@ async function strandedWatch(why) {
   for (const p of allSheets()) { const rec = p.recalled; if (rec) for (const id of (rec.poolIds || [])) on.add(String(id)); }
   const cand = Orders.rows().filter(r => r && r.state === "pooled" && !r.hold && (r.poolIds || []).length && !(r.poolIds || []).some(id => on.has(id) || (B.pool.rows.get(id) || {}).sheetId));
   for (const r of Orders.rows()) if (r && r.state === "contended" && !r.hold) cand.push(r);   // (CONTENDEDBACK)
-  for (const r of Orders.rows()) if (r && ["pooled", "written"].includes(r.state) && !r.hold && (r.poolIds || []).length && r.poolIds.every(id => !on.has(id)) && !cand.includes(r)) cand.push(r);   // (NEVERMADE)
+  const drawnW = new Set(allSheets().flatMap(p => (p.charms || []).map(c => c && c.poolId)).filter(Boolean));
+  for (const r of Orders.rows()) if (r && ["pooled", "written"].includes(r.state) && !r.hold && (r.poolIds || []).length && r.poolIds.every(id => !drawnW.has(id)) && !cand.includes(r)) cand.push(r);   // (NEVERMADE, STALECARD: a saved card's own list is checked against the cloud in placeStranded)
   const now = Date.now(), fresh = cand.filter(r => now - (strandedTried.get(r.key) || 0) > 30 * 60 * 1000);
   if (!fresh.length) return null;
   strandedBusy = true; for (const r of fresh) strandedTried.set(r.key, now);
