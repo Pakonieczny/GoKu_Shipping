@@ -5995,7 +5995,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
    *  files and verification; its .pdf copied again from the .ai when it had one; a set it was released in told it changed (releasedChange, as Review.inPlaceRefile says it). → true. */
   async function mcWriteStandalone(sh, st, paint) {
     st.state = "now"; st.detail = "written from its saved record (its run is not open on this screen)"; paint();
-    const Pd = window.CharmNestPDF, rec = (W.rec && W.rec.id === sh.sheetId ? W.rec : null) || sh._rec || {}, outs = rec.outputs || {};
+    const Pd = window.CharmNestPDF, rec = (!sh._standWord && W.rec && W.rec.id === sh.sheetId ? W.rec : null) || sh._rec || {}, outs = rec.outputs || {};
     if (!Pd || typeof Pd.buildSheet !== "function" || typeof Pd.parseSource !== "function" || typeof uploadBytes !== "function") throw new Error("the sheet writer is not loaded in this page; reload it");
     const stock = (typeof stockFor === "function" ? tryDo(() => stockFor(sh.metal, sh)) : null) || stockOf(rec), byId = new Map(sh.charms.map(c => [c.id, c]));
     const sources = new Map(), spec = [], pageSrc = id => (typeof sourceOf === "function" ? tryDo(() => sourceOf(id)) : null) || null;
@@ -6051,11 +6051,28 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (outs.pdf) await api("charmNestLibrary", { op: "sheetPdf", id: sh.sheetId }, { quiet: true }).catch(e => console.warn("sheet window: .pdf", e));
     // a set the sheet was released in (out of draft) says it changed, as Review.inPlaceRefile says it for a sheet of the run on screen
     if (sh.setId && !sh.draft) {
-      const set = `Set ${rec.setSeq || ""}`.trim(), word = `${set} changed after it was released: ${sheetWord(sh.sheetId, sh.fileBase, sh)}'s charms were moved by hand — its files are written again`;
+      const set = `Set ${rec.setSeq || ""}`.trim(), word = `${set} changed after it was released: ${sheetWord(sh.sheetId, sh.fileBase, sh)}${sh._standWord ? ": " + sh._standWord : "'s charms were moved by hand"} — its files are written again`;
       await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releasedChange: { setId: sh.setId, set, at: Date.now(), by: whoAmI() || null, orders: [], word } } }, { quiet: true }).catch(e => console.warn("sheet window: released mark", e));
     }
     st.state = "ok"; st.detail = sh.verification.ok ? "written and checked" : hand ? `${hand} charms overlap: the sheet stays flagged until they are moved clear` : "written; its check flagged it, see its report"; paint();
     return true;
+  }
+  /** ARTUNCUT (Paul, 16 Nov 2026; charm-nest-bridge.js artUncutWrite): a sheet written again from its saved record with the charms a caller made for it (each where the record places it), by the
+   *  writer above. Its stock and green line are read first, as for Manual Control on such a sheet (mcStandPrep), so the check measures against the metal that is really there. → true */
+  async function writeFromRecord(rec, charms, placements, o) {
+    if (!rec || !rec.id || !Array.isArray(charms) || !Array.isArray(placements) || !placements.length) throw new Error("the sheet's record or its pieces are missing");
+    if (+rec.laserDoneAt > 0) throw new Error("the laser has cut this sheet: it is not written again");
+    const byId = new Map(charms.map(c => [c.id, c]));
+    const pls = placements.map(p => { const c = byId.get(p.id) || {}; return Object.assign({}, p, { cxPt: +p.cxPt, cyPt: +p.cyPt, angle: +p.angle || 0, scale: +p.scale || 1, wPt: +p.wPt || c.widthPt || 10, hPt: +p.hPt || c.heightPt || 10 }); });
+    const sh = { sheetId: rec.id, metal: rec.metal, runId: rec.runId || null, fileBase: rec.fileBase || rec.folder || rec.id, page: rec.page || 1, sheetIndex: rec.sheetIndex || null, setId: rec.setId || null, seq: rec.setSeq || null, setDay: rec.day || null,
+      draft: !!rec.draft, releaseFull: !!rec.releaseFull, processReady: !!rec.processReady, laserSetPending: !!rec.laserSetPending, laserDoneAt: +rec.laserDoneAt || null, label: rec.label || null,
+      charms: charms.slice(), placements: pls, rejects: [], backPool: [], log: [], status: "complete", persistedDone: true, persisted: Promise.resolve(), dirty: false, problem: null, verification: rec.verification || null,
+      keptStock: stockOf(rec), roseCutAt: rec.roseCutAt || null, rosePlanHash: rec.rosePlanHash || null, roseRevision: rec.roseRevision || 0,
+      _standalone: true, _rec: rec, _srcOf: new Map(), _standWord: (o && o.word) || "" };
+    const R = window.RoseStock;
+    if (rec.roseStockId && R && typeof R.restore === "function") await within(R.restore(sh, rec), 20000, "the cloud did not answer in 20 seconds");
+    else { const parse = s0 => (s0 ? JSON.parse(s0) : null); sh.rosePlan = parse(rec.rosePlanJson); sh.roseProtected = parse(rec.roseProtectedJson); }
+    return mcWriteStandalone(sh, { state: "", detail: "" }, () => {});
   }
   async function mcToggle(o0) {
     if (MC.claiming && !MC.on) return;   // (MOVEINSTANT 2: on, the toggle always ends it, even while a carried-to sheet is still being claimed)
@@ -7630,7 +7647,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   // (LOCAL: and the sheets opened last on this computer, with their designs, are read into memory: the next of them opened is drawn with no wait for the disk)
   try { (window.requestIdleCallback || (f => setTimeout(f, 1500)))(() => { try { build(); } catch (_) {} try { if (window.OrderPieces && OrderPieces.of && (S.library.rows || []).length) OrderPieces.of("0"); } catch (_) {}
     try { const St = window.CharmNestStore; if (St && St.warm && window.Pool && Pool.warmKept) St.ready().then(() => St.warm("sheetFull", 8)).then(recs => { for (const r of recs) for (const s0 of r.sources || []) if (s0 && s0.pool && s0.path && s0.hash) Pool.warmKept(s0.path, s0.hash); }).catch(() => {}); } catch (_) {} }, { timeout: 5000 }); } catch (_) {}
-  window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, dropTakenOff, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, pieceBase, _W: W };
+  window.SheetWin = { writeFromRecord, remakeLabel, joinSet, joinInfo, takeOffOrder, dropTakenOff, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, pieceBase, _W: W };
   /* ── the sheet hop (charm-nest-sheet-hop.js; Paul, 18 Oct 2026: on 10K and 14K sheets a person drags a charm onto the next or previous sheet
      of its metal): this window's own pieces for it, nothing new. The move itself is moveIn (o.hop: pinned where it was put, the hop's own
      guards), the room is the window's collision grid (plateGrid / variantOf: real outlines and the run's clearance). W.hop, set while a charm

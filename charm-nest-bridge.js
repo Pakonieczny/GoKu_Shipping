@@ -28185,6 +28185,7 @@ const Recall = window.Recall = (() => {
         pg.charms.push(charm);
         pg.placements.push({ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: Number.isFinite(+p.scale) && +p.scale > 0 ? +p.scale : man && man.size ? +((typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) * man.size).toFixed(5) : (typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) });   // (OWNSCALE, Paul 15 Nov 2026: a 14K sheet read "6 charms overlap" on the computer that follows the run): the piece is drawn at the scale ITS PLACEMENT was saved with (six pieces of that sheet were saved a little smaller); it was drawn at the standard scale, larger than it lies on the sheet
       }
+      if (opts && opts.detached) return;   // (ARTUNCUT: only the sheet's pieces, made again from its record: the page's own card is not touched)
       pg.recalled = null; pg.status = "complete"; pg.dirty = false;
       // (FULLSAID, Paul 15 Nov 2026: the sheets of the computer that follows the run read "0% full" where the carrying computer reads 33%): how full the sheet is comes from its record (the free area saved with it), as the nest that made it measured it
       try { const fp = +rec.freePt2, us = typeof usableArea === "function" ? +usableArea(pg) : 0; if (!pg.liveInfo && Number.isFinite(fp) && fp >= 0 && us > 0) pg.liveInfo = { freePt2: Math.min(fp, us), usablePt2: us, placedPt2: Math.max(0, us - fp), fromRecord: true }; } catch (_) { /* the card says less */ }
@@ -29920,6 +29921,39 @@ function artSheetWrite(sh) {
   ART_SHEET_WRITES.set(sh, st);
   return st.run;
 }
+/** ARTUNCUT: the files of a sheet with a recorded green line cut that the laser has not cut, written again from its saved record after an artwork edit: every piece made again from the master
+ *  with its own edits (Recall.rebuild, detached: no card of this page is touched), each exactly where the record places it, then the sheet window's writer for a sheet with no run
+ *  (SheetWin.writeFromRecord: the .ai, the proof, the check, the report and the picture at the paths they had; the record is told its files and its check, nothing else: its layout, its cut
+ *  and its green line plan are not written). A sheet whose pieces cannot ALL be made again is not written. One write per sheet at a time; a save during it writes once more. → Promise<boolean> */
+const ART_UNCUT = new Map();
+function artUncutWrite(sheetId) {
+  const cur = ART_UNCUT.get(sheetId); if (cur) { cur.again = true; return cur.run; }
+  const st = { again: false };
+  st.run = (async () => {
+    let ok = false;
+    do {
+      st.again = false;
+      const d = (await api("charmNestLibrary", { op: "getSheet", id: sheetId })).sheet;
+      if (!d || d.archived || !d.roseCutAt || +d.laserDoneAt > 0) return false;   // (not that kind of sheet: its own page writes it, or nobody does)
+      if (!window.Recall || !Recall.rebuild || !window.SheetWin || typeof SheetWin.writeFromRecord !== "function") throw new Error("the sheet writer is not loaded in this page; reload it");
+      const ids = [...new Set((d.poolIds || []).map(String))];
+      // (every piece as the cloud has it now: an edit made on another computer to another piece of the sheet is in the file too)
+      for (let i = 0; i < ids.length; i += 300) { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: ids.slice(i, i + 300) }, { quiet: true })).pools || {}; for (const [id, p] of Object.entries(got)) { if (!p) continue; const mine = B.pool.rows.get(id); if (!mine) B.pool.rows.set(id, p); else mine.artEdit = p.artEdit || null; } }
+      const pg = { metal: d.metal, sheetId: d.id, recalled: d, charms: [], placements: [], _detached: true };
+      await Recall.rebuild(pg, { cutOk: true, detached: true });
+      const want = (d.placements || []).length;
+      if (!want || pg.placements.length !== want) throw new Error(`only ${pg.placements.length} of its ${want} pieces could be made again from their designs: nothing was written`);
+      const name = d.fileBase || d.id;
+      agent({ metal: d.metal }, "info", `${name}: its green line cut is recorded and the laser has not cut it: its files are written again from its record with the edited artwork (no piece moves, its cut and its green line stay)`);
+      ok = !!(await SheetWin.writeFromRecord(d, pg.charms, pg.placements, { word: "a piece's artwork was edited" }));
+      if (ok) agent({ metal: d.metal }, "ok", `${name}: written again with the edited artwork`);
+    } while (st.again);
+    return ok;
+  })().finally(() => ART_UNCUT.delete(sheetId));
+  ART_UNCUT.set(sheetId, st);
+  return st.run;
+}
+window.artUncutWrite = artUncutWrite;   // (tests wait for it)
 /** ARTEVERYWHERE: does this page carry the run this sheet belongs to? Only that page writes the sheet's files after an artwork edit. */
 function artCarries(sh) { return !!(sh && B.run && sh.runId && sh.runId === B.run.runId); }
 window.artCarries = artCarries;
@@ -29990,6 +30024,9 @@ if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
     let n = 0; try { n = Engrave.artChanged(poolId, face); if (info && info.cut) n += Engrave.artChanged(poolId, face === "front" ? "back" : "front", `This charm's cut line changed since the words were approved — fit the words again`); } catch (e) { console.warn("artwork edit: engraving", e); }   // (a cut line is both faces' edge)
     const sh = Pool.sheetOf(poolId), rec = info && info.record;
     agent({ pool: true, ...(sh ? { metal: sh.metal } : {}) }, "info", `${poolId}: its own ${face} artwork ${rec ? `edited${rec.by ? " by " + rec.by : ""}` : "taken back to the master drawing"}${info && info.sync ? " (on another computer)" : ""}${n ? `; its ${face} engraving is fitted again and waits for Approve` : ""}${sh && sh.outputs ? `; ${sh.fileBase || "its sheet"} writes its files again` : ""}`);
+    // (ARTUNCUT, Paul 16 Nov 2026: a piece on a sheet whose green line cut is recorded but that the laser has not cut: no page nests or writes such a sheet (its layout is fixed), so the page that SAVED
+    //  the edit writes its files again from the sheet's saved record: artUncutWrite. Not on a page the edit reached by sync, and never for a changed cut line: the cloud refused that)
+    if (!(info && info.sync) && info && info.sheetId && (!sh || sh.recalled || sh.roseCutAt) && !(sh && +sh.laserDoneAt > 0) && !(info.cut || (rec && rec.cut))) { artUncutWrite(info.sheetId).catch(e => { console.warn("artwork edit: cut-recorded sheet", e); agent({ pool: true }, "warn", `${poolId}: its sheet's files could not be written again after the artwork edit (${(e && e.message) || e}); the sheet's record still says it owes them`); }); return; }
     if (!sh || sh.roseCutAt || sh.laserDoneAt) return;
     // (ARTEVERYWHERE, Paul 15 Nov 2026: "all the changes and updates automatically reflect across all the sheets": only the page that carries the run writes a sheet's files; any other page only redraws its own copy of the sheet (the piece is swapped, its thumbnail and approval handled above), so several computers never write the same sheet at once. The carrier writes when the edit arrives by sync too)
     if (!artCarries(sh)) { try { renderCard(sh); } catch (_) { /* its card says it with the next paint */ } return; }
