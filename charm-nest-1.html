@@ -5337,7 +5337,7 @@ function overflowToNextSheet(sh, announce = true) {
   if (!after) { next.intakeAppend=next.placements.length>0;next.appendOnly=next.intakeAppend; }
   // (a charm a Move all onto Sheet 1 could not fit goes back to the spot it had on its own sheet: Gate, _mergeSpots)
   if (typeof markMissed === "function") markMissed(moving, sh);   // (ONEFILL: never gathered back onto the sheet that passed them on)
-  moving.forEach(c => { if(c.arrivalPin){c.pinned=null;delete c.arrivalPin;} const was=next._mergeSpots&&next._mergeSpots.get(c.id); if(was){c.pinned={cxPt:was.cxPt,cyPt:was.cyPt,angle:was.angle};c.arrivalPin=true;} c.metal = sh.metal; next.charms.push(c); });
+  moving.forEach(c => { if(c.arrivalPin){c.pinned=null;delete c.arrivalPin;} /* (BACKCLEAN, Paul 16 Nov 2026: a failed "Empty this sheet" left 10K Draft 4 "verification flagged": its pieces came back pinned to the spots saved for them, which are rounded and lay 0.17 pt inside the edge rule). A piece that comes back to its sheet is nested there afresh, not pinned to its old spot: the sheet is a draft, and its layout verifies */ c.metal = sh.metal; next.charms.push(c); });
   if (after) { next.feedWait = (next.feedWait || []).concat(moving.map(c => c.id)); next.dirty = true; }
   { const followOn = LNx && typeof LNx.follow === "function" ? LNx.follow : typeof follow === "function" ? follow : null; if (followOn && !chained && !seatNext) { try { followOn(oids, run0, { except: sh.metal }); } catch (e) { console.warn("[overflow] follow", e && e.message); } } }   // (PAIR: see above)
   sh.movedOn.page = next.page;
