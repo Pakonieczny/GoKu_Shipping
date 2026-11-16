@@ -182,9 +182,15 @@
           // (LIGHTLOAD, Paul 13 Nov 2026: "THE GRID": the page froze for over 45 s at every load while every piece was refitted and every outline read at once): at the start of the page a piece is not refitted here (its fields are in place); it is outlined and fitted when it is opened (watchOpen)
           if (why === "start" && !onScreenKey(l.key)) { if (!sameFit(j)) { j.fit = null; j.view = null; j.mask = null; } continue; }   // (NOFALLBACK, Paul 13 Nov 2026: "Look at the thumbnails" / "remove these fallbacks, make it work"): a fit this page holds that is the cloud's placement is kept; any other is fitted again in the background (fitMissing)
           j.fit = null; j.view = null; j.mask = null; j.state = "ready";
-          await outline(j);   // (FITFIRST, Paul 13 Nov 2026: "the bottom options below the grid are not working" / "the grid seems to ALWAYS update after 1-2 minutes"): the charm's outline is read FIRST: a fit made without it failed in silence, the words had no place, the controls under the grid nothing to act on
-          try { await E().fitJob(j); } catch (e) { console.warn("[engrave-sync] fit", l.key, e); }
-          j.state = keepState; if (keepApproved.approvedAt !== undefined) Object.assign(j, keepApproved);
+          // (APPROVEDSTAYS, Paul 16 Nov 2026: "on my computer it was approved without any issues. Then when I refreshed the other computer tab my approval showed up ... This can not continue to happen"): the state the
+          //  other computer sent (approved, written) is put back WHATEVER happens while the words are fitted here: a piece whose outline or sheet this computer could not read threw out of this step and was left at
+          //  "ready", so the card asked for an approval the cloud already held, until a reload
+          try {
+            await outline(j);   // (FITFIRST, Paul 13 Nov 2026: "the bottom options below the grid are not working" / "the grid seems to ALWAYS update after 1-2 minutes"): the charm's outline is read FIRST: a fit made without it failed in silence, the words had no place, the controls under the grid nothing to act on
+          
+            try { await E().fitJob(j); } catch (e) { console.warn("[engrave-sync] fit", l.key, e); }
+          } catch (e) { console.warn("[engrave-sync] outline", l.key, e); }
+          finally { j.state = keepState; if (keepApproved.approvedAt !== undefined) Object.assign(j, keepApproved); }
         } else if (!FIT_STATES.has(rj.state)) { j.fit = null; }
       }
       safe(() => root.CharmNestMadeThumb && root.CharmNestMadeThumb.changed("engrave-sync", (line.poolIds || []).slice()));

@@ -4033,7 +4033,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-cloud-activity.js?v=20261113-ca1"></script>   <!-- CLOUDALL S4 (Paul 13 Nov 2026): every computer's activity log lines shared through the cloud -->   <!-- CLOUDALL (Paul 13 Nov 2026): every sheet is one cloud document, changed from any computer, followed by every computer -->   <!-- RUNFOLLOW (Paul 13 Nov 2026): a computer without the run follows the cloud run's lines (held, pooled, taken out) -->
 <script src="charm-nest-cloud-tray.js?v=20261114-ct1-cs1"></script>   <!-- (CLOUDTRAY, Paul 14 Nov 2026: "You must put all this in the cloud" -> "Yes, build it"): the Nest rail's dropped files shared by every computer through the cloud -->
 <script src="charm-nest-cloud-share.js?v=20261114-cs1-cs2"></script>   <!-- (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): what every computer keeps the same (Settings, the stock preset, set-aside notices, unsent drafts, the learned lists, Manual Control drafts), shared through the cloud and the changes feed -->
-<script src="charm-nest-engrave-sync.js?v=artnet-1116h"></script>   <!-- ENGRSYNC (Paul 13 Nov 2026): every line's engraving work and every Charm Editor Save shared by every computer, live -->
+<script src="charm-nest-engrave-sync.js?v=approvedstays-1116q"></script>   <!-- ENGRSYNC (Paul 13 Nov 2026): every line's engraving work and every Charm Editor Save shared by every computer, live -->
 <script src="charm-nest-made-thumb.js?v=20261028-ts1-fb1-tb2-mv1-bx1-pb1-np1-gn1-bb1-fa1-fj1-fs1-fa2"></script><!-- charm-nest-made-thumb.js: every list box shows its pieces as they will be made (cut, art, Charm Editor changes, fitted words; front and back), live here and kept on the pool row for the other computers (THUMBSYNC, Paul 28 Oct 2026) -->
 <script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1-dm1-ko1-pv1"></script>
 <script src="qr-piece-label.js?v=20261014-ql1-noord1"></script><!-- qr-piece-label.js: the sticker of ONE piece of a multi-piece order, printed by hand: its note, fitted (Paul, 14 Oct 2026) -->
@@ -6635,7 +6635,11 @@ async function finishNest(sh, { result, error }) {
     // (WHEN, Paul 12 Nov 2026: "at the end of a sheet that is full, or a rose sheet that hasn't been cut with a green line": a Gold or Silver sheet when it is full (it is about to join a set),
     //  or one already in its set written again; a Rose Gold, 10K or 14K sheet whenever it is written before its green line is cut. A Gold or Silver sheet still filling is checked when it is full)
     const greenLine = ["rose", "gold10k", "gold14k"].includes(sh.metal);
-    const exactDue = greenLine ? !sh.roseCutAt : (!!sh.releaseFull || !!sh._wasReleased || !!(sh.keepRelease && sh.keepRelease.full) || !!(sh.setId && !sh.draft) || (() => { try { return !!sheetFull(sh, result, items); } catch (_) { return false; } })());
+    /* EXACTALWAYS (Paul, 16 Nov 2026: "there is still overlap between the charms on sheets ... The overlap checker is not working" / "You still need to have a robust fix/guardrails for the overlapping charms.
+       This can not affect charm nesting quality and density"). The exact check read a Gold or Silver sheet only once it was full, released or in a set: a sheet that joined its set without being
+       written again (GF Nov 15 Set-1 Sheet-1) kept the crossings its last fill had left (0.07, 0.01 and 0.003 mm² on that sheet). It now reads EVERY sheet at EVERY write (0.4 s for 70 charms): no file
+       leaves the nest unread, whatever happens to the sheet afterwards. Nothing of the nest changes: the same clearance, the same places; only a pair whose cut lines really cross is touched. */
+    const exactDue = greenLine ? !sh.roseCutAt : true;
     if (exactDue) try {
       const xf = await exactFix(sh, { byId, st, result, aiBytes, labelledBytes });
       if (xf && xf.changed) {
