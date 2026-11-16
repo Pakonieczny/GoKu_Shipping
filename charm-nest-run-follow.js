@@ -146,6 +146,29 @@
     }
     else if (c.type === "seat") { const step = stepper(c); step({ text: "Reading the sheet…" }); try { r = typeof G.seatOn === "function" ? await G.seatOn(a.sheetId, Array.isArray(a.partialIds) && a.partialIds.length ? a.partialIds : a.partialId, { onStep: step, finish: true }) : { ok: false, why: "not ready" }; } finally { step.stop(); } }   // (ONEGRID: a nested sheet's pieces onto a physical sheet; MOVESHOW: the physical sheets in the order chosen, and it stays until the nest has ended so the answer says where the pieces lie)
     else if (c.type === "delete") r = await G.deleteEmpty(a.sheetId);
+    // (UNKEEP, Paul 16 Nov 2026: "Remove all of those shipped orders from the sheets"): orders Etsy has closed that were put back on their sheets by hand (the run's keepShipped list, 13 Nov) are let go:
+    //  they leave that list, the run is saved, and the page's own check of the orders against Etsy (Orders.revalidate) takes their pieces off, as it does for any order that ships. A sheet the
+    //  laser has cut, one with a recorded cut, and one whose set went to the station keep their pieces, as always (takeOffGone's own rule)
+    else if (c.type === "unkeep") {
+      const run = safe(() => (typeof B !== "undefined" ? B.run : root.B && root.B.run), null), Or = safe(() => (typeof Orders !== "undefined" ? Orders : root.Orders), null), RC = safe(() => (typeof RunCtl !== "undefined" ? RunCtl : root.RunCtl), null);
+      const want = new Set((a.ids || a.orders || []).map(x => String(x).replace(/\D/g, "")).filter(Boolean));
+      if (!run || !Or || typeof Or.revalidate !== "function" || !RC) r = { ok: false, why: "not ready" };
+      else if (!want.size) r = { ok: false, why: "No order was named." };
+      else {
+        const step = stepper(c), was = (run.keepShipped || []).map(String), let_go = was.filter(x => want.has(x));
+        if (!let_go.length) r = { ok: true, text: "None of these orders was being kept on its sheet." };
+        else {
+          run.keepShipped = was.filter(x => !want.has(x));
+          step({ text: `${let_go.length} order(s) no longer kept: checking them against Etsy…` });
+          try {
+            await RC.save(run);
+            const v = await Or.revalidate(run, "shipped orders let go");
+            const gone = (v && v.gone || []).map(String).filter(x => want.has(x));
+            r = { ok: true, text: `${let_go.length} shipped order(s) let go; Etsy says ${gone.length} of them are closed: their pieces were taken off every sheet that is still open` };
+          } catch (e) { r = { ok: false, why: `The orders left the keep list, but the check against Etsy did not finish (${String((e && e.message) || e).slice(0, 160)}); it runs again at the next check of the orders.` }; }
+        }
+      }
+    }
     else if (c.type === "remake") r = root.Review && typeof root.Review.redrawStale === "function" ? await root.Review.redrawStale(a.ids || []) : { ok: false, why: "not ready" };   // (REMAKESTALE: open pieces that hold an older drawing of these SKUs are made up again from the library's drawing)
     // (REMOTENEST, Paul 15 Nov 2026: "you re-nest it and then check that everything is OK everywhere"): a draft sheet of the run is nested again here, exactly as its Re-nest button does (never a sheet that was cut or is in a committed set: startNest's own rules stand), and the answer waits for the nest and its save
     else if (c.type === "renest") {
