@@ -20680,6 +20680,9 @@ const Review = window.Review = (() => {
       const sh = pageOf(h); if (!sh || (sh.runId && sh.runId !== B.run.runId) || replaceLaserWhy(sh)) continue;
       if (!homes.includes(sh)) {
         if (sh.recalled && !(sh.charms || []).length && window.Recall && typeof Recall.rebuild === "function") { try { await Recall.rebuild(sh); } catch (e) { console.warn("[homeagain] sheet not drawn:", e && e.message); } }
+        // (HOMEWAIT, Paul 16 Nov 2026: 17 charms sent home one order after the other: the first went on, the sheet was being saved for it, and the others, finding it busy, went to a draft instead.
+        //  A home sheet being arranged or saved is WAITED for, two minutes at most, as a piece exchanged in place waits: never a reason to put the piece elsewhere)
+        try { await inPlaceWait([sh]); await inPlaceIdle([sh]); } catch (_) { /* judged below */ }
         if (!(sh.charms || []).length || inPlaceHoldsWhy(sh)) continue;
         homes.push(sh);
       }
@@ -30286,7 +30289,7 @@ window.CNStrandedWatch = strandedWatch;   // (tests)
    sheet's free space; with no room there it stays on the latest unfinished sheet. Only on the computer that carries the run. → { lines, moved, names, why } */
 window.CNSendHome = async function (keys) {
   const run = B.run; if (!run) throw new Error("this page does not carry a run");
-  if (allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone))) throw new Error("a sheet is being nested or saved: try again once it is done");
+  if (allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status))) throw new Error("a sheet is being nested: try again once it is done");
   const out = { lines: 0, moved: 0, names: [], why: [] };
   for (const k of [...new Set((keys || []).map(String))]) {
     const row = B.orders.byKey.get(k);
