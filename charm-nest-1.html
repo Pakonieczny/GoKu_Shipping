@@ -4071,7 +4071,7 @@ const DEFAULTS = {
   rail: "md",
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
   nestFlow: "standard", learnedBudgetS: 600, learnedStallS: 300,
-  clearancePt: 0.25 /* NOTOUCH, Paul 16 Nov 2026: was -0.5 (cut lines shared) */, insetPt: 1.5, cornerPt: 1.5 * 72 / 25.4 /* CORNERS: 1.5 mm, stored in pt like the inset */, angleStep: 10, budgetS: 180, seed: 1, freshSeed: true, serverAbove: 0, parallel: 0,
+  clearancePt: -0.5 /* (NOTOUCH, 16 Nov 2026, +0.25, was taken back the same day: BACKTIGHT below) */, insetPt: 1.5, cornerPt: 1.5 * 72 / 25.4 /* CORNERS: 1.5 mm, stored in pt like the inset */, angleStep: 10, budgetS: 180, seed: 1, freshSeed: true, serverAbove: 0, parallel: 0,
   minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", computePipeline: "cpu", aiRounds: 10, snapIn: 0.25, maxFill: 0.80, orderView: "list", v: 27,
   // Design Station bridge, orders, run (design doc §14)
   dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, pollOrders: "on", pollMinutes: 10, finalOptimizeCount: 85, optimizeAt: 85, etsyHourlyCap: 600, sandbox: "off",
@@ -4236,7 +4236,10 @@ function loadSettings() {
     // v29 NOTOUCH (Paul, 16 Nov 2026: "there is still overlap between the charms on sheets ... several minor overlaps but they are unacceptable ... the algorithm for nesting is not accurate enough"): the clearance was
     //  -0.5 pt, "shared cut lines": two charms were placed so their cut lines met, and the nest's own precision then left some of them crossing by a few hundredths of a millimetre; the check let the same 0.5 pt
     //  pass. No two cut lines meet any more: every computer's clearance comes up to +0.25 pt (cut lines about 0.26 mm apart), and the check then measures with nothing let pass (erodePt 0)
-    if ((saved.v || 1) < 29) { if (!(+saved.clearancePt >= DEFAULTS.clearancePt)) saved.clearancePt = DEFAULTS.clearancePt; saved.v = 29; }
+    if ((saved.v || 1) < 29) { saved.v = 29; }
+    // v30 BACKTIGHT (Paul, 16 Nov 2026: "the nesting is broken, you broke it when you were trying to fix the overlapping ... fix now"): v29's +0.25 pt was put on sheets already laid out at -0.5 pt: a sheet nested
+    //  again with it placed none of its pieces (GF Draft 2: 0 of 67), and every sheet written again read over-full. The clearance every computer had before v29 is back; v29 above changes nothing any more
+    if ((saved.v || 1) < 30) { if (+saved.clearancePt === 0.25) saved.clearancePt = DEFAULTS.clearancePt; saved.v = 30; }
     if (![2,5,10].includes(+saved.angleStep)) saved.angleStep = DEFAULTS.angleStep;
     const out = Object.assign({}, DEFAULTS, saved); out.stock = Object.assign({}, DEFAULTS.stock, saved.stock || {}); return out;
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
@@ -9025,7 +9028,7 @@ function readSettings() {
   const s = S.settings, previousGeometry = JSON.stringify([s.stock,s.clearancePt,s.insetPt,s.maxFill]);
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
   for (const m of METALS) s.stock[m.key] = [untouched(`st${cap(m.key)}W`) ? s.stock[m.key][0] : (+$(`#st${cap(m.key)}W`).value / 25.4) || DEFAULTS.stock[m.key][0], untouched(`st${cap(m.key)}H`) ? s.stock[m.key][1] : (+$(`#st${cap(m.key)}H`).value / 25.4) || DEFAULTS.stock[m.key][1]];
-  if (!untouched("stClearance")) s.clearancePt = Math.max(0 /* NOTOUCH: never below 0, cut lines never meet */, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); if (!untouched("stInset")) s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); if (!untouched("stCorner")) s.cornerPt = Math.max(0, Math.min(36, (+$("#stCorner").value || 0) / MM_PER_PT));   // (CORNERS: a change applies to new nests and placements; no sheet is nested again for it) s.angleStep = [2,5,10].includes(+$("#stAngle").value) ? +$("#stAngle").value : 10; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.freshSeed = $("#stFreshSeed").checked; s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
+  if (!untouched("stClearance")) s.clearancePt = Math.max(-2, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); if (!untouched("stInset")) s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); if (!untouched("stCorner")) s.cornerPt = Math.max(0, Math.min(36, (+$("#stCorner").value || 0) / MM_PER_PT));   // (CORNERS: a change applies to new nests and placements; no sheet is nested again for it) s.angleStep = [2,5,10].includes(+$("#stAngle").value) ? +$("#stAngle").value : 10; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.freshSeed = $("#stFreshSeed").checked; s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
   s.pollOrders = $("#stPollOrders").value; s.pollMinutes = Math.max(10, Math.min(1440, +$("#stPollMinutes").value || 10));
   s.dsOrigin = ($("#stDsOrigin").value || DEFAULTS.dsOrigin).trim().replace(/\/+$/, ""); s.heartbeatS = Math.max(2, Math.min(60, +$("#stHeartbeatS").value || 5)); s.heartbeatMiss = Math.max(1, Math.min(10, Math.round(+$("#stHeartbeatMiss").value || 3))); s.autoCommit = $("#stAutoCommit").value; s.cadenceDays = Math.max(1, Math.min(14, Math.round(+$("#stCadenceDays").value || 2))); s.lateDays = Math.max(0, Math.min(14, Math.round(+$("#stLateDays").value ?? 2))); s.pullMode = $("#stPullMode").value; s.pullDueBy = $("#stPullDueBy").value || ""; s.pullCount = Math.max(1, Math.min(500, Math.round(+$("#stPullCount").value || 40))); s.autoEvery = Math.max(0, Math.min(1440, Math.round(+$("#stAutoEvery").value || 0))); if (s.autoEvery > 0 && s.autoEvery < 5) s.autoEvery = 5; s.etsyHourlyCap = Math.max(50, Math.min(5000, Math.round(+$("#stEtsyCap").value || 600))); { const was = s.sandbox === "on"; s.sandbox = $("#stSandbox").value === "on" ? "on" : "off"; if (was !== (s.sandbox === "on")) { saveSettings(); toast(`Sandbox ${s.sandbox === "on" ? "ON" : "off"} — reloading`, "ok", 3000); setTimeout(() => location.reload(), 600); } }
   s.sandboxStream = $("#stSbStream").value === "off" ? "off" : "on"; s.sandboxSpeed = Math.max(1, Math.min(1000, Math.round(+$("#stSbSpeed").value || 50))); s.sandboxSeed = Math.max(0, Math.min(2147483646, Math.round(+$("#stSbSeed").value || 0)));
@@ -9204,7 +9207,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=artuncut-1116i"></script>
+<script src="charm-nest-bridge.js?v=backtight-1116l"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1-sy1-sy2"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1-ob1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
