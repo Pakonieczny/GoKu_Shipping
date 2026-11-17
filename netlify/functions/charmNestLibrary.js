@@ -6208,6 +6208,7 @@ OPS.sharedOrders = op_sharedOrders;
 OPS.getOrderPieces = op_getOrderPieces;   // where each piece of an order is (OrderPieces); read only
 OPS.customSaveGet = op_customSaveGet;   // a custom design saved to the repository: the order's save record; read only
 OPS.customSavePending = op_customSavePending; OPS.customSaveIntent = op_customSaveIntent;   // KEEP: no repository token (they write nothing in the repository)
+OPS.keepOverrideUndo = body => CustomSave.undoOverride({ db, FV }, body);   // KEEPUNDO: puts back what one recorded save changed (its audit record names every write); refuses when anything changed since
 OPS.customSaveCommit = op_customSaveCommit;   // ... and its write (repo upload token; refused in the sandbox)
 OPS.customSaveRepair = b => require("./_charmNestCustomRepair").repair({ db, FV, bucket: admin.storage().bucket(), etsySku: require("./_charmNestEtsySku").ops.customEtsySkuWrite }, b); NO_GEN_BUMP.add("customSaveRepair");   // KEEP R1-R9: the repair of saved designs (orphan files, records vs entries vs aliases vs files, a stuck Etsy note, intent litter, optional Etsy steps); free below, an upload token to remove files younger than an hour
 OPS.customSkuCheck = b => require("./_charmNestSkuCheck").check(db, b); NO_GEN_BUMP.add("customSkuCheck");   // SKUGEN: which proposed SKU for a saved custom design nobody holds; reads only, so it does not raise the placement counter
@@ -6225,7 +6226,7 @@ Object.assign(OPS, require("./_charmNestEtsyZodiac").ops); ["zodiacListingPrepar
 /** FEED: the names an op's one bumpRev carries. An op of REV_OPS that named nothing is '*' (as before); one that may move a placement (the placement counter
     moves for it) and named no order is p:*, so no placement is ever missed. An empty list moves nothing. failed: the op threw (what it named may be part of it). */
 const FEED_OP_NAMES = { aliasPut: ["a:aliases"], optionMapPut: ["a:options"], noDesignPut: ["a:nodesign"], noDesignDelete: ["a:nodesign"], cancelSweep: ["x:*"],
-  masterPutIndex: ["m:index"], masterEditorPut: ["m:index"], masterPatch: ["m:index"], masterPutFile: ["m:index"], masterRemoveSkus: ["m:index"], masterRemoveSku: ["m:index"], masterRemoveFile: ["m:index"], customSaveCommit: ["m:index", "a:aliases"] };
+  masterPutIndex: ["m:index"], masterEditorPut: ["m:index"], masterPatch: ["m:index"], masterPutFile: ["m:index"], masterRemoveSkus: ["m:index"], masterRemoveSku: ["m:index"], masterRemoveFile: ["m:index"], customSaveCommit: ["m:index", "a:aliases"], keepOverrideUndo: ["m:index", "a:aliases"] };
 function feedKeys(body, failed) {
   const op = body.op, named = body[REV_TOUCHED], keys = new Set(FEED_TOUCHED);
   for (const k of FEED_OP_NAMES[op] || []) keys.add(k);

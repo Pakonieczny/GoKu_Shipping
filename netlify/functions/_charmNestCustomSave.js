@@ -505,4 +505,49 @@ async function intent(deps, b) {
   return { ok: true, intent: out.intent };
 }
 
-module.exports = { config, COLL, INTENTS, OVERRIDES, DIR, SKU_RE, pathsOf, stemOfFile, tagged, TAGGED_RE, commit, get, pending, intent, sweep, read, recordFor, pick, optionPairsOf, groupOf, usableKey, oldSkuOf, ORPHAN_MS };
+/**
+ * KEEPUNDO (Paul, 17 Nov 2026: "Revers this NOW ... the system changed the charm repository without asking and changed the other SKUs that were linked to that SKU ... go into the system, find what was recently updated in
+ * the charm repository and undo that change"). Puts back what ONE recorded "toggle wins" save changed (the audit record Charm_Keep_Overrides/{audit}, written in the same transaction as the act): the SKU's whole old entry, the
+ * listing's old answer, the other save records the act superseded, and removes the save record the act created for the order. One transaction; nothing it was not told by the audit record. It refuses when the audit is
+ * unknown, already undone or older than five days, and when the entry no longer draws what the act wrote (someone changed it since: `changed`, nothing is written). The files of both drawings stay in Storage.
+ * → { ok: true, sku, restored, ... } | { ok: false, error }
+ */
+async function undoOverride(deps, b) {
+  b = b || {};
+  if (isSandbox(b)) return refuse("sandbox");
+  const { db, FV } = deps, col = n => db.collection(n), audit = String(b.audit || ""), by = str(b.by, 80) || "undo", now = (typeof deps.now === "function" ? deps.now : Date.now)();
+  if (!/^[A-Za-z0-9._-]{3,200}$/.test(audit)) return refuse("bad-request", { text: "the audit record id is needed" });
+  const ref = col(OVERRIDES).doc(audit), up = x => String(x == null ? "" : x).trim().toUpperCase();
+  return db.runTransaction(async tx => {
+    const snap = await tx.get(ref); if (!snap.exists) return refuse("no-audit");
+    const a = snap.data() || {};
+    if (a.undone) return refuse("already-undone", { undone: a.undone });
+    if (!(num(a.at) > 0) || now - num(a.at) > 5 * 24 * 3600 * 1000) return refuse("too-old");
+    const sku = up(a.sku); if (!sku) return refuse("bad-audit");
+    const indexRef = col(INDEX).doc(sku), aliasRef = a.alias && a.listingId ? col(ALIASES).doc(String(a.listingId)) : null;
+    const saveRefs = [col(COLL).doc(String(a.rid)), col(COLL).doc(String(a.rid) + "-" + String(a.listingId))];
+    const reads = [indexRef, ...saveRefs].concat(aliasRef ? [aliasRef] : []);
+    const snaps = await tx.getAll(...reads), idxSnap = snaps[0], aliasSnap = aliasRef ? snaps[3] : null;
+    const cur = idxSnap.exists ? idxSnap.data() || {} : null;
+    if (cur && String(cur.charmHash || "") !== String(a.newCharmHash || "")) return refuse("changed", { charmHash: cur.charmHash || "", wrote: a.newCharmHash || "" });
+    const old = a.removed && a.removed.entry && typeof a.removed.entry === "object" ? a.removed.entry : null;
+    const did = { sku, entry: null, alias: false, saves: [], unsuperseded: [] };
+    // 1 · the SKU's entry: the whole old one back (what the act replaced), or gone when the act created it
+    if (old) { const back = Object.assign({}, old, { indexedAt: FV.serverTimestamp(), indexedAtMs: now, restored: { audit, at: now, by } }); delete back.override; tx.set(indexRef, back); did.entry = "restored"; }
+    else if (cur && cur.hashSource === "custom-save") { tx.delete(indexRef); did.entry = "removed"; }
+    // 2 · the listing's answer
+    if (aliasRef && aliasSnap && aliasSnap.exists && a.alias) {
+      const was = a.alias.was == null ? "" : String(a.alias.was), upd = { updatedAt: FV.serverTimestamp(), keep: FV.delete() };
+      if (a.alias.key) upd.bySku = { [a.alias.key]: was ? was : FV.delete() }; else if (was) upd.sku = was; else upd.sku = FV.delete();
+      tx.set(aliasRef, upd, { merge: true }); did.alias = true;
+    }
+    // 3 · the save record this act made for the order is gone (the order is not saved or linked any more)
+    for (const s of snaps.slice(1, 3)) if (s.exists) { const d = s.data() || {}; if (up(d.sku) === sku && num(d.at) === num(a.at)) { tx.delete(s.ref); did.saves.push(s.id); } }
+    // 4 · the other save records of the moved SKU are as they were
+    for (const id of Array.isArray(a.superseded) ? a.superseded.slice(0, 200) : []) { tx.set(col(COLL).doc(String(id)), { superseded: FV.delete() }, { merge: true }); did.unsuperseded.push(String(id)); }
+    tx.set(ref, { undone: { at: now, by } }, { merge: true });
+    return { ok: true, status: 200, ...did, oldHash: old ? String(old.charmHash || "") : "", wasHash: String(a.newCharmHash || "") };
+  });
+}
+
+module.exports = { undoOverride, config, COLL, INTENTS, OVERRIDES, DIR, SKU_RE, pathsOf, stemOfFile, tagged, TAGGED_RE, commit, get, pending, intent, sweep, read, recordFor, pick, optionPairsOf, groupOf, usableKey, oldSkuOf, ORPHAN_MS };
