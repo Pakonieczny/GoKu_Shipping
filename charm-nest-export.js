@@ -479,7 +479,10 @@
         ops += '/OC /' + tag.get(name) + ' BDC\n';
         for (const e of list) {
           if (e.kind === 'spline') ops += 'q ' + rgb1(e.rgb) + ' RG ' + n6(Math.max(0.1, (e.lw || 0) / 100 / MM)) + ' w 1 J 1 j ' + path(e.b) + 'S Q\n';
-          else if (e.kind === 'fill') ops += 'q ' + rgb1(e.rgb) + ' rg ' + e.loops.map(path).join('') + 'f* Q\n';
+          else if (e.kind === 'fill') {   // (exactly as the .dxf writes a fill: each boundary curve first, as a line of its own in the layer, then the filled area)
+            for (const b of e.loops) ops += 'q 0 0 0 RG 0.25 w ' + path(b) + 'S Q\n';
+            ops += 'q ' + rgb1(e.rgb) + ' rg ' + e.loops.map(path).join('') + 'f* Q\n';
+          }
         }
         ops += 'EMC\n';
       }

@@ -4001,7 +4001,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-sheet-name.js?v=20261010-sn1-nm2"></script>
 <script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2-sn1-fb1-eu3-hg1-rh1-rh3-rh4-sp1-cost18-gl1-lg1-gs1-ln1"></script>
 <script src="charm-nest-dxf-skeleton.js?v=20261114-ai1"></script>
-<script src="charm-nest-export.js?v=1117-675c5511"></script>
+<script src="charm-nest-export.js?v=1117-10e03059"></script>
 <script src="charm-nest-art-edit.js?v=artnet-1116h"></script><!-- charm-nest-art-edit.js: ONE piece's own change to its master artwork, kept beside it and put over the master wherever the piece is made (ART EDIT, Paul 27 Oct 2026) -->
 <script src="charm-nest-designs.js?v=20261028-dsg1-dsg2-tq1"></script><!-- charm-nest-designs.js: the design library, every version of every charm saved in the Charm Editor, searchable at once on this computer (DESIGNS, Paul 28 Oct 2026) -->
 <script src="charm-nest-charm-editor.js?v=1117-64a3c023"></script><!-- charm-nest-charm-editor.js: the charm editor, a watered-down Illustrator over the page for ONE piece's front and back, layer by layer; the Engraving window's "Edit charm" opens it and saves through the art edit above (CHARM EDIT, Paul 27 Oct 2026) -->
@@ -4051,7 +4051,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1-cg1-ld1-sn1-dm1-sp1-sa25-gl1-ga1-gfp1"></script>
 <script src="charm-nest-set-invariants.js?v=20261017-setrepair1-setfix1-rv1-cost18-sets9-bk26-gl1-ga1-gfp1-rga1-gw1"></script><!-- the owner's set rules as one checker (docs/charm-nest/set-rules.md) -->
 <script src="charm-nest-set-repair.js?v=20261017-setrepair1-rv1-cost18-sa25-dc26-gl1-gk1-vis1-ga1-tab1-rga1"></script><!-- the explicit one-press repair of a set that breaks them (SETREPAIR, Paul 17 Oct 2026) -->
-<script src="charm-nest-background.js?v=1117-a5b1f8d4"></script>
+<script src="charm-nest-background.js?v=1117-80b7a021"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
    CHARM NESTING STATION 1 — application
@@ -6593,7 +6593,9 @@ async function finishNest(sh, { result, error }) {
         agent({ metal: sh.metal }, "nest", `${sheetName(sh)}: no room for ${sh.rejects.length === 1 ? "the new piece" : `the ${sh.rejects.length} new pieces`}; the layout and its saved files stand as they are`);
         const updatedJob = sh.jobId;
         if (!S.cloud.ok && !(window.B?.run && window.B.run.runId === sh.runId)) { sh.saveOwed = true; log(sh, "cloud offline: kept in this browser, saved when the cloud is back"); feedOn(sh); flushManualIntake(sh.metal); } else   // (as finishNest's save below)
-        sh.persisted = api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, releaseFull: !!sh.releaseFull, topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized } }, { label: "Updating sheet record", quiet: true })
+        sh.persisted = api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, releaseFull: !!sh.releaseFull, topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized,
+          /* (DWRECORD, Paul 17 Nov 2026, found by the Designs-window test: a piece taken off a sheet leaves its record flagged dirty and without that piece in its list (poolUpdate); an exchange that put a piece back where it was lands here, the layout the files hold, and only the state was written: the record stayed dirty and without the piece, so 90 s later the run's own repair dropped the piece from the sheet and put it back "beside". The record's own list of pieces and its clean state are written with it) */
+          poolIds: sh.placements.map(p => byId.get(p.id)).filter(Boolean).map(c => c.poolId).filter(Boolean), dirty: false } }, { label: "Updating sheet record", quiet: true })
           .then(() => { sh.persistedDone = true; releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); if (sh.jobId === updatedJob) feedOn(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); })
           .catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e, { stage: "persistence", critical: true })); });
         // in Auto the move is routine and shows on both cards; a toast for it covered the next card's controls
