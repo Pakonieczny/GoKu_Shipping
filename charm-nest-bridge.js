@@ -21616,9 +21616,22 @@ const Review = window.Review = (() => {
         r = r || {};
         const first = (async () => { if (r.loadMaps) await Orders.loadMaps(true).catch(e => line("maps", "The saved links were not read again", "failed", (e && e.message) || String(e))); await relinkNow().catch(() => null); })();
         const all = first.then(async () => {
+          /* KEEPREMOTE (Paul, 17 Nov 2026: "the whole thing got stuck at 73 or 72% and it was sitting there for several minutes"): on a computer that FOLLOWS the run this step waited for
+             a sheet only the carrying computer can change, until that computer noticed the new drawing by itself (eight minutes on 17 Nov). The carrying computer is now ASKED, at once: it
+             reads the repository and the links again and makes the other open orders of this charm again in place; what it is doing and its answer are shown here. This page waits for no
+             sheet of its own, and a carrier that is busy or closed never holds the panel: the line says the orders follow as soon as it is free. */
+          const remote = !B.run && typeof window.CNRelayAsk === "function";
+          if (remote) {
+            const skus = [...new Set([to, also].filter(Boolean))];
+            line("carrier", `Other open orders of ${skus.join(", ")}: asking the computer that carries the run…`, "work");
+            const ans = await window.CNRelayAsk({ type: "keepsync", ids: skus, label: `Make the open orders of ${skus.join(", ")} again from the new design`.slice(0, 150) }, t => line("carrier", `Other open orders: ${t}`, "work"), 420000);
+            if (ans && ans.ok) { line("carrier", `Other open orders: ${ans.text}`.slice(0, 260), "done"); tally.orders.add("carrier"); }
+            else line("carrier", `Other open orders of this charm are updated by ${(ans && ans.name ? ans.name + "'s computer" : "the computer that carries the run")} as soon as it is free`, "warn", (ans && ans.text) || "");
+            for (const e of [...relinkWait.values()]) if (e.row && mine(e.row)) relinkWait.delete(e.key);   // (they are the carrying computer's to make: not waited for, not warned about, here)
+          }
           // the lines still waiting for their sheet (one being arranged) are made up by the next sweeps: followed until each is settled (a line in Review waits for its Review: told above)
           const t0 = Date.now();
-          for (;;) {
+          for (; !remote;) {
             const wait = [...relinkWait.values()].filter(e => e.row && mine(e.row) && !kept.has(e.key) && !skip.has(e.key));
             if (!wait.length) break;
             if (Date.now() - t0 > 150000) { for (const e of wait) { tally.failed.add("o:" + e.key); line("o:" + e.key, `Order ${e.row.order.receiptId}: not made again yet`, "failed", "its sheet stayed busy; the Review's Order changed row offers it"); } break; }
@@ -21627,7 +21640,7 @@ const Review = window.Review = (() => {
           }
           // (o.placeWaiting, the designs window's save: the orders of this listing + SKU that waited for a charm (no library charm answered them, so none of them was on a sheet) read the saved
           //  design now: each is made from it and goes onto its sheet, which is nested at once, as a swap's sheet is)
-          if (o.placeWaiting) {
+          if (o.placeWaiting && !remote) {
             const joined = new Set();
             for (const rr of Orders.rows()) {
               if (rlLid(rr) !== lid || skip.has(rr.key) || (rr.poolIds || []).length || !rr.spec || String(rr.spec.designSku || "").toUpperCase() !== to || ["gone", "skipped", "noDesign", "committed", "written"].includes(rr.state) || rr.hold) continue;
@@ -30372,6 +30385,28 @@ window.CNPairNow = async function (keys) {
   try { await RunCtl.save(run); } catch (_) { /* saved with the next change */ }
   const on = id => allSheets().find(p => (p.charms || []).some(c => c && c.poolId === id)), ids = rows.flatMap(r => r.poolIds || []), homes = ids.map(on).filter(Boolean);
   return { lines: rows.length, placed: homes.length, pieces: ids.length, names: [...new Set(homes.map(p => p.fileBase || sheetName(p)))], waiting: rows.filter(r => r.state === "waiting").map(r => String(r.reason || "")) };
+};
+/* CNRelayAsk(cmd, onStep, maxMs): a request put to the computer that carries the run, its steps passed on while it works, its answer waited for (the list is read every 3 s for the first minute,
+   every 6 s after). → { ok, text, name } · { ok:false, none:true } when this page carries the run itself or no carrier is open. Never throws. */
+window.CNRelayAsk = async function (cmd, onStep, maxMs) {
+  try {
+    const F = window.CharmNestRunFollow, runId = F && F.state && F.state().runId, dev = F && typeof F.dev === "function" ? F.dev() : "";
+    if (B.run || !runId || !dev) return { ok: false, none: true, text: "No other computer carries the run." };
+    const c = await api("charmNestLibrary", { op: "runCarrier", runId, dev, check: true }, { quiet: true });
+    if (!c || !c.alive || c.mine) return { ok: false, none: true, text: "The computer that carries the run is not open right now." };
+    const name = (c.carrier && c.carrier.by) || "the computer that carries the run";
+    const put = await api("charmNestLibrary", { op: "runCmdPut", runId, dev, by: (typeof employeeName === "function" && employeeName()) || "", cmd }, { quiet: true });
+    if (!put || !put.id) return { ok: false, text: (put && put.error) || "The request was not sent.", name };
+    if (typeof onStep === "function") onStep(`Waiting for ${name}'s computer…`, name);
+    for (const t0 = Date.now(); Date.now() - t0 < (maxMs || 600000);) {
+      await new Promise(r => setTimeout(r, Date.now() - t0 < 60000 ? 3000 : 6000));
+      let list = null; try { list = await api("charmNestLibrary", { op: "runCmdList", runId }, { quiet: true }); } catch (_) { continue; }
+      const k = ((list && list.cmds) || []).find(x => x && x.id === put.id); if (!k) continue;
+      if (k.state === "done" || k.state === "failed" || k.state === "cancelled") return { ok: k.state === "done", text: String(k.text || ""), name };
+      if (k.state === "running" && k.step && typeof onStep === "function") onStep(`${name}'s computer: ${k.step}`, name);
+    }
+    return { ok: false, text: `${name}'s computer did not answer.`, name };
+  } catch (e) { return { ok: false, text: String((e && e.message) || e) }; }
 };
 let askPlaceAt = 0;
 /** After a change that left pieces on no sheet: the carrier places them now (here, when this computer carries the run; asked through the relay when it follows one). At most every 15 s. */

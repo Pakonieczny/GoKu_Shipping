@@ -227,6 +227,22 @@
         try { const v = await f(a.ids); r = v.made ? { ok: true, text: `${v.made} order line(s) made again: ${v.pieces} piece(s) on ${[...new Set(v.names)].join(" and ")}${v.why.length ? " · " + v.why.join("; ") : ""}`.slice(0, 380) } : { ok: false, why: (v.why.join("; ") || "Nothing was made.").slice(0, 380) }; }
         catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); } }
     }
+    // (KEEPREMOTE, Paul 17 Nov 2026: a design saved to the repository on a following computer: the repository and the saved links are read again HERE, now, and the open orders of these SKUs are made again in place: the listing's lines the link moved (Review.relinkNow) and the pieces that hold an older drawing of the SKU (Review.redrawStale))
+    else if (c.type === "keepsync") {
+      const Rv = root.Review, Ms = safe(() => (typeof Master !== "undefined" ? Master : root.Master), null), Or = safe(() => (typeof Orders !== "undefined" ? Orders : root.Orders), null);
+      if (!Rv || typeof Rv.redrawStale !== "function" || !(a.ids || []).length) r = { ok: false, why: "not ready" };
+      else { const step = stepper(c); step({ text: "Reading the repository again…" });
+        try {
+          if (Ms && typeof Ms.load === "function") { try { await Ms.load(true); } catch (_) { /* the index it holds */ } }
+          if (Or && typeof Or.loadMaps === "function") { try { await Or.loadMaps(true); } catch (_) { /* the links it holds */ } }
+          try { if (Or && Or.interpretAll) Or.interpretAll(); } catch (_) { /* read at the next look */ }
+          step({ text: "Making the other orders again…" });
+          let moved = 0; try { const v = typeof Rv.relinkNow === "function" ? await Rv.relinkNow() : null; moved = ((v && v.swapped) || []).length; } catch (_) { /* the next sweep */ }
+          const v2 = await Rv.redrawStale(a.ids);
+          try { if (root.CNStrandedWatch) root.CNStrandedWatch("a design saved on another computer"); } catch (_) { /* its own look */ }
+          r = v2 && v2.ok !== false ? { ok: true, text: `${moved ? moved + " order line(s) moved to the new design; " : ""}${String(v2.text || "done")}`.slice(0, 380) } : { ok: false, why: String((v2 && (v2.why || v2.text)) || "not done").slice(0, 300) };
+        } catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); } }
+    }
     else if (c.type === "remake") r = root.Review && typeof root.Review.redrawStale === "function" ? await root.Review.redrawStale(a.ids || []) : { ok: false, why: "not ready" };   // (REMAKESTALE: open pieces that hold an older drawing of these SKUs are made up again from the library's drawing)
     // (REMOTENEST, Paul 15 Nov 2026: "you re-nest it and then check that everything is OK everywhere"): a draft sheet of the run is nested again here, exactly as its Re-nest button does (never a sheet that was cut or is in a committed set: startNest's own rules stand), and the answer waits for the nest and its save
     else if (c.type === "renest") {
