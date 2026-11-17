@@ -418,6 +418,7 @@
         for(const sub of path.subpaths||[]){const b=bez(sub,cutFill);if(b)entities.push({kind:'spline',layer:lay,b,rgb:rgb(c),lw:lwOf(path)});}
       }
     }
+    if(opts.collectOnly)return {entities,layers:[...order],hatchMm};   // (AIMATCH: the .ai is written from these very entities)
     // ── the file: Illustrator's own frame, the layers, then every curve and fill ──
     const out=[];let handle=0x1000,count=0;
     const H=()=>(handle++).toString(16).toUpperCase();
@@ -455,6 +456,42 @@
     const values={LAYERS:layerText,ENTITIES:entityText,LAYER_COUNT:String(order.length+1).padStart(6),HANDSEED:handle.toString(16).toUpperCase()};
     const text=sk.text().replace(/\{\{(\w+)\}\}/g,(_,key)=>values[key]);
     return {text,entityCount:count,layers:[...names.entries()],colors:[...colours],hatchMm};
+  }
+  /* AIMATCH (Paul, 17 Nov 2026: "The .ai file has to match the .dxf NOT the other way around" · "I need you to fix the missing layers in the .ai" · "both need the back engraving fixed"). The .dxf is the file the engraving software reads
+     perfectly, so the .ai is made from the SAME entities the .dxf is written from (dxf() with collectOnly: every path's layer, colour, line weight, every fill and its holes, the back engravings laid above the sheet in BACK ENG):
+     the same ten layers (Layer 1, Dimensions, ENGRAVE, HATCH, CUT, BACK ENGRAVING, LABELS, BACK ENG, SHEET (do not cut), CUT OUTLINE (reference)), each a real layer of the page, never a form inside the page
+     (Illustrator lists the layers of a page, and shows none of the layers of a form drawn on it: the earlier .ai put the sheet and every back in embedded forms). Same coordinates, 1 pt = 1 pt, y up, on a page of the composed sheet's size. */
+  function aiFrom(got, pageW, pageH, title) {
+    const L = lib(), n6 = v => { const r = +(+v).toFixed(5); if (!Number.isFinite(r)) throw new Error('The .ai contains a non-finite coordinate.'); return String(r); };
+    return (async () => {
+      const doc = await L.PDFDocument.create(), page = doc.addPage([pageW, pageH]);
+      doc.setTitle(title || 'Charm production sheet'); doc.setProducer('Brites Manager'); doc.setCreator('Brites Manager · production sheet');
+      const props = doc.context.obj({}), refs = [], tag = new Map();
+      page.node.Resources().set(L.PDFName.of('Properties'), props);
+      for (const name of got.layers) { const ref = doc.context.register(doc.context.obj({ Type: 'OCG', Name: L.PDFString.of(String(name)) })); refs.push(ref); tag.set(name, 'L' + refs.length); props.set(L.PDFName.of(tag.get(name)), ref); }
+      const byLayer = new Map(got.layers.map(l => [l, []]));
+      for (const e of got.entities) (byLayer.get(e.layer) || byLayer.set(e.layer, []).get(e.layer)).push(e);
+      for (const [name, list] of byLayer) if (!tag.has(name)) { const ref = doc.context.register(doc.context.obj({ Type: 'OCG', Name: L.PDFString.of(String(name)) })); refs.push(ref); tag.set(name, 'L' + refs.length); props.set(L.PDFName.of(tag.get(name)), ref); }
+      const rgb1 = c => (c || [0, 0, 0]).map(v => n6(v / 255)).join(' ');
+      const path = b => { let t = n6(b.pts[0][0]) + ' ' + n6(b.pts[0][1]) + ' m '; for (let i = 1; i + 2 < b.pts.length; i += 3) t += b.pts[i].map(n6).join(' ') + ' ' + b.pts[i + 1].map(n6).join(' ') + ' ' + b.pts[i + 2].map(n6).join(' ') + ' c '; return t + (b.closed ? 'h ' : ''); };
+      let ops = '';
+      for (const [name, list] of byLayer) {
+        ops += '/OC /' + tag.get(name) + ' BDC\n';
+        for (const e of list) {
+          if (e.kind === 'spline') ops += 'q ' + rgb1(e.rgb) + ' RG ' + n6(Math.max(0.1, (e.lw || 0) / 100 / MM)) + ' w 1 J 1 j ' + path(e.b) + 'S Q\n';
+          else if (e.kind === 'fill') ops += 'q ' + rgb1(e.rgb) + ' rg ' + e.loops.map(path).join('') + 'f* Q\n';
+        }
+        ops += 'EMC\n';
+      }
+      page.node.set(L.PDFName.of('Contents'), doc.context.register(doc.context.flateStream(new TextEncoder().encode(ops))));
+      doc.catalog.set(L.PDFName.of('OCProperties'), doc.context.obj({ OCGs: refs, D: { Order: refs, ON: refs } }));
+      return await doc.save({ useObjectStreams: false });
+    })();
+  }
+  /** The production .ai of a composed sheet (compose's bytes): the .dxf's own entities, written as layers of one page. → Uint8Array */
+  async function productionAi(bytes, title) {
+    const parsed = await pdf().parseSource(bytes, 'Production sheet');
+    return aiFrom(dxf(productionPaths(parsed), layerNames(parsed), { collectOnly: true }), parsed.pageW, parsed.pageH, title);
   }
   function layerNames(parsed) {
     const L=lib();return [...new Set(parsed.doc.context.enumerateIndirectObjects().filter(([,o])=>o instanceof L.PDFDict&&o.get(L.PDFName.of('Type'))?.toString()==='/OCG').map(([,o])=>o.get(L.PDFName.of('Name'))?.decodeText?.()).filter(Boolean))];
@@ -506,7 +543,7 @@
     const [idx, rep] = await Promise.all([deps.upload(names.index, pdfBytes, 'application/pdf', face === 'front' ? 'Saving front index' : 'Saving back index'), deps.upload(names.report, new TextEncoder().encode(JSON.stringify(report, null, 1)), 'application/json')]);
     return {index: {path: idx.path, url: idx.url}, report: {path: rep.path, url: rep.url}, count: records.length};
   }
-  const api={blueEngraving,compose,parentScale,parentForm,leaves,productionPaths,flatten,dxf,layerNames,backIndexPdf,faceFiles,ofFace,reportRow,indexLines,faceOutputs,layerPrefix,frontFrame,isFront,FRONT_LAYER,MM};
+  const api={productionAi,aiFrom,blueEngraving,compose,parentScale,parentForm,leaves,productionPaths,flatten,dxf,layerNames,backIndexPdf,faceFiles,ofFace,reportRow,indexLines,faceOutputs,layerPrefix,frontFrame,isFront,FRONT_LAYER,MM};
   root.CharmNestExport=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);

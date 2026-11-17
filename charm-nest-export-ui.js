@@ -37,6 +37,8 @@
     // (front engravings: the manifest lists each one and whether it sits on its charm or above the sheet; a sheet with none has no such key)
     let data=composed.ai,metadata={sheetId:sheet.id||sheet.sheetId,fileBase:sheet.fileBase,units:'mm',backs:composed.layout,...(earPieces?{pairPieces:earPieces}:{}),...(composed.frontLayout?{fronts:composed.frontLayout}:{}),...(composed.contourMissing?{contourMissing:composed.contourMissing}:{})};
     const noBack=missingBacks(sheet);if(noBack.length)metadata.backsMissing=noBack;
+    // (AIMATCH, Paul 17 Nov 2026: the .ai has to match the .dxf: the same layers and the same paths, the back engravings above the sheet; never the sheet and its backs as forms inside a page)
+    if(format==='ai'&&CharmNestExport.productionAi){const ai=await CharmNestExport.productionAi(composed.ai,sheet.fileBase);data=ai instanceof Uint8Array?ai:new Uint8Array(ai);}
     if(format==='dxf') {
       const result=CharmNestExport.productionDxf ? await CharmNestExport.productionDxf(composed.ai) : await (async()=>{const parsed=await CharmNestPDF.parseSource(composed.ai,'Production sheet');return CharmNestExport.dxf(CharmNestExport.productionPaths(parsed),CharmNestExport.layerNames(parsed));})();
       data=new TextEncoder().encode(result.text);

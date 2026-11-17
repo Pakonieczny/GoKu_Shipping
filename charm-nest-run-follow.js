@@ -233,7 +233,7 @@
       if (!Rv || typeof Rv.redrawStale !== "function" || !(a.ids || []).length) r = { ok: false, why: "not ready" };
       else { const step = stepper(c); step({ text: "Reading the repository again…" });
         try {
-          if (Ms && typeof Ms.load === "function") { try { await Ms.load(true); } catch (_) { /* the index it holds */ } }
+          if (Ms && typeof Ms.load === "function") { try { await Ms.load({ quiet: true, ttl: 1, fresh: true }); } catch (_) { /* the index it holds */ }   /* (REPOEDIT: what changed is read, not the whole index) */ }
           if (Or && typeof Or.loadMaps === "function") { try { await Or.loadMaps(true); } catch (_) { /* the links it holds */ } }
           try { if (Or && Or.interpretAll) Or.interpretAll(); } catch (_) { /* read at the next look */ }
           step({ text: "Making the other orders again…" });
