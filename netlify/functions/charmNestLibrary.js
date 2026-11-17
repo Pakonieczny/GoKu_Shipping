@@ -162,6 +162,8 @@ function slim(d) {
     preview: d.outputs && d.outputs.preview ? d.outputs.preview.url : null,
     // when the picture itself was last saved (op_putSheet): the page keeps a picture by it, so a seal or a step on the record no longer makes every open page load the picture again
     ...(d.previewAt ? { previewAt: num(d.previewAt) } : {}),
+    // (PICTUREREV, Paul 17 Nov 2026: "what I see in the previews is not what opens when I open the detailed view of the sheet"): the layout's revision the picture was drawn for, and the layout's revision now: a picture behind its layout is drawn again by the computer that carries the run
+    ...(d.layoutRev != null ? { layoutRev: num(d.layoutRev) } : {}), ...(d.previewRev != null ? { previewRev: num(d.previewRev) } : {}),
     // the four files a recalled card offers, so recalling a set is one read of this list and nothing more
     outputs: d.outputs ? Object.fromEntries(["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k] && d.outputs[k].url).map(k => [k, d.outputs[k].url])) : {},
     stock: d.stock || null, poolIds: d.poolIds || [], engraving:d.engraving || {}, orderReadiness:d.orderReadiness || {}, laser:d.laser || null,
@@ -183,7 +185,7 @@ function slim(d) {
 /* The fields of a sheet record that its list entry (slim) and its laser readiness (Readiness.sheet) read, and the lists
    filter on. A list reads only these: the rest of a record (its charms with their outlines, its placements) is most of
    its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
-const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit", "releasedChange", "filesOwed", "cutCheck", "draftOrder", "_w"];   // (releasedChange: a set changed after it was released or approved for laser cutting, said on its Library card, Paul 27 Oct 2026)
+const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit", "releasedChange", "filesOwed", "cutCheck", "draftOrder", "_w", "layoutRev", "previewRev"];   // (releasedChange: a set changed after it was released or approved for laser cutting, said on its Library card, Paul 27 Oct 2026)
 /** What the Library's live read (op_laserStatus) reads of a sheet: SLIM_SHEET, and the sheet's own number (readiness labels a sheet that is in no set by it). */
 const LASER_SHEET = SLIM_SHEET.filter(f => f !== "sources").concat(["seq", "sourcesLite"]);
 /** What decides whether a sheet is on the Library's Current list (op_listSheets with excludeDone): archived, completed, its set (filingRecords), the filters and the order. */
@@ -1087,7 +1089,7 @@ async function op_putSheet(b) {
   // a hold back from Laser cutting and the Library's move history are server-owned too (op_flowApply): a stale page cannot clear them
   delete doc.laserHold; delete doc.flowHistory;
   // the time the picture was saved is the server's: a record that carries a picture (the save after its upload) stamps it, nothing else does
-  delete doc.previewAt; if (s.outputs && s.outputs.preview && s.outputs.preview.url) doc.previewAt = Date.now();
+  delete doc.previewAt; delete doc.previewRev; if (s.outputs && s.outputs.preview && s.outputs.preview.url) doc.previewAt = Date.now();
   // the short list of the sheet's sources that its Library entry reads (see withSources); the sources themselves stay as they were
   delete doc.sourcesLite; if (Array.isArray(s.sources)) doc.sourcesLite = s.sources.slice(0, 500).filter(x => x && typeof x === "object").map(x => ({ ...(x.name == null ? {} : { name: String(x.name).slice(0, 300) }), hash: x.hash ? String(x.hash).slice(0, 80) : null }));
   // the listings its pieces were bought from, as the Library's listing search reads them (array-contains)
@@ -1104,6 +1106,7 @@ async function op_putSheet(b) {
     { const carries = Object.prototype.hasOwnProperty.call(s, "placements"), lr = num(old.layoutRev) || 0;
       if (carries && typeof b.layoutBase === "number" && Number.isFinite(b.layoutBase) && b.layoutBase !== lr) return { error: `${Placement.labelOf(old) || "Sheet " + s.id} was changed on another computer since this one read it: it is read again, nothing was overwritten`, status: 409, conflict: true, layoutRev: lr };
       if (carries) doc.layoutRev = lr + 1; layoutRevOut = carries ? lr + 1 : lr; }
+    if (doc.previewAt) doc.previewRev = layoutRevOut;   // (PICTUREREV: the picture this save carries stands for the layout as it is after it)
     // (OUTBOX: a patch of the sheet's own fields that no placement answer reads (PIECE_SHEET_FIELDS), its release mark or its label, moves no piece: it names no order, and
     //  the placement counter stays: only a save that carries what an order's pieces are read from names their orders)
     if (ex.exists && !old.archived && Object.keys(s).every(k => k === "id" || !PIECE_SHEET_FIELDS.includes(k))) PLACE_QUIET = true;

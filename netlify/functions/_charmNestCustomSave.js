@@ -130,7 +130,7 @@ function read(b, deps) {
   if (!reuse && fileKey !== sku && !TAG_RE.test(tag)) return { answer: bad("fileTag", "6 to 16 letters or digits") };
   const override = via ? { via, from: str(o.from, 80).trim().toUpperCase() } : null;
   const declared = { aiSha256: SHA_RE.test(str(f.aiSha256, 80).trim()) ? str(f.aiSha256, 80).trim().toLowerCase() : "", aiBytes: Math.max(0, Math.floor(num(f.aiBytes))), pngSha256: SHA_RE.test(str(f.pngSha256, 80).trim()) ? str(f.pngSha256, 80).trim().toLowerCase() : "" };
-  const v = { rid, listingId, sku, oldSku, oldCut: wasCut(b.oldSku), productId, optionPairs: optionPairsOf(b.optionPairs), group: groupOf(b.group), title: str(b.title, 200), by: str(b.by, 80) || "operator", reuse, declared, override, etsyOwn, fileKey: reuse ? sku : fileKey,
+  const v = { rid, listingId, sku, oldSku, oldCut: wasCut(b.oldSku) || b.noAlias === true /* (NEWSKU, Paul 17 Nov 2026: a design saved under a NEW SKU beside a SKU another drawing holds writes no listing answer: the listing's other orders keep reading the old SKU; only the Etsy step links the new one) */, productId, optionPairs: optionPairsOf(b.optionPairs), group: groupOf(b.group), title: str(b.title, 200), by: str(b.by, 80) || "operator", reuse, declared, override, etsyOwn, fileKey: reuse ? sku : fileKey,
     design: { name, kind: d.kind === "dxf" ? "dxf" : "ai", hash: str(d.hash || masterHash, 80).toLowerCase(), bytes: Math.max(0, Math.floor(num(d.bytes))) } };
   const charmHash = str(e.charmHash, 80).trim();
   if (!reuse && config.requireFileHash && !declared.aiSha256) return { answer: bad("file.aiSha256", "the hash of the .ai the page built") };
