@@ -62,20 +62,25 @@ function cleanSym(v) { return v === "symmetric" || v === "slight" || v === "dire
 
 /** [w, h] in points, both positive and finite (the charm's size without its hoop), else null. */
 function cleanBody(v) { return Array.isArray(v) && v.length === 2 && v.every(x => typeof x === "number" && isFinite(x) && x > 0 && x < 5000) ? [+v[0].toFixed(3), +v[1].toFixed(3)] : null; }
+/** REPOEDIT: the mark the Charm Editor's "Update repository charm" leaves on an entry: { at, by, from (the hash it drew), to (the hash it draws), size, n (how many times) }. */
+function cleanEdited(v) {
+  if (!v || typeof v !== "object" || !v.to) return null;
+  return { at: num(v.at) || null, by: String(v.by || "").slice(0, 80), from: String(v.from || "").slice(0, 80), to: String(v.to || "").slice(0, 80), size: v.size ? String(v.size).slice(0, 12) : null, n: num(v.n) || 1 };
+}
 function slimEntry(d) {
   if (!d) return null;
   const pair = cleanPair(d.pair), facing = cleanFacing(d.facing), facings = cleanFacings(d.facings), sym = cleanSym(d.sym);
   // (KEEPOVERRIDE, Paul 20 Oct 2026: a SKU the designs window's switch took from another charm says so, so every computer remakes the pieces cut from the old drawing: charm-nest-bridge.js redrawChanged)
   const ov = d.override && typeof d.override === "object" ? { audit: String(d.override.audit || ""), via: String(d.override.via || ""), by: String(d.override.by || ""), at: num(d.override.at) || null, from: d.override.from && typeof d.override.from === "object" ? { skus: Array.isArray(d.override.from.skus) ? d.override.from.skus.slice(0, 20).map(String) : [], charmHash: String(d.override.from.charmHash || ""), aiPath: String(d.override.from.aiPath || ""), retired: !!d.override.from.retired } : null } : null;
-  const body = cleanBody(d.bodyPt), sizeFix = cleanSizeFix(d.sizeFix);
-  return { ...(ov ? { override: ov } : {}), ...(sizeFix ? { sizeFix } : {}), ...(body ? { bodyPt: body } : {}), ...(pair ? { pair } : {}), ...(facing ? { facing } : {}), ...(Array.isArray(facings) ? { facings } : {}), ...(sym ? { sym } : {}), sku: d.sku, masterHash: d.masterHash || null, masterPath: d.masterPath || null, masterName: d.masterName || null, charmHash: d.charmHash || null, widthPt: num(d.widthPt), heightPt: num(d.heightPt), areaPt2: num(d.areaPt2), members: num(d.members), holes: num(d.holes), readerV: num(d.readerV),
+  const body = cleanBody(d.bodyPt), sizeFix = cleanSizeFix(d.sizeFix), edited = cleanEdited(d.edited);
+  return { ...(edited ? { edited } : {}), ...(ov ? { override: ov } : {}), ...(sizeFix ? { sizeFix } : {}), ...(body ? { bodyPt: body } : {}), ...(pair ? { pair } : {}), ...(facing ? { facing } : {}), ...(Array.isArray(facings) ? { facings } : {}), ...(sym ? { sym } : {}), sku: d.sku, masterHash: d.masterHash || null, masterPath: d.masterPath || null, masterName: d.masterName || null, charmHash: d.charmHash || null, widthPt: num(d.widthPt), heightPt: num(d.heightPt), areaPt2: num(d.areaPt2), members: num(d.members), holes: num(d.holes), readerV: num(d.readerV),
     engravable: d.engravable !== false, engravableBy: d.engravableBy || null, upAngle: d.upAngle == null ? null : num(d.upAngle), upSource: d.upSource || null, backKeepOut: d.backKeepOut || [], aiPath: d.aiPath || null, thumbPath: d.thumbPath || null, aiUrl: d.aiUrl || null, thumbUrl: d.thumbUrl || null,
     sizes: d.sizes || null, blocked: d.blocked || null, conflict: d.conflict || null, sizeMoved: d.sizeMoved || null, labelSource: d.labelSource || "text", confirmedBy: d.confirmedBy || null, open: !!d.open, indexedAt: d.indexedAt && d.indexedAt.toMillis ? d.indexedAt.toMillis() : (num(d.indexedAtMs) || null), hashSource: d.hashSource || "browser" };
 }
 
 /** A short name for the shape an entry is sent in (the code that makes it). It rides in the index's signature (charmNestLibrary masterIndexSig),
     so a page that kept a copy of the whole index (charm-nest-master-cache.js) reads it again when this code changed, not only when the data did. */
-const SHAPE = require("crypto").createHash("sha1").update([slimEntry, cleanPair, cleanFacing, cleanSym, num].map(f => String(f)).join("\n")).digest("hex").slice(0, 10);
+const SHAPE = require("crypto").createHash("sha1").update([slimEntry, cleanPair, cleanFacing, cleanSym, num, cleanEdited].map(f => String(f)).join("\n")).digest("hex").slice(0, 10);
 
 /**
  * entries: [{ sku, size?, masterHash, masterPath, masterName, charmHash, widthPt, heightPt, areaPt2, members, holes, engravable, upAngle, upSource, aiPath, thumbPath, aiUrl, thumbUrl, open, labelSource, confidence, blocked? }]
@@ -97,7 +102,7 @@ async function putIndex(db, FV, body) {
   for (let i = 0; i < skus.length; i += 200) {
     const part = skus.slice(i, i + 200);
     // (only what the rules below look at of an entry already there: its master, its size, its operator overrides)
-    const snaps = await db.getAll(...part.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["masterHash", "masterName", "widthPt", "heightPt", "engravableBy", "upSource", "sizes", "pair", "pairBy", "facingBy", "hashSource", "charmHash"] });
+    const snaps = await db.getAll(...part.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["masterHash", "masterName", "widthPt", "heightPt", "engravableBy", "upSource", "sizes", "pair", "pairBy", "facingBy", "hashSource", "charmHash", "edited"] });
     snaps.forEach((sn, j) => { if (sn.exists) existing.set(part[j], sn.data()); });
   }
   // KEEP R4: a design SAVED FROM AN ORDER (hashSource "custom-save", written create-only by the Review card's save) is the page's own and is never overwritten by a master file it did not come from: the master's
@@ -105,6 +110,10 @@ async function putIndex(db, FV, body) {
   // landed in between is kept too (the window was the whole batch; it is now one read and one commit).
   const savedDesign = (e, hash) => !!e && e.hashSource === "custom-save" && !!e.masterHash && e.masterHash !== hash && !replaces.has(e.masterHash);
   const keepSaved = (sku, e) => out.blocked.push({ sku, reason: "this name is a design saved from an order: it is kept as it is (rename the charm in the master file to index it)", with: e.masterHash, saved: true });
+  // REPOEDIT (Paul, 17 Nov 2026): a charm a person updated from the Charm Editor (`edited`) keeps that drawing when a master file is indexed again; only a file added as the NEWEST, and not the entry's own file, takes it
+  // (a person's newer drawing). It is said (`blocked`, edited: true), never dropped without a word.
+  const editedKept = e => !!e && !!cleanEdited(e.edited) && body.overEdited !== true && !(newest && !!e.masterHash && e.masterHash !== masterHash);
+  const keepEdited = (sku, e) => out.blocked.push({ sku, reason: "this charm was updated in the Charm Editor" + (e.edited && e.edited.by ? " by " + String(e.edited.by).slice(0, 60) : "") + ": that drawing is kept (add the file as the newest to replace it)", with: e.masterHash || null, edited: true });
   let queue = [];
   const flush = async () => {
     if (!queue.length) return;
@@ -121,6 +130,7 @@ async function putIndex(db, FV, body) {
   for (const [sku, list] of bySku) {
     const ref = db.collection(INDEX).doc(sku); const ex = existing.get(sku) || null;
     if (savedDesign(ex, masterHash)) { keepSaved(sku, ex); continue; }
+    if (editedKept(ex)) { keepEdited(sku, ex); continue; }
     // A design the library holds as a PAIR is never written back as one body. An entry that says nothing of `pair` (an indexer that read only the labelled body of a row of two) would put one body's
     // file and size over a record that still says two bodies; it is left as it was and the answer names it (`pairKept`). `pair: null` (a person's word, or a deliberate re-index) still takes it away.
     if (ex && (cleanPair(ex.pair) || Object.values(ex.sizes || {}).some(z => z && cleanPair(z.pair))) && !list.some(e => cleanPair(e.pair) !== undefined)) { out.pairKept.push({ sku, reason: "the library holds " + sku + " as a pair and this entry draws one body: left as it was (set pair to null first to make it one charm)" }); continue; }
@@ -173,6 +183,7 @@ async function putIndex(db, FV, body) {
       doc.replaced = rec; out.replaced.push(Object.assign({ sku }, rec));
       if (!movedOut.has(ex.masterHash)) movedOut.set(ex.masterHash, []); movedOut.get(ex.masterHash).push(sku);
     }
+    if (ex && ex.edited) doc.edited = FV.delete();   // (REPOEDIT: a newer master file's drawing took the entry: the editor's mark goes)
     if (!ex) doc.firstIndexedAt = FV.serverTimestamp();
     queue.push({ ref, doc, sku, ex }); out.written++;
     if (queue.length >= 400) await flush();
@@ -189,6 +200,63 @@ async function putIndex(db, FV, body) {
   return out;
 }
 
+/**
+ * REPOEDIT (Paul, 17 Nov 2026: "inside the Charm Editor we need to give users an option to update the Charm repository for a given charm ... the SKU of that charm wherever it came from ... has to be
+ * matched to the SKU for that charm so then when it gets updated, it's always the correct one that gets updated"). ONE entry's drawing is replaced by the drawing the Charm Editor holds, in one transaction.
+ *   body: { sku, size?, expect: { charmHash }, entry: { charmHash, widthPt, heightPt, areaPt2, members, holes, aiPath, thumbPath, upAngle?, upSource?, readerV? }, by, keepPlaced? }
+ * NEVER creates an entry and never renames one: the SKU must be in the index (a size: that size must be), must draw ONE body (a pair is two), and must STILL draw what the editor opened (expect.charmHash is
+ * the entry's, or the size's, hash now), else `changed` and nothing is written. The files are the page's uploads under charmnest/master/edited/ and must be in Storage.
+ * What changes: the geometry and the files of that entry (or of that one size: the other sizes and every other SKU are untouched). What stays: the SKU, its master file's hash, name and path (the Library lists
+ * it under its file as before), hashSource, and everything a person set (angle, engravable, facing, keep-outs, blocks). `edited` stays on the entry (putIndex keeps an edited entry when its master file is
+ * indexed again), and Charm_Master_Edits keeps what it drew before (its hash, size and files: nothing is deleted from Storage).
+ * keepPlaced: the pieces already made up keep the drawing they were cut from (sizeFix.from lists the old hashes: the page's redrawNoted); otherwise every computer re-makes the open pieces (redrawChanged).
+ * deps: { db, FV, bucket?, tokenUrl? } → { ok: true, sku, size, entry (slim), was, same? } | { ok: false, reason, text, ... }
+ */
+const EDIT_DIR = /^charmnest\/master\/edited\/[A-Za-z0-9][A-Za-z0-9 _.,'&()+\-]{1,90}\.(ai|png)$/, EDITS = "Charm_Master_Edits";
+async function editorPut(deps, body) {
+  const { db, FV } = deps, b = body || {}, no = (reason, text, more) => Object.assign({ ok: false, reason, text }, more || {});
+  if (b.sandbox === true || b.sandbox === 1 || b.sandbox === "1" || b.sandbox === "true") return no("sandbox", "this is the sandbox: the repository is not written");
+  const sku = String(b.sku || "").trim().toUpperCase(), size = String(b.size || "").trim().toUpperCase(), e = b.entry && typeof b.entry === "object" ? b.entry : {}, by = str(b.by, 80).trim();
+  if (!isSku(sku)) return no("bad-sku", "that SKU cannot be read");
+  if (!by) return no("nobody", "nobody is signed in");
+  const hash = str(e.charmHash, 80), expect = str(b.expect && b.expect.charmHash, 80), aiPath = str(e.aiPath, 600), thumbPath = str(e.thumbPath, 600);
+  if (!expect) return no("no-expect", "the page did not say which drawing it opened");
+  if (!hash || !(num(e.widthPt) > 0) || !(num(e.heightPt) > 0) || !(num(e.members) > 0)) return no("bad-entry", "the new drawing was not sent whole");
+  if (!EDIT_DIR.test(aiPath) || !/\.ai$/.test(aiPath) || (thumbPath && (!EDIT_DIR.test(thumbPath) || !/\.png$/.test(thumbPath)))) return no("bad-file", "the new drawing's file is not where an update keeps it");
+  if (deps.bucket) {
+    try { const [there] = await deps.bucket.file(aiPath).exists(); if (!there) return no("not-uploaded", "the new drawing's file did not reach the repository"); if (thumbPath) { const [t] = await deps.bucket.file(thumbPath).exists(); if (!t) return no("not-uploaded", "the new drawing's picture did not reach the repository"); } }
+    catch (er) { return no("not-uploaded", "the new drawing's file could not be checked: " + String((er && er.message) || er).slice(0, 120)); }
+  }
+  let aiUrl = "", thumbUrl = "";
+  if (typeof deps.tokenUrl === "function") { try { [aiUrl, thumbUrl] = await Promise.all([deps.tokenUrl(aiPath), thumbPath ? deps.tokenUrl(thumbPath) : ""]); } catch (_) { /* withLinks makes them at the next read */ } }
+  const ref = db.collection(INDEX).doc(sku), now = Date.now();
+  const out = await db.runTransaction(async tx => {
+    const sn = await tx.get(ref); if (!sn.exists) return no("missing", sku + " is not in the charm repository");
+    const d = sn.data() || {}, sizes = d.sizes && typeof d.sizes === "object" ? d.sizes : null;
+    if (size && !(sizes && sizes[size])) return no("missing-size", sku + " has no size " + size + " in the charm repository");
+    if (!size && sizes && Object.keys(sizes).length && !d.charmHash) return no("needs-size", sku + " is drawn in sizes: the size was not said");
+    const slot = size ? sizes[size] : d;
+    if (cleanPair(d.pair) || cleanPair(slot.pair)) return no("pair", sku + " is a pair (two bodies in one drawing): add it as a master file");
+    const was = str(slot.charmHash, 80);
+    if (was !== expect) return no("changed", sku + " was changed in the repository after it was opened here: open it again", { charmHash: was, edited: cleanEdited(d.edited) });
+    if (was === hash) return { ok: true, same: true, sku, size: size || null, was };
+    const geom = { charmHash: hash, widthPt: num(e.widthPt), heightPt: num(e.heightPt), areaPt2: num(e.areaPt2), members: num(e.members), holes: num(e.holes), aiPath, thumbPath, aiUrl: str(aiUrl, 900), thumbUrl: str(thumbUrl, 900), open: false, bodyPt: FV.delete() };
+    if (num(e.readerV)) geom.readerV = num(e.readerV);
+    const oldHashes = [d.charmHash].concat(Object.values(sizes || {}).map(z => z && z.charmHash)).filter(Boolean).map(String);
+    const edited = { at: now, by, from: was, to: hash, size: size || null, n: (num(d.edited && d.edited.n) || 0) + 1 };
+    const patch = Object.assign(size ? { sizes: { [size]: geom } } : geom, { edited, indexedAt: FV.serverTimestamp(), indexedAtMs: now, sizeMoved: FV.delete(), conflict: FV.delete() });
+    if (!size && d.upSource !== "operator" && e.upAngle !== undefined) { patch.upAngle = e.upAngle == null ? null : num(e.upAngle); patch.upSource = str(e.upSource || "index", 20); }
+    if (b.keepPlaced === true) { const had = cleanSizeFix(d.sizeFix); patch.sizeFix = { from: [...new Set((had ? had.from : []).concat(oldHashes))].slice(-20), at: now }; }
+    else if (d.sizeFix) patch.sizeFix = FV.delete();
+    tx.set(ref, patch, { merge: true });
+    tx.set(db.collection(EDITS).doc(), { sku, size: size || null, by, at: now, atTs: FV.serverTimestamp(), from: was, to: hash, fromAi: str(slot.aiPath, 600) || null, fromThumb: str(slot.thumbPath, 600) || null, toAi: aiPath, toThumb: thumbPath || null,
+      fromSize: [num(slot.widthPt), num(slot.heightPt)], toSize: [geom.widthPt, geom.heightPt], masterHash: d.masterHash || null, masterName: d.masterName || null, keepPlaced: b.keepPlaced === true, piece: str(b.piece, 80) || null, order: str(b.order, 40) || null });
+    return { ok: true, sku, size: size || null, was };
+  });
+  if (out && out.ok && !out.same) { try { const sn = await ref.get(); out.entry = slimEntry(sn.data()); } catch (_) { /* the page reads it */ } }
+  return out;
+}
+
 async function putFile(db, FV, body) {
   const f = body.file || {}; const hash = str(f.masterHash, 80); if (!/^[0-9a-f]{8,64}$/i.test(hash)) return { error: "bad master hash" };
   const doc = { masterHash: hash, path: str(f.path, 600), url: str(f.url, 900), name: str(f.name, 200), charms: num(f.charms), labelled: num(f.labelled), held: num(f.held), unlabelled: (f.unlabelled || []).slice(0, 500), orphans: (f.orphans || []).slice(0, 500), duplicates: (f.duplicates || []).slice(0, 500), undecodable: num(f.undecodable), blocked: (f.blocked || []).slice(0, 500),
@@ -202,4 +270,4 @@ async function putFile(db, FV, body) {
   return { ok: true, masterHash: hash };
 }
 
-module.exports = { INDEX, FILES, SHAPE, isSku, slimEntry, cleanSizeFix, cleanBody, cleanPair, cleanFacing, cleanFacings, cleanSym, putIndex, putFile };
+module.exports = { INDEX, FILES, SHAPE, isSku, slimEntry, cleanSizeFix, cleanBody, cleanPair, cleanFacing, cleanFacings, cleanSym, cleanEdited, putIndex, putFile, editorPut };

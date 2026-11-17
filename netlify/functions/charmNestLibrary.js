@@ -1703,6 +1703,7 @@ async function withLinks(e) { if (!e) return e; const jobs = []; if (e.aiPath) j
 
 // ── master index ──
 async function op_masterPutIndex(b) { const r = await Master.putIndex(db, FV, b); return Object.assign({ ok: true }, r); }
+async function op_masterEditorPut(b) { const r = await Master.editorPut({ db, FV, tokenUrl, bucket: admin.storage().bucket() }, b); if (r && r.entry) r.entry = await withLinks(r.entry); return r; }   // REPOEDIT: the Charm Editor's "Update repository charm" (repo upload token; one entry, one transaction)
 async function op_masterGet(b) {
   const sku = String(b.sku || "").trim().toUpperCase(); if (!Master.isSku(sku)) return { entry: null, error: "bad sku" };
   const s = await db.collection(Master.INDEX).doc(sku).get();
@@ -5278,7 +5279,7 @@ function cancelCopy(r) {
   return x;
 }
 const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, getOrderDays: op_getOrderDays, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, sheetLayoutPatch: op_sheetLayoutPatch, manualClaim: op_manualClaim, listSheets: op_listSheets, getSheet: op_getSheet, getMany: op_getMany, changes: op_changes, getChanges: op_changes, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
-  masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, masterRemoveSkus: op_masterRemoveSkus, startMaster: op_startMaster,
+  masterPutIndex: op_masterPutIndex, masterEditorPut: op_masterEditorPut, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, masterRemoveSkus: op_masterRemoveSkus, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxPullLimitSet: op_sandboxPullLimitSet, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, shippedByUs: op_shippedByUs, shipUndo: op_shipUndo, cancelCheck: op_cancelCheck,
@@ -6224,7 +6225,7 @@ Object.assign(OPS, require("./_charmNestEtsyZodiac").ops); ["zodiacListingPrepar
 /** FEED: the names an op's one bumpRev carries. An op of REV_OPS that named nothing is '*' (as before); one that may move a placement (the placement counter
     moves for it) and named no order is p:*, so no placement is ever missed. An empty list moves nothing. failed: the op threw (what it named may be part of it). */
 const FEED_OP_NAMES = { aliasPut: ["a:aliases"], optionMapPut: ["a:options"], noDesignPut: ["a:nodesign"], noDesignDelete: ["a:nodesign"], cancelSweep: ["x:*"],
-  masterPutIndex: ["m:index"], masterPatch: ["m:index"], masterPutFile: ["m:index"], masterRemoveSkus: ["m:index"], masterRemoveSku: ["m:index"], masterRemoveFile: ["m:index"], customSaveCommit: ["m:index", "a:aliases"] };
+  masterPutIndex: ["m:index"], masterEditorPut: ["m:index"], masterPatch: ["m:index"], masterPutFile: ["m:index"], masterRemoveSkus: ["m:index"], masterRemoveSku: ["m:index"], masterRemoveFile: ["m:index"], customSaveCommit: ["m:index", "a:aliases"] };
 function feedKeys(body, failed) {
   const op = body.op, named = body[REV_TOUCHED], keys = new Set(FEED_TOUCHED);
   for (const k of FEED_OP_NAMES[op] || []) keys.add(k);
