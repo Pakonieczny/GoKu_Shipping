@@ -116,6 +116,7 @@
  *                          key(it): '' when the engine's own outlines are the words, else a string that is part of their cache key; layout -> { subpaths, bbox } | null (null:
  *                          the engine's own); bent(it): the words do not run straight, so a click finds their outlines rather than their box, and a stretch stays a stretch
  *   ctx (one per open workspace; also CharmEditor.current.ctx)
+ *     repo                 opts.repo as given ({ kind, sku, size, charmHash, piece?, order?, why? }) or null: the repository entry the drawing came from (charm-nest-ce-repo.js)
  *     doc                  the face being edited as a FaceDoc { face, unitPt, frame, items } (read-only: change it through the calls below)
  *     face() items() selection() frame() zoom() tool()      read-outs, as CharmEditor.current's
  *     select(ids)          the selection
@@ -4173,6 +4174,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
       if (ms !== 0) sayT = setTimeout(() => el.classList.remove('is-in'), fin(ms) && ms > 0 ? ms : 2600);
     }
     const ectx = {
+      repo: opts.repo && typeof opts.repo === 'object' ? opts.repo : null,   // (REPOEDIT, 17 Nov 2026: the ONE repository entry this drawing came from, as whoever opened the editor says it: charm-nest-ce-repo.js)
       get doc() { return { face: S.face, unitPt: true, frame: Object.assign({}, frame()), items: items() }; },
       face: () => S.face, items: () => items(), selection: () => S.sel.slice(), frame: () => Object.assign({}, frame()), zoom: () => zoomPct(), tool: () => S.tool,
       select: ids => setSel((Array.isArray(ids) ? ids : ids == null ? [] : [ids]).map(String)),

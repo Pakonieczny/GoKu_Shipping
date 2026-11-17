@@ -537,7 +537,7 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
     let draft = null;
     if (host && typeof host.draft === 'function' && by) { try { const who = String(by).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40), dk = start.id ? 'DESIGN-' + String(start.id).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 60) : 'DESIGN-NEW-' + (who || 'x'); draft = await host.draft(dk, by, Number(start.version) || 0); } catch (e) { console.warn('masters: the draft', e); } }
     const opts = Object.assign({ title: start.title || start.name, subtitle: start.subtitle || '', faces: start.faces, startFace: 'front', lockRoles: [] },
-      Array.isArray(fonts) && fonts.length ? { fonts } : {}, textToPaths ? { textToPaths } : {}, start.back ? { back: Object.assign({}, start.back) } : {}, { hold: true },
+      Array.isArray(fonts) && fonts.length ? { fonts } : {}, textToPaths ? { textToPaths } : {}, start.back ? { back: Object.assign({}, start.back) } : {}, { hold: true }, start.repo ? { repo: Object.assign({}, start.repo) } : {},
       draft ? { autosave: draft.autosave } : {}, draft && draft.offer ? { offer: draft.offer, base: start.faces } : {});   // (CES3 hold: the workspace stays under the windows after Save)   // (the way back: the editor's head, CharmEditor opts.back)
     let shown;
     try { shown = E.open(opts); }
@@ -597,7 +597,7 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
   function subtitleFor(st) {
     const bits = [];
     if (st.id) bits.push(`Design · version ${st.version || 1}`); else bits.push('A new design');
-    if (st.source && st.source.kind === 'master') bits.push(`from ${st.source.sku}${st.source.size ? ' · ' + st.source.size : ''} in the charm library (the master never changes)`);
+    if (st.source && st.source.kind === 'master') bits.push(`from ${st.source.sku}${st.source.size ? ' · ' + st.source.size : ''} in the charm library (Save keeps a design; Repository updates the charm itself)`);
     else if (st.source && st.source.kind === 'new') bits.push(st.source.shape === 'free' ? 'draw the outline, then make it a Cut line' : 'the outline is the cut');
     else if (st.source && st.source.kind === 'import' && st.source.file) bits.push(`from the file ${st.source.file} (the file never changes)`);
     if (st.orderId) bits.push(`order ${st.orderId}`); else if (st.customName) bits.push(st.customName);
@@ -718,6 +718,8 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
     const skipped = front.skipped; delete front.skipped;
     const st = { name: entry.sku, title: entry.sku, source: Object.assign({ kind: 'master', sku: entry.sku }, sz ? { size: sz } : {}), faces: { front, back: backFace(front, [], M) },
       log: { source: 'master', sku: entry.sku, size: sz, layers: front.items.length }, ...rides(o) };
+    // (REPOEDIT, Paul 17 Nov 2026: the editor is told the ONE repository entry this drawing is, so its Repository button can update exactly that entry: charm-nest-ce-repo.js. A pair is two bodies: not updated from here)
+    { const g = geomOf(entry, sz), pair = !!(entry.pair || (g && g.pair)); st.repo = { kind: 'repository', sku: entry.sku, size: sz || '', charmHash: String((g && g.charmHash) || ''), ...(pair ? { why: `${entry.sku} is a pair (two bodies in one drawing): add it as a master file to change it.` } : {}) }; }
     st.subtitle = subtitleFor(st) + (skipped ? ` · ${skipped} part${skipped === 1 ? ' is' : 's are'} live text or a picture in the master and not here` : '');
     return st;
   }

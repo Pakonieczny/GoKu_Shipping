@@ -4184,6 +4184,68 @@ const Master = window.Master = (() => {
       return fail(net ? "offline" : "error", net ? "you could not reach the cloud" : String((e && e.message) || e).slice(0, 160), { transient: !!(e && e.transient) });
     }
   }
+  /* ═══ REPOEDIT · the Charm Editor's "Update repository charm" (Paul, 17 Nov 2026) ═══════════════════════════════════════════════════════════════════════════════════════════════
+     "inside the Charm Editor we need to give users an option to update the Charm repository for a given charm ... the SKU of that charm wherever it came from ... has to be matched to the SKU for that
+     charm so then when it gets updated, it's always the correct one that gets updated" · "You must test thoroughly that cloud gets updated. The charm repository gets updated all other computers get updated."
+     spec = { sku, size, expect (the charm hash the repository held when the editor opened it), charm, parsed (the new drawing as read: CharmNestCustomPool.readOf), by, keepPlaced, piece, order }
+     hooks = { say(text) }
+     1 the file is built by the very writer a per-SKU file is written with (buildSingleCharm) and READ BACK: the entry is written with what the page will read from the stored file (hash, size, parts),
+       so a piece made from it holds the entry's hash. A drawing that does not read back as ONE closed charm is refused; nothing is written.
+     2 the file and its picture go under charmnest/master/edited/ (a new name every time: the drawing it replaces stays in Storage), behind the repo door a signed-in person holds (REPOSIGNED).
+     3 masterEditorPut writes that ONE entry (or that one size) in one transaction, and refuses when the entry no longer draws `expect`.
+     4 this page's library takes the entry at once and compares it (Review.redrawNoted: the open pieces cut from the old drawing are made again in place, unless keepPlaced); a page that follows a run
+       tells the carrying computer (keepsync), which reads the library and does the same. Every other computer reads it at its next library check (the index's signature moved).
+     -> { ok: true, sku, size, entry, was, same? } | { ok: false, reason, text } */
+  async function replaceDrawing(spec, hooks) {
+    hooks = hooks || {}; spec = spec || {};
+    const say = t => { try { if (hooks.say) hooks.say(t); } catch (_) { /* a label only */ } };
+    const fail = (reason, text, extra) => Object.assign({ ok: false, reason, text }, extra || {});
+    const sku = String(spec.sku || "").trim().toUpperCase(), size = spec.size ? String(spec.size).trim().toUpperCase() : "", c = spec.charm, by = String(spec.by || employeeName() || "").trim();
+    if (!by) return fail("nobody", "Sign in first: an update to the repository is kept under your name");
+    const was = entryFor(sku); if (!was || rdUpper(was.sku) !== sku) return fail("missing", `${sku} is not in the charm repository`);
+    if (!c || !spec.parsed || !Array.isArray(c.members) || !c.members.length) return fail("error", "the drawing was not read");
+    if (c.open) return fail("geometry", "its cut outline is not closed");
+    if (!spec.expect) return fail("error", "which drawing was opened is not known: open the charm again");
+    if (!S.cloud.ok) return fail("offline", "you are offline");
+    const L = RLOCK(); if (!L) return fail("unavailable", "the charm repo lock did not load: reload the page");
+    try {
+      say("Building the new drawing…");
+      const ai = await P.buildSingleCharm(Object.assign({}, c, { name: sku }), spec.parsed);
+      const CPool = window.CharmNestCustomPool; let back = null;
+      try { back = (await CPool.readOf(ai, sku + ".ai")).charm; } catch (e) { return fail("geometry", "the new drawing does not read back as one charm · " + String((e && e.message) || e).slice(0, 160)); }
+      if (!back || back.open || !back.hash) return fail("geometry", "the new drawing does not read back as one closed charm");
+      let thumb = back.thumb || ""; if (!thumb) { try { thumb = await P.thumbnail(back, 168); } catch (_) { thumb = ""; } }
+      if (!thumb) return fail("error", "the new drawing's picture could not be made");
+      let upAngle = null, upSource = "drawn";
+      try { const up = window.CharmNestBackground ? await CharmNestBackground.run('indexGeometry', { charm: { outline: back.outline, members: back.members, bbox: back.bbox, widthPt: back.widthPt, heightPt: back.heightPt } }) : G.upAngleOf(back); upAngle = up.angle; upSource = up.source; }
+      catch (e) { return fail("geometry", "the new drawing cannot be kept as a charm · " + String((e && e.message) || e).slice(0, 160)); }
+      if (String(back.hash) === String(spec.expect)) return { ok: true, same: true, sku, size: size || null, entry: was, was: String(spec.expect) };
+      const key = sku.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+/, "").slice(0, 60) + (size ? "-" + size.replace(/[^A-Za-z0-9]+/g, "") : "") + "-e" + Date.now().toString(36), dir = "charmnest/master/edited/";
+      const tok = await L.ensure("upload", { what: `Updating ${sku} in the charm repo.`, target: sku, go: "Update" });
+      if (!tok || !tok.token) return fail("locked", "the repository was not unlocked");
+      say("Saving the new drawing…");
+      const upAi = await uploadBytes(dir + key + ".ai", ai, "application/illustrator", `Updating ${sku}`, { repoToken: tok.token });
+      const upPng = await uploadBytes(dir + key + ".png", dataUrlToBytes(thumb), "image/png", `Updating ${sku}`, { repoToken: tok.token });
+      say("Writing the charm repository…");
+      const r = await api("charmNestLibrary", { op: "masterEditorPut", repoToken: tok.token, sku, size, by, expect: { charmHash: String(spec.expect) }, keepPlaced: spec.keepPlaced === true, piece: String(spec.piece || ""), order: String(spec.order || ""),
+        entry: { charmHash: back.hash, widthPt: back.widthPt, heightPt: back.heightPt, areaPt2: back.areaPt2, members: back.members.length, holes: P.cutLinesOf(back).length, aiPath: upAi.path, thumbPath: upPng.path, upAngle, upSource } }, { label: `Updating ${sku}`, quiet: true });
+      if (!r || r.ok !== true) return fail((r && r.reason) || "error", (r && r.text) || (r && r.error) || "the repository did not answer", r && r.charmHash ? { charmHash: r.charmHash } : {});
+      const now = r.entry && r.entry.sku ? r.entry : null;
+      if (now && !r.same) {
+        B.master.entries.set(now.sku, now);
+        try { if (window.Review && Review.redrawNoted) Review.redrawNoted(new Map([[now.sku, was]]), new Map([[now.sku, now]])); } catch (e) { console.warn("[repoedit] the open pieces were not looked at:", e && e.message); }
+        try { render(); } catch (_) { /* the Library tab paints at its next look */ }
+        // a page that follows a run: the computer carrying it reads the library now and makes the open pieces again (never when the placed pieces are to stay)
+        if (!B.run && spec.keepPlaced !== true && typeof window.CNRelayAsk === "function") { try { say("Telling the computer that carries the run…"); await window.CNRelayAsk({ type: "keepsync", ids: [sku] }, t => say(String(t || "")), 120000); } catch (e) { console.warn("[repoedit] the carrier was not told:", e && e.message); } }
+      }
+      return { ok: true, sku, size: size || null, entry: now || was, was: r.was || String(spec.expect), same: !!r.same };
+    } catch (e) {
+      if (L.isRepoLocked && L.isRepoLocked(e)) return fail("locked", "the repository was not unlocked");
+      const net = !!e && (e.transient === true || /cloud offline|timed out|no answer/i.test(String(e.message || "")));
+      return fail(net ? "offline" : "error", net ? "you could not reach the cloud" : String((e && e.message) || e).slice(0, 200));
+    }
+  }
+  const rdUpper = s => String(s == null ? "" : s).trim().toUpperCase();
   /** The SKU of a non-blocked entry that is the very same drawing (exact charm hash), "" when the library holds none: the design a custom order brings may already be there (D8). */
   function sameDesign(charmHash) {
     const h = String(charmHash || ""); if (!h) return "";
@@ -4462,7 +4524,7 @@ const Master = window.Master = (() => {
     // the Etsy chip (charm-nest-etsy-link.js, SWANSKU 12 Oct 2026): this charm's SKU on one existing Etsy listing, behind the repo password; a card with several SKUs offers each
     each("etsylink", (b, skus) => { if (window.CharmNestEtsyLink) CharmNestEtsyLink.mount(b, { skus, repoApi, toast, who: employeeName, skuTable: id => api("charmNestLibrary", { op: "listingSkus", listingIds: [id] }, { quiet: true }) }); });   // (skuTable: the SKUs now on that listing's products, from the stored table: no password; ETSYFAM 13 Oct)
   }
-  return { entryFor, looseFor, sharedFor, likeFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, saveCustom, sameDesign, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
+  return { entryFor, looseFor, sharedFor, likeFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, saveCustom, replaceDrawing, sameDesign, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
 
 /* INPLACE (Paul, 20 Oct 2026): "Unless a sheet has been marked as fully completed and laser cut then that charm needs to come off that particular sheet and be re-added to the same sheet if it
@@ -12043,6 +12105,25 @@ const Engrave = window.Engrave = (() => {
     return { subpaths: subs, bbox: subs.length ? window.CharmEditor.model.bboxOf(subs) : null };
   }
   /** The view one face of the piece is edited in: the face's job's own (the work area's frame) when it is drawn on this charm; else the view the card's Front / Back boxes make. */
+  /** REPOEDIT (Paul, 17 Nov 2026: "the SKU of that charm wherever it came from ... has to be matched to the SKU for that charm so then when it gets updated, it's always the correct one"): the ONE repository entry
+   *  an order's piece is, for the Charm Editor's Repository button (charm-nest-ce-repo.js): the SKU and size its pool row was made from, and only when the piece holds a hash the repository's drawing of that SKU and
+   *  size goes by NOW (no exact match = no match). Anything else carries `why`, and the button updates nothing. → { kind: "order", sku, size, charmHash, piece, order, why? } */
+  async function charmEditRepo(poolId, charm, sp, sku, order) {
+    const U = v => String(v == null ? "" : v).trim().toUpperCase(), p = B.pool.rows.get(poolId) || {}, name = U(p.sku || sku), size = U(p.size || (sp && sp.size) || "");
+    const out = { kind: "order", sku: name, size: "", charmHash: "", piece: String(poolId || ""), order: String(order || "") }, no = why => Object.assign(out, { why });
+    if (p.custom || (charm && charm.frozen) || (sp && (sp.ownDesign || sp.noDesign))) return no("This piece is a custom design: it has no charm in the repository.");
+    const e = name ? Master.entryFor(name) : null; if (!e || U(e.sku) !== name) return no(`${name || "This piece"} is not in the charm repository.`);
+    let g = null; try { g = Pool.sizeEntry(e, size || null); } catch (_) { g = null; }
+    if (!g || !g.charmHash) return no(`${name}: the repository holds no drawing${size ? " for size " + size : ""}.`);
+    if (e.pair || g.pair) return no(`${name} is a pair (two bodies in one drawing): add it as a master file to change it.`);
+    if (e.sizes && size && e.sizes[size] === g) out.size = size; else if (g !== e) { const k = Object.keys(e.sizes || {}).find(z => e.sizes[z] === g); if (!k) return no(`${name}: the size this piece was made in could not be told.`); out.size = U(k); }
+    let ok = null; try { ok = await Pool.drawingHashes(e, size || null); } catch (_) { ok = null; }
+    let h = String(p.charmHash || (charm && charm.hash) || "");
+    // (a following computer's pool row can lag the carrier's re-make of the piece from an updated drawing: the piece's own charm and the cloud's row are asked before "an older drawing" is said)
+    if (ok && h && !ok.has(h)) { const alt = [charm && charm.hash]; try { const got = await api("charmNestLibrary", { op: "poolGet", poolIds: [poolId] }, { quiet: true }); alt.unshift(got && got.pools && got.pools[poolId] && got.pools[poolId].charmHash); } catch (_) { /* the local row stands */ } const hit = alt.map(x => String(x || "")).find(x => x && ok.has(x)); if (hit) h = hit; }
+    if (!ok || !h || !ok.has(h)) return no(`This piece was made from an older drawing of ${name}. Open ${name} from the Library to change the repository's drawing.`);
+    out.charmHash = String(g.charmHash); return out;
+  }
   function charmEditView(poolId, charm, face, sku) {
     const j = jobsOfPiece(poolId)[face];
     if (j && j.view && Array.isArray(j.view.M) && (j.view.face === "front") === (face === "front") && charmFor(j) === charm) return j.view;
@@ -12648,7 +12729,8 @@ const Engrave = window.Engrave = (() => {
         if (host) host.addEventListener("cancel", keepOpen);
         // (TYPEWORDS: what the repair found is said over the work as it opens: a line, not a dialog)
         if (!again && repair.said.length) setTimeout(() => { try { const cur = CE.current; if (cur && cur.ctx && typeof cur.ctx.say === "function") cur.ctx.say([...new Set(repair.said)].join(" · "), 9000); } catch (_) { /* the Layers say it too */ } }, 60);
-        try { res = await CE.open(Object.assign({ title: sku, subtitle, faces: again ? again.faces : docs, startFace: again ? again.face : startFace, fonts, textToPaths: charmEditText, lockRoles: ["cut"], back, host, check, hold: true }, draft ? { autosave: draft.autosave } : {}, again ? { base: docs, notice: again.notice } : draft && draft.offer ? { offer: draft.offer, base: docs } : {})); }   // (CETEXT: the words open unselected, as everything does: a picture imported first goes into the charm's outline, not into the words' box; a click on them shows their controls)
+        if (t._repo === undefined) { try { t._repo = await charmEditRepo(poolId, charm, sp, sku, order); } catch (_) { t._repo = null; } }   // (REPOEDIT: the repository entry this piece is, told to the editor once)
+        try { res = await CE.open(Object.assign({ title: sku, subtitle, faces: again ? again.faces : docs, startFace: again ? again.face : startFace, fonts, textToPaths: charmEditText, lockRoles: ["cut"], back, host, check, hold: true }, t._repo ? { repo: t._repo } : {}, draft ? { autosave: draft.autosave } : {}, again ? { base: docs, notice: again.notice } : draft && draft.offer ? { offer: draft.offer, base: docs } : {})); }   // (CETEXT: the words open unselected, as everything does: a picture imported first goes into the charm's outline, not into the words' box; a click on them shows their controls)
         finally { if (host) setTimeout(() => host.removeEventListener("cancel", keepOpen), 0); }
         if (!res) return null;   // (Cancel, the ×, Esc, Back with nothing kept: nothing is written)
         const p = planOf(res); todo = p.todo; wordsNow = p.wordsNow; kept = p.kept; wordsTodo = p.wordsTodo;
@@ -17204,7 +17286,7 @@ const RunCtl = window.RunCtl = (() => {
       if (["gold10k","gold14k","rose"].includes(d.metal) && d.solidIncluded === true) pg.solidPick = true;   // a 10K/14K/Rose Gold sheet's own Include tick
       pg.leftSet = Gate.leftSetOf(d); if (pg.leftSet && ["gold10k","gold14k","rose"].includes(d.metal)) pg.solidPick = false;
       if (+d.joinedAt) pg.joinedAt = +d.joinedAt; if (d.joinedBy) pg.joinedBy = d.joinedBy; if (!pg.leftSet && d.leftSet) { pg.leftSet = d.leftSet; if (["gold10k","gold14k","rose"].includes(d.metal)) pg.solidPick = false; }   // (CLOUDMARKS, Paul 14 Nov 2026: "You must put all this in the cloud"): the set marks from the sheet's cloud record   // a sheet a person took out of a committed set stays out (and can be put back by the In current set switch)
-      pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; if (d.draftOrder != null && Number.isFinite(+d.draftOrder)) { pg.draftOrder = +d.draftOrder; pg._savedDO = pg.draftOrder; if (Number.isFinite(+d.page)) pg._savedPage = +d.page; } pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
+      pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = (set && set.day) || d.day;   /* (NAMECLASH) */ pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; if (d.draftOrder != null && Number.isFinite(+d.draftOrder)) { pg.draftOrder = +d.draftOrder; pg._savedDO = pg.draftOrder; if (Number.isFinite(+d.page)) pg._savedPage = +d.page; } pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
       // a 10K/14K sheet keeps its own size after a reload (keptStock: a cut sheet an Apply size left as it was), read from
       // the size its record was nested at; one at the metal's size now takes the metal's size (as before)
@@ -21775,7 +21857,9 @@ const Review = window.Review = (() => {
   function redrawChanged(was, now) {
     // (KEEPOVERRIDE, Paul 20 Oct 2026: a SKU the designs window's switch took for another design (the entry carries `override`) is a new drawing for every computer: the one whose run holds its pieces makes them again)
     const took = !!now && !!now.override && String((now.override.from && now.override.from.charmHash) || "") !== String(now.charmHash || "");
-    if (!was || !now || was === now || ((rdCustom(was) || rdCustom(now)) && !took)) return false;
+    // (REPOEDIT, Paul 17 Nov 2026: so is an entry a person updated from the Charm Editor (`edited.to` is a hash it draws now and did not before), a design saved from an order included)
+    const edit = !!now && !!now.edited && !!now.edited.to && rdHashes(now).includes(String(now.edited.to)) && !!was && !rdHashes(was).includes(String(now.edited.to));
+    if (!was || !now || was === now || ((rdCustom(was) || rdCustom(now)) && !took && !edit)) return false;
     const a = new Set(rdHashes(was)), b = rdHashes(now);
     return a.size > 0 && b.length > 0 && b.some(h => !a.has(h)) && !rdFixed(was, now);
   }
@@ -28350,7 +28434,7 @@ const Recall = window.Recall = (() => {
         const pg = i === 0 ? prim.pages[0] : CN.addPage(m.key, { fresh: true });
         pg.charms = []; pg.placements = []; pg.rejects = []; pg.outputs = null; pg.verification = rec.verification || null; pg.liveInfo = null; pg.dirty = false; pg.problem = null;
         delete pg.roseStock; delete pg.roseProtected; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded=false; pg._roseError=null; pg.roseCutAt=rec.roseCutAt || null;
-        pg.recalled = rec; pg.status = "complete"; pg.sheetId = rec.id; pg.runId = rec.runId || RC.runId; pg.setId = rec.setId; pg.seq = rec.setSeq; pg.setDay = rec.day; pg.cardStartedAt = rec.cardStartedAt || rec.createdAt || null; pg.sheetIndex = rec.sheetIndex; pg.fileBase = rec.fileBase; pg.group = null;
+        pg.recalled = rec; pg.status = "complete"; pg.sheetId = rec.id; pg.runId = rec.runId || RC.runId; pg.setId = rec.setId; pg.seq = rec.setSeq; pg.setDay = setDayOfRec(rec); pg.cardStartedAt = rec.cardStartedAt || rec.createdAt || null; pg.sheetIndex = rec.sheetIndex; pg.fileBase = rec.fileBase; pg.group = null;
         pg.backPool = (rec.backs || []).map(bk => ({ sheetId:rec.id, engravingSeals:bk.engravingSeals || [], approvedAt:bk.approvedAt, copy:bk.copy, previewWPt:bk.previewWPt, previewHPt:bk.previewHPt, pageWPt:bk.pageWPt, pageHPt:bk.pageHPt, poolId: bk.poolId, ...(bk.face === "front" ? { face: "front" } : {}), order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));
         pg.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
         pg.persistedDone = true; pg.persisted = Promise.resolve(); pg._img = null;
@@ -28484,7 +28568,7 @@ const Recall = window.Recall = (() => {
           const pg = i === 0 ? prim.pages[0] : CN.addPage(m.key, { fresh: true });
           pg.charms = []; pg.placements = []; pg.rejects = []; pg.outputs = null; pg.verification = rec.verification || null; pg.liveInfo = null; pg.dirty = false; pg.problem = null;
           delete pg.roseStock; delete pg.roseProtected; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded = false; pg._roseError = null; pg.roseCutAt = rec.roseCutAt || null;
-          pg.recalled = rec; pg.followed = true; pg.status = "complete"; if (rec.draftOrder != null && Number.isFinite(+rec.draftOrder)) { pg.draftOrder = +rec.draftOrder; pg._savedDO = pg.draftOrder; } pg.sheetId = rec.id; pg.runId = rec.runId || runId; pg.setId = rec.setId; pg.seq = rec.setSeq; pg.setDay = rec.day; pg.cardStartedAt = rec.cardStartedAt || rec.createdAt || null; pg.sheetIndex = rec.sheetIndex; pg.fileBase = rec.fileBase; pg.group = null;
+          pg.recalled = rec; pg.followed = true; pg.status = "complete"; if (rec.draftOrder != null && Number.isFinite(+rec.draftOrder)) { pg.draftOrder = +rec.draftOrder; pg._savedDO = pg.draftOrder; } pg.sheetId = rec.id; pg.runId = rec.runId || runId; pg.setId = rec.setId; pg.seq = rec.setSeq; pg.setDay = setDayOfRec(rec); pg.cardStartedAt = rec.cardStartedAt || rec.createdAt || null; pg.sheetIndex = rec.sheetIndex; pg.fileBase = rec.fileBase; pg.group = null;
           pg.backPool = (rec.backs || []).map(bk => ({ sheetId: rec.id, engravingSeals: bk.engravingSeals || [], approvedAt: bk.approvedAt, copy: bk.copy, previewWPt: bk.previewWPt, previewHPt: bk.previewHPt, pageWPt: bk.pageWPt, pageHPt: bk.pageHPt, poolId: bk.poolId, ...(bk.face === "front" ? { face: "front" } : {}), order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));
           pg.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
           pg.persistedDone = true; pg.persisted = Promise.resolve(); pg._img = null;
@@ -30301,9 +30385,46 @@ function sentReleased() {
     return n;
   } catch (e) { console.warn("[sentreleased]", e && e.message); return 0; }
 }
+/* ═══ NAMECLASH (Paul, 17 Nov 2026: "On another computer this sheet is duplicated, but on my computer it is not ... Fix it and once and for all") ══════════════════════════════════════════════
+   WHAT HAPPENED: the Nov 13 set's gold sheet (gold-s7-mwdqm3l4) was saved with its own DAY (Nov 12, the day it was first made) where its SET's day (Nov 13) belongs. A sheet's file name and its storage folder
+   are made from the set's day, the set's number and its own number (sheetFileBase, persistSheet), so it was named GF_Nov.12.26_Set-1_Sheet-1 and written to charmnest/sets/2026-11-12/Set-1/GF_Nov.12.26_Set-1_Sheet-1/:
+   the very name and folder of the Nov 12 set's own Sheet 1. Two sheets, one set of files: each save wrote over the other's .ai, preview, labelled proof, QR label and back files, and a computer showed whichever it
+   had read last (a copy of the other sheet where its own should be). The same stale day sat on two more records (the Nov 16 set's GF Sheet 1, kept as Nov 15; the Nov 12 set's GF Sheet 2, kept as Nov 13): its next
+   save would have written over the Nov 15 set's gold sheet.
+   THE RULES NOW: (1) a sheet in a set takes the SET's day wherever it is read from the cloud (the three places a record becomes a page: setDayOfRec); (2) persistSheet takes the set's day and refuses to write
+   into a folder another sheet's files are in (it names the other sheet); (3) the computer that carries the run looks for two sheets of the run with one name or one folder, and for each that is named from a day that is not its set's
+   writes that sheet again AS IT STANDS (writeAsPlaced: no piece moves, no search) under its own name and folder, so each sheet's files are its own. A cut sheet is never touched. */
+const setDayOfRec = rec => { try { const st = rec && rec.setId && window.Sets ? Sets.ofRun(rec.runId || (B.run && B.run.runId)).find(x => x.setId === rec.setId) : null; return (st && st.day) || rec.day; } catch (_) { return rec && rec.day; } };
+let nameHealBusy = false; const nameHealTried = new Map();
+async function healSheetNames() {
+  const nmOf = p => (window.CharmNestSheetName && CharmNestSheetName.name ? CharmNestSheetName.name(p) : p.fileBase) || p.sheetId;
+  if (nameHealBusy || !B.run || ["stopped", "abandoned", "retired"].includes(B.run.status) || S.cloud.ok !== true || typeof window.writeAsPlaced !== "function") return 0;
+  const run = B.run; let sets = []; try { sets = Sets.ofRun(run.runId); } catch (_) { return 0; }
+  const pages = allSheets().filter(p => p.runId === run.runId && p.sheetId && p.setId && !p.draft && p.fileBase);
+  const same = new Map(); for (const p of pages) { for (const k of [p.fileBase, p.folderPath].filter(Boolean)) { (same.get(k) || same.set(k, new Set()).get(k)).add(p); } }
+  const clash = [...new Set([...same.values()].filter(l => l.size > 1).flatMap(l => [...l]))];
+  if (!clash.length) return 0;
+  nameHealBusy = true; let n = 0;
+  try {
+    for (const sh of clash) {
+      if (Date.now() - (nameHealTried.get(sh.sheetId) || 0) < 30 * 60 * 1000) continue;
+      const st = sets.find(x => x.setId === sh.setId); if (!st || !st.day) continue;
+      const want = CN.sheetFileBase(Object.assign({}, sh, { setDay: st.day, seq: st.seq }));
+      if (!want || want === sh.fileBase || allSheets().some(p => p !== sh && p.fileBase === want)) continue;   // (this one is named right: the other is the one to put right)
+      nameHealTried.set(sh.sheetId, Date.now());
+      if (sh.laserDoneAt || sh.roseCutAt || sh.recalled || sh._manualHold || ["nesting", "finishing", "queued"].includes(sh.status)) { agent({ run: run.runId, metal: sh.metal }, "warn", `${nmOf(sh)} shares the name ${sh.fileBase} with another sheet and cannot be renamed now (${sh.laserDoneAt || sh.roseCutAt ? "it is cut" : "it is busy"}): looked at again`); nameHealTried.delete(sh.sheetId); continue; }
+      const was = { setDay: sh.setDay, fileBase: sh.fileBase, folderPath: sh.folderPath };
+      sh.setDay = st.day; sh.fileBase = want;
+      agent({ run: run.runId, metal: sh.metal }, "cloud", `${nmOf(sh)} was named ${was.fileBase}, the name of another sheet, and kept its files in that sheet's folder: it is written again as it stands (no piece moves) as ${want}, in its own folder`);
+      let ok = false; try { ok = await window.writeAsPlaced(sh); } catch (e) { console.warn("[nameclash]", e && e.message); }
+      if (!ok) { Object.assign(sh, was); agent({ run: run.runId, metal: sh.metal }, "warn", `${nmOf(sh)}: the new name ${want} was not saved; it keeps ${was.fileBase} for now`); } else n++;
+    }
+  } finally { nameHealBusy = false; }
+  return n;
+}
 async function strandedWatch(why) {
   if (strandedBusy || !B.run || ["stopped", "abandoned", "retired"].includes(B.run.status) || S.cloud.ok !== true) return null;
-  sentReleased();
+  sentReleased(); healSheetNames().catch(e => console.warn("[nameclash]", e && e.message));
   if (allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone) || p._rebuilding)) return null;
   const on = new Set(allSheets().flatMap(p => (p.charms || []).map(c => c && c.poolId)).filter(Boolean));
   for (const p of allSheets()) { const rec = p.recalled; if (rec) for (const id of (rec.poolIds || [])) on.add(String(id)); }
@@ -30665,6 +30786,10 @@ async function bootBridge() {
   // (SKUFOLLOW, Paul 15 Nov 2026): a charm link saved on ANY computer (a:aliases, a:options in the cloud's feed) is read here at once on the computer that carries the run, which makes the pieces again (Orders.loadMaps → Review.relinkMaps);
   //  it was read only at the next order check, up to ten minutes later
   try { if (window.CNSync && typeof CNSync.follow === "function") { let mapsT = 0; CNSync.follow({ name: "maps", kinds: "a", active: () => !!B.run, read: () => { clearTimeout(mapsT); mapsT = setTimeout(() => { if (B.run) Orders.loadMaps(true).catch(() => {}); }, 1500); } }); } } catch (_) { /* read at the next order check, as before */ }
+  // (REPOEDIT, Paul 17 Nov 2026: "The charm repository gets updated all other computers get updated"): a change to the charm repository made on ANY computer (m:index in the cloud's feed: a charm updated from the Charm Editor,
+  //  a master file added, a design saved from an order) is read here at once on EVERY computer, carrying a run or not: only the entries that changed are read (the index's signature and the since-read), and the page that
+  //  carries the run makes the open pieces again from the new drawing (Review.redrawNoted). It was read only at the next library check, up to ten minutes later.
+  try { if (window.CNSync && typeof CNSync.follow === "function") { let repoT = 0; CNSync.follow({ name: "repository", kinds: "m", active: () => true, read: () => { clearTimeout(repoT); repoT = setTimeout(() => { Master.load({ quiet: true, ttl: 1 }).catch(() => {}); }, 1200); } }); } } catch (_) { /* read at the next library check, as before */ }
   document.addEventListener("keydown", e => { if (e.altKey && e.key === "r") { e.preventDefault(); setMode("review"); } });
   agent({ bridge: true }, "DS", `Bridge ready · station ${DesignLink.origin()} · ${S.settings.runMode} mode`);
 }
