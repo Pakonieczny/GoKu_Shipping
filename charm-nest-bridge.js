@@ -10957,6 +10957,7 @@ const Engrave = window.Engrave = (() => {
       workspace is restored those writes run again, as the approval ran them (saveBacks). */
   function resumeBacks(pendingOnly) {
     recoverApprovals();
+    try { let healed = 0; for (const job of items().values()) if (healBlockedApproval(job)) healed++; if (healed) { Session.schedule(); render(); } } catch (e) { console.warn("[Engrave] heal", e); }   // (ENGSAVED: an approval blocked after its back was saved is put right)
     let waiting = 0;
     for (const job of items().values()) {
       if (!["approved","written"].includes(job.state) || job.backSaving || job.approvalPreparing || job.stamping || !job.approvedAt || !(job.fit && job.view || job.writtenFit && job.writtenFit.approvedAt === job.approvedAt) || !(job.copies || []).length || unplacedPre(job)) continue;
@@ -13023,14 +13024,39 @@ const Engrave = window.Engrave = (() => {
     refreshBacks();
   }
   let backQueue = Promise.resolve();
+  /* ENGSAVED (Paul, 17 Nov 2026: orders 4230034499 H&Y, 4230448685 4ever + 1 day and FRENCH/THOR_98338 on SS Nov.13 Set-1 Sheet-1 "were marked as engraved with the stamp and a seal and somehow they ended up with red dots as if they're not
+     engraved and then they don't show up in the DXF"). The cloud held each approval's back record, valid (approvedAt = the seal's), while the run's line record said {state:"blocked", approved:false}: a reload cut the page's copy of job.backs short,
+     resumeBacks wrote the approved back "again", built and re-checked the file against the placement as it was NOW (the sheet had been written since), the check failed (engravingInvalid) and writeBacks turned the APPROVED job blocked, though the
+     approval's back was saved already. A back record of THIS approval that stands in the sheet's list of backs (not withdrawn, not pending, both files saved) is the back: it is adopted, never built or checked again, and never lets an approval
+     go blocked; a job already blocked that way is healed. */
+  function savedBackOf(job, poolId) {
+    try { const sh = sheetFor(job, poolId); if (!sh) return null; const f = faceOf(job);
+      return (sh.backPool || []).find(b => b && b.poolId === poolId && faceOf(b) === f && +b.approvedAt === +job.approvedAt && !b.invalidated && !b.pending && b.outputs && b.outputs.ai && b.outputs.ai.url && b.outputs.png && b.outputs.png.url) || null;
+    } catch (_) { return null; }
+  }
+  const allBacksSaved = job => (job.copies || []).length > 0 && +job.approvedAt > 0 && job.copies.every(id => !!savedBackOf(job, id));
+  function healBlockedApproval(job) {
+    if (!job || job.state !== "blocked" || !(+job.approvedAt > 0) || !allBacksSaved(job)) return false;
+    job.backs = (job.backs || []).filter(b => !(job.copies || []).includes(b.poolId));
+    for (const id of job.copies) job.backs.push(savedBackOf(job, id));
+    job.state = "approved"; job.reason = null; job.poolPending = true;
+    if (job.row) job.row.engrave = Object.assign(job.row.engrave || {}, { needed: true, state: "approved", approved: true, approvedAt: job.approvedAt, approvedBy: job.approvedBy, reason: null });
+    try { Review.remove("eng:" + job.key); } catch (_) { /* no card */ }
+    try { agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: the approved back is saved in the cloud: the approval stands (it had been held back by a check made after the sheet changed)`); } catch (_) { /* a log line */ }
+    return true;
+  }
   function writeBacks(job) {
     const write = async()=>{
       try{return await writeBacksNow(job);}
       catch(e){
+        if(e.engravingInvalid && allBacksSaved(job)){ try{agent({engrave:true},"warn",`${job.row.order.receiptId}: ${e.message} (the approved back stays: it is saved in the cloud)`);}catch(_){ } return false; }
         if(e.engravingInvalid){
-          job.state="blocked";job.reason=e.message;
-          job.row.engrave={...job.row.engrave,state:"blocked",approved:false,reason:e.message};
-          try{Review.add({kind:"placement",key:"eng:"+job.key,row:(job.row.parentRow || job.row),job,why:e.message});}catch(viewError){console.warn("Engraving review view",viewError);}
+          // (ENGSAVED: a newer approval whose back could not be saved: the OLDER approved back stays in the files, and the person is told so, in plain words)
+          let older=null;try{older=(job.copies||[]).map(id=>{const sh=sheetFor(job,id);return sh&&(sh.backPool||[]).find(b=>b&&b.poolId===id&&faceOf(b)===faceOf(job)&&!b.invalidated&&!b.pending&&+b.approvedAt<+job.approvedAt);}).find(Boolean)||null;}catch(_){older=null;}
+          const why=older?`Not saved: ${e.message}. The back approved before (${String(older.text||"").replace(/\s*\n\s*/g," / ").slice(0,60)}) is kept in the files; approve the new one again after fixing the placement`:e.message;
+          job.state="blocked";job.reason=why;
+          job.row.engrave={...job.row.engrave,state:"blocked",approved:false,reason:why};
+          try{Review.add({kind:"placement",key:"eng:"+job.key,row:(job.row.parentRow || job.row),job,why});}catch(viewError){console.warn("Engraving review view",viewError);}
         }else{job.backPending=e.message || "Back files wait for saving";retryBacksLater();}
         Session.schedule();
         for(const show of [()=>agent({engrave:true},"warn",`${job.row.order.receiptId}: ${e.message}`),render])try{show();}catch(viewError){console.warn("Engraving save view",viewError);}
@@ -13071,6 +13097,7 @@ const Engrave = window.Engrave = (() => {
       sh.backPool = sh.backPool || [];
       for (const poolId of poolIds) {
         if(job.backs.some(b=>b.poolId===poolId && b.approvedAt===approval && b.sheetId===sh.sheetId && b.outputs?.ai?.url && b.outputs?.png?.url) && sh.backPool.some(b=>b.poolId===poolId && faceOf(b)===faceOf(job) && b.approvedAt===approval))continue;
+        { const saved = savedBackOf(job, poolId); if (saved) { if (!job.backs.some(b => b.poolId === poolId && b.approvedAt === approval && b.sheetId === sh.sheetId)) job.backs.push(saved); continue; } }   // (ENGSAVED: this approval's back is saved: nothing to build or check again)
         const p = B.pool.rows.get(poolId) || {}; const copy = job.editingBack ? job.editOriginal.copy || 1 : p.copy || 1;
         const name = `${sh.fileBase}_${faceWord(job)}_${poolId}_${approval}`;
         let rec=job.stagedBacks.find(b=>b.poolId===poolId && b.approvedAt===approval && b.sheetId===sh.sheetId && b.outputs?.ai?.url && b.outputs?.png?.url);
