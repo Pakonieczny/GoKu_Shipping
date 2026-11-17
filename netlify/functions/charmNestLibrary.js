@@ -468,7 +468,15 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
       }
     }catch(e){console.warn('[charmNestLibrary] the custom pieces of these sheets could not be read:',e && e.message);}
   }
-  for(const s of evidence.values())s.engraving=Object.fromEntries(Readiness.idsOf(s).map(id=>[id,decisions[id] || (CUSTOM_PIECES.has(id)?{needed:false,state:'none',approved:true}:{needed:true,state:'unknown',approved:false})]));
+  /* ENGLIVE (Paul, 17 Nov 2026: "this order had the back engraving approved ... but it still shows it needs fixing, but there's already a seal on it"): a piece's decision is read from the run's saved LINE, which lags the carrying computer's work (the run saves its lines at
+     its checkpoints): gold-s5 pieces 4227697405_5286208312_1/_2/_3/_7 read {needed, state:'review', approved:false} for hours while their approved back records were saved on the sheet. The sheet's own back records are approval evidence too: a back record
+     of the piece (not withdrawn, not still being saved) approved by a named person makes the piece approved, the line's word being older than it. */
+  const backApproved=(s,id)=>{const b=(Array.isArray(s.backPool)?s.backPool:Array.isArray(s.backs)?s.backs:[]).find(r=>r && String(r.poolId)===String(id) && r.face!=='front' && !r.invalidated && !r.pending && r.approvedAt && r.approvedBy);return b||null;};
+  for(const s of evidence.values())s.engraving=Object.fromEntries(Readiness.idsOf(s).map(id=>{
+    let d=decisions[id] || (CUSTOM_PIECES.has(id)?{needed:false,state:'none',approved:true}:{needed:true,state:'unknown',approved:false});
+    if(d && d.approved!==true && !(d.needed===false && d.state==='none')){const b=backApproved(s,id);if(b)d={...d,needed:true,state:'approved',approved:true,approvedBy:str(b.approvedBy,80),approvedAt:num(b.approvedAt),fromBack:true};}
+    return [id,d];
+  }));
   /* An order a person sent to Review holds the sheet it sits on until it is resolved there. The page holds the sheet at once (charm-nest-review-hold.js); the server holds it too where it WRITES
      (a transaction: the laser seal, completing a set, the cut), so an older page or a second computer can never get past it. openReviews() above says which are open. */
   let review=null;
