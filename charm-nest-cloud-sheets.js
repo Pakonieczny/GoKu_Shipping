@@ -199,7 +199,7 @@
       if (!ready) return;
       st.started = true;
       const Y = root.CNSync;
-      if (Y && typeof Y.follow === "function") Y.follow({ name: "cloud-sheets", kinds: "s", wild: "", wants: k => !!pageOf(String(k).slice(2)), read: (why, keys) => { if (keys && keys.length) return changed(keys); if (why !== "wrote") return sweep(); } });   // (FOLLOWFEED: no names = '*', a reset, a verify or a lost feed: every sheet shown here is looked at, by revision)
+      if (Y && typeof Y.follow === "function") Y.follow({ name: "cloud-sheets", kinds: "s", wild: "", wants: k => !!pageOf(String(k).slice(2)), read: (why, keys, at, names) => { if (keys && keys.length) return changed(keys); if (names && names.length && why !== "wrote") { changed(names); } if (why !== "wrote") return sweep(); } });   // (ENGLIVE: the names of an answer that also carried a wildcard / reset / verify are read at once, then the sweep)   // (FOLLOWFEED: no names = '*', a reset, a verify or a lost feed: every sheet shown here is looked at, by revision)
       setTimeout(() => { learn().catch(e => console.warn("[cloud-sheets] learn", e)); }, 15000);
       setInterval(() => { if (!(root.document && root.document.hidden)) learn().catch(() => {}); }, 300000);
       setInterval(() => { announce().catch(() => {}); }, 4000);

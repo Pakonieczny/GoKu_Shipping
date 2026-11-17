@@ -22,7 +22,7 @@
    window.CharmNestEngraveSync: state() · flush() · pull(orders?) · sigOf(line) */
 (function (root) {
   "use strict";
-  const DEBOUNCE = 1500, MAX_WAIT = 6000, OWN_HOLD = 10000, NET_MS = 600000, BATCH = 40, START_DELAY = 800;   // (FASTSTART, Paul 13 Nov 2026: "So why is the grid take like 30 seconds or one minute to come up?")
+  const DEBOUNCE = 500, MAX_WAIT = 2000, OWN_HOLD = 10000, NET_MS = 600000, BATCH = 40, START_DELAY = 800;   // (FASTSTART, Paul 13 Nov 2026: "So why is the grid take like 30 seconds or one minute to come up?") (ENGLIVE, Paul 17 Nov 2026: DEBOUNCE 1.5 s -> 0.5 s and MAX_WAIT 6 s -> 2 s: "the updates must be instantaneous")
   const JOB_FIELDS = ["face", "slot", "rowKey", "groupKey", "linked", "pre", "state", "reason", "text", "lines", "lineInput", "lineMode", "splitIndex", "lineGap", "decision", "source", "quote",
     "confidence", "requests", "questions", "claudeReasoning", "ignored", "wordsSource", "claudeJob", "claude", "fontKey", "fontAsked", "fontName", "fontStyle", "faceFontWord", "fontLocked",
     "fontMapped", "fontListing", "fontSubstituted", "wantSize", "nudged", "turnUp", "upSystem", "orientVersion", "approvedBy", "approvedAt", "engravingSeals", "decidedAt", "decidedBy",

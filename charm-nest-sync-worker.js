@@ -293,19 +293,23 @@
     const kinds = new Set(String(spec.kinds || '').split('').filter(k => KIND.test(k))), wild = new Set(String(spec.wild == null ? spec.kinds || '' : spec.wild).split(''));
     let dirty = null, gone = false;
     const active = () => safe(() => (spec.active ? !!spec.active() : visible()), false);
-    const run = (why, keys, at) => { stats.reads++; safe(() => spec.read(why, keys, at)); };
+    const run = (why, keys, at, names) => { stats.reads++; safe(() => spec.read(why, keys, at, names || keys)); };
     const s = {
       every: () => (gone || !spec.every ? 0 : safe(() => +spec.every() || 0, 0)),
       take(keys, reset, verify, at, wrote) {
         if (gone) return;
         let hit = reset || verify || keys.has('*'), mine = [];
-        if (!hit) for (const k of keys) { if (!kinds.has(k[0])) continue; if (k.endsWith(':*') ? wild.has(k[0]) : safe(() => (spec.wants ? !!spec.wants(k) : true), true)) { hit = true; mine.push(k); } }
+        // (ENGLIVE, Paul 17 Nov 2026: "things are not being updated in time"): a surface is handed the names of its own kinds ALWAYS, also when the same answer carried a wildcard, a reset or a verify (it used to be handed none then: `mine` was only filled when
+        //  nothing else made the answer a hit, so a surface that reads by name read nothing). Its second argument is what it always was (empty on a wildcard / reset / verify: read it all); the names ride as a fourth argument, read(why, keys, at, names).
+        const whole = hit, named = [];
+        for (const k of keys) { if (!kinds.has(k[0])) continue; if (k.endsWith(':*') ? wild.has(k[0]) : safe(() => (spec.wants ? !!spec.wants(k) : true), true)) { hit = true; mine.push(k); named.push(k); } }
         if (!hit) return;
+        if (whole) mine = [];
         const why = reset ? 'reset' : verify ? 'verify' : wrote ? 'wrote' : 'keys';
         // (its own read began after the leader's question (or the write's answer): it holds what that named)
         if ((why === 'keys' || why === 'wrote') && spec.since && safe(() => +spec.since() || 0, 0) > at) return;
         if (!active() || !visible()) { dirty = dirty || { why, keys: new Set(), at }; if (why === 'reset' || why === 'verify') dirty.why = why; dirty.at = Math.min(dirty.at, at); for (const k of mine) dirty.keys.add(k); return; }
-        run(why, mine, at);
+        run(why, mine, at, named);
       },
       live: () => live(),
       dirty: () => !!dirty,

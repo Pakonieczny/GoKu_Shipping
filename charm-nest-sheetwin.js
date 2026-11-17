@@ -2090,6 +2090,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** One face's reading of a piece: what engOf always answered for the piece's (only) engraving. `saved` is the sheet record's decision for the face. */
   function engFace(x, rec, face, job, saved) {
     const back = (rec?.backPool || []).find(b => b.poolId === x.poolId && (face === "front") === isFrontRec(b)) || null;
+    /* ENGLIVE (Paul, 17 Nov 2026: "this order had the back engraving approved, but in this sheet it is not updated ... there's already a seal on it so it's been approved"; "the back engraving dots are turned RED after engraving is approved when the user exits the
+       detailed view and then comes back"): the approval is read from EVERY source, the newest word winning. A back record the cloud holds for this piece and face (approved by a named person, not withdrawn (invalidated), not still being saved) is an
+       approval; the page's own job for it says "to approve" / "words to confirm" only when it is NEWER than that approval (the words were changed, or the approval taken back, after it): a job this computer has not been told about yet
+       (the engraving was approved on another computer, or the page was reloaded from an older workspace) never paints the piece red over a seal. */
+    const approvedBack = !!back && !back.invalidated && !back.pending && !!back.approvedAt && !!back.approvedBy;
+    if (job && approvedBack && ["review", "words", "blocked", "classify", "ready", "fitting"].includes(job.state) && (+back.approvedAt || 0) >= (+(job.decidedAt || job.approvedAt) || 0))
+      return { kind: "approved", label: "approved", job, back, by: back.approvedBy, at: back.approvedAt, text: back.text || job.text };
     if (job) {
       const s = job.state;
       // Engrave keeps a job for every line, "none" for one with nothing to engrave: that is no back engraving (it read as
@@ -5281,7 +5288,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (changed) { renderStrip(); if (W.view === "sheet") renderSheetPane(); else if (W.sel) renderEng(W.sel, true); paintFx(); frontWordsAgain(); }
     // (MSSTALE: the selected piece is a monogram whose seals or status moved since its panel was drawn: drawn again, unless its button is busy opening Engraving)
     else if (W.view !== "sheet" && W.sel && typeof W.sel._monoSig === "string" && monoSigOf(W.sel) !== W.sel._monoSig && !(W.el && W.el.detail && W.el.detail.querySelector("[data-r2=eng] button:disabled"))) renderEng(W.sel, true);
-  }, 1500);
+  }, 600);   // (ENGLIVE: 1.5 s -> 0.6 s: it only compares what Engrave and the record already hold, no cloud call)
 
   /* ── the window follows the cloud (Paul, 5 Oct: "make sure that everywhere the same information is available and that there's no mismatch in orders being on sheets, not
      being on sheets"). The sheet this window shows was read once, when it opened, and said so until it was closed: an order taken off it (a Hold, a Take off on another
@@ -5318,7 +5325,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (now - FOLLOW.touch < 120000 && (typeof document.hasFocus !== "function" || document.hasFocus())) return 0;
     return now - Math.max(FOLLOW.touch, FOLLOW.moved) < 600000 ? 13500 : 59500;   // (the beat is 2 s: these read at about 14 s and 60 s)
   };
-  const memberSig = r => !r ? "gone" : JSON.stringify([(r.poolIds || []).map(String).sort(), (r.orders || []).map(String).sort(), r.setId || "", +r.laserDoneAt || 0, r.archived ? 1 : 0, (r.manual && +r.manual.at) || 0, (r.manualEdit && r.manualEdit.tab) || ""]);   // (Manual Control: a layout saved by hand, and who holds the sheet's claim now)
+  /* ENGLIVE (Paul, 17 Nov 2026: "once the user pressed the actual penguin on the sheet and a detailed view, then the penguin updated ... the updates must be instantaneous"): the signature the window compares to decide whether to read the sheet again named
+     its pieces, orders, set, cut and hand layout, and NOT its back records: an approval (or a withdrawal, or a back file saved) changes that record alone, so the window never saw it and went on showing "words to confirm" until it was closed and opened again.
+     The back records are part of it now: who, which face, when approved, withdrawn or still being saved. */
+  const backSig = r => (r && Array.isArray(r.backPool) ? r.backPool : []).map(b => [b && b.poolId, b && b.face === "front" ? "f" : "b", +(b && b.approvedAt) || 0, b && b.invalidated ? 1 : 0, b && b.pending ? 1 : 0, b && b.outputs && b.outputs.ai ? 1 : 0].join(":")).sort().join(",");
+  const memberSig = r => !r ? "gone" : JSON.stringify([(r.poolIds || []).map(String).sort(), (r.orders || []).map(String).sort(), r.setId || "", +r.laserDoneAt || 0, r.archived ? 1 : 0, (r.manual && +r.manual.at) || 0, (r.manualEdit && r.manualEdit.tab) || "", backSig(r)]);   // (Manual Control: a layout saved by hand, and who holds the sheet's claim now)
   const followBusy = () => !!(MC.on || MC.claiming || HOP.pending || W.hand || W.hop || W.add || W.fill || W.flow || W.flying || W.leaving || W.folding || W.away || W.coming || (W.going && W.going.size) || (W.landing && W.landing.length));
   async function follow(now) {
     if (!W.dlg || !W.dlg.open || !W.rec || !W.id || document.hidden || FOLLOW.busy || followBusy()) return;
@@ -5347,6 +5358,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     finally { FOLLOW.busy = false; }
   }
   setInterval(follow, 2000);
+  window.CNSheetEng = { engFace, memberSig, backSig };   // (tests: tests/charm-nest/engrave-live.cjs reads these two functions alone)
   // a read that moved a piece of one of the orders this window shows (the placement feed's, or any other) asks for the sheet's own read at once, not at the next beat
   const followHook = () => { try { const OP = window.OrderPieces; if (!OP || !OP.subscribe || followHook.on) return; followHook.on = true; OP.subscribe(() => { if (W.dlg && W.dlg.open) { clearTimeout(followHook.t); followHook.t = setTimeout(() => follow(true), 80); } }); } catch (_) {} };
   // what the window shows is on the placement feed's screen (the cancelled marks, the pieces' other sheets)
