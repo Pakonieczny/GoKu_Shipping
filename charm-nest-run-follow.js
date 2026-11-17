@@ -219,6 +219,14 @@
         try { const v = await f(a.ids); r = v.moved ? { ok: true, text: `${v.moved} order line(s) back on ${v.names.join(" and ")}${v.why.length ? " · " + v.why.join("; ") : ""}` } : { ok: false, why: (v.why.join("; ") || "Nothing was moved.").slice(0, 380) }; }
         catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); } }
     }
+    // (REMAKELINE: order lines made up again from what they read as now, in place: charm-nest-bridge.js CNRemakeLines)
+    else if (c.type === "remakeline") {
+      const f = root.CNRemakeLines;
+      if (typeof f !== "function" || !(a.ids || []).length) r = { ok: false, why: "not ready" };
+      else { const step = stepper(c); step({ text: "Making the order's pieces again…" });
+        try { const v = await f(a.ids); r = v.made ? { ok: true, text: `${v.made} order line(s) made again: ${v.pieces} piece(s) on ${[...new Set(v.names)].join(" and ")}${v.why.length ? " · " + v.why.join("; ") : ""}`.slice(0, 380) } : { ok: false, why: (v.why.join("; ") || "Nothing was made.").slice(0, 380) }; }
+        catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); } }
+    }
     else if (c.type === "remake") r = root.Review && typeof root.Review.redrawStale === "function" ? await root.Review.redrawStale(a.ids || []) : { ok: false, why: "not ready" };   // (REMAKESTALE: open pieces that hold an older drawing of these SKUs are made up again from the library's drawing)
     // (REMOTENEST, Paul 15 Nov 2026: "you re-nest it and then check that everything is OK everywhere"): a draft sheet of the run is nested again here, exactly as its Re-nest button does (never a sheet that was cut or is in a committed set: startNest's own rules stand), and the answer waits for the nest and its save
     else if (c.type === "renest") {

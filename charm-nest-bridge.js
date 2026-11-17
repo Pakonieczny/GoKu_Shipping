@@ -5028,7 +5028,7 @@ const Pool = window.Pool = (() => {
     /* KEPTWINS (Paul, 16 Nov 2026: "now that the charm repository has correctly updated this needs to go on a sheet"): the card's own design was saved to the charm repository and the listing
        linked to it (Save to the charm repository and link this listing), so the line now reads as that repository charm: it is made from the repository, as every other order of the listing
        is (a pair as its two ears), not from the card's file a second way. Only when the line reads clean from a saved link AND that repository charm was made from a file this card sent. */
-    const keptFromCard = () => { try { if (!sp || sp.skuSource !== "alias" || !sp.designSku || sp.noDesign || sp.ownDesign || (sp.problems || []).length) return false; const en = Master.entryFor(sp.designSku), e = CustomSheet.sentOf(row); if (!en || !e || !/^charmnest\/master\/custom\//.test(String(en.masterPath || en.aiPath || ""))) return false; const nm = String(en.masterName || "").trim().toLowerCase(); return !!nm && (e.files || []).some(F => String(F.name || "").trim().toLowerCase() === nm); } catch (_) { return false; } };
+    const keptFromCard = () => { try { if (!sp || !sp.designSku || sp.noDesign || sp.ownDesign || (sp.problems || []).length) return false;   /* (17 Nov 2026: the SKU itself can be given to the saved design, "SKU CHEETAH taken from ... and given to this order's design": then the line reads it directly, not through a saved link) */ const en = Master.entryFor(sp.designSku), e = CustomSheet.sentOf(row); if (!en || !e || !/^charmnest\/master\/custom\//.test(String(en.masterPath || en.aiPath || ""))) return false; const nm = String(en.masterName || "").trim().toLowerCase(); return !!nm && (e.files || []).some(F => String(F.name || "").trim().toLowerCase() === nm); } catch (_) { return false; } };
     if (sp && !sp.customDone && window.CustomSheet && CustomSheet.sentOf(row) && !keptFromCard()) return CustomSheet.prepare(row, run);
     if (!sp || sp.noDesign) { row.state = "noDesign"; return null; }
     // an add-on listing's line (specialOf: own) has no master design: the one its SKU happens to match is not its design. It waits, asked nothing, for the order's own designs
@@ -18641,6 +18641,10 @@ const CustomSheet = window.CustomSheet = (() => {
       if(!e.sendIntent){
         const lines={};for(const r of rows)lines[r.key]=[];
         for(const F of files)for(let q=0;q<F.qty;q++){const r=(F.mono && rows.find(x=>x.key===F.mono.line)) || rows[q%rows.length],{charms}=await read(F);if(!current())return;for(let i=0;i<charms.length;i++)lines[r.key].push({f:F.id,i});}
+        /* PAIRSEND (Paul, 17 Nov 2026: "only one charm returns to the sheet ... and the other one did not because they were a set of earrings"): one body sent for an earring-PAIR line used to
+           make ONE piece, so the Left went on the sheet and the Right never existed. A pair line that is sent exactly one body per pair makes the pair: the same body twice, the Right its
+           mirror image (earsOf: "one body twice"). A person who sends both ears, or a count that is not half the pair's, is taken as sent. */
+        for(const r of rows){const plan=pairPlan(r),got=lines[r.key] || [];if(plan && got.length && got.length*2===plan.length)lines[r.key]=got.flatMap(pc=>[pc,Object.assign({},pc)]);}
         const at=Date.now(),replace=rows.filter(r=>(r.poolIds || []).length).map(r=>r.key);e.sendIntent={id:`custom-sheet:${e.ck}:${at}`,at,by:who,lines,...(replace.length?{replace,replaced:{}}:{})};ver++;   // (REVDROP: the lines that already have pieces on an open sheet: those come off first)
       }
       const intent=e.sendIntent, lines=intent.lines;
@@ -19626,7 +19630,8 @@ const CustomSheet = window.CustomSheet = (() => {
         else if (repo) V = V0(`Saved to the repository as ${sku}. Linking this listing on Etsy…`, "Step 3 of 3 · setting the SKU on the Etsy listing", "Linking on Etsy…", "work", "work");
         else V = V0("Saving to the repository…", step === 1 ? "Step 1 of 3 · choosing the SKU" : step === 2 ? `Step 2 of 3 · saving ${sku ? sku + ".ai" : "the design"}` : since ? `Started ${since}` : "", "Saving to the repository…", "work", "work");
       } else if (state === "password") {
-        V = V0("Waiting for the repository password", `It saves by itself as soon as you enter it${since ? ` · asked ${since}` : ""}. Nothing is lost while it waits.`, "Waiting for the repository password", "wait", "locked", { say: "Waiting for the repository password. It saves by itself as soon as you enter it." });
+        /* SIGNINSAYS (Paul, 17 Nov 2026: "why is it still asking me for a password"): the save needs a signed-in person, not the password. With nobody signed in on this computer the strip says so, in those words: signing in saves it by itself (the lock gets the person's door at once). The password still works for whoever has it. */
+        V = V0(employeeName() ? "Waiting for the repository password" : "Sign in to save to the repository", employeeName() ? `It saves by itself as soon as you enter it${since ? ` · asked ${since}` : ""}. Nothing is lost while it waits.` : `Nobody is signed in on this computer. Sign in with your Employee Number and it saves by itself${since ? ` · asked ${since}` : ""}. Nothing is lost while it waits.`, employeeName() ? "Waiting for the repository password" : "Sign in to save to the repository", "wait", "locked", { say: "Waiting for the repository password. It saves by itself as soon as you enter it." });
         V.cardAct = { kind: "repo", label: "Enter password" };
       } else if (state === "connection") {
         V = V0("Waiting for the connection", `It saves by itself when you are back online${since ? ` · asked ${since}` : ""}. Nothing is lost while it waits.`, "Waiting for the connection", "wait", "wait", { say: "Waiting for the connection. It saves by itself when you are back online." });
@@ -20048,7 +20053,7 @@ const CustomSheet = window.CustomSheet = (() => {
     if (msg._sig !== msgSig) {
       msg._sig = msgSig; msg.replaceChildren(); msg.classList.toggle("bad", !!K.pw.bad && !K.pw.busy);
       if (K.pw.busy) { const s = el("span", "spin"); s.setAttribute("aria-hidden", "true"); msg.append(s, document.createTextNode("Checking the password…")); }
-      else msg.textContent = K.pw.msg || "Locked: type the repository password to save";
+      else msg.textContent = K.pw.msg || (employeeName() ? "Locked: type the repository password to save" : "Nobody is signed in: sign in with your Employee Number (or type the repository password)");
     }
     // the line
     if (want.line) {
@@ -23031,7 +23036,8 @@ const Review = window.Review = (() => {
     const openCustom = new Set(all.filter(it => it.kind === "customOrder").map(it => it.key.slice(4)).concat(cl.open.concat(cl.done,cl.sent).map(it => it.key.slice(6))));
     const doneAt = it => it.settled ? it.settled.t || 0 : (it.record && Math.max(+it.record.lastPrintedAt || 0, +it.record.completedAt || 0, +it.record.printedAt || 0, +it.record.at || 0)) || (it.record ? 0 : CNListActivity.at(it)) || 0;   // (a custom card that waits on nobody has no record: its latest activity, clLaid)
     // (the records of older sends kept in the workspace, flagged or by their words, stay stored and are still not listed: sentToSheet)
-    const answeredCards = settled.filter(d => !sentToSheet(d) && !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d })).concat((window.CharmNestReviewMark ? CharmNestReviewMark.doneSettled(Orders.rows()) : []).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d })));
+    const sentRids = new Set((cl.sent || []).flatMap(it => (it.rows || []).map(r => String(r && r.order && r.order.receiptId || ""))).filter(Boolean));
+    const answeredCards = settled.filter(d => !sentToSheet(d) && !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d })).concat((window.CharmNestReviewMark ? CharmNestReviewMark.doneSettled(Orders.rows()) : []).filter(d => !sentRids.has(String((d.orders || [])[0] || ""))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d })));   // (ONECARD 2, Paul 17 Nov 2026: "it duplicated this order": a Send to Sheet releases the order's hold, and that release was listed as a second card under Resolved beside the Sent to Sheet card: one order, one card)
     // (a line still listed in Open is not a released card: it waits on something else)
     const inOpen = new Set(all.concat(clWait).flatMap(it => rowsOf(it).map(r => r.key)));
     const releasedNow = releasedCards(inOpen, answeredCards).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }));
@@ -30301,6 +30307,27 @@ async function strandedWatch(why) {
 }
 setInterval(() => { try { if (!document.hidden || B.run) strandedWatch("the two-minute look").catch(() => {}); } catch (_) { /* the next look */ } }, 120000);
 window.CNStrandedWatch = strandedWatch;   // (tests)
+/* REMAKELINE (Paul, 17 Nov 2026: the Right earring of order 4226679201 was never made): these order lines are made up again from what they read as NOW (a pair as its two ears), their pieces
+   exchanged in place on the sheet they are on (the old spot, else that sheet's free space, else a draft); nothing else moves and no sheet is nested again. Only on the computer that carries the run. */
+window.CNRemakeLines = async function (keys) {
+  const run = B.run; if (!run) throw new Error("this page does not carry a run");
+  if (allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status))) throw new Error("a sheet is being nested: try again once it is done");
+  try { if (typeof Master !== "undefined" && Master.load) await Master.load(true); } catch (_) { /* the index this page holds */ }
+  try { Orders.interpretAll(); } catch (_) { /* read as it is */ }
+  const out = { lines: 0, made: 0, pieces: 0, names: [], why: [] };
+  for (const k of [...new Set((keys || []).map(String))]) {
+    const row = B.orders.byKey.get(k); if (!row || ["gone", "committed"].includes(row.state)) { out.why.push(`${k}: not an open line`); continue; }
+    out.lines++;
+    row.repoolChanged = true; row.changePending = true; row.replaceByDesign = true;
+    try { await Review.repool(row); } catch (e) { out.why.push(`${row.order.receiptId}: ${String((e && e.message) || e).slice(0, 120)}`); } finally { delete row.replaceByDesign; }
+    const on = (row.poolIds || []).map(id => allSheets().find(p => (p.charms || []).some(c => c && c.poolId === id))).filter(Boolean);
+    out.pieces += (row.poolIds || []).length;
+    if (on.length && on.length === (row.poolIds || []).length) { out.made++; out.names.push(...new Set(on.map(p => p.fileBase || sheetName(p)))); }
+    else out.why.push(`${row.order.receiptId}: ${on.length} of ${(row.poolIds || []).length} piece(s) on a sheet${row.reason ? " (" + String(row.reason).slice(0, 120) + ")" : ""}`);
+  }
+  try { await RunCtl.save(run); } catch (_) { /* saved with the next change */ }
+  return out;
+};
 /* SENDHOME (Paul, 16 Nov 2026: "that charm must immediately be put back on the same sheet it was removed from"): a line whose piece was put on ANOTHER sheet than the one it was taken off (it
    was placed before the rule above existed) is sent home: its piece comes off the sheet it is on (written as it stands, nothing else on it moving) and goes back on its own sheet, in that
    sheet's free space; with no room there it stays on the latest unfinished sheet. Only on the computer that carries the run. → { lines, moved, names, why } */
