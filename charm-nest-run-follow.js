@@ -232,15 +232,18 @@
       const Rv = root.Review, Ms = safe(() => (typeof Master !== "undefined" ? Master : root.Master), null), Or = safe(() => (typeof Orders !== "undefined" ? Orders : root.Orders), null);
       if (!Rv || typeof Rv.redrawStale !== "function" || !(a.ids || []).length) r = { ok: false, why: "not ready" };
       else { const step = stepper(c); step({ text: "Reading the repository again…" });
+        const snap = typeof Rv.redrawStale.snap === "function" ? safe(() => Rv.redrawStale.snap(a.ids), null) : null;   // (TRUEREDRAW, Paul 17 Nov 2026: what the open pieces hold BEFORE the library is read: the lines the sweep Master.load queues are made before redrawStale is asked, and are counted against this)
         try {
           if (Ms && typeof Ms.load === "function") { try { await Ms.load({ quiet: true, ttl: 1, fresh: true }); } catch (_) { /* the index it holds */ }   /* (REPOEDIT: what changed is read, not the whole index) */ }
           if (Or && typeof Or.loadMaps === "function") { try { await Or.loadMaps(true); } catch (_) { /* the links it holds */ } }
           try { if (Or && Or.interpretAll) Or.interpretAll(); } catch (_) { /* read at the next look */ }
           step({ text: "Making the other orders again…" });
-          let moved = 0; try { const v = typeof Rv.relinkNow === "function" ? await Rv.relinkNow() : null; moved = ((v && v.swapped) || []).length; } catch (_) { /* the next sweep */ }
-          const v2 = await Rv.redrawStale(a.ids);
+          let moved = 0, movedKeys = new Set(); try { const v = typeof Rv.relinkNow === "function" ? await Rv.relinkNow() : null; moved = ((v && v.swapped) || []).length; movedKeys = new Set(((v && v.swapped) || []).map(x => x && x.row && x.row.key).filter(Boolean)); } catch (_) { /* the next sweep */ }
+          const v2 = await Rv.redrawStale(a.ids, { snap, not: movedKeys });
           try { if (root.CNStrandedWatch) root.CNStrandedWatch("a design saved on another computer"); } catch (_) { /* its own look */ }
-          r = v2 && v2.ok !== false ? { ok: true, text: `${moved ? moved + " order line(s) moved to the new design; " : ""}${String(v2.text || "done")}`.slice(0, 380) } : { ok: false, why: String((v2 && (v2.why || v2.text)) || "not done").slice(0, 300) };
+          /* TRUEREDRAW (Paul, 17 Nov 2026): the answer says what was made ("made again: N line(s)", N counted from the pieces), and a line that still waits for its sheet (one being arranged or saved: the sweep tries again by itself) is never
+             a finished green line: it is answered as not done yet, in words that say the line follows as soon as its sheet is free (the computer that asked shows that as a plain note, not as done) */
+          r = v2 && v2.ok !== false ? (v2.waiting ? { ok: false, why: `${moved ? moved + " order line(s) moved to the new design; " : ""}${String(v2.text || "")}`.slice(0, 380) } : { ok: true, text: `${moved ? moved + " order line(s) moved to the new design; " : ""}${String(v2.text || "done")}`.slice(0, 380) }) : { ok: false, why: String((v2 && (v2.why || v2.text)) || "not done").slice(0, 300) };
         } catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); } }
     }
     else if (c.type === "remake") r = root.Review && typeof root.Review.redrawStale === "function" ? await root.Review.redrawStale(a.ids || []) : { ok: false, why: "not ready" };   // (REMAKESTALE: open pieces that hold an older drawing of these SKUs are made up again from the library's drawing)

@@ -32,7 +32,15 @@
   const sig = list => (list || []).map(p => [p.id, r2(p.cxPt), r2(p.cyPt), r2(p.angle)].join("@")).sort().join(",");
   const near = (a, b) => { if (a === b) return true; const A = a.split(","), Bv = b.split(","); if (A.length !== Bv.length) return false; for (let i = 0; i < A.length; i++) { const x = A[i].split("@"), y = Bv[i].split("@"); if (x[0] !== y[0]) return false; for (let k = 1; k < 4; k++) if (Math.abs(+x[k] - +y[k]) > 0.05) return false; } return true; };
   const revOf = p => (p && Number.isFinite(p.layoutRev) ? p.layoutRev : null);
-  const getRec = async id => { const r = await api({ op: "getSheet", id }); return (r && r.sheet) || null; };
+  /* (FOLLOWFEED, Paul 17 Nov 2026: "one cloud truth, every computer shows the same sheets in real time"; designs-window-e2e.cjs, scenario A, proved it by the feed's own answers): REVS keeps the revision (updateTime) of the cloud record this page last read for each sheet, so a look at a sheet
+     that has not moved is one field read (getSheet ifRev / getMany ifRevs) and not the whole record. getRec(id, probe) → the record, SAME (probe: it has not moved since this page read it) or null. */
+  const REVS = new Map(), SAME = Object.freeze({ same: true });
+  const getRec = async (id, probe) => {
+    const ask = { op: "getSheet", id }; if (probe && REVS.has(id)) ask.ifRev = REVS.get(id);
+    const r = await api(ask); if (r && r.unchanged === true && ask.ifRev) return SAME;
+    if (r && r.sheet && r.rev) REVS.set(id, String(r.rev));
+    return (r && r.sheet) || null;
+  };
   /* (CLOUDALL C6, Paul 13 Nov 2026: "Sheets that haven't been saved yet ... exist only on the computer doing it"): a sheet this page is nesting, or holds changed and not nested yet, is marked on its cloud record (working: { status, dev, by, at }), cleared when it is saved; every
      other computer sees it and does not change that sheet meanwhile (ensureLive refuses it, in words, for 15 minutes at most: a mark left by a page that closed does not lock it for good) */
   const devId = () => safe(() => root.CharmNestRunFollow.dev(), "") || "";
@@ -88,6 +96,8 @@
     st.reloads++; st.last = { at: Date.now(), id: p.sheetId, why: why || "" };
     say("cloud", `${rec.fileBase || p.sheetId}: read again from the cloud (${why || "changed on another computer"}) · ${(p.placements || []).length} pieces`);
     safe(() => root.CN.renderCard(p));
+    // (FOLLOWFEED: the pieces of this sheet are other charms now, so every thumbnail on this page that shows one looks at its piece again: its picture key names the piece this sheet holds (charm-nest-bridge.js ListMedia pieceSig))
+    safe(() => root.CharmNestMadeThumb && typeof root.CharmNestMadeThumb.refreshSoon === "function" && root.CharmNestMadeThumb.refreshSoon());
     return p;
   }
 
@@ -135,13 +145,18 @@
     return true;
   }
   const PENDING = new Set(); let pendT = 0; let orderT = 0;
-  async function changed(keys) {
+  /* (FOLLOWFEED, Paul 17 Nov 2026) a record read while a take-off or an exchange in place is half written (dirty: the piece list already cut, the layout still to be written by the computer that carries the run) is read again 5 s later, up to two minutes:
+     the write that finishes it names the sheet on the feed as well (below), this is the net under it */
+  const DIRTYN = new Map(), again = (id, dirty) => { if (!dirty) { DIRTYN.delete(id); return; } const n = (DIRTYN.get(id) || 0) + 1; DIRTYN.set(id, n); if (n <= 24) PENDING.add(id); };
+  async function changed(keys, probe) {
     for (const k of keys || []) {
       const id = String(k).slice(2); if (!id || id === "*") continue;
       const p = pageOf(id); if (!p) continue;
       if (atWork(p) || p.dirty) { PENDING.add(id); continue; }
-      let rec = null; try { rec = await getRec(id); } catch (_) { PENDING.add(id); continue; }
+      let rec = null; try { rec = await getRec(id, probe); } catch (_) { PENDING.add(id); continue; }
+      if (rec === SAME) { if (DIRTYN.has(id)) again(id, true); continue; }   // (not moved since this page read it; read half written, it is looked at again)
       if (!rec) continue;
+      again(id, rec.dirty === true);
       // (ORDERCLOUD 2, Paul 15 Nov 2026: the carrier's new draft order never reached the computer that follows): a followed sheet whose order changed in the cloud has this computer list the run's sheets again
       if (p.followed && rec.draftOrder != null && Number.isFinite(+rec.draftOrder) && +rec.draftOrder !== +p.draftOrder) { clearTimeout(orderT); orderT = setTimeout(() => safe(() => { const R = root.Recall, F = root.CharmNestRunFollow, id = (F && F.state().runId) || p.runId; if (R && R.follow && id) Promise.resolve(R.follow(id, { force: true })).catch(() => {}); }), 1500); }
       if (p.recalled) { p.recalled = rec; st.refreshed++; safe(() => root.CN.renderCard(p)); continue; }
@@ -151,7 +166,25 @@
       // (only a newer revision, saved by another computer, rebuilds a sheet held here: a sheet this page is changing itself is never rebuilt under it)
       if ((+rec.layoutRev || 0) > mine) { try { await reload(p, "changed on another computer"); } catch (e) { PENDING.add(id); console.warn("[cloud-sheets] reload", id, e); } }
     }
-    if (PENDING.size && !pendT) pendT = setTimeout(() => { pendT = 0; const ks = [...PENDING].map(id => "s:" + id); PENDING.clear(); changed(ks); }, 5000);
+    if (PENDING.size && !pendT) pendT = setTimeout(() => { pendT = 0; const ks = [...PENDING].map(id => "s:" + id); PENDING.clear(); changed(ks, true); }, 5000);
+  }
+  /* (FOLLOWFEED, Paul 17 Nov 2026: "one cloud truth, every computer shows the same sheets in real time"; the cause of "the follower's own picture of a sheet does not take the new charm" (designs-window-e2e.cjs, scenario A, traced answer by answer): the changes feed hands a surface the NAMES that
+     concern it only when nothing else made the answer concern it (charm-nest-sync-worker.js take); an answer that also carried '*' (a write that named nothing, here the exchange's own piece writes), a reset, a verify or a lost feed hands it NO names, though the same answer named the sheets. changed([])
+     read nothing, so the last write of an exchange in place (rev 6 to 8 on the sheet) never reached the following computer: it had read the sheet half written (7 of 8 pieces listed, layout 6) and kept it. A read with no names now looks at every sheet this page shows
+     that can still change, all in ONE call by revision (getMany ifRevs: a sheet that has not moved costs one field read), and the ones that moved are read as if the feed had named them; at most every 8 s, the last one never lost. A write of this computer itself is not looked at (its page is the newest). */
+  let sweepT = 0, sweepAt = 0, sweeping = false;
+  async function sweep() {
+    const wait = 8000 - (Date.now() - sweepAt);
+    if (sweeping || wait > 0) { if (!sweepT) sweepT = setTimeout(() => { sweepT = 0; sweep(); }, Math.max(1000, wait) + 100); return; }
+    sweeping = true; sweepAt = Date.now();
+    try {
+      const mine = pages().filter(p => p && p.sheetId && REVS.has(p.sheetId) && !(+p.laserDoneAt > 0) && !(+p.roseCutAt > 0) && !(p.recalled && +p.recalled.laserDoneAt > 0)), ifRevs = {};
+      for (const p of mine) ifRevs["s:" + p.sheetId] = REVS.get(p.sheetId);
+      const keys = Object.keys(ifRevs); if (!keys.length) return;
+      const moved = []; for (let i = 0; i < keys.length; i += 300) { const part = keys.slice(i, i + 300), r = await api({ op: "getMany", keys: part, ifRevs: Object.fromEntries(part.map(k => [k, ifRevs[k]])) }); moved.push(...Object.keys((r && r.recs) || {})); }
+      st.swept = (st.swept || 0) + 1; if (moved.length) { st.sweptMoved = (st.sweptMoved || 0) + moved.length; await changed(moved); }
+    } catch (e) { console.warn("[cloud-sheets] sweep", e && e.message); }
+    finally { sweeping = false; }
   }
 
   /** persistSheet's refusal from the server (409 conflict): the sheet is read again; the run goes on (its next look nests what is still waiting). */
@@ -166,7 +199,7 @@
       if (!ready) return;
       st.started = true;
       const Y = root.CNSync;
-      if (Y && typeof Y.follow === "function") Y.follow({ name: "cloud-sheets", kinds: "s", wild: "", wants: k => !!pageOf(String(k).slice(2)), read: (why, keys) => changed(keys) });
+      if (Y && typeof Y.follow === "function") Y.follow({ name: "cloud-sheets", kinds: "s", wild: "", wants: k => !!pageOf(String(k).slice(2)), read: (why, keys) => { if (keys && keys.length) return changed(keys); if (why !== "wrote") return sweep(); } });   // (FOLLOWFEED: no names = '*', a reset, a verify or a lost feed: every sheet shown here is looked at, by revision)
       setTimeout(() => { learn().catch(e => console.warn("[cloud-sheets] learn", e)); }, 15000);
       setInterval(() => { if (!(root.document && root.document.hidden)) learn().catch(() => {}); }, 300000);
       setInterval(() => { announce().catch(() => {}); }, 4000);

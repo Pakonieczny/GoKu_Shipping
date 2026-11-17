@@ -4161,7 +4161,7 @@ const Master = window.Master = (() => {
       say(spec.reuse ? `Linking ${sku}…` : `Writing ${sku} to the repository…`);
       const body = () => ({ op: "customSaveCommit", repoToken: tok.token, rid: String(spec.rid), listingId: String(spec.listingId), sku, oldSku: String(spec.oldSku || ""), productId: String(spec.productId || ""), optionPairs: spec.optionPairs || [], group: spec.group || { mode: "unknown", productIds: [] }, title: String(spec.title || ""), by: String(spec.by || ""),
         design: { name: F.name, kind: F.kind === "dxf" ? "dxf" : "ai", hash: F.hash, bytes: F.bytes ? F.bytes.length : 0 }, reuse: !!spec.reuse,
-        ...(ov ? { override: { via: ov.via, from: ov.from } } : {}), ...(spec.etsyOwn ? { etsyOwn: true } : {}), ...(spec.fileTag ? { fileTag: spec.fileTag } : {}),
+        ...(ov ? { override: { via: ov.via, from: ov.from } } : {}), ...(spec.etsyOwn ? { etsyOwn: true } : {}), ...(spec.noAlias ? { noAlias: true } : {}), ...(spec.fileTag ? { fileTag: spec.fileTag } : {}),
         entry: spec.reuse ? { charmHash: c.hash } : { charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource }, file: Object.assign({ masterHash: F.hash, name: F.name }, proof) });
       let r;
       for (let again = false; ; again = true) {
@@ -18827,7 +18827,10 @@ const CustomSheet = window.CustomSheet = (() => {
       const c=await api("charmNestLibrary",{op:"runCarrier",runId,dev,check:true},{quiet:true});
       if(!c?.alive || c.mine)throw new Error("The computer that carries the run is not open right now.");
       const name=c.carrier?.by || "the computer that carries the run";
-      const put=await api("charmNestLibrary",{op:"runCmdPut",runId,dev,by:employeeName() || "",cmd:{type:"customsend",ck:e.ck,ids:Object.keys(decisionLines(e)),label:`Place the designs sent for order ${e.rid}`.slice(0,150)}},{quiet:true});
+      /* CARRIERRETRY (Paul, 17 Nov 2026): asked again, a send is asked ONCE: this computer's own request for this card that still waits, is being done, or was done (this send's) is the one waited for, not another put beside it
+         (the carrier's exchange is also a no-op on pieces that already are these designs). */
+      let put=null;try{const L0=await api("charmNestLibrary",{op:"runCmdList",runId},{quiet:true}),now0=Date.now(),since=(+e.carrierPending?.at || 0)-30000;put=(L0?.cmds || []).find(x=>x && x.type==="customsend" && x.args?.ck===e.ck && x.dev===dev && ((x.state==="waiting" && now0-(+x.at || 0)<600000) || (x.state==="running" && now0-(+x.stepAt || +x.at || 0)<180000) || (x.state==="done" && (+x.at || 0)>=since))) || null;}catch(_){put=null;}
+      if(!put)put=await api("charmNestLibrary",{op:"runCmdPut",runId,dev,by:employeeName() || "",cmd:{type:"customsend",ck:e.ck,ids:Object.keys(decisionLines(e)),label:`Place the designs sent for order ${e.rid}`.slice(0,150)}},{quiet:true});
       if(!put?.id)throw new Error(put?.error || "The request was not sent.");
       say(`Waiting for ${name}'s computer…`);
       for(const t0=Date.now();Date.now()-t0<11*60000;){
@@ -18837,6 +18840,13 @@ const CustomSheet = window.CustomSheet = (() => {
         if(k.state==="cancelled" || (k.state==="failed" && /^too old$/i.test(String(k.text || ""))))throw new Error(`${name}'s computer did not get to it in time.`);
         if(k.state==="done" || k.state==="failed"){if(all()[e.ck]===e){delete e.carrierPending;ver++;Session.schedule();}return {ok:k.state==="done",text:String(k.text || (k.state==="done"?"its new piece is on the sheet":"It could not be placed.")),name};}
         if(k.state==="running" && k.step)say(`${name}'s computer: ${k.step}`);
+        /* CARRIERGONE (Paul, 17 Nov 2026): a computer closed less than 90 s ago still counts as open (runCarrier FRESH), so a send pressed then waited 11 minutes. While the request has not started, the carrier is
+           looked at again at each look: not open, or 25 s without the request starting, and it is asked again later (the card keeps carrierPending; the request stays queued and the carrier does it when it is open and free). */
+        else if(k.state==="waiting"){
+          let gone=false;try{const c2=await api("charmNestLibrary",{op:"runCarrier",runId,dev,check:true},{quiet:true});gone=!!c2 && (!c2.alive || !!c2.mine);}catch(_){/* not told: not gone */}
+          if(gone)throw new Error("The computer that carries the run is not open right now.");
+          if(Date.now()-t0>=25000)throw new Error(`${name}'s computer has not started it yet.`);
+        }
       }
       throw new Error(`${name}'s computer did not answer.`);
     })();
@@ -18903,13 +18913,14 @@ const CustomSheet = window.CustomSheet = (() => {
       if(all()!==owner || owner[e.ck]!==e)return;await saveCloud(e,"sent");Session.schedule();await Session.flushNow?.();
     } catch(err) {e.sendCloudPending=true;e.sendError=String(err.message || err);Session.schedule();}
   }
-  async function recover() {
+  async function recover(o={}) {
     if(window.CNWipe?.active)return 0;   // a sandbox clean-up is under way: nothing is sent or placed again from this browser's copies
     let n=0;for(const e of Object.values(all())){
       if(!e || e.legacy || tasks.has(e.ck) || busy.has(e.ck))continue;
+      if(o?.carrier && !(e.sent && e.carrierPending))continue;   // (CARRIERRETRY: the timer below looks only at the sends that wait for the carrier)
       if(e.sent){if(!e.sent.id && +e.sent.at>0){e.sent.id=`custom-sheet:${e.ck}:${e.sent.at}`;e.sendCloudPending=true;ver++;Session.schedule();}if(e.sendCloudPending && S.cloud.ok)await syncSent(e);
-        // (REMOTESEND: a send whose exchange the carrier has not done yet is asked again, at most every two minutes; when this computer carries the run itself by now, it does it)
-        if(e.carrierPending && !e.sendCloudPending && S.cloud.ok && Date.now()-(+e.carrierPending.askedAt || 0)>120000){
+        // (REMOTESEND: a send whose exchange the carrier has not done yet is asked again; when this computer carries the run itself by now, it does it. CARRIERRETRY, Paul 17 Nov 2026: every 25 s, not two minutes, and by the timer below, not only when the custom records load: with the carrier open again the send was asked again after minutes)
+        if(e.carrierPending && !e.sendCloudPending && S.cloud.ok && Date.now()-(+e.carrierPending.askedAt || 0)>25000){
           e.carrierPending.askedAt=Date.now();
           const done=out=>{if(out && (out.ok || !out.retry) && all()[e.ck]===e){delete e.carrierPending;ver++;Session.schedule();}if(out && out.ok)toast(`Order ${e.rid}: ${out.text}`,"ok",7000);redraw();};
           (B.run?applyRemote(e.ck).then(r=>({ok:r.ok!==false,text:r.text || r.why || ""})):askCarrier(e)).then(done).catch(err=>console.warn("[remotesend] still to place:",err && err.message));
@@ -18920,6 +18931,9 @@ const CustomSheet = window.CustomSheet = (() => {
       const it={key:"ord:"+e.ck,rows,row:rows[0]};await send(it,{recover:true});if(e.sent)n++;
     }if(n)redraw();return n;
   }
+  /* CARRIERRETRY (Paul, 17 Nov 2026: "This process has caused me a lot of grief"): recover() ran only after the custom records were read (a two-minute floor), so a send that waited for a closed carrier was not asked again
+     for minutes after that computer was open again (375 s seen). While any card waits for the carrier, it is looked at every 30 s: asked again if the carrier is open (once: askCarrier names its own request), else it stays pending. */
+  setInterval(()=>{try{if(Object.values(all()).some(e=>e && e.sent && e.carrierPending && !e.legacy))recover({carrier:true}).catch(err=>console.warn("[remotesend] timer:",err && err.message));}catch(_){/* looked at again in 30 s */}},30000);
   function hydrate(records, owner=all()) {
     if(all()!==owner)return 0;
     const list=Array.isArray(records)?records:Object.values(records || {});let updated=0;
@@ -19672,6 +19686,7 @@ const CustomSheet = window.CustomSheet = (() => {
     `<div class="cuKeepSw" hidden><button type="button" class="cuSwitch" id="cuKeepSwitch" role="switch" aria-checked="false" aria-labelledby="cuKeepL" aria-describedby="cuKeepP"></button>` +
     `<div class="cuKeepTx" id="cuKeepTx"><b id="cuKeepL">Save to the charm repository and link this listing</b><span id="cuKeepP"></span></div>` +
     `<span class="cuKeepPill" hidden>Sandbox: nothing is saved</span><button type="button" class="btn gold sm" data-k-now hidden>Save now</button></div>` +
+    `<div class="cuKeepAsk" id="cuKeepAsk" role="alertdialog" aria-labelledby="cuKeepAskT" hidden><b id="cuKeepAskT"></b><div class="cuKeepAskB"></div><div class="cuKeepAskAct"><button type="button" class="btn gold sm" data-k-yes>Save and link</button><button type="button" class="btn ghost sm" data-k-no>Cancel</button></div></div>` +
     `<div class="cuKeepLine" id="cuKeepLn" hidden><span class="cuKm" aria-hidden="true"></span><span class="cuKlTx"><b></b><span class="sub"></span></span><span class="cuKlAct"></span></div>` +
     `<div class="cuKeepPw" hidden><span class="cuLockMk" data-repo="upload" aria-hidden="true"></span>` +
     `<input type="password" id="cuKeepPw" name="repo-unlock-field" placeholder="Password" aria-label="Repository password" aria-describedby="cuKeepMsg" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other">` +
@@ -19713,7 +19728,7 @@ const CustomSheet = window.CustomSheet = (() => {
         else V = V0("Saving to the repository…", step === 1 ? "Step 1 of 3 · choosing the SKU" : step === 2 ? `Step 2 of 3 · saving ${sku ? sku + ".ai" : "the design"}` : since ? `Started ${since}` : "", "Saving to the repository…", "work", "work");
       } else if (state === "password") {
         /* SIGNINSAYS (Paul, 17 Nov 2026: "why is it still asking me for a password"): the save needs a signed-in person, not the password. With nobody signed in on this computer the strip says so, in those words: signing in saves it by itself (the lock gets the person's door at once). The password still works for whoever has it. */
-        V = V0(employeeName() ? "Waiting for the repository password" : "Sign in to save to the repository", employeeName() ? `It saves by itself as soon as you enter it${since ? ` · asked ${since}` : ""}. Nothing is lost while it waits.` : `Nobody is signed in on this computer. Sign in with your Employee Number and it saves by itself${since ? ` · asked ${since}` : ""}. Nothing is lost while it waits.`, employeeName() ? "Waiting for the repository password" : "Sign in to save to the repository", "wait", "locked", { say: "Waiting for the repository password. It saves by itself as soon as you enter it." });
+        V = V0(employeeName() ? "Waiting for the repository password" : "Sign in to save to the repository", employeeName() ? `It saves by itself as soon as you enter it${since ? ` · asked ${since}` : ""}. Nothing is lost while it waits.` : `Nobody is signed in on this computer. Sign in with your Employee Number and it saves by itself${since ? ` · asked ${since}` : ""}. Nothing is lost while it waits.`, employeeName() ? "Waiting for the repository password" : "Sign in to save to the repository", "wait", "locked", { say: employeeName() ? "Waiting for the repository password. It saves by itself as soon as you enter it." : "Sign in to save to the repository. It saves by itself as soon as you sign in." });   // (SIGNINWORDS: the line read out says the same as the strip: nobody signed in is never read the password)
         V.cardAct = { kind: "repo", label: "Enter password" };
       } else if (state === "connection") {
         V = V0("Waiting for the connection", `It saves by itself when you are back online${since ? ` · asked ${since}` : ""}. Nothing is lost while it waits.`, "Waiting for the connection", "wait", "wait", { say: "Waiting for the connection. It saves by itself when you are back online." });
@@ -19971,6 +19986,10 @@ const CustomSheet = window.CustomSheet = (() => {
     if (on) {
       if (keepLive(K) || K.phase === "linked" || K.phase === "rehearsed" || !(K.phase === "off" || K.phase === "held")) return;
       K.pw.msg = ""; K.pw.bad = false;
+      /* NEWSKU (Paul, 17 Nov 2026: "it should ask me to confirm ... not fucking update everything just because I clicked the toggle"): the switch only ASKS. Nothing is written to the repository, the listing's
+         link or Etsy until the card is confirmed ("Save and link"); a rehearsal (the sandbox) writes nothing and starts at once. */
+      if (!K.asked && !(K.ctx && K.ctx.sandbox) && !(K.open && K.open.rehearsal)) { K.ask = true; paintKeep(); setTimeout(() => { try { const b = keepHost().querySelector("[data-k-yes]"); if (b && !b.closest("[hidden]")) b.focus({ preventScroll: true }); } catch (_) { /* gone */ } }, 0); return; }
+      K.asked = false; K.ask = false;
       if (!keepStartIntent(K)) return;
     } else {
       if (!keepLive(K)) return;
@@ -19978,6 +19997,25 @@ const CustomSheet = window.CustomSheet = (() => {
       K.pwOpen = false; K.on = false;
     }
     paintKeep(); if (on && keepLocked(K)) keepFocusPw();
+  }
+  /** NEWSKU: what saving will do, in plain words, for the card: the new SKU, what stays as it is, who is linked. → { title, lines: [html-free strings] } */
+  function keepAskWords(K) {
+    const o = K.open || {}, c = K.ctx || {}, rid = txt((c && c.rid) || ""), sku = txt(K.sku || o.sku || ""), old = txt(o.replaces || ""), lines = [];
+    let others = 0;
+    if (old) { try { others = Orders.rows().filter(r => r && r.spec && String(r.spec.designSku || "").toUpperCase() === old.toUpperCase() && !(r.order && String(r.order.receiptId) === rid) && !["gone", "skipped"].includes(r.state) && (r.poolIds || []).length).length; } catch (_) { others = 0; } }
+    if (o.reuse) { lines.push(`This design is already in the repository as ${typeof o.reuse === "string" ? txt(o.reuse) : sku}. Nothing new is uploaded.`); lines.push(`This order's listing line is linked to it.`); }
+    else if (o.own) { lines.push(`This design is uploaded to the repository under the order's own SKU ${sku}, which is not in the repository yet.`); }
+    else { lines.push(`A NEW SKU, ${sku || "chosen when you confirm"}, is created and this design is uploaded to the repository under it.`); }
+    if (old) lines.push(`${old} is not changed: its drawing, its other SKUs and ${others ? "its " + others + " other open order" + (others === 1 ? "" : "s") : "every other order that uses it"} stay exactly as they are.`);
+    lines.push(`Only order ${rid} is linked to ${sku || "the new SKU"}: the Etsy listing line of this order gets that SKU, so later orders of this listing use this design. No other listing and no other SKU is touched.`);
+    return { title: "Save this design to the charm repository?", lines };
+  }
+  /** The card's answer: Save and link starts the save (the keeper takes it as before); Cancel writes nothing. */
+  function keepConfirm(yes) {
+    const K = keeps.get(D.ck); if (!K || !K.ask) return;
+    K.ask = false;
+    if (!yes) { K.asked = false; try { KeepUI.note(K, "Not saved. Nothing was written to the repository.", "Switch it on again when you want to save it."); } catch (_) { /* a word only */ } paintKeep(); return; }
+    K.asked = true; keepToggle(K, true); K.asked = false;
   }
   /** The password field takes the focus when it opens, unless the person is typing in another field of the window (a name, a count): the field is then one Tab away, and the live line has said it is wanted. */
   function keepFocusPw() {
@@ -20028,6 +20066,7 @@ const CustomSheet = window.CustomSheet = (() => {
     host.querySelector(".cuSwitch").onclick = flip; host.querySelector(".cuKeepTx").onclick = flip;
     host.querySelector("[data-k-now]").onclick = () => keepNow();
     host.querySelector("[data-k-unlock]").onclick = () => keepUnlock();
+    host.querySelector("[data-k-yes]").onclick = () => keepConfirm(true); host.querySelector("[data-k-no]").onclick = () => keepConfirm(false);   // (NEWSKU)
     host.querySelector("#cuKeepPw").onkeydown = ev => { if (ev.key !== "Escape") ev.stopPropagation(); if (ev.key === "Enter") { ev.preventDefault(); keepUnlock(); } };
     host.addEventListener("click", ev => {
       const r = ev.target.closest("[data-k-retry]"); if (r) { keepRetry(keeps.get(D.ck), r.dataset.kRetry); return; }
@@ -20086,6 +20125,15 @@ const CustomSheet = window.CustomSheet = (() => {
     const e = D.ck && all()[D.ck], it = D.it; let calm = calmIn != null ? calmIn : (D.opening || !d.open || motionOff());
     const blocks = { sw: host.querySelector(".cuKeepSw"), pw: host.querySelector(".cuKeepPw"), steps: host.querySelector(".cuKeepSteps"), line: host.querySelector(".cuKeepLine") };
     if (host._ck !== D.ck) { host._ck = D.ck; for (const n of Object.values(blocks)) { if (n._fold) { n._fold.cancel(); n._fold = null; } if (n._fade) { try { n._fade.cancel(); } catch (_) { /* gone */ } n._fade = null; } n._gate = null; n.hidden = true; delete n._sig; } blocks.line._st = ""; host._say = ""; host.querySelectorAll(".cuKr").forEach(n => { delete n._sig; n.dataset.s = "idle"; n.querySelector(".cuKm").innerHTML = markHtml("idle"); }); host.hidden = true; }
+    const askN = host.querySelector(".cuKeepAsk"), K0 = D.ck ? keeps.get(D.ck) : null;
+    if (askN) {   // (NEWSKU: the confirm card, shown while the switch is asking)
+      const showAsk = !!(K0 && K0.ask && !K0.stub), sigA = showAsk ? JSON.stringify(keepAskWords(K0)) : "";
+      if (askN._sig !== sigA) {
+        askN._sig = sigA; askN.hidden = !showAsk; askN.dataset.on = showAsk ? "1" : "0";
+        if (showAsk) { const w = JSON.parse(sigA); askN.querySelector("b").textContent = w.title; const bd = askN.querySelector(".cuKeepAskB"); bd.replaceChildren(); for (const t of w.lines) { const p = document.createElement("p"); p.textContent = t; bd.append(p); } }
+      }
+      if (!document.getElementById("cuKeepAskCss")) { const st = document.createElement("style"); st.id = "cuKeepAskCss"; st.textContent = ".cuKeepAsk{margin:8px 0 8px 52px;max-width:560px;padding:12px 14px;border:1px solid rgba(138,100,32,.45);border-radius:12px;background:#fbf4e4;color:var(--ink)}.cuKeepAsk[hidden]{display:none}.cuKeepAsk b{display:block;font:600 13.5px/1.4 var(--sans);margin-bottom:6px}.cuKeepAskB p{margin:0 0 6px;font:12.5px/1.45 var(--sans);color:var(--ink70)}.cuKeepAskAct{display:flex;gap:10px;margin-top:8px}"; document.head.appendChild(st); }
+    }
     const K = keepSync(e, it);
     if (!K) { host.dataset.phase = ""; host.dataset.state = ""; if (!host.hidden) { keepLeave(host, true); } return; }
     KeepUI.bind();
@@ -20110,13 +20158,12 @@ const CustomSheet = window.CustomSheet = (() => {
       sB.title = finished ? "Saved to the repository. It cannot be switched off here; change it in the Library." : "";
       sB.setAttribute("aria-describedby", V ? "cuKeepLn" : "cuKeepP");
       pv.hidden = !!V;
-      const o = K.open || {}, sig = [K.sku, o.aliasWorks, o.reuse, on ? 1 : 0, o.override ? o.override.via + o.override.from : "", o.own ? 1 : 0].join("|");
+      const o = K.open || {}, sig = [K.sku, o.aliasWorks, o.reuse, on ? 1 : 0, o.replaces || "", o.own ? 1 : 0].join("|");
       if (pv._sig !== sig) {
         pv._sig = sig; pv.replaceChildren(); const sk = el("span", "cuSku"); sk.textContent = K.sku; const T = s => document.createTextNode(s);
         // (REVDROP: while the switch is off nothing is linked, so the line says what switching it on does, not what "will" happen)
-        // KEEPOVERRIDE (Paul, 20 Oct 2026): a line that already reads a library charm: the switch is the correction ("the toggle wins")
-        if (o.override && o.override.via === "own") pv.append(T("This listing reads "), sk, T(` with another drawing now · ${on ? "the SKU moves to this design" : "switch on to move the SKU to this design"}; the old charm keeps its other SKUs`));
-        else if (o.override) { const was = el("span", "cuSku"); was.textContent = o.override.from; pv.append(T("This listing reads "), was, T(" now · "), T(on ? "it will be linked to this design as " : "switch on to link it to this design as "), sk, T(`; ${o.override.from} keeps its SKUs`)); }
+        // NEWSKU (Paul, 17 Nov 2026): the switch never moves a SKU: a line that reads another drawing gets a NEW SKU, the old one is left as it is
+        if (o.replaces) { const was = el("span", "cuSku"); was.textContent = o.replaces; pv.append(T("New SKU "), sk, T(on ? " · this order is linked to it; " : " · switch on to save it and link this order to it; "), was, T(" and its other orders stay as they are")); }
         else if (o.own) pv.append(T("The order's own SKU "), sk, T(on ? " · this design is saved under it, so later orders of this listing use it" : " · switch on to save this design under it, so later orders of this listing use it"));   // (KEEPOWNSKU)
         else if (o.reuse) { if (typeof o.reuse === "string" && o.reuse.length > 11) sk.textContent = txt(o.reuse); pv.append(T("Already in the repository as "), sk, T(on ? " · this listing will be linked to it" : " · switch on to link this listing to it")); }
         else if (!K.sku) pv.append(T("A new SKU is chosen when you press"));
@@ -20131,7 +20178,7 @@ const CustomSheet = window.CustomSheet = (() => {
     host.querySelectorAll(".cuKr").forEach(n => paintRow(n, shows[n.dataset.r], calm || blocks.steps.hidden));
     // the password row: its words, its spinner (the spinner stops with the check)
     const unl = blocks.pw.querySelector("[data-k-unlock]"); unl.disabled = !!(K.pw.busy || Date.now() < (K.pw.until || 0));
-    const msg = blocks.pw.querySelector(".cuKeepMsg"), msgSig = K.pw.busy ? "spin" : (K.pw.msg || "") + "|" + !!K.pw.bad;
+    const msg = blocks.pw.querySelector(".cuKeepMsg"), msgSig = K.pw.busy ? "spin" : (K.pw.msg || "") + "|" + !!K.pw.bad + "|" + (employeeName() ? 1 : 0);   /* (SIGNINWORDS, Paul 17 Nov 2026: "why is it still asking me for a password": the words depend on who is signed in, so who is signed in is part of what decides they are painted again; a person signed out kept "Locked: type the repository password to save") */
     if (msg._sig !== msgSig) {
       msg._sig = msgSig; msg.replaceChildren(); msg.classList.toggle("bad", !!K.pw.bad && !K.pw.busy);
       if (K.pw.busy) { const s = el("span", "spin"); s.setAttribute("aria-hidden", "true"); msg.append(s, document.createTextNode("Checking the password…")); }
@@ -21882,19 +21929,41 @@ const Review = window.Review = (() => {
   }
   /** (REMAKESTALE, Paul 15 Nov 2026: three pieces were made up while the library held the wrong, smaller drawing of their SKU; the library was put right, and "you have to do whatever you need to do to fix everything"): the open pieces of these SKUs
       that do NOT hold a hash of the drawing the library has NOW are queued for the same sweep a changed drawing gets (redrawSweep: a cut or committed piece is only noted, a line in Review or on hold is left). → { ok, text } */
-  async function redrawStale(skus) {
-    const said = [];
+  async function redrawStale(skus, o) {
+    const said = [], want = new Set((skus || []).map(rdUp)), snap = o && o.snap instanceof Map ? o.snap : redrawSnap(skus), staleBy = new Map();
     for (const s0 of skus || []) {
       const sku = rdUp(s0), now = Master.entryFor(sku); if (!now) { said.push(`${sku}: not in the library`); continue; }
       const stale = new Set();
       for (const p of B.pool.rows.values()) { if (!p || RELINK_TAKEN.has(p.state) || p.custom || !p.charmHash || rdUp(p.sku) !== sku) continue; let ok = null; try { ok = await Pool.drawingHashes(now, p.size || null); } catch (_) { /* cannot be told: left */ } if (ok && !ok.has(String(p.charmHash))) stale.add(String(p.charmHash)); }
       if (!stale.size) { said.push(`${sku}: every open piece already holds the drawing the library has now`); continue; }
       const mark = k => `stale:${sku}:${k || ""}`, was = Object.assign({}, now, { charmHash: mark(""), sizeFix: null, sizes: Object.fromEntries(Object.entries(now.sizes || {}).map(([k, z]) => [k, Object.assign({}, z, { charmHash: mark(k) })])) });
-      redrawWait.set(sku, { sku, was, oldSrc: stale, at: Date.now(), tries: 0 }); said.push(`${sku}: pieces of ${stale.size} older drawing(s) are made up again`);
+      redrawWait.set(sku, { sku, was, oldSrc: stale, at: Date.now(), tries: 0 }); staleBy.set(sku, stale); said.push(`${sku}: pieces of ${stale.size} older drawing(s) found`);
     }
     let r = { swapped: [], flagged: [], kept: [], held: [] }; try { r = (await redrawNow()) || r; } catch (e) { return { ok: false, why: String((e && e.message) || e) }; }
-    return { ok: true, text: `${said.join("; ")} · made again: ${r.swapped.length} line(s); only noted (cut or committed): ${r.flagged.length}; kept: ${r.kept.length}; held: ${r.held.length}` };
+    /* TRUEREDRAW: what was made is what the pieces hold now against what they held when the request began (whichever sweep made it; a line another step of the request moved, o.not, is told by that step); what still waits is the
+       SKU the sweep kept to try again (a sheet being arranged or saved) and the lines of it that still hold the older drawing, not counting a line only noted (cut, committed). */
+    const madeL = new Set(r.swapped.filter(x => x && x.made && x.row).map(x => x.row.key)), waitL = new Set(), byLine = new Map();
+    for (const v of snap.values()) (byLine.get(v.line) || byLine.set(v.line, new Set()).get(v.line)).add(v.hash);
+    for (const [id, p] of B.pool.rows) {
+      if (!p || RELINK_TAKEN.has(p.state) || p.custom || !p.charmHash || !want.has(rdUp(p.sku))) continue;
+      const h = String(p.charmHash), was = snap.get(id);
+      if (was ? was.hash !== h : byLine.has(p.lineKey) && !byLine.get(p.lineKey).has(h)) { madeL.add(p.lineKey); continue; }
+      if (redrawWait.has(rdUp(p.sku)) && (staleBy.get(rdUp(p.sku)) || new Set()).has(h)) { const row = B.orders.byKey && B.orders.byKey.get(p.lineKey); if (row && !relinkFixed(row).length) waitL.add(p.lineKey); }
+    }
+    if (o && o.not) for (const k of o.not) madeL.delete(k);
+    const parts = [], found = staleBy.size > 0;
+    if (madeL.size || found) parts.push(`made again: ${madeL.size} line(s)`);
+    if (waitL.size) parts.push(`${waitL.size} line(s) follow as soon as their sheet is free`);
+    if (r.flagged.length) parts.push(`only noted (cut or committed): ${r.flagged.length}`);
+    if (r.kept.length) parts.push(`kept: ${r.kept.length}`);
+    if (r.held.length) parts.push(`held: ${r.held.length}`);
+    return { ok: true, text: said.join("; ") + (parts.length ? " · " + parts.join("; ") : ""), made: madeL.size, waiting: waitL.size };
   }
+  /** (TRUEREDRAW, Paul 17 Nov 2026: "made again: 0 line(s)" when the other order WAS made again; a green "made up again" line while its sheet was busy and nothing was made): what the open pieces of these SKUs hold now, line by line.
+      Taken at the START of a request (Review.redrawStale.snap(skus)), because the lines are made by the sweep Master.load queued before redrawStale is called, not by the sweep it awaits; redrawStale(skus, { snap, not }) counts
+      the lines whose pieces hold another drawing than in the snap (not: lines another step already told) and the lines the sweep kept to try again. → Map poolId → { line, hash } */
+  const redrawSnap = skus => { const want = new Set((skus || []).map(rdUp)), m = new Map(); for (const [id, p] of B.pool.rows) { if (!p || RELINK_TAKEN.has(p.state) || p.custom || !p.charmHash || !want.has(rdUp(p.sku))) continue; m.set(id, { line: p.lineKey, hash: String(p.charmHash) }); } return m; };
+  redrawStale.snap = redrawSnap;
   function redrawLater(ms) { if (!redrawWait.size) return; clearTimeout(redrawTimer); redrawTimer = setTimeout(() => { redrawTimer = 0; redrawNow().catch(() => {}); }, ms || 0); }
   /** The sweep now (after any sweep under way). → { swapped, flagged, kept, held } */
   function redrawNow() { clearTimeout(redrawTimer); redrawTimer = 0; const p = redrawChain.then(redrawSweep, redrawSweep); redrawChain = p.catch(() => {}); return p; }
@@ -28418,7 +28487,7 @@ const Recall = window.Recall = (() => {
     /* One record per sheet name, the newest: before a re-nested sheet kept its identity, the library could hold two
        GF_Sep.17.26_Set-1_Sheet-1 records, one stale. */
     const byName = new Map();
-    for (const x of ls.sheets || []) { const k = x.fileBase || x.id; const had = byName.get(k); if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) byName.set(k, x); }
+    for (const x of ls.sheets || []) { const k = (x.setId || "") + "|" + (x.fileBase || x.id); /* (NAMECLASH: two stale records of ONE sheet in one set are told apart by name; two sheets of different sets are never one) */ const had = byName.get(k); if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) byName.set(k, x); }
     const sheets = [...byName.values()].sort((a, b) => (a.setSeq || 0) - (b.setSeq || 0) || (a.sheetIndex || 0) - (b.sheetIndex || 0));
     if (!sheets.length) { if (!sel.quiet) toast("Nothing is saved under that set", "bad", 5000); return; }
     if (B.run && !["complete", "abandoned"].includes(B.run.status)) { toast("Finish or abandon the current run before opening another set; your current decisions are kept", "bad", 6000); return; }
@@ -28534,7 +28603,7 @@ const Recall = window.Recall = (() => {
       const ls = await api("charmNestLibrary", { op: "listSheets", limit: 200, runId }, { quiet: true, all: "sheets" });
       if (B.run || on() || ownWork()) return false;   // (a run was opened, or work begun, here while the list was on its way)
       const byName = new Map(), gone = new Set((window.CharmNestRunFollow && CharmNestRunFollow.state().retired) || []);   // (GONESHEET: a sheet the run let go of (deleted on the carrying computer) is not listed, though its record is archived only at the run's next checkpoint)
-      for (const x of ls.sheets || []) { if (gone.has(String(x.id))) continue; const k = x.fileBase || x.id; const had = byName.get(k); if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) byName.set(k, x); }
+      for (const x of ls.sheets || []) { if (gone.has(String(x.id))) continue; const k = (x.setId || "") + "|" + (x.fileBase || x.id); /* (NAMECLASH: as above: a follower showed 3 of 4 sheets when two sets held one name) */ const had = byName.get(k); if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) byName.set(k, x); }
       const startedOf = x => +x.cardStartedAt || +(x.createdAt && (x.createdAt._seconds || x.createdAt.seconds)) * 1000 || Date.parse(x.createdAt) || 0;
       const sheets = [...byName.values()].sort((a, b) => startedOf(a) - startedOf(b));   // (oldest first, as a run put back here lists them: PAGEORDER)
       // (SHEETSLIST: a metal's sheets the person ordered by hand (draftOrder) keep that order here too)
@@ -30417,14 +30486,41 @@ async function healSheetNames() {
       sh.setDay = st.day; sh.fileBase = want;
       agent({ run: run.runId, metal: sh.metal }, "cloud", `${nmOf(sh)} was named ${was.fileBase}, the name of another sheet, and kept its files in that sheet's folder: it is written again as it stands (no piece moves) as ${want}, in its own folder`);
       let ok = false; try { ok = await window.writeAsPlaced(sh); } catch (e) { console.warn("[nameclash]", e && e.message); }
-      if (!ok) { Object.assign(sh, was); agent({ run: run.runId, metal: sh.metal }, "warn", `${nmOf(sh)}: the new name ${want} was not saved; it keeps ${was.fileBase} for now`); } else n++;
+      if (!ok) { Object.assign(sh, was); agent({ run: run.runId, metal: sh.metal }, "warn", `${nmOf(sh)}: the new name ${want} was not saved; it keeps ${was.fileBase} for now`); }
+      else {
+        n++;
+        // the set's record lists each piece with the name of its sheet, and a save of a sheet adds a piece to it once and never changes it again: the pieces of this sheet are told their sheet's new name
+        try { let moved = 0; for (const o of Object.values(st.orders || {})) for (const l of Object.values((o && o.lines) || {})) for (const c of (l && l.copies) || []) if (c && c.sheetId === sh.sheetId && c.sheet !== sh.fileBase) { c.sheet = sh.fileBase; moved++; } if (moved) await Sets.save(st); } catch (e) { console.warn("[nameclash] set record", e && e.message); }
+      }
     }
   } finally { nameHealBusy = false; }
   return n;
 }
+window.CNHealSheetNames = healSheetNames;   // (tests)
+/* PICTUREKEEP (Paul, 17 Nov 2026: "what I see in the previews is not what opens when I open the detailed view of the sheet ... Those previews are not updating ... after every refresh"). A sheet's saved picture (preview.png: what the
+   Library shows of a sheet this page does not hold, and what every other computer shows) is drawn when the sheet's files are written; a move, an exchange or a take-off since then changes the layout and leaves the picture as it was.
+   The cloud now says which layout revision each picture stands for (previewRev; charmNestLibrary putSheet) beside the layout's own (layoutRev). The computer that CARRIES the run looks at most once in five minutes: a sheet whose picture is
+   behind its layout (previewRev < layoutRev; or a record with no previewRev yet whose picture is more than three minutes older than its last change) has its picture drawn again as the sheet is now (Recall.repicture: only that file and its link
+   are written, never the layout, the pieces or the files), three sheets at most each time. */
+let pictureKeepAt = 0, pictureKeepBusy = false;
+async function keepPictures() {
+  if (pictureKeepBusy || !B.run || ["stopped", "abandoned", "retired"].includes(B.run.status) || S.cloud.ok !== true || Date.now() - pictureKeepAt < 300000 || !window.Recall || typeof Recall.repicture !== "function") return 0;
+  pictureKeepAt = Date.now(); pictureKeepBusy = true; let n = 0;
+  try {
+    const ls = await api("charmNestLibrary", { op: "listSheets", limit: 200, runId: B.run.runId }, { quiet: true, all: "sheets" });
+    const stale = (ls.sheets || []).filter(x => x && x.id && !x.archived && x.preview && (x.previewRev != null ? (+x.layoutRev || 0) > +x.previewRev : (+x.updatedAt || 0) - (+x.previewAt || 0) > 180000));
+    for (const x of stale.slice(0, 3)) {
+      const pg = allSheets().find(p => p.sheetId === x.id); if (!pg || pg.recalled) continue;
+      let r = null; try { r = await Recall.repicture(x.id); } catch (e) { r = { ok: false, why: String((e && e.message) || e) }; }
+      if (r && r.ok) { n++; agent({ run: B.run.runId, metal: x.metal }, "cloud", `${x.fileBase || x.id}: its saved picture was behind its layout (picture of layout ${x.previewRev != null ? x.previewRev : "?"}, layout ${x.layoutRev != null ? x.layoutRev : "?"}): drawn again as the sheet is now`); }
+    }
+  } catch (e) { console.warn("[picturekeep]", e && e.message); } finally { pictureKeepBusy = false; }
+  return n;
+}
+window.CNKeepPictures = keepPictures;   // (tests)
 async function strandedWatch(why) {
   if (strandedBusy || !B.run || ["stopped", "abandoned", "retired"].includes(B.run.status) || S.cloud.ok !== true) return null;
-  sentReleased(); healSheetNames().catch(e => console.warn("[nameclash]", e && e.message));
+  sentReleased(); healSheetNames().catch(e => console.warn("[nameclash]", e && e.message)); keepPictures().catch(e => console.warn("[picturekeep]", e && e.message));
   if (allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone) || p._rebuilding)) return null;
   const on = new Set(allSheets().flatMap(p => (p.charms || []).map(c => c && c.poolId)).filter(Boolean));
   for (const p of allSheets()) { const rec = p.recalled; if (rec) for (const id of (rec.poolIds || [])) on.add(String(id)); }
@@ -30525,6 +30621,14 @@ window.CNRelayAsk = async function (cmd, onStep, maxMs) {
       const k = ((list && list.cmds) || []).find(x => x && x.id === put.id); if (!k) continue;
       if (k.state === "done" || k.state === "failed" || k.state === "cancelled") return { ok: k.state === "done", text: String(k.text || ""), name };
       if (k.state === "running" && k.step && typeof onStep === "function") onStep(`${name}'s computer: ${k.step}`, name);
+      /* CARRIERGONE (Paul, 17 Nov 2026: "This process has caused me a lot of grief"): a computer counts as carrying the run for 90 s after its last beat (runCarrier FRESH), so a page closed a minute ago still read as open and
+         the panel waited for it for the whole 7 minutes. While the request has not been started, the carrier is looked at again at each look: once it is not open, or after 25 s without the request starting,
+         the answer is plain. The request stays queued: the carrier does it as soon as it is open (and free) again. */
+      else if (k.state === "waiting") {
+        let gone = false; try { const c2 = await api("charmNestLibrary", { op: "runCarrier", runId, dev, check: true }, { quiet: true }); gone = !!c2 && (!c2.alive || !!c2.mine); } catch (_) { /* not told: not gone */ }
+        if (gone) return { ok: false, queued: true, text: `${name}'s computer is not open right now. Nothing more is needed here: the request stays queued and is done as soon as that computer is open again.`, name };
+        if (Date.now() - t0 >= 25000) return { ok: false, queued: true, text: `${name}'s computer has not started it yet. Nothing more is needed here: the request stays queued and is done as soon as that computer is free.`, name };
+      }
     }
     return { ok: false, text: `${name}'s computer did not answer.`, name };
   } catch (e) { return { ok: false, text: String((e && e.message) || e) }; }

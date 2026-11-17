@@ -1559,7 +1559,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     for (const x of W.pieces) {
       const g = got.get(x.sourceId); if (!g) continue;
       if (g.pool) { const b = await pieceBase(g, x); if (!b) continue; const c = Pool.cloneCharm(b, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = await withOwnArt(c, x, x.poolId ? poolRowOf(x.poolId, x.rid) : null); }   // (SHEETBACK: the piece's own artwork edit over the master)
-      else { const base = g.charms[x.index] && (!x.hash || g.charms[x.index].hash === x.hash) ? g.charms[x.index] : g.charms.find(c => c.hash === x.hash); if (base) x.c = Object.assign({}, base, { id: x.id, name: x.name }); }
+      else { const c = await fileCharm(g, x, rec); if (c) x.c = c; }   // (DETAILPIECE: a piece of a file is never left out for a hash the file does not read to: see fileCharm)
     }
     if (failed.length) toast(`${failed.length} design${failed.length === 1 ? "" : "s"} could not be read (${failed.slice(0, 3).join(", ")}); ${failed.length === 1 ? "it shows" : "they show"} as outlines`, "bad", 7000);
     // (MCLIBRARY: a sheet Manual Control holds from its record keeps its own charms, the ones it checks and saves, through a read of the window)
@@ -6942,10 +6942,27 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     charms: (pg.charms || []).map(c => ({ id: c.id, name: c.name || "", poolId: c.poolId || null, order: c.order != null ? String(c.order) : "", sku: (c.orderInfo && c.orderInfo.sku) || "", ...(c.oneBody != null && c.hash ? { hash: c.hash } : {}), ...(inPlaceFitOf(c) ? { inPlaceFit: inPlaceFitOf(c) } : {}),   // (INPLACE SHRINK: the size it is cut at, for the window's facts)
       // (an earring pair's piece keeps its ear on the record this page makes of its own sheet, as the saved descriptor does)
       ...(c.side === "L" || c.side === "R" ? { side: c.side, mirror: c.mirror === true, ...(c.bodyIndex != null ? { bodyIndex: c.bodyIndex } : {}), ...(c.groupKey ? { groupKey: c.groupKey } : {}), ...(c.groupSize ? { groupSize: c.groupSize } : {}) } : {}) })) });
+  /* DETAILPIECE (Paul, 17 Nov 2026: "what I see in the previews is not what opens when I open the detailed view of the sheet ... parts missing"). A piece made from a FILE (a design sent to a sheet from the Designs window, a file
+     dropped on an order) is drawn from the charm that file reads to. The record's hash for the piece is not always the file's: the RIGHT ear of a pair made from one file is the mirror image (its hash is the mirrored
+     drawing's: 307a462f where the file reads fda3df9b), and a piece cut with an edit of the Charm Editor carries `~ae…` after the drawing's hash. The old pick found no charm for either and left the piece with no drawing
+     (an outline only: its seams, its engraving, its parts gone from the detailed view while its stored picture has them all). Now: the charm with that very hash, else the charm of the same drawing (the hash without the edit's
+     tag), else the file's charm at the piece's index (or its only charm), turned over when the record says the piece is mirrored; and the piece's own artwork edit is laid over it. */
+  const hashCore = h => String(h == null ? "" : h).replace(/~ae[0-9a-z]+$/, "");
+  async function fileCharm(g, x, rec) {
+    const cs = (g && g.charms) || []; if (!cs.length) return null;
+    const want = hashCore(x.hash);
+    let base = (x.hash && cs.find(c => c.hash === x.hash)) || (want && cs.find(c => hashCore(c.hash) === want)) || null, near = false;
+    if (!base) { base = cs[x.index] || (cs.length === 1 ? cs[0] : null); near = !!base; }
+    if (!base) return null;
+    if (near && x.mirror === true && window.CharmNestPair && typeof CharmNestPair.pieceGeometry === "function") {
+      try { const m = CharmNestPair.pieceGeometry(base, { side: x.side, bodyIndex: x.bodyIndex != null ? +x.bodyIndex : 0, mirror: true }); if (m) base = m; } catch (e) { console.warn("sheet window: a piece turned over", x.poolId, (e && e.message) || e); }
+    }
+    const c = Object.assign({}, base, { id: x.id, name: x.name });
+    return /~ae[0-9a-z]+$/.test(String(x.hash || "")) ? await withOwnArt(c, x, x.poolId ? poolRowOf(x.poolId, x.rid) : null) : c;
+  }
   async function attachGeom(x, g, rec) {
     if (g.pool) { const b = await pieceBase(g, x); if (!b) return; const c = Pool.cloneCharm(b, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = await withOwnArt(c, x); return; }   // (SHEETBACK: the piece's own artwork edit over the master)
-    const base = g.charms[x.index] && (!x.hash || g.charms[x.index].hash === x.hash) ? g.charms[x.index] : g.charms.find(c => c.hash === x.hash);
-    if (base) x.c = Object.assign({}, base, { id: x.id, name: x.name });
+    const c = await fileCharm(g, x, rec); if (c) x.c = c;   // (DETAILPIECE)
   }
   /* ── the back of a sheet: every charm's own engraving, where the laser burns it (Paul, 28 Sep: "make sure I can see
      all of the back engraving on all of the charms … a standard for all sheets") ──
