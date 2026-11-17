@@ -166,6 +166,8 @@ const assets = [
   "charm-nest-assets.js",
   "charm-nest-thumbs.js",
   "charm-nest-master-cache.js",
+  "charm-nest-ai-native.js",
+  "charm-nest-ai-template.js",
   "charm-nest-ce-masters.js",
   "charm-nest-ce-repo.js",
   "charm-nest-store.js",
