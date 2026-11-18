@@ -11086,7 +11086,7 @@ const Engrave = window.Engrave = (() => {
         if (ids.every(id => { const p = pools.get(id); return !!p && ["abandoned", "superseded"].includes(p.state); })) { job.backPending = false; delete job.poolPending; cleared++; for (const id of ids) { const r = B.pool.rows.get(id); if (r) r.state = pools.get(id).state; } }
       }
     }
-    if (cleared) { try { Session.schedule(); render(); } catch (_) { /* the flags are cleared */ } }
+    if (cleared) { try { Session.schedule(); } catch (_) { /* the flags are cleared */ } }   // (no redraw: a flag shows nowhere but the count)
     return cleared;
   }
   function resumeBacks(pendingOnly) {
