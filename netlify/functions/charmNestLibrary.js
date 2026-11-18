@@ -5397,7 +5397,7 @@ async function op_computerReport(b) {
   const dev = str(b.dev, 60); if (!/^d[0-9a-z]{4,14}$/.test(dev)) return { error: "bad computer" };
   const r = b.report && typeof b.report === "object" ? b.report : {}, n = v => Math.max(0, Math.min(1000000, Math.round(num(v)))), ids = a => (Array.isArray(a) ? a : []).slice(0, 40).map(x => str(x, 90)).filter(Boolean), at = Date.now();
   const rec = { dev, by: str(b.by, 80), station: str(r.station, 60), role: ["carrier", "follower"].includes(r.role) ? r.role : "none", runId: str(r.runId, 80), build: str(r.build, 80), at,
-    checked: n(r.checked), behindN: n(r.behindN), behind: ids(r.behind), stillN: n(r.stillN), still: ids(r.still), healed: ids(r.healed), unverifiedN: n(r.unverifiedN), missingN: n(r.missingN), extraN: n(r.extraN), inHandN: n(r.inHandN), rebuilt: n(r.rebuilt),
+    checked: n(r.checked), backWaitN: n(r.backWaitN), backWaitMin: n(r.backWaitMin), behindN: n(r.behindN), behind: ids(r.behind), stillN: n(r.stillN), still: ids(r.still), healed: ids(r.healed), unverifiedN: n(r.unverifiedN), missingN: n(r.missingN), extraN: n(r.extraN), inHandN: n(r.inHandN), rebuilt: n(r.rebuilt),
     mode: ["on", "report", "off"].includes(r.mode) ? r.mode : "on", feed: ["push", "polling"].includes(r.feed) ? r.feed : "", freezeMs: n(r.freezeMs), freezes: n(r.freezes), heapMB: n(r.heapMB), idleS: n(r.idleS), error: str(r.error, 160), note: str(r.note, 100), expireAt: new Date(at + 7 * 86400000) };
   await col(COMPUTERS).doc(dev).set(rec);
   return { ok: true, at };
