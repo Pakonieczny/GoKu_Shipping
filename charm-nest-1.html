@@ -7091,6 +7091,15 @@ function saveOwedSheets() {
     }
   })().finally(() => { savingOwed = null; });
 }
+/** (NOPARTIALSET) The membership a save of this sheet may carry: its own, except that a partial GF or SS sheet of a modern run (not full, not cut: CharmNestSetRules.isPartial) is a draft outside every set. */
+function membershipOf(sh) {
+  const own = { draft: !!sh.draft, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null };
+  try {
+    const R = window.CharmNestSetRules;
+    if (R && typeof R.isPartial === "function" && (sh.setId || !sh.draft) && R.isPartial(sh) && window.Gate && typeof Gate.modern === "function" && Gate.modern(sh.runId)) return { draft: true, setId: null, setSeq: null, sheetIndex: null };
+  } catch (_) { /* its own, as before */ }
+  return own;
+}
 async function persistSheet(sh, items, context) {
   const ops = window.CharmNestOperations;
   if (ops && !context) return ops.run({key:'sheet-save:'+sh.sheetId, label:'Saving sheet', resources:['production:'+(sh.runId || sh.sheetId)]}, token=>persistSheet(sh,items,token));
@@ -7111,13 +7120,16 @@ async function persistSheet(sh, items, context) {
   // a label made by hand for a sheet outside any set (the sheet window's Make QR label) names the orders it was made for:
   // once they change it goes, rather than stay on record wrong
   if (sh.label?.own && [...new Set(sh.placements.map(p => byId.get(p.id)).filter(Boolean).map(c => String(c.order || c.id).split("/")[0]))].sort().join() !== (sh.label.orders || []).map(String).sort().join()) sh.label = null;
+  // (NOPARTIALSET, Paul 18 Nov 2026: "why would that be engaged ... this draft sheet isn't complete"; the removal of a charm from a 25% full draft ended "GF Sheet 10: not saved to the cloud — GF Draft 15 cannot go into Set 5 ... a partial sheet never joins a set"): while the set look waits
+  //  for the cloud on its in-memory join of a sheet (draft false, a set, the next sheet number), a save of the same sheet read that state and sent it. A partial GF or SS sheet (not full, not cut) is never written as a member of a set (your rule R3): it is written as the draft it is
+  const member = membershipOf(sh);
   const record = (outputs) => ({
     id: sh.sheetId, cardStartedAt: sh.cardStartedAt || null, metal: sh.metal, metalLabel: sheetName(sh), day, folder: name, fileBase: name, seq: sh.seq || sh.page, runId: sh.runId || null, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, searchMetrics:sh.searchMetrics||null, gpu:sh.gpuProgress||null, elapsedMs: Math.round(sh.elapsedMs || 0), totalMs: Math.round(sh.totalMs || 0),
     stock: sh.outputs.report.stock, params: sh.solveParams, density: sh.density, freePt2: Math.round(sh.liveInfo.freePt2), usablePt2: Math.round(sh.liveInfo.usablePt2), pocket: sh.liveInfo.pocket,
     charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, ...(Number.isFinite(sh.draftOrder) ? { draftOrder: sh.draftOrder } : {}), verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx } },
     outputs,
     sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = sourceOf(id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes ? s.bytes.length : 0, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url, pool: !!s.pool, custom: !!s.custom, sku: s.sku || null } : null; }).filter(Boolean),
-    dirty:!!sh.dirty, draft: !!sh.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal, sh) : sh.metal === "rose" && sh.solidPick === true ? true : null, releaseFull: !!sh.releaseFull,   /* (SETFIX: a Rose Gold sheet keeps its own tick across a reload, true or nothing) */ topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized, intakeOptimized:!!sh.intakeOptimized, intakeOptimizedCount:sh.intakeOptimizedCount||0, missRearranged:!!sh.missRearranged, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
+    dirty:!!sh.dirty, draft: member.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal, sh) : sh.metal === "rose" && sh.solidPick === true ? true : null, releaseFull: !!sh.releaseFull,   /* (SETFIX: a Rose Gold sheet keeps its own tick across a reload, true or nothing) */ topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized, intakeOptimized:!!sh.intakeOptimized, intakeOptimizedCount:sh.intakeOptimizedCount||0, missRearranged:!!sh.missRearranged, setId: member.setId, setSeq: member.setSeq, sheetIndex: member.sheetIndex, runId: sh.runId || null,
     orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
     ...(listings => listings ? { listings } : {})(listingsOf(sh.placements.map(p => byId.get(p.id)))),
     poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,

@@ -7168,6 +7168,9 @@ const Gate = window.Gate = (() => {
       if (!admits(sh, set)) continue;
       // (STUCKSPIN, Paul 28 Oct 2026) a join the cloud refused for the owner's rules a moment ago is not asked again at every look: the sheet waits outside with the cloud's words (joinRefusedOf)
       { const rf = joinRefusedOf(sh, set); if (rf) { sh.setWait = rf; continue; } }
+      // (NOPARTIALSET, Paul 18 Nov 2026: removing a charm from a 25% full draft: "why would that be engaged ... this draft sheet isn't complete"): a partial GF or SS sheet (not full, not cut) never joins a set (your rule R3), not even as a partner the cardinal rule would pull: it is not put into the set in memory
+      //  (the cloud refuses it, and while it waited for that a save of the sheet sent the join); only a person's own drop of it is asked, and refused to them in the cloud's words
+      if (SRt && typeof SRt.isPartial === "function" && SRt.isPartial(sh) && !(sh.handSet === set.setId && !sh.cardinalHome)) continue;
       const previous = { draft:sh.draft, setId:sh.setId, setDay:sh.setDay, seq:sh.seq, group:sh.group, sheetIndex:sh.sheetIndex, fileBase:sh.fileBase, joinedAt:sh.joinedAt, joinedBy:sh.joinedBy }, nosWas = set.sheetNos;
       sh.draft = false; sh.setId = set.setId; sh.setDay = set.day; sh.seq = set.seq; sh.group = "dispatch";
       sh.joinedAt = at; if (sh.handSet === set.setId && !sh.cardinalHome) sh.joinedBy = "person"; else delete sh.joinedBy;      // (SETFIX: when it joined, and whether a person's drop put it there: the checker's closed-set rule reads both)
