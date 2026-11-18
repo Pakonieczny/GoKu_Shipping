@@ -143,7 +143,7 @@ const stationStub = `
   st = await page.evaluate(() => ({ printed: JSON.parse(localStorage.getItem('qrPrintAll')).userTypedOrderNum, sorted: __rec.filter(d => d.type === 'sorted').map(d => [d.orderId, d.data && d.data.how]) }));
   assert.strictEqual(st.printed, A);
   assert.deepStrictEqual(st.sorted, [[A, 'print']], 'a printed sticker records its order as sorted');
-  await page.evaluate(() => { __st.guard.length = 0; return handlePrintRowClick(); });
+  await page.evaluate(() => { __st.guard.length = 0; return handlePrintRowClick({ again: true }); });   // (ONEQR: an order whose sticker was printed is left out of the row unless Shift is held; this case is about the cancelled order)
   await page.waitForFunction(() => localStorage.getItem('qrPrintBatch'), null, { timeout: 5000 });
   st = await page.evaluate(() => ({ batch: JSON.parse(localStorage.getItem('qrPrintBatch')).map(o => o.userTypedOrderNum), guard: __st.guard.slice().sort(),
     sorted: __rec.filter(d => d.type === 'sorted' && d.data.how === 'row').map(d => d.orderId), toast: __toasts.join(' | ') }));
@@ -180,7 +180,7 @@ const stationStub = `
   st = await page.evaluate(i => { openIframePrinterForListing(i); return { frames: [...document.querySelectorAll('iframe')].filter(f => /QR/.test(f.src)).length,
     alert: !!document.querySelector('#stCancelAlert'), marked: document.querySelectorAll('.st-cancelled').length, st: typeof window.StationTimeline }; }, iB2);
   assert.deepStrictEqual(st, { frames: 1, alert: false, marked: 0, st: 'undefined' }, 'with no StationTimeline the sticker prints at once, no alert, no marks');
-  await page.evaluate(() => handlePrintRowClick());
+  await page.evaluate(() => handlePrintRowClick({ again: true }));   // (ONEQR: order B was just printed singly: Shift + Print Row prints it again)
   assert.strictEqual(JSON.parse(await page.evaluate(() => localStorage.getItem('qrPrintBatch'))).length, 3, 'Print Row prints every order as before');
   console.log('without StationTimeline: the page behaves as before');
   await ctx.close();

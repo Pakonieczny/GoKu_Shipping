@@ -108,7 +108,7 @@ const QRLIB = () => fs.readFileSync(path.join(root, 'lib/qrcode.min.js'), 'utf8'
 
   const b2 = await printed(page), frames2 = await printerFrames(page);
   await page.evaluate(() => { window.__qrDocs.length = 0; window.__qrTexts.length = 0; });
-  await page.evaluate(() => handlePrintRowClick());
+  await page.evaluate(() => handlePrintRowClick({ again: true }));   // (ONEQR: the row leaves out an order whose sticker was printed; order 0 was just printed singly, and this case is about the full storage: Shift + Print Row)
   let toasts = await page.evaluate(() => window.__toasts);
   assert(!toasts.some(t => /Print Row error/.test(t)), 'Print Row must not fail on a full store: ' + JSON.stringify(toasts));
   assert.strictEqual(await printerFrames(page), frames2 + 1, 'the printer page is opened for the row');
@@ -130,7 +130,7 @@ const QRLIB = () => fs.readFileSync(path.join(root, 'lib/qrcode.min.js'), 'utf8'
   assert.strictEqual((await fill(page, 'sessionStorage')).roomFor1000, false);
   await page.evaluate(() => { window.__toasts.length = 0; });
   const frames3 = await printerFrames(page), b3 = await printed(page);
-  await page.evaluate(() => handlePrintRowClick());
+  await page.evaluate(() => handlePrintRowClick({ again: true }));   // (ONEQR: as above)
   toasts = await page.evaluate(() => window.__toasts);
   assert(toasts.length === 1 && /Print Row error/.test(toasts[0]) && /storage is full/i.test(toasts[0]), 'the error says the browser storage is full: ' + JSON.stringify(toasts));
   await page.waitForTimeout(500);
