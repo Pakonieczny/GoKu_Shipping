@@ -5380,6 +5380,34 @@ async function op_activityGet(b) {
   return { batches: q.docs.map(d => { const x = d.data() || {}; let rows = []; try { rows = JSON.parse(x.rows || "[]"); } catch (_) { rows = []; } return { at: x.at, dev: x.dev || "", by: x.by || "", rows }; }), checkedAt: Date.now() };
 }
 OPS.activityPut = op_activityPut; OPS.activityGet = op_activityGet; NO_GEN_BUMP.add("activityPut"); NO_GEN_BUMP.add("activityGet");
+/* ── (DRIFT, Paul 18 Nov 2026: "Make computers report how far behind the cloud they are ... see in one list which computer is behind") ──
+   sheetRevsGet { runId } → { sheets: [{ id, rev, ch, d, cut, fb, set, upd }], at }: the run's sheets, only the few fields a computer needs to know whether the copy it holds is the cloud's (rev = the layout revision, ch = pieces, d = draft, cut = cut or sent,
+   fb = file name, set = set id, upd = update time). One read of each sheet of the run, no feed name, nothing written.
+   computerReport { dev, by, report } → { ok }: what ONE computer found when it compared its sheets with those: one small document per computer (Charm_Nest_Computers/<dev>, kept seven days); computerList → { computers, at }: every
+   computer that reported, newest first, with how long ago. None of them writes anything a placement answer is made from or names a key on the changes feed (NO_GEN_BUMP; nothing calls revTouch), so no computer reads anything because of them. */
+const COMPUTERS = "Charm_Nest_Computers";   // (not a sandboxed family: the sandbox neither asks nor reports (charm-nest-drift.js), and the sandbox reset has nothing of it to wipe)
+async function op_sheetRevsGet(b) {
+  const runId = str(b.runId, 80); if (!isId(runId)) return { error: "bad run" };
+  const snap = await col(SHEETS).where("runId", "==", runId).select("layoutRev", "charmCount", "draft", "archived", "roseCutAt", "laserDoneAt", "fileBase", "setId", "updatedAt").limit(600).get();
+  const sheets = [];
+  for (const d of snap.docs) { const x = d.data() || {}; if (x.archived) continue; sheets.push({ id: d.id, rev: num(x.layoutRev), ch: num(x.charmCount), d: x.draft ? 1 : 0, cut: num(x.roseCutAt) || num(x.laserDoneAt) ? 1 : 0, fb: str(x.fileBase, 120), set: str(x.setId, 80), upd: ms(x.updatedAt) || 0 }); }
+  return { sheets, at: Date.now() };
+}
+async function op_computerReport(b) {
+  const dev = str(b.dev, 60); if (!/^d[0-9a-z]{4,14}$/.test(dev)) return { error: "bad computer" };
+  const r = b.report && typeof b.report === "object" ? b.report : {}, n = v => Math.max(0, Math.min(1000000, Math.round(num(v)))), ids = a => (Array.isArray(a) ? a : []).slice(0, 40).map(x => str(x, 90)).filter(Boolean), at = Date.now();
+  const rec = { dev, by: str(b.by, 80), station: str(r.station, 60), role: ["carrier", "follower"].includes(r.role) ? r.role : "none", runId: str(r.runId, 80), build: str(r.build, 80), at,
+    checked: n(r.checked), behindN: n(r.behindN), behind: ids(r.behind), stillN: n(r.stillN), still: ids(r.still), healed: ids(r.healed), unverifiedN: n(r.unverifiedN), missingN: n(r.missingN), extraN: n(r.extraN), inHandN: n(r.inHandN), rebuilt: n(r.rebuilt),
+    mode: ["on", "report", "off"].includes(r.mode) ? r.mode : "on", feed: ["push", "polling"].includes(r.feed) ? r.feed : "", freezeMs: n(r.freezeMs), freezes: n(r.freezes), heapMB: n(r.heapMB), idleS: n(r.idleS), error: str(r.error, 160), note: str(r.note, 100), expireAt: new Date(at + 7 * 86400000) };
+  await col(COMPUTERS).doc(dev).set(rec);
+  return { ok: true, at };
+}
+async function op_computerList() {
+  const q = await col(COMPUTERS).limit(60).get(), now = Date.now();
+  const computers = q.docs.map(d => { const x = d.data() || {}; delete x.expireAt; return { ...x, ageS: Math.max(0, Math.round((now - (num(x.at) || 0)) / 1000)) }; }).sort((a, b) => a.ageS - b.ageS);
+  return { computers, at: now };
+}
+OPS.sheetRevsGet = op_sheetRevsGet; OPS.computerReport = op_computerReport; OPS.computerList = op_computerList; ["sheetRevsGet", "computerReport", "computerList"].forEach(op => NO_GEN_BUMP.add(op));
 /* (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"). The run is carried by ONE computer at a time, any computer: the run record's `carrier` { dev, by, at, since } says which, renewed by that computer every 20 s.
    runCarrier { runId, dev, by, take?, check? }: check only reads; the carrier itself renews it; another computer becomes the carrier when nobody carries it or the carrier has not been
    seen for 90 s (closed, asleep, offline), or when a person there chose to take it over (take). → { ok, mine, alive, carrier } */
