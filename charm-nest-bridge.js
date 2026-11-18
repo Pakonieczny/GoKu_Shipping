@@ -10734,6 +10734,27 @@ const Engrave = window.Engrave = (() => {
     render();
     return task;
   }
+  /* SEALAFTERSAVE (Paul, 17 Nov 2026, option 2 of his choice: "the approval seal and the timeline event only after the back is saved"): a press on Approve on a placed piece now waits in `job.approving` { at, by, text }: no approved
+     state, no seal, no timeline event, no line record, nothing another computer can read as an approval, until the back/front record of that approval is saved in the cloud (backPut ok). Then finalizeApproval makes it what an
+     approval always was (state, seal, event). A save that fails leaves no seal and no event, and says why; the back approved before stays in the files. A piece approved before it is on a sheet (ENGPRE), an edit of an approved back
+     (editingBack) and a back whose approval is already saved keep the old order. */
+  const apAt = job => +job.approvedAt || +(job.approving && job.approving.at) || 0;
+  const apBy = job => String(job.approvedBy || (job.approving && job.approving.by) || "");
+  const apLive = job => ["approved", "written"].includes(job.state) || !!(job.approving && job.state === "review");
+  function sealOfApproving(job) { const at = +job.approving.at, by = String(job.approving.by || "").trim(); return isFront(job) ? { id: `engraveApproved:front:${at}:${by}`, how: "engraveApproved", at, by, face: "front" } : { id: `engraveApproved:${at}:${by}`, how: "engraveApproved", at, by }; }
+  function finalizeApproval(job) {
+    const ap = job.approving; if (!ap) return false;
+    const was = { by: job.approvedBy, at: job.approvedAt, state: job.state };
+    job.approvedBy = ap.by; job.approvedAt = +ap.at; job.state = "approved";
+    try { CNEngravingSeals.add(job, "engraveApproved", ap.by, +ap.at); }
+    catch (e) { if (was.by === undefined) delete job.approvedBy; else job.approvedBy = was.by; if (was.at === undefined) delete job.approvedAt; else job.approvedAt = was.at; job.state = was.state; throw e; }   // (nothing is left half made: no state without its seal)
+    try { CNListActivity.touch(job.row, job.approvedAt); } catch (_) { /* a list stamp only */ }
+    job.row.engrave = Object.assign(job.row.engrave || {}, { needed: true, state: "approved", approved: true, text: job.text, approvedBy: job.approvedBy, approvedAt: job.approvedAt, reason: null });
+    delete job.approving; delete job.approvalIntent; job.reason = null;
+    try { Review.remove("eng:" + job.key); } catch (_) { /* the card is drawn again with the next render */ }
+    timelineApproved(job);
+    return true;
+  }
   async function prepareApproval(job, by, at) {
     // ENGPRE: a job made before its piece was pooled is approved on the charm it will have (its drawing read again when this page let it go); the back file is written when the piece is on a sheet
     if(job.pre && !job.editCharm && !sourceOf((charmFor(job) || {}).sourceId))try{await Pool.preview(lineOf(job.row));}catch(e){throw new Error("The charm's drawing could not be read ("+e.message+")");}
@@ -10781,9 +10802,13 @@ const Engrave = window.Engrave = (() => {
   function recoverApprovals() {
     let recovered=0;
     for(const job of items().values()) {
-      if(job.approvalPreparing || job.stamping || !job.approvalIntent)continue;
+      if(job.approvalPreparing || job.stamping || job.approving || !job.approvalIntent)continue;
       if(job.row?.state==="gone" || !job.copies?.length){delete job.approvalIntent;continue;}
       if(job.approvedAt>job.approvalIntent.at){delete job.approvalIntent;continue;}
+      { const it=job.approvalIntent;   // (SEALAFTERSAVE: a recorded approval of a placed piece finishes by saving its back first: seal and event only after it)
+        if(!job.editingBack && !unplacedPre(job) && it.phase==="verified" && +it.at>0 && it.by && !(it.text!=null && it.text!==job.text) && job.fit && job.view && job.verify?.geometry?.ok){
+          job.approving={at:+it.at,by:it.by,text:it.text!=null?it.text:job.text};job.backPending="Finishing the recorded approval after reopening";recovered++;
+          saveBacks(job).catch(e=>agent({engrave:true},"warn",`${job.row.order.receiptId}: ${e.message}`));continue;} }
       if(settleApproval(job)){job.backPending="Finishing the recorded approval after reopening";Review.remove("eng:"+job.key);recovered++;}
     }
     if(recovered)Session.schedule();
@@ -10850,7 +10875,7 @@ const Engrave = window.Engrave = (() => {
     const owner=items(),row=job.row,pendingFit=fitTasks.get(job);
     { const why=approveBlocked(job,owner,pendingFit); if(why){approveRefused(job,why);return;} approveSay(job,""); }
     if(neverEngraves(row) && !job.approvalIntent){setNone(job,neverWhy(row));Orders.render();render();return;}   // (NO EARRING IS EVER ENGRAVED: an old open card is put away, nothing is approved)
-    if(job.approvalIntent){recoverApprovals();if(job.state==="approved"){approveSay(job,"");await saveBacks(job);}else approveSay(job,"Not approved: the approval that was under way could not be finished. Look at the placement, then press Approve again.");return;}   // (HELDREL: the recovered approval, or one line why not: never a silent press)
+    if(job.approvalIntent){recoverApprovals();if(job.state==="approved" || job.approving){approveSay(job,"");await saveBacks(job);}else approveSay(job,"Not approved: the approval that was under way could not be finished. Look at the placement, then press Approve again.");return;}   // (HELDREL: the recovered approval, or one line why not: never a silent press)
     if(pendingFit){
       // A can arrive while new words still wait for fonts or the fitting worker.
       // Keep the duplicate task lock, let that fit finish without preparation
@@ -10867,7 +10892,7 @@ const Engrave = window.Engrave = (() => {
     if(EG.cardKey===job.key) EG.card?._flushSpacing?.();
     const approvalButton=(button?.isConnected===false ? null : button) || (EG.cardKey===job.key ? EG.card?.querySelector('[data-a="approve"]') : null);
     const wasDisabled=!!approvalButton?.disabled;
-    if(approvalButton){approvalButton.textContent="Approved";approvalButton.disabled=true;approvalButton.setAttribute?.("aria-busy","true");}
+    if(approvalButton){approvalButton.textContent=(job.editingBack || unplacedPre(job)) ? "Approved" : "Saving…";approvalButton.disabled=true;approvalButton.setAttribute?.("aria-busy","true");}
     job.approvalPreparing=true;
     try {
     if(EG.cardKey===job.key) {
@@ -10883,6 +10908,7 @@ const Engrave = window.Engrave = (() => {
         job.lines=job.lineInput.slice();if(!(await approveWithin(fitNewWords(job),APPROVE_MS.fit,"").catch(()=>false))){approveSay(job,"Not approved: the new words are being placed. Look at them, then press Approve.");return;}
       }
     }
+    if (job.approving) { approveSay(job, "Still saving this approval's file. The seal comes down when it is saved.", null, true); return; }
     if (job.backSaving) { approveSay(job, "Still saving this placement's file. Press Approve again in a moment.", null, true); return; }
     by = by || employeeName() || await approveWithin(needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: button }), APPROVE_MS.sign, "").catch(() => "");   // (SIGNIN, 27 Oct 2026: asked under Approve; put away, a note says why)
     if (!by) { approveSay(job, "Not approved: nobody is signed in. Sign in, then press Approve."); return; }
@@ -10897,6 +10923,17 @@ const Engrave = window.Engrave = (() => {
       try {Session.schedule();if(await approveWithin(Session.flushNow?.(),APPROVE_MS.save,"the workspace save did not answer")===false)throw new Error("Workspace checkpoint did not complete");}
       catch(e){delete job.approvalIntent;notApproved(job,`Not approved: the approval could not be saved on this browser${e && e.stuck ? " (the workspace save did not answer in " + Math.round(APPROVE_MS.save / 1000) + " seconds)" : ""}. Your changes are kept: press Approve to try again.`);return;}
     }
+    // SEALAFTERSAVE: a placed piece's approval waits in job.approving until its back is saved (writeBacksOnce finalizes it: state, seal, event); the stamp comes down on the button then
+    const hold=!job.editingBack && !unplacedPre(job);
+    if(hold){
+      job.approving={at:approvedAt,by,text:job.text};
+      approveSay(job,`Saving the ${faceWord(job)} file… the seal comes down when it is saved`,null,true);
+      try{await saveBacks(job);}catch(e){approveSay(job,`Not saved yet: ${e && e.message}`);}
+      if(!(job.approvedAt===approvedAt && ["approved","written"].includes(job.state) && !job.approving)){return;}   // (not saved: writeBacks said why, plainly, and no seal or event was made)
+      { const sealNow=(CNEngravingSeals.list(job).filter(x=>+x.at===approvedAt)).pop()||null;
+        try{if(o && o.quick){Promise.resolve().then(()=>CNEngravingSeals.press(approvalButton,sealNow)).catch(()=>{});}else{job.stamping=true;try{await approveWithin(CNEngravingSeals.press(approvalButton,sealNow),APPROVE_MS.stamp,"").catch(()=>{});}finally{job.stamping=false;}}}catch(_){} }
+    }
+    if(!hold){
     CNEngravingSeals.keep(job);
     const seal=CNEngravingSeals.add(job,"engraveApproved",by,approvedAt);
     // Publish the new state only after the wooden press, ink and lift finish. Pollers must not advance early.
@@ -10906,11 +10943,12 @@ const Engrave = window.Engrave = (() => {
     else{job.stamping=true;try{await approveWithin(CNEngravingSeals.press(approvalButton,seal),APPROVE_MS.stamp,"").catch(()=>{});}finally{job.stamping=false;}}   // (APPROVEFIX: the stamp is the picture of the approval, never what holds it up)
     if(job.fit!==prepared.fit || job.view!==prepared.view){notApproved(job,"Not approved: the placement changed while it was approved. Review the current words.",4000);delete job.approvalIntent;return;}
     if(!settleApproval(job)){notApproved(job,"Not approved: the placement changed while it was approved. Look at it, then press Approve again.",4000);return;}
+    }   // (SEALAFTERSAVE: end of the old order, used when the piece is not placed yet or an approved back is edited)
     approveSay(job,"");   // (APPROVEFIX: it used to go on as if approved, and the card came back with Approve)
     // ENGPRE: approved before its piece was pooled: the run's record of the line keeps the approval (one coalesced save), the back file follows once the piece is on a sheet
     if(unplacedPre(job) && job.state==="approved" && B.run){try{B.run.lines=Object.fromEntries(Orders.rows().map(Orders.lineRecord));RunCtl.save(B.run).catch(()=>{});}catch(_){}}
     // the person pressed Approve and the approval stands: engraving approved for this line's pieces (once per press)
-    if(job.state==="approved")try{humanAct("complete",{orderId:String(job.row.order.receiptId),line:String(job.row.line.transactionId||""),sku:String(job.row.spec&&job.row.spec.designSku||""),parts:(job.copies||[]).length||1,detail:(isFront(job) ? "front " : "") + "engraving approved"});}catch(_){}
+    if(job.state==="approved" || hold && job.state==="written")try{humanAct("complete",{orderId:String(job.row.order.receiptId),line:String(job.row.line.transactionId||""),sku:String(job.row.spec&&job.row.spec.designSku||""),parts:(job.copies||[]).length||1,detail:(isFront(job) ? "front " : "") + "engraving approved"});}catch(_){}
     job.approvalPreparing=false;
     if(typeof Session!=="undefined"){Session.schedule();await approveWithin(Session.flushNow?.(),APPROVE_MS.save,"").catch(()=>{});}   // (the approval is checkpointed already: this save only carries what followed)
     // (ENGSTAGE, coordinator 30 Oct 2026: "The previous commit's "move on" throws away newer staged edits": an approval made by the panel's commit (o.moveOn false) leaves the card where it is; the panel
@@ -10918,7 +10956,7 @@ const Engrave = window.Engrave = (() => {
     const moveOn = !(o && o.moveOn === false);
     if (moveOn && EG.opened === job.key) EG.opened = null;   // (NODECIDED: the card of a piece just approved moves on to the next piece; the approved piece is in the list, its seals on its row)
     for(const show of [()=>{if(moveOn)goes(job,{to:EG_TAB("approved")});},()=>Review.remove("eng:"+job.key),()=>agent({engrave:true},"ENGRAVE",`${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.artOnly ? "the charm editor's parts, no words" : `${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""}`})`),render,()=>Orders.render()])try{show();}catch(e){console.warn("Engraving approval view",e);}
-    await saveBacks(job);
+    if(!hold)await saveBacks(job);
     } finally {
       job.approvalPreparing=false;
       if(approvalButton){approvalButton.removeAttribute?.("aria-busy");approvalButton.textContent=job.state==="review" ? "Approve" : "Approved";if(job.state==="review")approvalButton.disabled=wasDisabled;}   // (APPROVEFIX: a press that did not approve leaves "Approve", never a live "Approved")
@@ -10933,11 +10971,11 @@ const Engrave = window.Engrave = (() => {
     try{return await task;}finally{if(job._backTask===task)delete job._backTask;}
   }
   async function saveBacksOnce(job) {
-    job.backSaving = true; const approval = job.approvedAt, was = job.state, had = (job.backs || []).length;
+    job.backSaving = true; const approval = apAt(job), was = job.state, had = (job.backs || []).length;
     try {
     for(const show of [render,()=>Orders.render(),refreshBacks])try{show();}catch(e){console.warn("Engraving view refresh",e);}
     const written=await writeBacks(job); if (written!==false && job.approvedAt === approval && job.backPending) { delete job.backPending; backRetry.n = 0; }
-    } catch (e) { if (job.approvedAt !== approval) return;
+    } catch (e) { if (apAt(job) !== approval) return;
       // The network or the cloud gone for a while is not the placement's fault: the approval stands and its back file waits
       // for the cloud, written when it is back (resumeBacks). It used to undo the approval, and after a wake a person
       // approved the same words again. Only a file that fails its own checks goes back to review.
@@ -10960,7 +10998,7 @@ const Engrave = window.Engrave = (() => {
     try { let healed = 0; for (const job of items().values()) if (healBlockedApproval(job)) healed++; if (healed) { Session.schedule(); render(); } } catch (e) { console.warn("[Engrave] heal", e); }   // (ENGSAVED: an approval blocked after its back was saved is put right)
     let waiting = 0;
     for (const job of items().values()) {
-      if (!["approved","written"].includes(job.state) || job.backSaving || job.approvalPreparing || job.stamping || !job.approvedAt || !(job.fit && job.view || job.writtenFit && job.writtenFit.approvedAt === job.approvedAt) || !(job.copies || []).length || unplacedPre(job)) continue;
+      if (!apLive(job) || job.backSaving || job.approvalPreparing || job.stamping || !apAt(job) || !(job.fit && job.view || job.writtenFit && job.writtenFit.approvedAt === job.approvedAt) || !(job.copies || []).length || unplacedPre(job)) continue;
       if (!job.backPending && !job.poolPending && job.state==="written" && job.copies.every(id => (job.backs || []).some(b => b.poolId === id && b.approvedAt === job.approvedAt && b.sheetId===sheetFor(job,id)?.sheetId))) continue;
       if (pendingOnly && !job.backPending && !job.poolPending) continue;
       // (with the cloud still away it waits on: each try builds and checks the file before it finds that out)
@@ -13031,10 +13069,10 @@ const Engrave = window.Engrave = (() => {
      go blocked; a job already blocked that way is healed. */
   function savedBackOf(job, poolId) {
     try { const sh = sheetFor(job, poolId); if (!sh) return null; const f = faceOf(job);
-      return (sh.backPool || []).find(b => b && b.poolId === poolId && faceOf(b) === f && +b.approvedAt === +job.approvedAt && !b.invalidated && !b.pending && b.outputs && b.outputs.ai && b.outputs.ai.url && b.outputs.png && b.outputs.png.url) || null;
+      return (sh.backPool || []).find(b => b && b.poolId === poolId && faceOf(b) === f && +b.approvedAt === +apAt(job) && !b.invalidated && !b.pending && b.outputs && b.outputs.ai && b.outputs.ai.url && b.outputs.png && b.outputs.png.url) || null;
     } catch (_) { return null; }
   }
-  const allBacksSaved = job => (job.copies || []).length > 0 && +job.approvedAt > 0 && job.copies.every(id => !!savedBackOf(job, id));
+  const allBacksSaved = job => (job.copies || []).length > 0 && apAt(job) > 0 && job.copies.every(id => !!savedBackOf(job, id));
   function healBlockedApproval(job) {
     if (!job || job.state !== "blocked" || !(+job.approvedAt > 0) || !allBacksSaved(job)) return false;
     job.backs = (job.backs || []).filter(b => !(job.copies || []).includes(b.poolId));
@@ -13049,6 +13087,31 @@ const Engrave = window.Engrave = (() => {
     const write = async()=>{
       try{return await writeBacksNow(job);}
       catch(e){
+        if(job.approving && e.approvalThrew){   // (SEALAFTERSAVE: its back is saved but the approval itself could not be made here: said as any approval that threw is (HELDREL); the next press approves again)
+          const msg=String((e && e.message) || e || "unknown error").replace(/[.\s]+$/,"").slice(0,200);
+          delete job.approving;delete job.approvalIntent;job.reason=null;
+          try{console.error("[Engrave] approval failed",e);}catch(_){}
+          try{agent({engrave:true},"warn",`${job.row?.order?.receiptId || job.key}: the approval stopped on an error (${msg})`);}catch(_){}
+          try{notApproved(job,`Not approved: something went wrong while approving (${msg}). Your changes are kept: press Approve to try again.`);}catch(_){}
+          Session.schedule();try{render();}catch(_){}
+          return false;
+        }
+        if(job.approving && !allBacksSaved(job)){   // (SEALAFTERSAVE: this approval is not published yet: no seal, no event; a file that cannot be saved ends it with the reason, a cloud that is away keeps it waiting)
+          let older=null;try{older=(job.copies||[]).map(id=>{const sh=sheetFor(job,id);return sh&&(sh.backPool||[]).find(b=>b&&b.poolId===id&&faceOf(b)===faceOf(job)&&!b.invalidated&&!b.pending&&+b.approvedAt<apAt(job));}).find(Boolean)||null;}catch(_){older=null;}
+          if(e.engravingInvalid){
+            const why=older?`Not saved: ${e.message}. The back approved before (${String(older.text||"").replace(/\s*\n\s*/g," / ").slice(0,60)}) is kept in the files; approve the new one again after fixing the placement`:`Not saved: ${e.message}. Nothing was approved; fix the placement, then approve again`;
+            delete job.approving;delete job.approvalIntent;job.reason=why;
+            job.row.engrave={...job.row.engrave,state:"review",approved:false,reason:why};
+            try{Review.add({kind:"placement",key:"eng:"+job.key,row:(job.row.parentRow || job.row),job,why});}catch(viewError){console.warn("Engraving review view",viewError);}
+            try{notApproved(job,why);}catch(_){}
+          }else{
+            job.backPending=e.message || "Back files wait for saving";retryBacksLater();
+            try{approveSay(job,`Not approved yet: saved when the cloud is back (${job.backPending}). The seal comes down as soon as the ${faceWord(job)} file is saved; it is tried again by itself.`);}catch(_){}   // (kept, not passing: the panel's commit reads it back as its reason)
+          }
+          Session.schedule();
+          for(const show of [()=>agent({engrave:true},"warn",`${job.row.order.receiptId}: ${e.message}`),render])try{show();}catch(viewError){console.warn("Engraving save view",viewError);}
+          return false;
+        }
         if(e.engravingInvalid && allBacksSaved(job)){ try{agent({engrave:true},"warn",`${job.row.order.receiptId}: ${e.message} (the approved back stays: it is saved in the cloud)`);}catch(_){ } return false; }
         if(e.engravingInvalid){
           // (ENGSAVED: a newer approval whose back could not be saved: the OLDER approved back stays in the files, and the person is told so, in plain words)
@@ -13071,16 +13134,16 @@ const Engrave = window.Engrave = (() => {
   }
   const recordBack = (job, fn) => { const ops = window.CharmNestOperations; return ops ? ops.run({ key: "back-record:" + job.key, label: "Recording engraving", resources: ["production:" + (job.editSheet?.runId || B.run?.runId || job.editSheet?.sheetId || "manual")] }, fn) : fn(); };
   async function writeBacksNow(job) {
-    if (!["approved", "written"].includes(job.state) || !hasPlacement(job)) return;
+    if (!apLive(job) || !hasPlacement(job)) return;
     // counted while it runs, so the upkeep never lets go of a placement a write is using (shelveWritten)
     job._writingBacks = (job._writingBacks || 0) + 1;
     try { if (!job.fit || !job.view) { await loadFonts(); restoreWritten(job); } return await writeBacksOnce(job); }
     finally { job._writingBacks--; }
   }
   async function writeBacksOnce(job) {
-    if (!["approved", "written"].includes(job.state) || !job.fit || !job.view) return;
-    const approval = job.approvedAt;
-    const current = () => approval === job.approvedAt && ["approved", "written"].includes(job.state);
+    if (!apLive(job) || !job.fit || !job.view) return;
+    const approval = apAt(job);
+    const current = () => approval === apAt(job) && apLive(job);
 
     const charm0 = charmFor(job); if(!charm0) throw Object.assign(new Error("The charm is being moved between sheets; retry saving its engraving after nesting finishes"),{engravingPending:true}); const src = sourceOf(charm0.sourceId); const view = job.view, fit = job.fit;
     const rel = fit.glyphs.map(g => ({ cmds: g.cmds.map(c => { const o = { type: c.type }; if (c.type !== "Z") { o.x = c.x - view.cx; o.y = c.y - view.cy; } if (c.type === "C" || c.type === "Q") { o.x1 = c.x1 - view.cx; o.y1 = c.y1 - view.cy; } if (c.type === "C") { o.x2 = c.x2 - view.cx; o.y2 = c.y2 - view.cy; } return o; }) }));
@@ -13102,12 +13165,12 @@ const Engrave = window.Engrave = (() => {
         const name = `${sh.fileBase}_${faceWord(job)}_${poolId}_${approval}`;
         let rec=job.stagedBacks.find(b=>b.poolId===poolId && b.approvedAt===approval && b.sheetId===sh.sheetId && b.outputs?.ai?.url && b.outputs?.png?.url);
         if(!rec){
-        const built = await P.buildBackFile({ charm: charm0, mirrored: !!charm0.mirrored, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, ...(isFront(job) ? { face: "front" } : {}), ...(!isFront(job) && Array.isArray(charm0.artBack) && charm0.artBack.length ? { artBack: charm0.artBack } : {}), view: fileViewOf(job), title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · ${faceWord(job)}`, meta: { poolId, ...(isFront(job) ? { face: "front" } : {}), order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
+        const built = await P.buildBackFile({ charm: charm0, mirrored: !!charm0.mirrored, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, ...(isFront(job) ? { face: "front" } : {}), ...(!isFront(job) && Array.isArray(charm0.artBack) && charm0.artBack.length ? { artBack: charm0.artBack } : {}), view: fileViewOf(job), title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · ${faceWord(job)}`, meta: { poolId, ...(isFront(job) ? { face: "front" } : {}), order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: apBy(job), approvedAt: apAt(job), upAngle: view.upAngle, flipChecks: view.checks } });
         const verified = await verifyBackFile(built.bytes, job);                 // 7.4 · flip integrity re-run on the written, re-parsed file
         if (!verified.ok) throw Object.assign(new Error(`the written ${faceWord(job)} file did not re-verify (${verified.why})`),{engravingInvalid:true});
         let ai = null, pngUp = null;
         if (S.cloud.ok && sh.folderPath) { ai = await uploadBytes(`${sh.folderPath}/${faceWord(job)}/${name}.ai`, built.bytes, "application/illustrator", `Saving ${faceWord(job)} ${copy}`); pngUp = await uploadBytes(`${sh.folderPath}/${faceWord(job)}/${name}.png`, pngBlob, "image/png"); }
-        rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, materialVersion:2, ...(fit.artOnly ? { artOnly:true } : {}), upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, ...pieceFields(job), text: job.text, lines: job.lines, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), ...(job.fontAsked ? { fontAsked: job.fontAsked } : {}), weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, engravingSeals:CNEngravingSeals.keep(job), nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: fileViewOf(job), reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
+        rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, materialVersion:2, ...(fit.artOnly ? { artOnly:true } : {}), upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, ...pieceFields(job), text: job.text, lines: job.lines, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), ...(job.fontAsked ? { fontAsked: job.fontAsked } : {}), weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: apBy(job), approvedAt: apAt(job), engravingSeals: job.approving ? [sealOfApproving(job)] : CNEngravingSeals.keep(job), nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: fileViewOf(job), reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
         if(!rec.outputs.ai?.url || !rec.outputs.png?.url)throw new Error("Reconnect to save the approved back files");
         // Keep the exact uploaded payload before sending it. A lost reply must replay
         // these same file tokens, not upload again and look like a different edit.
@@ -13145,9 +13208,10 @@ const Engrave = window.Engrave = (() => {
     delete job._backPreview; delete job._previewSize; delete job._previewAt;   // the saved picture stands for it from now on
     // a piece is "engraved" when EVERY face it expects is written: the first face to be written leaves the piece as it was (Faces.bothFacesWritten, over this line's other jobs of the same piece)
     const othersDone = !job.editingBack && jobsOf(job.row).filter(o => o !== job && (o.copies || []).some(id => job.copies.includes(id))).every(o => ["written", "skipped", "none"].includes(o.state));
-    await Pool.update(job.copies, isFront(job) ? { engraveFront: true, engraveFrontApprovedBy: job.approvedBy, ...(job.editingBack || !othersDone ? {} : {state:"engraved"}) } : { engrave: true, engraveApprovedBy: job.approvedBy, ...(job.editingBack || !othersDone ? {} : {state:"engraved"}) });
+    await Pool.update(job.copies, isFront(job) ? { engraveFront: true, engraveFrontApprovedBy: apBy(job), ...(job.editingBack || !othersDone ? {} : {state:"engraved"}) } : { engrave: true, engraveApprovedBy: apBy(job), ...(job.editingBack || !othersDone ? {} : {state:"engraved"}) });
     if(!current())return;
     delete job.poolPending;
+    if (job.approving) { try { finalizeApproval(job); } catch (e) { throw Object.assign(e instanceof Error ? e : new Error(String(e)), { approvalThrew: true }); } }   // (SEALAFTERSAVE: its back is saved in the cloud: now the approval, its seal and its event)
     job.state = "written"; job.row.engrave.state = "written";
     // (the piece's other face was still being written when this one's flags were saved: the last face to finish marks the piece engraved)
     if (!job.editingBack && !othersDone && jobsOf(job.row).filter(o => (o.copies || []).some(id => job.copies.includes(id))).every(o => ["written", "skipped", "none"].includes(o.state))) Pool.update(job.copies, { state: "engraved" }).catch(() => {});
