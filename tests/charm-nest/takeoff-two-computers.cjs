@@ -75,8 +75,9 @@ async function otherComputer(H) {
     assert(mine.run === runId && !mine.stopped && mine.status !== 'stopped', '1 · the carrier run never stopped: ' + JSON.stringify(mine));
     assert.equal([...st.docs.keys()].filter(k => k.startsWith('Charm_Nest_Runs/')).length, runs0, '1 · no second run');
     for (const [name, pg] of [['carrier', page], ['follower', p2]]) {
-      const held = await pg.evaluate(gone => Orders.rows().filter(r => (r.poolIds || []).some(id => gone.includes(id))).length, gone);
-      assert.equal(held, 0, `1 · on the ${name} no order line still holds the piece`);
+      // (the carrier takes the line another computer changed at its next look at the run's lines, a few seconds after the sheet itself changed: it is waited for, up to 40 s; this checked at once and failed on timing alone, 18 Nov 2026: held 0 after 5 s)
+      let held = -1; for (let i = 0; i < 40; i++) { held = await pg.evaluate(gone => Orders.rows().filter(r => (r.poolIds || []).some(id => gone.includes(id))).length, gone); if (!held) break; await new Promise(r => setTimeout(r, 1000)); }
+      assert.equal(held, 0, `1 · on the ${name} no order line still holds the piece (within 40 s)`);
     }
     assert.deepStrictEqual(two.errors, [], '1 · no page error on the second computer');
     console.log(at(), 'OK · takeoff-two-computers', runId);

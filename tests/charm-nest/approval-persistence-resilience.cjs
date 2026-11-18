@@ -13,7 +13,7 @@ const section = (start, end) => {
   return source.slice(a, b);
 };
 function approvalSection() {
-  const markers = ['  async function prepareApproval(', '  function settleApproval(', '  async function settleApproval(', '  function recoverApprovals(', '  async function recoverApprovals('];
+  const markers = ['  /* SEALAFTERSAVE (Paul', '  async function prepareApproval(', '  function settleApproval(', '  async function settleApproval(', '  function recoverApprovals(', '  async function recoverApprovals('];
   const a = Math.min(...markers.map(m => source.indexOf(m)).filter(n => n >= 0));
   return source.slice(a, source.indexOf('  /* ── 7.6', a));
 }
@@ -93,7 +93,7 @@ function fixture({ holdPress = false, holdPool = false, writeFiles = false, real
   // commits those bytes immediately, or deliberately fails before the stamp.
   if(realSession)vm.runInContext(section('const Session = window.Session =', '/* ═══ 24g'),context);
   else {
-    vm.runInContext(section('  const OMIT =', '  function open()') + section('  function poolSourcesInUse()', '  /** Before each checkpoint'), context);
+    vm.runInContext(section('  const OMIT =', '  function open()') + section('  function poolSourcesInUse(', '  /** Before each checkpoint'), context);
     vm.runInContext(`
     const Session = {
       copy,capture,
@@ -111,6 +111,7 @@ function fixture({ holdPress = false, holdPool = false, writeFiles = false, real
       async function writeBacks(j) {
         control.writes++;
         if(control.networkDown)throw new Error('Failed to fetch');
+        if(j.approving)finalizeApproval(j);   // (SEALAFTERSAVE: the approval, its seal and its event come only once its back is saved)
         j.backs=j.copies.map(poolId=>({poolId,approvedAt:j.approvedAt,approvedBy:j.approvedBy,engravingSeals:CNEngravingSeals.keep(j),outputs:{ai:{url:'https://example.invalid/back.ai'},png:{url:'https://example.invalid/back.png'}}}));
         j.state='written';j.row.engrave.state='written';
       }
@@ -142,24 +143,31 @@ function fixture({ holdPress = false, holdPool = false, writeFiles = false, real
     restored.c.savedJSON = JSON.stringify(saved);
     restored.run(`const restoredJob=JSON.parse(savedJSON);if(restoredJob.mask?.bits)restoredJob.mask.bits=new Uint8Array(Object.values(restoredJob.mask.bits));Object.assign(job,restoredJob);job.row=row;jobs.set(job.key,job);control.networkDown=true;`);
     assert.equal(restored.run('typeof recoverApprovals'), 'function', 'recovery has an explicit decision settlement entry point');
-    await restored.run('recoverApprovals()');
+    await restored.run('recoverApprovals()');await settle();
     const recovered = restored.run('job');
-    assert.equal(recovered.state, 'approved');
-    assert.equal(recovered.approvedAt, saved.approvalIntent.at);
-    assert.equal(recovered.approvedBy, 'Paul');
-    assert.equal(recovered.row.engrave.approved, true);
-    assert.equal(seals.list(recovered).length, 1, 'recovering adds exactly the original approval seal');
-    assert.equal(seals.list(recovered)[0].at, saved.approvalIntent.at);
+    // (SEALAFTERSAVE, Paul 17 Nov 2026: the seal only after the back is saved) with the cloud away the recorded approval WAITS: no state, no seal, no line record, nothing to read as approved
+    assert.equal(recovered.state, 'review');
+    assert.equal(recovered.approvedAt, undefined);
+    assert.equal(recovered.approving?.at, saved.approvalIntent.at, 'the recorded approval waits with its own time and signer');
+    assert.equal(recovered.approving?.by, 'Paul');
+    assert.equal(recovered.row.engrave.approved, false);
+    assert.equal(seals.list(recovered).length, 0, 'no seal before the back is saved');
+    assert(recovered.backPending, 'the file waits for the cloud and is tried again');
     assert.equal(restored.control.presses, 0, 'restoring history never plays the wooden press again');
     await restored.run('resumeBacks()');
     await settle();
-    assert.equal(recovered.state, 'approved', 'offline files do not revoke the recorded approval');
-    assert(recovered.backPending);
+    assert.equal(recovered.state, 'review', 'offline files do not make the recorded approval');
+    assert.equal(seals.list(recovered).length, 0);
     restored.control.networkDown = false;
     await restored.run('resumeBacks()');
     await settle();
     assert.equal(recovered.state, 'written');
-    assert.equal(seals.list(recovered).length, 1);
+    assert.equal(recovered.approvedAt, saved.approvalIntent.at, 'the approval keeps the time of the press');
+    assert.equal(recovered.approvedBy, 'Paul');
+    assert.equal(recovered.row.engrave.approved, true);
+    assert.equal(recovered.approving, undefined);
+    assert.equal(seals.list(recovered).length, 1, 'recovering adds exactly the original approval seal, after the save');
+    assert.equal(seals.list(recovered)[0].at, saved.approvalIntent.at);
     assert.equal(restored.control.presses, 0);
     f.press.resolve();await approval;
   });
@@ -170,11 +178,28 @@ function fixture({ holdPress = false, holdPool = false, writeFiles = false, real
     assert.equal(f.control.presses, 0, 'the approval must be durable before it receives a visible stamp');
     assert.equal(f.run('job.state'), 'review');
     assert.equal(f.run('job.approvalPreparing'), false);
+    assert.equal(f.run('job.approving'), undefined, 'a press that was not made durable waits for nothing');
     assert.equal(seals.list(f.run('job')).length, 0);
     f.control.checkpointFailure = false;
     await f.run('approve(job,"Paul")');
     assert.equal(f.control.presses, 1);
     assert.equal(f.run('job.state'), 'written');
+  });
+
+  await check('a press while the cloud is away makes no seal; the seal comes down when the file is saved', async () => {
+    const f = fixture();f.control.networkDown = true;
+    await f.run('approve(job,"Paul")');await settle();
+    assert.equal(f.control.presses, 0, 'no wooden press without a saved back');
+    assert.equal(f.run('job.state'), 'review');
+    assert.equal(f.run('row.engrave.approved'), false);
+    assert.equal(seals.list(f.run('job')).length, 0);
+    assert(f.run('job.approving'), 'the approval waits, with the time of the press');
+    const at = f.run('job.approving.at');
+    f.control.networkDown = false;
+    await f.run('resumeBacks()');await settle();
+    assert.equal(f.run('job.state'), 'written');
+    assert.equal(f.run('job.approvedAt'), at);
+    assert.equal(seals.list(f.run('job')).length, 1);
   });
 
   await check('a lost pool-update reply resumes a recorded back without another approval', async () => {

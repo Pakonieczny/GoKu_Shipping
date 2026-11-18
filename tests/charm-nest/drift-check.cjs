@@ -105,11 +105,16 @@ const RUN = 'run-drift-t', SHEETS = 'Charm_Nest_Sheets';
 
   // 8f approvals made here whose back files are not saved are counted, reported, and marked once they have waited ten minutes (Ana's and Michelle's waited hours)
   await setup();
-  await page.evaluate(() => { B.engrave.items.set('t-wait-1', { backPending: 'Reconnect to save the approved back files', approvedAt: Date.now() - 3600000 }); B.engrave.items.set('t-wait-2', { backPending: 'x', approving: { at: Date.now() - 120000 } }); });
+  await page.evaluate(() => {
+    const pg = allSheets().find(p => p.sheetId === 'p-same'); pg.charms = [{ poolId: 'pool-1' }, { poolId: 'pool-2' }]; pg.backPool = [{ poolId: 'pool-2', approvedAt: Date.now() - 1000 }];
+    B.engrave.items.set('t-wait-1', { copies: ['pool-1'], backPending: 'Reconnect to save the approved back files', approvedAt: Date.now() - 3600000 });   // counts: on a sheet, no saved back
+    B.engrave.items.set('t-wait-2', { copies: ['pool-gone'], backPending: 'x', approvedAt: Date.now() - 7200000 });                                          // not counted: its piece is on no sheet any more
+    B.engrave.items.set('t-wait-3', { copies: ['pool-2'], backPending: 'x', approvedAt: Date.now() - 3600000 });                                              // not counted: the sheet already holds its saved back
+  });
   await run(); const o8f = await out();
-  await page.evaluate(() => { B.engrave.items.delete('t-wait-1'); B.engrave.items.delete('t-wait-2'); });
+  await page.evaluate(() => { for (const k of ['t-wait-1', 't-wait-2', 't-wait-3']) B.engrave.items.delete(k); const pg = allSheets().find(p => p.sheetId === 'p-same'); pg.charms = []; pg.backPool = []; });
   const rf = o8f.calls.reports[0] || {};
-  say('8f approvals waiting to be saved: counted with the age of the oldest, and the mark says so', rf.backWaitN === 2 && rf.backWaitMin >= 59 && o8f.pill && /Approvals not saved · 2/.test(o8f.pillText), [rf.backWaitN, rf.backWaitMin, o8f.pillText]);
+  say('8f approvals waiting to be saved: only one whose piece is on a sheet and whose back the cloud lacks is counted (not a replaced piece, not one already saved), with its age, and the mark says so', rf.backWaitN === 1 && rf.backWaitMin >= 59 && rf.backWaitMin < 90 && o8f.pill && /Approvals not saved · 1/.test(o8f.pillText), [rf.backWaitN, rf.backWaitMin, o8f.pillText]);
   await setup({ cloud: ['p-behind', 'p-dirty', 'p-cut', 'p-same', 'p-new'].map((id, i) => ({ id, rev: 1, ch: 3, d: 1, cut: id === 'p-cut' ? 1 : 0, fb: 'G' + i, set: '', upd: 5 })) });
   await run(); const o8g = await out();
   say('8g with none waiting there is no such mark', (o8g.calls.reports[0] || {}).backWaitN === 0 && !o8g.pill, o8g.pillText);
