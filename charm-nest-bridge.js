@@ -5956,6 +5956,19 @@ const Pool = window.Pool = (() => {
      keeps its Charm Editor edit under the pool id it will have (ARTPRE), but every picture of it and its engraving jobs read the charm it WILL have, this preview, which kept the master's drawing.
      The edit is put on the preview too (the art-edit host's swap): the order window, the engraving card and the jobs show it at once. → whether a preview took it. */
   const previewSwap = (poolId, next) => { if (!poolId || !next || charmOf(poolId) || !previews.has(poolId)) return false; previews.set(poolId, next); return true; };
+  /* HELDCHARM: the pool ids of a custom line that is on hold, read from the cloud (a line on hold has no pool ids of its own on a computer that did not pool it: "poolIds" is empty and a card has nothing to name its piece by).
+     A read of the order's pieces, asked at most once in two minutes for a line. -> [pool ids of its custom pieces that carry a design file], in copy order. */
+  const heldIdsAsked = new Map();
+  async function heldPoolIds(row) {
+    row = (row && row.parentRow) || row; if (!row || !row.key || !row.order) return [];
+    const t = heldIdsAsked.get(row.key); if (t && Date.now() - t.at < 120000) return t.ids;
+    const rid = String(row.order.receiptId || ""), mark = { at: Date.now(), ids: [] }; heldIdsAsked.set(row.key, mark);
+    try {
+      const r = await api("charmNestLibrary", { op: "getOrderPieces", orderId: rid }, { quiet: true });
+      mark.ids = (((r && r.orders && r.orders[rid] && r.orders[rid].pools) || []).filter(p => p && p.lineKey === row.key && p.custom && p.aiPath).sort((a, b) => (+a.copy || 0) - (+b.copy || 0)).map(p => p.poolId));
+    } catch (e) { heldIdsAsked.delete(row.key); }
+    return mark.ids;
+  }
   /** The pool ids a line that is not pooled will get, from its last preview ([] when none was made). */
   const previewIds = row => { row = (row && row.parentRow) || row; return (row && previewIdsOf.get(row.key)) || []; };
   // (who: { by, signedIn, device } for the order timeline's stamp, stampWho; sent beside the patch, not stored on the rows)
@@ -6054,7 +6067,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(ListMedia.oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pairResume, previewHeld, keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewSwap, previewIds, previewAll: true, previewEntries: () => [...previews.entries()].filter(([id, c]) => c && !charmOf(id)), previewSig: trySig, greenFits, partnerSheets, greenPage, greenResume, greenHeld, greenLeftover };
+  return { pairResume, previewHeld, heldPoolIds, keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewSwap, previewIds, previewAll: true, previewEntries: () => [...previews.entries()].filter(([id, c]) => c && !charmOf(id)), previewSig: trySig, greenFits, partnerSheets, greenPage, greenResume, greenHeld, greenLeftover };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */

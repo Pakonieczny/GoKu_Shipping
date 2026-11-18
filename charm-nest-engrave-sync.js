@@ -243,7 +243,9 @@
   /** (NOFALLBACK, Paul 13 Nov 2026: "Look at the thumbnails" / "remove these fallbacks, make it work"): a piece not on a sheet yet carries the ids its piece WILL get (Pool.previewIds, the way the computer that made the job did, ENGPRE); a job that arrived here without them is given them, its preview made when this page has none */
   async function ensureCopies(j) {
     if (!j || (j.copies || []).length) return; const P = root.Pool, line = j.row && (j.row.parentRow || j.row); if (!P || typeof P.previewIds !== "function" || !line || (line.poolIds || []).length) return;
-    let ids = safe(() => P.previewIds(line), []) || []; if (!ids.length) { try { await P.preview(line); } catch (_) {} ids = safe(() => P.previewIds(line), []) || []; } if (!ids.length) return;
+    let ids = safe(() => P.previewIds(line), []) || []; if (!ids.length) { try { await P.preview(line); } catch (_) {} ids = safe(() => P.previewIds(line), []) || []; }
+    if (!ids.length && typeof P.heldPoolIds === "function") { try { ids = (await P.heldPoolIds(line)) || []; } catch (_) { ids = []; } }   // (HELDCHARM: a custom piece on hold: its pool ids are the cloud's)
+    if (!ids.length) return;
     const m = /^D(\d+)$/.exec(String(j.slot || "")), pick = j.slot ? (m ? [ids[Math.min(+m[1] - 1, ids.length - 1)]] : []) : ids.slice(); if (pick.length) { j.copies = pick; j.pre = true; }
   }
   async function fitOne(j) {
