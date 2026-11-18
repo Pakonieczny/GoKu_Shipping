@@ -8,6 +8,7 @@
    master designs (Pool.masterCharm, shared with the run) placed where the record says. */
 (() => {
   "use strict";
+  try { window.__swBuild = "nb1"; } catch (_) { /* a marker only: the computers' reports say which sheet window code they run */ }
   const CODE = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
   const METAL_OF_CODE = Object.fromEntries(Object.entries(CODE).map(([k, v]) => [v, k]));
   const colorOf = m => (METALS.find(x => x.key === m) || {}).color || "#999";

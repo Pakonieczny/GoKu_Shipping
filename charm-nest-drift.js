@@ -22,7 +22,7 @@
   "use strict";
   const doc = root.document || null;
   const safe = (f, d) => { try { const v = f(); return v === undefined ? d : v; } catch (_) { return d; } };
-  const EVERY = 240000, FIRST = 75000, MIN_GAP = 120000, MAX_HEAL = 4, RETRY = 20 * 60000, STALE_S = 900, BUILD = "drift-1118a";
+  const EVERY = 240000, FIRST = 75000, MIN_GAP = 120000, MAX_HEAL = 4, RETRY = 20 * 60000, STALE_S = 900, BUILD = "drift-1118d";
   const st = { checks: 0, errors: 0, healed: 0, reports: 0, unsupported: false, last: null, at: 0, started: false, pill: 0 };
   const sandbox = () => safe(() => typeof WORKSPACE_SANDBOX !== "undefined" && WORKSPACE_SANDBOX, false);
   const api = (body, o) => root.CN && typeof root.CN.api === "function" ? root.CN.api("charmNestLibrary", body, Object.assign({ quiet: true, timeoutMs: 30000 }, o || {})) : Promise.reject(new Error("no api"));
@@ -137,7 +137,7 @@
     checking = true;
     try {
       const { runId, carrier } = runOf(), m = mode();
-      const rep = { station: safe(() => root.localStorage.getItem("station_computer_id"), "") || "", role: !runId ? "none" : carrier ? "carrier" : "follower", runId: runId || "", build: BUILD + "/" + (safe(() => (/[?&]v=([^&]+)/.exec((doc.querySelector('script[src*="charm-nest-bridge.js"]') || {}).src || "") || [])[1], "") || ""),
+      const rep = { station: safe(() => root.localStorage.getItem("station_computer_id"), "") || "", role: !runId ? "none" : carrier ? "carrier" : "follower", runId: runId || "", build: (BUILD + "/" + (safe(() => (/[?&]v=([^&]+)/.exec((doc.querySelector('script[src*="charm-nest-bridge.js"]') || {}).src || "") || [])[1], "") || "") + "/sw:" + (root.__swBuild || "old") + "/sup:" + (safe(() => typeof root.Engrave.settleStuckBacks === "function" ? 1 : 0, 0))).slice(0, 80),
         checked: 0, backWaitN: 0, backWaitMin: 0, behindN: 0, behind: [], stillN: 0, still: [], healed: [], unverifiedN: 0, missingN: 0, extraN: 0, inHandN: 0, rebuilt: 0, mode: m, feed: safe(() => root.CNSync.push.status().state, ""), heapMB: safe(() => Math.round(root.performance.memory.usedJSHeapSize / 1e6), 0), idleS: Math.round((Date.now() - lastInput) / 1000), ...freezeNow() };
       try { await root.Engrave.settleStuckBacks(); } catch (_) { /* the count below is as the flags are */ }   // (STALEBACK)
       { const w = waiting(); rep.backWaitN = w.n; rep.backWaitMin = w.min; }
