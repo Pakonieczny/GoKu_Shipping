@@ -115,10 +115,10 @@ function world(opt = {}) {
     const d = Object.assign({}, w.design, { rid: rec.rid, listingId: rec.listingId });
     return { state: 'ready', ctx: { rid: rec.rid, listingId: rec.listingId, title: d.title, line: { sku: d.sku, productId: '', variations: [{ name: 'Metal', value: 'GF', propertyId: 513, valueId: 1234 }], listingId: rec.listingId }, listingKind: null,
       F: { name: d.name, kind: 'ai', bytes: new Uint8Array(500), hash: rec.hash, pieces: 1, state: 'ready' }, charm: { hash: d.charmHash, open: false }, parsed: { ok: 1 }, by: 'Paul', sandbox: !!rec.sandbox, S: w.S, O, Sku: NameSku, Master,
-      aliases: {}, tableFor: () => (w.tableReady ? null : null), api, lock: w.lock, designs: 1, now: () => w.now } };
+      aliases: {}, tableFor: () => (w.tableReady ? null : null), api, lock: w.lock, designs: 1, now: () => w.now, etsyWrite: opt.etsyWrite !== false } };   // (ETSYALIAS: these scenarios are of the Etsy write itself; section 11 is without it)
   };
   w.mk = (tab) => {
-    const k = Keep.durable({ store: w.store, now: () => w.now, setTimeout: w.setTimeout, clearTimeout: w.clearTimeout, tab: tab || 'tab' + (w.keepers.length + 1), online: () => w.online, lock: w.lock, locks: opt.noLocks ? null : w.locks,
+    const k = Keep.durable({ sku: NameSku, etsyWrite: opt.etsyWrite !== false, store: w.store, now: () => w.now, setTimeout: w.setTimeout, clearTimeout: w.clearTimeout, tab: tab || 'tab' + (w.keepers.length + 1), online: () => w.online, lock: w.lock, locks: opt.noLocks ? null : w.locks,
       saveBuilt: async (rec, b) => { w.builtStore.set(rec.hash, b); }, loadBuilt: async rec => w.builtStore.get(rec.hash) || null, dropBuilt: async rec => { w.builtStore.delete(rec.hash); },
       resolve: w.resolve, make: ctx => Keep.make(ctx), etsy: rec => api('charmNestLibrary', { op: 'customEtsySkuWrite', rid: rec.rid, listingId: rec.listingId }) });
     k.log = []; k.on(ev => { if (ev.type === 'state') k.log.push(ev.view.phase); }); w.keepers.push(k); return k;
@@ -417,6 +417,28 @@ function world(opt = {}) {
     const info = await k.open(); ok(info.offered, 'the engine offers the save'); eq([w.srv.applied, w.srv.uploads.length], [0, 0], 'open() wrote nothing');
     const g = world(); const y = await g.resolve({ rid: RID, listingId: LISTING, hash: HASH }); y.ctx.alive = () => false; const e = Keep.make(y.ctx); await e.open();
     const out = await e.run(); eq([out.done, e.outcome().reason, g.srv.applied], ['held', 'cancelled', 0], 'the engine stops before its first step when the switch is off (ctx.alive)');
+  }
+  // ─── 11 · ETSYALIAS (Paul, 18 Nov 2026: "Etsy is rejecting the SKU update ... have a running tab that makes our system automatically recognize one SKU from Etsy as matching to a different SKU") ───
+  {
+    const w = world({ etsyWrite: false }); w.keeper.begin(w.spec()); await w.pump(0); await w.keeper.idle();
+    ok(w.rec().state === 'done' && w.rec().outcome === 'alias', 'with the listing\'s answer saved, the save is finished without Etsy: done, outcome alias (' + w.rec().state + '/' + w.rec().outcome + ')');
+    eq([w.srv.applied, w.srv.etsyCalls, w.srv.etsyApplied], [1, 0, 0], 'one commit, and Etsy was not asked for anything');
+    ok(w.rec().repo === true && w.rec().etsy === false, 'the record says saved, Etsy not written');
+    eq(w.keeper.describe(w.rec()).line, 'Saved and matched here \u00b7 ' + SKU, 'the line says saved and matched here');
+    ok(!w.keeper.describe(w.rec()).attention, 'and never "needs attention"');
+  }
+  {   // a save that Etsy refused before (needs attention, saved to the repository): finished on the next load, no Etsy write
+    const w = world({ etsyWrite: false }); w.keeper.begin(w.spec()); await w.pump(0); await w.keeper.idle();
+    const key = Object.keys(JSON.parse(w.ls.get('cn.keepIntents.v1')).intents)[0], all = JSON.parse(w.ls.get('cn.keepIntents.v1'));
+    Object.assign(all.intents[key], { state: 'attention', why: 'Etsy rejected the change', etsy: false, outcome: '', repo: true, sku: SKU, line: { sku: 'ACORN&#39;S LEAF' } }); w.ls.set('cn.keepIntents.v1', JSON.stringify(all));
+    const before = w.srv.etsyCalls;
+    w.keeper.resume('load');
+    const r = w.rec(); ok(r.state === 'done' && r.outcome === 'alias', 'an old needs-attention save is finished at the next load: ' + r.state + '/' + r.outcome);
+    eq(w.srv.etsyCalls, before, 'without asking Etsy');
+  }
+  {   // a shop code Etsy carries (CUSTOM_6673) keeps the line custom whatever an alias says: the Etsy write still has to be tried
+    const w = world({ etsyWrite: false, design: { rid: RID, listingId: LISTING, hash: HASH, charmHash: 'c1c2c3c4c5c6c7c8', name: 'Acorns_Leaf.ai', title: 'Custom', sku: 'CUSTOM_6673' } }); w.keeper.begin(w.spec({ line: { sku: 'CUSTOM_6673' } })); await w.pump(0); await w.keeper.idle();
+    ok(w.srv.etsyCalls >= 1, 'a shop code (CUSTOM_6673) is still written to Etsy: the alias cannot match it (' + w.srv.etsyCalls + ' call)');
   }
   console.log('keep-durable: ' + n + ' checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

@@ -147,7 +147,7 @@ function mkMaster(w) {
       };
       if (!spec.reuse) { try { await once('ai', `charmnest/master/custom/${fileKey}.ai`, built.ai); await once('png', `charmnest/master/custom/${fileKey}.png`, built.png); } catch (e) { if (e && e.keepLocked) return fail('locked', 'needs the repository password'); throw e; } }
       const body = () => ({ op: 'customSaveCommit', repoToken: tok.token, rid: String(spec.rid), listingId: String(spec.listingId), sku, oldSku: String(spec.oldSku || ''), productId: String(spec.productId || ''), optionPairs: spec.optionPairs || [], group: spec.group, title: spec.title, by: spec.by || '',
-        design: { name: F.name, kind: 'ai', hash: F.hash, bytes: F.bytes.length }, reuse: !!spec.reuse, ...(ov ? { override: { via: ov.via, from: ov.from } } : {}), ...(spec.etsyOwn ? { etsyOwn: true } : {}), ...(spec.fileTag ? { fileTag: spec.fileTag } : {}), entry: spec.reuse ? { charmHash: c.hash } : { charmHash: c.hash, widthPt: 60, heightPt: 50, areaPt2: 2400, members: 1, holes: 1, engravable: true, upAngle: 0, upSource: 'drawn' }, file: Object.assign({ masterHash: F.hash, name: F.name }, spec.reuse || !built ? {} : { aiSha256: sha(built.ai), aiBytes: built.ai.length, pngSha256: sha(built.png) }) });   // (the proof of the bytes built, as the page sends it: KEEP B3)
+        design: { name: F.name, kind: 'ai', hash: F.hash, bytes: F.bytes.length }, reuse: !!spec.reuse, ...(ov ? { override: { via: ov.via, from: ov.from } } : {}), ...(spec.etsyOwn ? { etsyOwn: true } : {}), ...(spec.noAlias ? { noAlias: true } : {}), ...(spec.fileTag ? { fileTag: spec.fileTag } : {}), entry: spec.reuse ? { charmHash: c.hash } : { charmHash: c.hash, widthPt: 60, heightPt: 50, areaPt2: 2400, members: 1, holes: 1, engravable: true, upAngle: 0, upSource: 'drawn' }, file: Object.assign({ masterHash: F.hash, name: F.name }, spec.reuse || !built ? {} : { aiSha256: sha(built.ai), aiBytes: built.ai.length, pngSha256: sha(built.png) }) });   // (the proof of the bytes built, as the page sends it: KEEP B3)
       let r;
       for (let again = false; ; again = true) {
         try { r = await w.api('charmNestLibrary', body()); break; }
@@ -164,7 +164,7 @@ function mkTab(w, o = {}) {
   const d = o.design || designs.A, rid = o.rid || RID1, listingId = o.listing || LISTING, sku = o.sku != null ? o.sku : RAW;
   const aliases = () => { const m = {}; for (const [k, v] of store.entries()) if (k.startsWith('Charm_Sku_Aliases/')) m[k.slice(18)] = v; return m; };
   const events = [], Master = mkMaster(w);
-  const ctx = { rid, listingId, title: "Acorn&#39;s Leaf Charm", line: { sku, productId: o.productId || '9100000001', variations: o.variations || [{ name: 'Metal', value: 'GF 14/20', propertyId: 513, valueId: 1234 }], listingId }, listingKind: null,
+  const ctx = { etsyWrite: true, rid, listingId, title: "Acorn&#39;s Leaf Charm", line: { sku, productId: o.productId || '9100000001', variations: o.variations || [{ name: 'Metal', value: 'GF 14/20', propertyId: 513, valueId: 1234 }], listingId }, listingKind: null,
     F: { name: d.name, kind: 'ai', bytes: d.bytes, hash: d.hash, pieces: 1, state: 'ready' }, charm: { hash: d.charmHash, open: false }, parsed: { ok: 1 }, by: 'Paul', sandbox: !!o.sandbox, S: { cloud: { ok: true } }, O, Sku: NameSku, Master, aliases, tableFor: () => o.table || null, api: (fn, b) => w.api(fn, b), lock: w.lock, now: Date.now };
   ctx.setTimeout = w.clock.setTimeout; ctx.clearTimeout = w.clock.clearTimeout;
   const tab = { events, ctx, w, rid, listingId };
@@ -259,16 +259,18 @@ scen('two orders of the same listing, same file, at the same moment: one entry',
 });
 // (KEEPOVERRIDE, Paul 20 Oct 2026: "If a user engages the toggle to update the charm repository, then that's exactly what needs to happen": a second order's switch on a listing that already reads the
 //  first design is an explicit correction and takes the listing (the first design keeps its SKU, an audit record says so); a second window that looked before the first save landed is refused calmly)
-scen('two orders, same listing, DIFFERENT files: one design answers the listing; the second switch, when it saw the first, takes it over (KEEPOVERRIDE)', ['P2', 'P4'], async () => {
+scen('two orders, same listing, DIFFERENT files: one design answers the listing; the second is saved under its own NEW SKU and takes nothing over (NEWSKU)', ['P2', 'P4'], async () => {
   const w = mkWorld(); const a = mkTab(w, { rid: RID1, design: designs.A }), b = mkTab(w, { rid: RID2, design: designs.B }); await w.ready; await b.k.open();   // (both windows are open before either saved)
   await carry(w, a); const sA = expectSaved(w, { allowOthers: true });
   await b.k.run(); if (DRIVER !== 'press') await carry(w, b); const al = store.get('Charm_Sku_Aliases/' + LISTING), targets = Object.values((al && al.bySku) || {}); const f = [...sA.f];
   const second = store.get('Charm_Custom_Saves/' + RID2); const lines = DRIVER === 'durable' ? [b.k.phase().line, (await b.k.open()).why].filter(Boolean) : b.events.filter(e => e.done).map(e => e.text); if (!second && !lines.length) f.push('the second order ended with no line at all');
   if (targets.length !== 1) f.push('the listing answers with more than one design: ' + JSON.stringify(targets));
   else if (second && second.sku !== sA.sku) {
-    if (targets[0] !== second.sku) f.push('the second design was saved but the listing does not read it: ' + JSON.stringify(targets));
-    if (!docs('Charm_Keep_Overrides').length) f.push('the takeover left no audit record');
-    if (!store.get('Charm_Master_Index/' + sA.sku)) f.push('the first design lost its SKU');
+    // NEWSKU (Paul, 17 Nov 2026): the second design is saved under its OWN new SKU; the first design, its SKU and the listing's answer stay exactly as they were; no override
+    if (targets[0] !== sA.sku) f.push('the listing\'s answer was changed by the second save: ' + JSON.stringify(targets) + ' (first ' + sA.sku + ')');
+    if (docs('Charm_Keep_Overrides').length) f.push('an override audit record was written');
+    const e1 = store.get('Charm_Master_Index/' + sA.sku); if (!e1) f.push('the first design lost its SKU'); else if (e1.charmHash !== designs.A.charmHash) f.push('the first design was replaced');
+    const e2 = store.get('Charm_Master_Index/' + second.sku); if (!e2 || e2.charmHash !== designs.B.charmHash) f.push('the second design is not under its own new SKU: ' + JSON.stringify(e2));
   } else if (targets[0] !== sA.sku) f.push('the listing\'s alias was taken over with no save of the second design: ' + JSON.stringify(targets) + ' (first ' + sA.sku + ')');
   return { f };
 });
@@ -290,9 +292,15 @@ scen('the same file in the repository under another listing: reused, no new file
 for (const [label, sku] of [['missing', ''], ['malformed', 'a b/c?? !!'], ['lower case', 'acorn leaf 4821'], ['reserved family (CUSTOM_6673)', 'CUSTOM_6673'], ['already a master design', 'HEART_1111']]) scen(`listing SKU ${label}: a defined calm end`, ['P2'], async () => {
   const w = mkWorld(); if (label === 'already a master design') store.set('Charm_Master_Index/HEART_1111', { sku: 'HEART_1111', charmHash: designs.B.charmHash, aiPath: 'x', thumbPath: 'y' });
   const t = mkTab(w, { sku }); const r = await carry(w, t); const f = []; const info = r.info;
-  if (label === 'already a master design' && info.offered) {   // (KEEPOVERRIDE: the line's own SKU read as ANOTHER drawing: the switch moves HEART_1111 to the dropped design, an audit record says so)
-    const e = store.get('Charm_Master_Index/HEART_1111');
-    if (r.res && r.res.done !== 'linked') f.push('ended ' + (r.res && r.res.done)); else { if (!e || e.charmHash === designs.B.charmHash) f.push('HEART_1111 still draws the old design: ' + JSON.stringify(e)); if (!docs('Charm_Keep_Overrides').length) f.push('no audit record of the override'); }
+  if (label === 'already a master design' && info.offered) {   // (NEWSKU, Paul 17 Nov 2026: the line's own SKU read as ANOTHER drawing: HEART_1111 is NOT touched, the design is saved under a NEW SKU, no override, no listing answer for HEART_1111)
+    const e = store.get('Charm_Master_Index/HEART_1111'), idx = docs('Charm_Master_Index').map(([id, v]) => Object.assign({ sku: id }, v));
+    if (r.res && r.res.done !== 'linked') f.push('ended ' + (r.res && r.res.done)); else {
+      if (!e || e.charmHash !== designs.B.charmHash || e.aiPath !== 'x' || e.hashSource) f.push('HEART_1111 was changed: ' + JSON.stringify(e));
+      if (docs('Charm_Keep_Overrides').length) f.push('an override audit record was written');
+      const fresh = idx.filter(x => x.sku !== 'HEART_1111' && x.hashSource === 'custom-save'); if (fresh.length !== 1) f.push('expected ONE new custom-save entry, got ' + fresh.length + ': ' + JSON.stringify(idx.map(x => [x.sku, x.hashSource, x.charmHash])));
+      const al = store.get('Charm_Sku_Aliases/' + LISTING); if (al && al.bySku && (al.bySku.HEART_1111 || al.bySku['HEART 1111'])) f.push('the listing was answered for HEART_1111: ' + JSON.stringify(al.bySku));
+      if (info.override) f.push('the engine still offers an override');
+    }
     return { f };
   }
   if (!info.offered) { if (!info.why) f.push('not offered and no reason'); f.push(...nothingWritten(w)); return { f }; }
