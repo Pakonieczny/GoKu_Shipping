@@ -3118,7 +3118,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     host.innerHTML = `<button type="button" class="swOffBtn">${ICON.off}Take off the sheet…</button>`;
     host.querySelector("button").onclick = () => renderOff(x);
   }
+  /* NEVERBLANK (Paul, 18 Nov 2026, Ana's computer: "the whole pop-up is missing"): the take-off panel is drawn by renderOffNow; anything that throws while it is drawn is SAID in the panel (and logged), never left as nothing. */
   function renderOff(x) {
+    try { return renderOffNow(x); }
+    catch (e) {
+      console.warn("sheet window: the take-off panel", e);
+      const host = W.el && W.el.detail && W.el.detail.querySelector("[data-r2=off]");
+      if (host) host.innerHTML = `<div class="swOff" role="group" aria-label="Take off the sheet"><h4>Take off the sheet</h4><div class="note">The take-off options could not be drawn on this computer: ${esc((e && e.message) || String(e))}. Nothing was changed. Close this window and open it again; if it stays, tell Paul this line.</div></div>`;
+    }
+  }
+  function renderOffNow(x) {
     const host = W.el.detail.querySelector("[data-r2=off]"); if (!host) return;
     // (CLOUDALL C4, Paul 13 Nov 2026: "The Take of Sheet function is not working. Remember, only the actual charm selected should be removed ... replaced from a draft sheet with a piece that fits ... only from a single piece order"; "It doesn't matter which computer is doing that"): the sheet is first made changeable on this computer from the cloud (its record read, its pieces rebuilt), whichever computer this is
     const CS = window.CharmNestCloudSheets, here = W.id ? allSheets().find(p => p.sheetId === W.id) : null;
