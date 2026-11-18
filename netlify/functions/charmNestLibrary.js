@@ -474,8 +474,7 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
   const backApproved=(s,id)=>{const b=(Array.isArray(s.backPool)?s.backPool:Array.isArray(s.backs)?s.backs:[]).find(r=>r && String(r.poolId)===String(id) && r.face!=='front' && !r.invalidated && !r.pending && r.approvedAt && r.approvedBy);return b||null;};
   for(const s of evidence.values())s.engraving=Object.fromEntries(Readiness.idsOf(s).map(id=>{
     let d=decisions[id] || (CUSTOM_PIECES.has(id)?{needed:false,state:'none',approved:true}:{needed:true,state:'unknown',approved:false});
-    if(d && d.approved!==true && !(d.needed===false && d.state==='none')){const b=backApproved(s,id);if(b)d={...d,needed:true,state:'approved',approved:true,approvedBy:str(b.approvedBy,80),approvedAt:num(b.approvedAt),fromBack:true};}
-    return [id,d];
+    return [id,engApprovedByBack(d,backApproved(s,id))];
   }));
   /* An order a person sent to Review holds the sheet it sits on until it is resolved there. The page holds the sheet at once (charm-nest-review-hold.js); the server holds it too where it WRITES
      (a transaction: the laser seal, completing a set, the cut), so an older page or a second computer can never get past it. openReviews() above says which are open. */
@@ -496,6 +495,14 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
    An archive grows for as long as the run stays open, so no reader reads all of it to answer about a few orders: each
    part lists its lines (keys) and orders, and carries its copies' engraving decisions (decisions), and a reader reads
    the few parts that hold what it asks for, and only the fields it needs. */
+/* ENGLABEL (Paul, 17 Nov 2026: "they are approved but the sheet says they are not"; checked on the live Silver Set-3 Sheet-1: 22 pieces whose approved back is saved still read {needed, state:'review', approved:true}): a run's saved line can say approved:true and still
+   carry the state 'review' it was made in. ENGLIVE (above) only read the sheet's own approved back where the line said approved was NOT true, so those pieces kept the word "review" for good. A piece whose saved back record is approved by a named person (b, from
+   backApproved: not withdrawn, not still being saved) is approved whatever state its line still names, unless the line says there is nothing to engrave. Pure: (decision, back record or null) -> decision. */
+function engApprovedByBack(d, b) {
+  if (!d || !b || (d.needed === false && d.state === 'none')) return d;
+  if (d.approved === true && d.state !== 'review') return d;
+  return { ...d, needed: true, state: 'approved', approved: true, approvedBy: str(b.approvedBy, 80), approvedAt: num(b.approvedAt), fromBack: true };
+}
 const partOrder = (a, b) => num(a.at) - num(b.at) || num(a.seq) - num(b.seq) || String(a.id).localeCompare(String(b.id));
 const lineOfCopy = poolId => { const s = String(poolId), i = s.lastIndexOf("_"); return i > 0 ? s.slice(0, i) : s; };
 const decisionsByLine = lines => Object.fromEntries(Object.keys(lines || {}).map(k => [k, Readiness.decisions([lines[k] || {}])]));
@@ -6254,6 +6261,7 @@ function feedHeader(keys, counts) {
   return counts && Object.keys(counts).length ? named + ";" + Object.entries(counts).map(([k, n]) => k + "=" + n).join(",") : named;
 }
 exports.ops = OPS;   // the connections check runs the same queries the app runs
+exports.engApprovedByBack = engApprovedByBack;   // (ENGLABEL; tests: tests/charm-nest/eng-label.cjs)
 exports.feedStats = feedStats;   // (FEED: bumpRev's counts, for the contention test)
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: require("./_charmNestAuth").CORS, body: "" };
