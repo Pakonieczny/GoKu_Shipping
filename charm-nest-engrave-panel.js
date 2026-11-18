@@ -194,6 +194,8 @@
     // (NONEGATE 2, Paul 13 Nov 2026, TREBLE_79646 showed "Approved" with no approval: keptApproved is true for None, which has no faces to check): None is Approved only when the
     //  piece carries its CUT PLAIN seal (engravePlain) and nothing was changed; otherwise Approve is lit
     if (d.choice === 'none') { const js = vm.jobs || [], plainKept = js.length > 0 && js.every(j => ['none', 'skipped'].includes(j.state)) && js.some(j => (j.engravingSeals || []).some(s => s && s.how === 'engravePlain')); return !dirty && plainKept ? { st: 'approved', dirty: false } : { st: 'approve', dirty }; }   // (NONEGATE, Paul 13 Nov 2026: "How come the approved button is lit up if it's already been approved": None kept and approved, nothing changed, is Approved, calm)   // (NONEALWAYS, Paul 13 Nov 2026: "I cannot approve the option of none, why the fuck are you blocking me ... I should be able to approve any one I want"): None is approved whatever state the piece is in (being read, placed, approved before)
+    // (HELDENGRAVE, Paul 18 Nov 2026, order 4225100553: an order with no piece on any sheet has nothing to place the words on: Approve waits, off, with the card's own sentence)
+    { const E_ = Eng(), why = E_ && E_.heldNoPiece ? (vm.jobs || []).map(j => tryDo(() => E_.heldNoPiece(j), '')).find(Boolean) : ''; if (why) return { st: 'blocked', why, dirty }; }
     const empty = emptyFaces(vm, d);
     if (dirty) {
       if (empty.length) return { st: 'need', faces: empty, dirty };

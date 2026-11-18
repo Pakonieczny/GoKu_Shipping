@@ -248,6 +248,7 @@
   }
   async function fitOne(j) {
     if (j && !j.fit && (j.lineInput || j.lines || []).length) await ensureCopies(j);
+    if (j && !j.fit && !(j.copies || []).length) return false;   // (HELDENGRAVE, Paul 18 Nov 2026, order 4225100553: a job with no piece at all, an order on hold or taken off its sheet, has nothing to be fitted on: it was made "ready" and fitted again and again, and the open card flickered each time)
     if (!j || j.fit || FITTING.has(j.key) || !["review", "approved", "ready", "written"].includes(j.state) || !(j.lineInput || j.lines || []).length) return !!(j && j.fit);
     const line = j.row && (j.row.parentRow || j.row); if (!line) return false;
     FITTING.add(j.key); TAKING.add(line.key);
@@ -264,8 +265,17 @@
     return !!j.fit;
   }
   /** The piece open on screen is outlined and fitted at once (it does not wait for the background pass) */
+  const TRIED = new Map();   // (HELDENGRAVE: job key -> { at, n }: a pass that changed nothing; the next waits longer, 15 s, 30 s ... 2 min)
   function watchOpen() {
-    setInterval(() => { safe(() => { const c = root.document && root.document.querySelector(".rvItem.full"), j = c && c._job; if (!j) return; const pid = (j.copies || [])[0]; const needOutline = pid && !safe(() => root.Pool.charmOf(pid) || root.Pool.previewCharmOf(pid), null); if (j.fit && !needOutline) return; if (FITTING.has(j.key)) return; (j.fit ? outline(j) : fitOne(j)).then(() => safe(() => E().render())).catch(() => {}); }); }, 600);
+    setInterval(() => { safe(() => {
+      const c = root.document && root.document.querySelector(".rvItem.full"), j = c && c._job; if (!j) return;
+      const pid = (j.copies || [])[0], charmNow = id => !!safe(() => root.Pool.charmOf(id) || root.Pool.previewCharmOf(id), null), needOutline = pid && !charmNow(pid);
+      if (j.fit && !needOutline) { TRIED.delete(j.key); return; }
+      if (FITTING.has(j.key)) return;
+      const t = TRIED.get(j.key); if (t && Date.now() - t.at < Math.min(120000, 15000 * Math.pow(2, t.n))) return;   // (HELDENGRAVE, Paul 18 Nov 2026: "it keeps on flashing the screen": a pass that found nothing to fit was followed by a redraw every 0.6 s, for ever)
+      const sig = () => JSON.stringify([!!j.fit, j.copies || [], (j.copies || [])[0] ? charmNow(j.copies[0]) : false]), was = sig();
+      (j.fit ? outline(j) : fitOne(j)).then(() => { if (sig() !== was) { TRIED.delete(j.key); safe(() => E().render()); } else TRIED.set(j.key, { at: Date.now(), n: Math.min(3, (t ? t.n : -1) + 1) }); }).catch(() => TRIED.set(j.key, { at: Date.now(), n: Math.min(3, (t ? t.n : -1) + 1) }));
+    }); }, 600);
   }
   /** Every other job with words and no fit, a few at a time while the page is idle */
   function fitMissing(done) {

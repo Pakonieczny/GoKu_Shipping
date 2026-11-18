@@ -57,6 +57,7 @@
     etsyWork: "Setting the SKU on Etsy…",
     etsyDone: "Linked on Etsy",
     etsyNo: why => "Etsy not updated: " + why,
+    etsyAlias: (old, sku) => old ? "Etsy keeps its SKU “" + old + "”: this system matches it to " + sku : "Etsy is left as it is: this system matches the listing to " + sku,   // (ETSYALIAS)
     rehearsedSave: sku => "Rehearsed: would save " + sku + ".ai",
     rehearsedHeld: sku => "Rehearsed: already in the repository as " + sku,
     rehearsedEtsy: tail => "Rehearsed: would set the SKU on listing …" + tail,
@@ -278,6 +279,11 @@
     async function etsyStep() {
       if (sandbox) { row("etsy", "rehearsed", T.rehearsedEtsy(tail4())); return { ok: true }; }
       if (st.etsyDone) { row("etsy", "done", T.etsyDone); return { ok: true }; }
+      /* ETSYALIAS (Paul, 18 Nov 2026: "Etsy is rejecting the SKU update for listings. Maybe instead of changing the Etsy SKU have a running tab that makes our system automatically recognize one SKU from Etsy as matching to
+         a different SKU on our system"): the repository step has saved the listing's answer (aliases[listing].bySku[the SKU Etsy sends] = this design), and an order of the listing is read through it. Where that
+         answer is enough (aliasWorks: the SKU Etsy carries is not a shop code that keeps the line a custom order whatever an alias says), Etsy's own SKU is NOT written: nothing to be rejected, nothing to retry.
+         A shop that wants the Etsy write as well passes ctx.etsyWrite: true. */
+      if (ctx.etsyWrite !== true && st.info && st.info.aliasWorks !== false) { st.etsyAlias = true; row("etsy", "skipped", T.etsyAlias(upSku(line.sku).replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 80), st.sku)); return { ok: true, alias: true }; }
       row("etsy", "work", T.etsyWork);
       let r; try { r = await call({ op: "customEtsySkuWrite", rid: String(ctx.rid), listingId }, { timeoutMs: 60000 }); }
       catch (e) { failure("etsy", e, T.etsyNo); return { ok: false, held: "etsy" }; }
@@ -301,6 +307,7 @@
         finish("held", st.sku, text, stopped === "locked" ? { reason: "locked" } : {});
         return { ok: false, done: "held" };
       }
+      if (st.etsyAlias && !st.etsyDone) { out("linked", { alias: true }); finish("linked", st.sku, "Saved · " + st.sku, { detail: "Saved to the repository; the listing's own Etsy SKU is matched here", alias: true }); return { ok: true, done: "linked", alias: true }; }
       if (st.etsyDone) { out("linked"); finish("linked", st.sku, "Linked · " + st.sku, { detail: "Saved to the repository and set on Etsy listing …" + tail4() }); return { ok: true, done: "linked" }; }
       out("saved");
       finish("saved", st.sku, T.savedOnly, st.info && st.info.aliasWorks === false ? { note: T.aliasNote } : {});
@@ -412,6 +419,8 @@
     const KEY = deps.storageKey || INTENTS_KEY, tab = deps.tab || ("t" + Math.random().toString(36).slice(2, 9));
     const autoTried = new Set(), listeners = new Set(), flights = new Map(), redo = new Set(), engines = new Map(), wired = new WeakSet(), polls = new Map();
     let memo = {}, timer = null, stopLock = null;
+    /* ETSYALIAS: does the listing's answer saved here (the repository step's alias) match the order of this save by the SKU Etsy carries? (CharmNestSku.aliasWorks: false for a shop code that keeps the line custom) */
+    const aliasEnough = rec => { try { if (deps.etsyWrite === true) return false; const K = deps.sku || (typeof self !== "undefined" ? self.CharmNestSku : null), old = rec && rec.line && rec.line.sku; return !!(K && typeof K.aliasWorks === "function" && old && K.aliasWorks(String(old), String(rec.sku))); } catch (_) { return false; } };
     const online = () => { try { return typeof deps.online === "function" ? deps.online() !== false : true; } catch (_) { return true; } };
     const lockHeld = () => { try { return !!(deps.lock && typeof deps.lock.find === "function" && deps.lock.find("upload")); } catch (_) { return false; } };
 
@@ -442,7 +451,7 @@
       if (!rec) return { phase: "off", line: "", sku: "", wait: "", attention: false };
       const sku = rec.sku || "", V = (phase, line, extra) => Object.assign({ phase, line, sku, wait: rec.wait || "", attention: phase === "attention", repo: !!rec.repo }, extra || {});
       if (rec.state === "off") return V("off", "");
-      if (rec.state === "done") return rec.outcome === "rehearsed" ? V("rehearsed", PHASE_LINE.rehearsed) : rec.outcome === "already" ? V("linked", "Already linked to " + sku, { linked: true }) : V("linked", "Saved and linked · " + sku, { linked: true });
+      if (rec.state === "done") return rec.outcome === "rehearsed" ? V("rehearsed", PHASE_LINE.rehearsed) : rec.outcome === "already" ? V("linked", "Already linked to " + sku, { linked: true }) : rec.outcome === "alias" ? V("linked", "Saved and matched here · " + sku, { linked: true }) : V("linked", "Saved and linked · " + sku, { linked: true });
       if (rec.state === "attention") return V("attention", "Needs attention: " + (rec.why || "something went wrong"), { auto: rec.auto || "" });
       if (rec.state === "waiting") {
         if (rec.wait === "password" || rec.wait === "connection" || rec.wait === "data" || rec.wait === "retry") return V(rec.wait, PHASE_LINE[rec.wait] + (rec.repo && rec.wait !== "retry" ? "" : ""));
@@ -490,6 +499,8 @@
       for (const rec of Object.values(all)) {
         if (!rec) continue;
         if ((rec.state === "done" || rec.state === "off") && t - (rec.upd || 0) > KEEP_DONE_MS) { const n = Object.assign({}, readAll()); delete n[rec.key]; writeAll(n); continue; }
+        // (ETSYALIAS: a save that reached the repository and was left "needs attention" only because Etsy would not take its SKU is finished when the listing's answer here matches the SKU Etsy carries)
+        if (rec.state === "attention" && rec.repo && rec.sku && !rec.etsy && !rec.sandbox && aliasEnough(rec)) { const n = patch(rec.key, { state: "done", wait: "", why: "", etsy: false, outcome: "alias", fails: 0, nextAt: 0, auto: "" }); if (n) remote(n); continue; }
         // (a needs-attention save that Etsy may take later, e.g. after Paul re-authorised it, is tried once more per page load; the person is never asked for it)
         if (rec.state === "attention" && rec.auto && reason === "load" && !autoTried.has(rec.key)) { autoTried.add(rec.key); patch(rec.key, { state: "wanted", wait: "", fails: 0, nextAt: 0 }); }
         if (live(read(rec.key))) tick(rec.key, reason || "resume");
@@ -565,6 +576,7 @@
       let k = 0;
       for (const p of Array.isArray(list) ? list : []) {
         const rid = String(p && p.rid || ""), listing = digits(p && p.listingId); if (!rid || !listing) continue;
+        if (p && p.linkNeedsEtsy === false) continue;   // (ETSYALIAS: the listing's answer here already matches the SKU Etsy carries: nothing to write on Etsy, and no 10-minute retries of a write Etsy refuses)
         const key = [sandbox ? "sbx" : "live", rid, listing, "etsy"].join("|"), all = readAll(), mine = Object.values(all).find(r => r && r.rid === rid && r.listingId === listing && r.sandbox === !!sandbox && r.key !== key && (live(r) || r.state === "done"));
         if (mine || (all[key] && (live(all[key]) || all[key].state === "done" || (all[key].state === "attention" && !force)))) continue;
         const rec = { v: 1, key, sandbox: !!sandbox, rid, listingId: listing, hash: "etsy", name: "", kind: "ai", by: "", ck: "", title: "", line: null, at: now(), upd: now(), state: "wanted", wait: "", why: "", sku: String(p.sku || ""), repo: true, etsy: false, fails: 0, nextAt: 0, auto: "", outcome: "", tab, etsyOnly: true };
@@ -593,7 +605,7 @@
     function settle(key, res, out) {
       const rec = read(key); if (!rec) return;
       const sku = out.sku || rec.sku || "", done = out.done || res.done;
-      if (done === "linked" || done === "rehearsed") { const n = patch(key, { state: "done", wait: "", why: "", sku, repo: true, etsy: done === "linked", outcome: done, fails: 0, nextAt: 0 }); remote(n); return; }
+      if (done === "linked" || done === "rehearsed") { const alias = done === "linked" && out.alias === true; const n = patch(key, { state: "done", wait: "", why: "", sku, repo: true, etsy: done === "linked" && !alias, outcome: alias ? "alias" : done, fails: 0, nextAt: 0 }); remote(n); return; }
       if (done === "already") { const n = patch(key, { state: "done", wait: "", why: "", sku: out.sku || sku, outcome: "already", nextAt: 0 }); remote(n); return; }
       if (res.done === null || res.done === undefined) {        // the engine did not offer the save
         if (res.linked) { const n = patch(key, { state: "done", wait: "", why: "", sku: res.linked, outcome: "already", nextAt: 0 }); remote(n); return; }
