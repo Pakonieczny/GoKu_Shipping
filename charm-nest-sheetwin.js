@@ -3063,7 +3063,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const sh = holder.get(id), pr = poolRowOf(id, rid), mine = W.byPool.get(id);
       const sku = mine?.sku || pr?.sku || "";
       if (!sh) {
-        if (pr && pr.sheetId && !["abandoned", "superseded"].includes(pr.state)) stay.push({ id, sku, where: sheetWord(pr.sheetId, pr.sheetName), kind: pr.state === "committed" ? "sent" : "unloaded", why: pr.state === "committed" ? "its set was already sent to the station" : "its sheet is not open in this sorter" });
+        if (pr && pr.sheetId && !["abandoned", "superseded"].includes(pr.state)) {
+          const card = allSheets().find(p => p.sheetId === pr.sheetId), cutCard = card && (card.roseCutAt || (card.recalled && card.recalled.roseCutAt)), doneCard = card && (+card.laserDoneAt > 0 || (card.recalled && +card.recalled.laserDoneAt > 0));
+          if (cutCard || doneCard) stay.push({ id, sku, where: sheetWord(pr.sheetId, pr.sheetName), kind: "cut", why: cutCard ? "that sheet was already cut" : "that sheet was marked completed" });   // (CUTSHEETPLAN: the same words the live sheet gives)
+          else stay.push({ id, sku, where: sheetWord(pr.sheetId, pr.sheetName), kind: pr.state === "committed" ? "sent" : "unloaded", why: pr.state === "committed" ? "its set was already sent to the station" : "its sheet is not open in this sorter" });
+        }
         else if (mine) stay.push({ id, sku, where: sheetWord(W.id, W.rec?.fileBase), kind: "unloaded", why: "this sheet is not open in this sorter" });
         else ok.push({ id, sku, sh: null, where: "not on a sheet yet" });
         continue;
@@ -3120,7 +3124,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const CS = window.CharmNestCloudSheets, here = W.id ? allSheets().find(p => p.sheetId === W.id) : null;
     if (CS && W.id && (!here || here.recalled) && !x._cloudReady) {
       host.innerHTML = `<div class="swOff" role="group" aria-label="Take off the sheet"><h4>Take off the sheet</h4><div class="note">Opening this sheet from the cloud so it can be changed here…</div></div>`;
-      CS.ensureLive(W.id).then(() => { x._cloudReady = true; if (x.rid) W.pools.delete(String(x.rid)); if (host.isConnected) renderOff(x); }, e => { if (host.isConnected) host.innerHTML = `<div class="swOff" role="group" aria-label="Take off the sheet"><h4>Take off the sheet</h4><div class="note">This sheet could not be opened from the cloud: ${esc((e && e.message) || String(e))}. Nothing was changed.</div></div>`; });
+      CS.ensureLive(W.id).then(() => { x._cloudReady = true; if (x.rid) W.pools.delete(String(x.rid)); if (host.isConnected) renderOff(x); }, e => { if (/already cut/i.test(String((e && e.message) || e))) { x._cloudReady = true; if (host.isConnected) renderOff(x); return; }   /* (CUTSHEETPLAN, Paul 18 Nov 2026, Ana's computer, order 4231640384 on a cut Rose Gold sheet: "it's not even showing her all the proper options"): a cut layout is never opened for change, on any computer; what can come off it is planned from its record, as on the computer that carries the run */ if (host.isConnected) host.innerHTML = `<div class="swOff" role="group" aria-label="Take off the sheet"><h4>Take off the sheet</h4><div class="note">This sheet could not be opened from the cloud: ${esc((e && e.message) || String(e))}. Nothing was changed.</div></div>`; });
       return;
     }
     const mates0 = x.rid ? offPlan(x, true) : null, one0 = offPlan(x, false);
