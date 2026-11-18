@@ -5,6 +5,7 @@
 //   2  Approve can be pressed (nothing on the card says the order is on hold, or blocks it)
 //   3  the card is drawn once and left alone (no redraw loop) after it settled
 //   4  nothing was written to the cloud to get there (reads only)
+//   (NO_COPIES=1: the job names NO piece at all, as on a computer that did not pool the line: the piece is found from the cloud's own pool row; REAL_FILE / REAL_HASH: a real design file)
 // Real charm-nest-1.html over the repo's fake site with a real design file in its bucket. Nothing live.   PW_DIR=... CHROMIUM=... node tests/charm-nest/engrave-held-custom-charm.cjs
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '../..');
@@ -19,8 +20,8 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
   let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { try { ({ chromium } = require('/opt/node22/lib/node_modules/playwright/node_modules/playwright-core')); } catch (__) { console.log('engrave-held-no-piece: playwright-core not found, skipped'); process.exit(0); } }
   const shots = process.env.SHOTS || ''; if (shots) fs.mkdirSync(shots, { recursive: true });
   const srv = await start({ receipts: [] });
-  srv.st.blobs.set(AIPATH, { buf: fs.readFileSync(path.join(__dirname, 'fixtures', 'COMET_9427.ai')), generation: 1, meta: { contentType: 'application/pdf', metadata: { firebaseStorageDownloadTokens: 't' } } });
-  srv.st.put('Charm_Pool', PID, { poolId: PID, orderId: RID, lineKey: KEY, transactionId: TX, sku: 'DIRECTOR_22959', copy: 1, quantity: 1, material: 'gold', custom: true, engrave: false, aiPath: AIPATH, customFile: '11.ai', charmHash: 'unknown', state: 'abandoned', sheetId: null, setId: null, heldAt: Date.now() - 3600e3, heldBy: 'Ana_M', heldReason: 'on hold' });
+  srv.st.blobs.set(AIPATH, { buf: fs.readFileSync(process.env.REAL_FILE || path.join(__dirname, 'fixtures', 'COMET_9427.ai')), generation: 1, meta: { contentType: 'application/pdf', metadata: { firebaseStorageDownloadTokens: 't' } } });
+  srv.st.put('Charm_Pool', PID, { poolId: PID, orderId: RID, lineKey: KEY, transactionId: TX, sku: 'DIRECTOR_22959', copy: 1, quantity: 1, material: 'gold', custom: true, engrave: false, aiPath: AIPATH, customFile: '11.ai', charmHash: process.env.REAL_HASH || 'unknown', state: 'abandoned', sheetId: null, setId: null, heldAt: Date.now() - 3600e3, heldBy: 'Ana_M', heldReason: 'on hold' });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   const fails = [];
   const check = (ok, msg) => { if (!ok) fails.push(msg); console.log((ok ? '  ✓ ' : '  ✗ ') + msg); };
@@ -36,17 +37,17 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     await page.waitForFunction(() => window.CN && window.Orders && window.Engrave && window.CharmNestEngravePanel && CN.S.cloud.ok === true, null, { timeout: 60000 });
 
     // the order ON HOLD; its pool row is only in the cloud (this page holds no row and no charm for it); its engraving job in Review with the words and no fit
-    await page.evaluate(async ({ order, KEY, PID }) => {
+    await page.evaluate(async ({ order, KEY, PID, NOCOPIES }) => {
       const line = order.lines[0];
       const row = { key: KEY, order, line, arrivedAt: Date.now() - 3600e3, spec: null, problems: [], state: 'held', hold: 'on hold: the design is not ready', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null };
       B.orders.rows.push(row); B.orders.byKey.set(KEY, row);
       Orders.interpretAll(); await Orders.loadMaps(true); Orders.interpretAll();
       row.spec.engraveCandidate = true;
       const j = Engrave.ensureJob(row);
-      Object.assign(j, { state: 'review', text: 'AB', lines: ['AB'], lineInput: ['AB'], copies: [PID], pre: true, fit: null, view: null, mask: null, confidence: 0.85, source: 'personalization' });
+      Object.assign(j, { state: 'review', text: 'AB', lines: ['AB'], lineInput: ['AB'], copies: NOCOPIES ? [] : [PID], pre: true, fit: null, view: null, mask: null, confidence: 0.85, source: 'personalization' });
       row.engrave = { needed: true, state: 'review', approved: false, text: j.text };
       window.__renders = 0; const r0 = Engrave.render; Engrave.render = function () { __renders++; return r0.apply(this, arguments); };
-    }, { order: ORDER, KEY, PID });
+    }, { order: ORDER, KEY, PID, NOCOPIES: process.env.NO_COPIES === '1' });
     srv.st.calls.length = 0;
 
     await page.evaluate(async KEY => {
