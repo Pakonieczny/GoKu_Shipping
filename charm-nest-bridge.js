@@ -11053,7 +11053,9 @@ const Engrave = window.Engrave = (() => {
       // The network or the cloud gone for a while is not the placement's fault: the approval stands and its back file waits
       // for the cloud, written when it is back (resumeBacks). It used to undo the approval, and after a wake a person
       // approved the same words again. Only a file that fails its own checks goes back to review.
-      if (!e.engravingInvalid) {
+      if (/has been superseded/i.test(String(e && e.message))) {   // (SUPERSEDED, Paul 18 Nov 2026: "Approvals not saved": the cloud holds a NEWER or an invalidated approval of this very back, so this approval has nothing left to save, and it was tried again every few minutes for ever; the flag comes off, the cloud's own state is what every computer shows)
+        delete job.backPending; delete job.poolPending; backRetry.n = 0; agent({ engrave: true }, "warn", `${job.row.order.receiptId}: this approval was replaced in the cloud by a newer one; it is not saved again (${e.message})`); Session.schedule(); }
+      else if (!e.engravingInvalid) {
         job.backPending = e.message; agent({ engrave: true }, "warn", `${job.row.order.receiptId}: the approved back file waits for the cloud (${e.message})`); retryBacksLater(); render(); }
       else { job.state = "review"; job.row.engrave.state = "review"; job.row.engrave.approved = false; job.reason = "back file failed: " + e.message; refreshBacks(); agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); } }
     finally { job.backSaving = false; Session.schedule(); if (EG.cardKey === job.key) { try { render(); } catch (_) { /* drawn with the next render */ } } }   // (NODECIDED: the card of an approved piece in front follows the end of its back file's saving: its position buttons)
@@ -11074,7 +11076,7 @@ const Engrave = window.Engrave = (() => {
     let cleared = 0; const asks = [];
     for (const job of items().values()) {
       if (!job || !job.backPending || job.editingBack) continue;
-      if (!apLive(job)) { job.backPending = false; delete job.poolPending; cleared++; continue; }   // (not an approval in force: nothing to save)
+      if (!apLive(job) || /has been superseded/i.test(String(job.backPending))) { job.backPending = false; delete job.poolPending; cleared++; continue; }   // (not an approval in force, or one the cloud says another has replaced: nothing to save)
       asks.push(job);
     }
     if (asks.length && S.cloud.ok) {

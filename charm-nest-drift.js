@@ -76,6 +76,7 @@
     for (const j of items.values()) {
       if (!j || !j.backPending || j.editingBack) continue;
       if (!(["approved", "written"].includes(j.state) || !!(j.approving && j.state === "review"))) continue;   // (STALEBACK: not an approval in force: nothing waits to be saved)
+      if (!safe(() => (j.copies || []).some(id => root.Pool.charmOf(id) || root.Pool.previewCharmOf(id)), true)) continue;   // (a computer that holds no charm of the piece (a sheet it has only as a saved card) cannot write its back: the computer that carries the run does, and counts it)
       const at = +j.approvedAt || +(j.approving && j.approving.at) || 0, copies = (j.copies || []).map(String).filter(id => held.has(id));
       if (!copies.length) continue;   // (none of its pieces is on a sheet any more, replaced or taken off: there is nothing to save for it; 13 of the 19 "waiting" on Michelle's computer were of this kind)
       const have = id => (held.get(id).backPool || []).some(b => b && String(b.poolId) === id && !b.invalidated && !b.pending && (+b.approvedAt || 0) >= at && (at > 0 || +b.approvedAt > 0));
