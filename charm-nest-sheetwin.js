@@ -3292,6 +3292,19 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 
   /** (CLOUDALL C4, Paul 13 Nov 2026: "The Take of Sheet function is not working. Remember, only the actual charm selected should be removed ... replaced from a draft sheet with a piece that fits ... only from a single piece order"; "It doesn't matter which computer is doing that"): the draft sheets of a metal, opened from the cloud on this computer, so a freed spot can be filled from them */
   async function openDrafts(sh) { const CS = window.CharmNestCloudSheets; if (!CS) return; for (const p of allSheets().slice()) { const r = p.recalled; if (p === sh || !r || p.metal !== sh.metal || !(r.draft || p.draft) || r.releaseFull || r.laserDoneAt || r.roseCutAt) continue; try { await CS.ensureLive(p.sheetId); } catch (e) { console.warn("sheet window: open draft", e); } } }
+  /** (SETREFUSAL) A write of a sheet that stopped on the cloud's refusal to put it into a set (a partial sheet never joins a set, a set that is full, ...) is not a failed write when the cloud holds the sheet as this page has it now with none of `ids` placed on it.
+   *  → { note } when it is so (the page's problem mark is cleared: the sheet is saved), else null. */
+  async function savedDespiteSetRefusal(sh, e, ids) {
+    const msg = String((e && e.message) || e || ""); if (!/cannot go into|never joins a set|set rules|not full yet|joins a set/i.test(msg) || !sh || !sh.sheetId) return null;
+    let rec = null; try { rec = ((await api("charmNestLibrary", { op: "getSheet", id: sh.sheetId }, { quiet: true })) || {}).sheet; } catch (_) { return null; }
+    if (!rec) return null;
+    const byId = new Map((rec.charms || []).map(c => [c.id, c.poolId])), cloud = new Set((rec.placements || []).map(p => byId.get(p.id)).filter(Boolean));
+    const here = new Set((sh.placements || []).map(p => { const c = (sh.charms || []).find(z => z.id === p.id); return c && c.poolId; }).filter(Boolean));
+    if (!here.size && !cloud.size) return null;
+    if ([...ids].some(id => cloud.has(id)) || cloud.size !== here.size || [...here].some(id => !cloud.has(id))) return null;   // (the cloud does not hold this sheet as it stands: a real failure)
+    if (/^not saved to the cloud/.test(String(sh.problem || "")) || sh.problem === msg) { sh.problem = null; sh.persistedDone = true; sh.dirty = false; }
+    return { note: "saved; the set refused to take this sheet (" + msg.replace(/^.*?cannot go into/i, "it cannot go into").replace(/\s+/g, " ").slice(0, 160) + ")" };
+  }
   async function takeOff(plan, opt, who) {
     const list = plan.ok; if (!list.length) return;
     const pressedAt = Date.now();   // (a cancel's moment on its timeline: when it was pressed, not when the record was kept)
@@ -3306,6 +3319,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const sheetId = ui ? W.id : null, names = listWhere(list.filter(o => o.sh));
     const rewrite = pages.map(sh => ({ sh, name: sheetWord(sh.sheetId, sh.fileBase, sh), st: stepOf(`Rewriting ${sheetWord(sh.sheetId, sh.fileBase, sh)}`) }));
     const labels = stepOf(`Remaking the QR label${pages.length === 1 ? "" : "s"}`), check = stepOf("Checking the saved sheets");
+    const setNotes = [];   // (SETREFUSAL: what the set look refused while the sheets were written: said at the end, never a failure)
     const wait = stepOf("Waiting for the sheets to finish their current step");
     const off = stepOf(`Taking ${list.length === 1 ? "1 piece" : list.length + " pieces"} off${names ? " " + names : ""}`);
     const keep = stepOf("Keeping its record under Cancelled orders"), gone = stepOf("Taking it off every list");
@@ -3399,7 +3413,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       Review.syncOrderItems(); Orders.render(); Engrave.render();
       off.state = "ok"; paint();
       // 4 · each sheet written again as it now stands, with a new QR label, and read back
-      for (const r of rewrite) { if (!activeCharms(r.sh).length && window.Gate && typeof Gate.dropEmpty === "function") { await Gate.dropEmpty(r.sh); r.st.state = "ok"; paint(); continue; } await rewritePage(r.sh, r.st, paint); }   // (EMPTYOK)
+      for (const r of rewrite) { if (!activeCharms(r.sh).length && window.Gate && typeof Gate.dropEmpty === "function") { await Gate.dropEmpty(r.sh); r.st.state = "ok"; paint(); continue; }   // (EMPTYOK)
+        // (SETREFUSAL, Paul 18 Nov 2026: "I was trying to use Remove from sheet ... It started the process but got stuck, this process can not get fucking stuck"): the sheet was written with the piece off (the cloud had it at 14:29:31), and then the set look refused to put this
+        //  partial draft into an old set ("GF Draft 15 cannot go into Set 5 ... a partial sheet never joins a set"); that refusal, which is not about the removal, came back as the sheet's own "not saved to the cloud" and ended the whole removal. A refusal of a set JOIN is no failure
+        //  of the removal when the cloud holds the sheet as it now stands: it is checked against the record, and said.
+        try { await rewritePage(r.sh, r.st, paint); }
+        catch (e) { const ok = await savedDespiteSetRefusal(r.sh, e, ids); if (!ok) throw e; r.st.state = "ok"; r.st.detail = ok.note; setNotes.push(ok.note); paint(); } }
       if (pages.length) {
         await remakeLabels(pages, labels, paint);
         letGo(pages);
@@ -3438,6 +3457,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       work.note = fates.join(" ") + (cancel ? ` The record is under Orders › Cancelled.` : rid && rowsOfOrder(rid).some(r => r.hold) ? ` Order ${esc(rid)} is under On hold.` : "") +
         (plan.stay.length ? ` ${plan.stay.length === 1 ? "1 piece" : plan.stay.length + " pieces"} stayed (${esc(plan.stay.map(o => o.where + ": " + o.why).join("; "))})${cancel ? ": set them aside once cut" : ""}.` : "") +
         ((plan.pairNotes || []).length ? ` ${esc(plan.pairNotes.join(" "))}` : "") + (aloneNote ? ` ${esc(aloneNote)}` : "");
+      if (setNotes.length) work.note += ` ${esc(setNotes.join("; "))}.`;
       if (cue) cue.end();
       paint(); endFlow(work);
       // (REFILL, Paul 11 Nov 2026: "when a user removes a given piece from a sheet ... another piece is found to take its place on that particular sheet and taken from a newer In process sheet
@@ -4345,6 +4365,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (src === target || src._manualHold || target._manualHold || src.metal !== target.metal || src.roseCutAt || src.recalled || src.laserDoneAt || sentToStation(src)) return false;
     if (window.LiveNest && LiveNest.closed(src)) return false;
     if (window.Gate && Gate.modern(src.runId) && src.setId && !src.draft) return false;
+    // (NOTAKE, Paul 18 Nov 2026: "why would it pull an order from somewhere else to replace one on a new draft?"; the freed room of a new draft offered order 4222232089, 13 days old, from GF Sheet 1 of the Nov 12 Set-1, a RELEASED sheet in a set): the rule above is the rule, whatever
+    //  the run's age says: a sheet that is released (full, sent on to its set) or that is in a set is never the place an order is taken from
+    if (src.releaseFull || (src.setId && !src.draft)) return false;
     return true;
   }
   /* A pair (or n discs) moves whole. An order whose group has a piece on a sheet other than the ones it moves from and the sheet it moves to (a cut, released,
