@@ -54,7 +54,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       await new Promise(r => setTimeout(r, 400));
       const c = document.querySelector('#egQueue .rvItem[data-kind=placement]');
       const q = s => c ? c.querySelectorAll(s).length : -1;
-      return { has: !!c, text: c ? c.innerText.replace(/\s+/g, ' ') : '', approve: q('[data-a=approve]'), approveOn: c ? [...c.querySelectorAll('[data-a=approve]')].filter(b => !b.disabled).length : -1, heldNotes: c ? [...c.querySelectorAll('.egHeldNote,.egApproveWhy,.why')].map(n => n.className + ':' + n.textContent.trim().slice(0, 40)) : [], ctl: q('.ctl'), centre: q('[data-a=centre]'), lines: q('[data-a=linecount]'), held: q('.egHeldNote'), heldText: c && c.querySelector('.egHeldNote') ? c.querySelector('.egHeldNote').textContent.replace(/\s+/g, ' ').trim() : '',
+      return { has: !!c, text: c ? c.innerText.replace(/\s+/g, ' ') : '', approve: q('[data-a=approve]'), approveOn: c ? [...c.querySelectorAll('[data-a=approve]')].filter(b => !b.disabled).length : -1, heldNotes: c ? [...c.querySelectorAll('.egHeldNote,.egApproveWhy,.why')].map(n => n.className + ':' + n.textContent.trim().slice(0, 40)) : [], ctl: q('.ctl'), centre: q('[data-a=centre]'), lines: q('[data-a=linecount]'), held: c ? [...c.querySelectorAll('*')].filter(n => !n.children.length && /on hold, so its piece is not on a sheet/.test(n.textContent)).length : -1, heldText: c ? ([...c.querySelectorAll('*')].filter(n => !n.children.length && /on hold, so its piece is not on a sheet/.test(n.textContent))[0] || { textContent: '' }).textContent.replace(/\s+/g, ' ').trim() : '',
         centreOff: c && c.querySelector('[data-a=centre]') ? c.querySelector('[data-a=centre]').disabled : null, canvases: q('canvas'), state: j.state, fit: !!j.fit };
     }, KEY);
 
@@ -62,9 +62,9 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     const d = await open();
     console.log('   card:', JSON.stringify(d).slice(0, 700));
     check(d.has, 'the Engrave detail opens on the held order\'s job');
-    check(d.held === 1 && /on hold/i.test(d.heldText) && /sheet/i.test(d.heldText), 'it says plainly that the order is on hold and the engraving opens once it is placed on a sheet: "' + d.heldText + '"');
+    check(d.held >= 1 && /on hold/i.test(d.heldText) && /sheet/i.test(d.heldText), 'it says plainly that the order is on hold and the engraving opens once it is placed on a sheet: "' + d.heldText + '"');
     check(d.approveOn === 0, 'and Approve cannot be pressed (there is nothing to place the words on): ' + JSON.stringify({ buttons: d.approve, pressable: d.approveOn }));
-    check(d.heldNotes.filter(x => /^egHeldNote/.test(x)).length === 1, 'the sentence is said once: ' + JSON.stringify(d.heldNotes));
+    check(d.held === 1, 'the sentence is said once, in the panel beside the words (never over the work area, where the Open in Charm Editor button sits): ' + d.held);
     check(d.ctl >= 1 && d.centre === 1 && d.lines === 1 && d.centreOff === true, 'the options row is there, disabled: ' + JSON.stringify({ ctl: d.ctl, centre: d.centre, lines: d.lines, off: d.centreOff }));
     if (shots) await page.screenshot({ path: path.join(shots, 'held-card.png') });
     await page.waitForTimeout(2500);   // (the page's own start-up work settles first)
