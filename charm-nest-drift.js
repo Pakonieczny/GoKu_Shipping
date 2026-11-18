@@ -53,7 +53,7 @@
     return safe(() => {
       const c = root.document && root.document.querySelector(".rvItem.full"), j = c && c._job; if (!j) return "";
       const pid = (j.copies || [])[0], row = pid && root.B.pool.rows.get(pid), ch = pid && (root.Pool.charmOf(pid) || root.Pool.previewCharmOf(pid)), rid = String(((j.row && (j.row.parentRow || j.row)).order || {}).receiptId || "");
-      return ("eng:" + rid + " st=" + j.state + " cp=" + (j.copies || []).length + " row=" + (pid ? (row ? row.state : "none") : "-") + " ch=" + (ch ? 1 : 0) + " pre=" + (j.pre ? 1 : 0) + " fit=" + (j.fit ? 1 : 0) + " ln=" + ((root.Orders.rows().find(r => r === (j.row.parentRow || j.row)) || {}).state || "?")).slice(0, 100);
+      return (rid + " " + j.state + " cp" + (j.copies || []).length + " " + (pid ? (row ? row.state : "norow") : "-") + " ch" + (ch ? 1 : 0) + " pre" + (j.pre ? 1 : 0) + " fit" + (j.fit ? 1 : 0) + " " + ((root.Orders.rows().find(r => r === (j.row.parentRow || j.row)) || {}).state || "?") + (pid && !ch ? " hw=" + safe(() => root.Pool.heldWhy(pid), "") : "")).slice(0, 100);
     }, "");
   }
   /** WHY each approval counted by waiting() is not being saved: the conditions the retry (Engrave.resumeBacks) tests, the first one that holds; as "bk:<order> <why>" in the report's `still` list, for reading in the cloud (never shown). */
@@ -75,6 +75,7 @@
     for (const p of pages()) { for (const c of (p && p.charms) || []) if (c && c.poolId) held.set(String(c.poolId), p); for (const id of (p && p.recalled && p.recalled.poolIds) || []) held.set(String(id), p); }
     for (const j of items.values()) {
       if (!j || !j.backPending || j.editingBack) continue;
+      if (!(["approved", "written"].includes(j.state) || !!(j.approving && j.state === "review"))) continue;   // (STALEBACK: not an approval in force: nothing waits to be saved)
       const at = +j.approvedAt || +(j.approving && j.approving.at) || 0, copies = (j.copies || []).map(String).filter(id => held.has(id));
       if (!copies.length) continue;   // (none of its pieces is on a sheet any more, replaced or taken off: there is nothing to save for it; 13 of the 19 "waiting" on Michelle's computer were of this kind)
       const have = id => (held.get(id).backPool || []).some(b => b && String(b.poolId) === id && !b.invalidated && !b.pending && (+b.approvedAt || 0) >= at && (at > 0 || +b.approvedAt > 0));
@@ -137,6 +138,7 @@
       const { runId, carrier } = runOf(), m = mode();
       const rep = { station: safe(() => root.localStorage.getItem("station_computer_id"), "") || "", role: !runId ? "none" : carrier ? "carrier" : "follower", runId: runId || "", build: BUILD + "/" + (safe(() => (/[?&]v=([^&]+)/.exec((doc.querySelector('script[src*="charm-nest-bridge.js"]') || {}).src || "") || [])[1], "") || ""),
         checked: 0, backWaitN: 0, backWaitMin: 0, behindN: 0, behind: [], stillN: 0, still: [], healed: [], unverifiedN: 0, missingN: 0, extraN: 0, inHandN: 0, rebuilt: 0, mode: m, feed: safe(() => root.CNSync.push.status().state, ""), heapMB: safe(() => Math.round(root.performance.memory.usedJSHeapSize / 1e6), 0), idleS: Math.round((Date.now() - lastInput) / 1000), ...freezeNow() };
+      try { await root.Engrave.settleStuckBacks(); } catch (_) { /* the count below is as the flags are */ }   // (STALEBACK)
       { const w = waiting(); rep.backWaitN = w.n; rep.backWaitMin = w.min; }
       { const d = heldCard(); if (d) rep.note = d; }   // (HELDCHARM: what the open engraving card holds, for a computer whose card is not drawn whole: said in the report, 100 characters)
       let state = null;

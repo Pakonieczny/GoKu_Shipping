@@ -5936,20 +5936,26 @@ const Pool = window.Pool = (() => {
   const previewCharmOf = poolId => (poolId && !charmOf(poolId) && previews.get(poolId)) || null;
   /* HELDCHARM: a piece of a custom order that is on no sheet (its pool row abandoned or held) gets the charm its design file draws, kept as a preview (never recorded, never placed). A read that failed is not asked again for two minutes.
      The row is the page's, else the cloud's (an order on hold is not loaded on every computer). -> the charm, or null. */
-  const heldTasks = new Map(), heldFailed = new Map();
+  const heldTasks = new Map(), heldFailed = new Map(), heldWhyOf = new Map();
   async function previewHeld(poolId) {
     if (!poolId || charmOf(poolId)) return null;
     if (previews.has(poolId)) return previews.get(poolId);
     const t0 = heldFailed.get(poolId); if (t0 && Date.now() - t0 < 120000) return null;
     let task = heldTasks.get(poolId); if (task) return task;
+    const fail = why => { heldFailed.set(poolId, Date.now()); heldWhyOf.set(poolId, String(why).slice(0, 40)); return null; };
     task = (async () => {
-      let p = B.pool.rows.get(poolId) || null;
-      if (!p || !p.aiPath) { const rid = String(poolId).split("_")[0], r = await api("charmNestLibrary", { op: "getOrderPieces", orderId: rid }, { quiet: true }); p = (((r && r.orders && r.orders[rid] && r.orders[rid].pools) || []).find(x => x && x.poolId === poolId)) || null; }
-      if (!p || !p.custom || !p.aiPath || !window.CustomSheet || !window.CustomSheet.heldCharm) { heldFailed.set(poolId, Date.now()); return null; }
+      // (the CLOUD's row first: a row this page kept from an earlier pass may name a file that was sent again since, or a piece that has since been taken off its sheet; the page's own is the fallback)
+      let p = null; const rid = String(poolId).split("_")[0];
+      try { const r = await api("charmNestLibrary", { op: "getOrderPieces", orderId: rid }, { quiet: true }); p = (((r && r.orders && r.orders[rid] && r.orders[rid].pools) || []).find(x => x && x.poolId === poolId)) || null; } catch (_) { p = null; }
+      if (!p || !p.aiPath) p = B.pool.rows.get(poolId) || p;
+      if (!p) return fail("norow");
+      if (!p.custom) return fail("notcustom");
+      if (!p.aiPath) return fail("nofile");
+      if (!window.CustomSheet || !window.CustomSheet.heldCharm) return fail("nomodule");
       const c = await window.CustomSheet.heldCharm(p);
-      if (!c) { heldFailed.set(poolId, Date.now()); return null; }
-      previews.set(poolId, c); previewKeep.add(poolId); return c;
-    })().catch(e => { heldFailed.set(poolId, Date.now()); console.warn("Held custom piece: its design could not be read", e); return null; }).finally(() => heldTasks.delete(poolId));
+      if (!c) return fail("nopiece");
+      previews.set(poolId, c); previewKeep.add(poolId); heldWhyOf.delete(poolId); return c;
+    })().catch(e => { console.warn("Held custom piece: its design could not be read", e); return fail("read:" + String((e && e.message) || e)); }).finally(() => heldTasks.delete(poolId));
     heldTasks.set(poolId, task); return task;
   }
   /* THISORDER (Paul, 12 Nov 2026, order 4227069460: the handwriting drawn on a heart's front in the Charm Editor, saved, and "nothing on the order changed"): a piece not pooled yet (nesting paused)
@@ -6067,7 +6073,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(ListMedia.oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pairResume, previewHeld, heldPoolIds, keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewSwap, previewIds, previewAll: true, previewEntries: () => [...previews.entries()].filter(([id, c]) => c && !charmOf(id)), previewSig: trySig, greenFits, partnerSheets, greenPage, greenResume, greenHeld, greenLeftover };
+  return { pairResume, previewHeld, heldPoolIds, heldWhy: id => heldWhyOf.get(id) || "", keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewSwap, previewIds, previewAll: true, previewEntries: () => [...previews.entries()].filter(([id, c]) => c && !charmOf(id)), previewSig: trySig, greenFits, partnerSheets, greenPage, greenResume, greenHeld, greenLeftover };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -11061,6 +11067,28 @@ const Engrave = window.Engrave = (() => {
   /** A reload while an approval's back files were being written left it approved with none, or only some, of them:
       its sheet showed "Saving…" until the run next passed Engraving, and not at all while the run stayed stopped. After the
       workspace is restored those writes run again, as the approval ran them (saveBacks). */
+  /* STALEBACK (Paul, 18 Nov 2026: "Approvals not saved · 4 / 5 / 10", the oldest 48 to 56 hours, on every computer): a computer's own flag that an approval's back "waits to be saved" is kept in its workspace. The computers' reports say what
+     they were: approvals no longer in force (the job went back to Review, or Blocked, or None: a person has to decide it again, and it says so there) and approvals of pieces the cloud has since taken off their sheets (abandoned),
+     which no sheet can hold a back for. Neither is waiting to be saved, and nothing ever cleared the flag. -> how many flags it cleared. cloud: the order's current pool rows (getOrderPieces), read once for all of them. */
+  async function settleStuckBacks() {
+    let cleared = 0; const asks = [];
+    for (const job of items().values()) {
+      if (!job || !job.backPending || job.editingBack) continue;
+      if (!apLive(job)) { job.backPending = false; delete job.poolPending; cleared++; continue; }   // (not an approval in force: nothing to save)
+      asks.push(job);
+    }
+    if (asks.length && S.cloud.ok) {
+      const rids = [...new Set(asks.map(j => String(((j.row && (j.row.parentRow || j.row)).order || {}).receiptId || "")).filter(Boolean))].slice(0, 30);
+      let res = null; try { res = await api("charmNestLibrary", { op: "getOrderPieces", orderIds: rids, orderId: rids[0] }, { quiet: true }); } catch (_) { res = null; }
+      const pools = new Map(); for (const o of Object.values((res && res.orders) || {})) for (const p of (o && o.pools) || []) if (p && p.poolId) pools.set(p.poolId, p);
+      for (const job of asks) {
+        const ids = (job.copies || []).filter(Boolean); if (!ids.length) continue;
+        if (ids.every(id => { const p = pools.get(id); return !!p && ["abandoned", "superseded"].includes(p.state); })) { job.backPending = false; delete job.poolPending; cleared++; for (const id of ids) { const r = B.pool.rows.get(id); if (r) r.state = pools.get(id).state; } }
+      }
+    }
+    if (cleared) { try { Session.schedule(); render(); } catch (_) { /* the flags are cleared */ } }
+    return cleared;
+  }
   function resumeBacks(pendingOnly) {
     recoverApprovals();
     try { let healed = 0; for (const job of items().values()) if (healBlockedApproval(job)) healed++; if (healed) { Session.schedule(); render(); } } catch (e) { console.warn("[Engrave] heal", e); }   // (ENGSAVED: an approval blocked after its back was saved is put right)
@@ -15126,7 +15154,7 @@ const Engrave = window.Engrave = (() => {
     return n;
   }
   artChanged._again = new Map();
-  return { viewFaceOf, setViewFace, showFace, showStage: svShowStage, stageNow: svStageNow, stageSeq: k => { const r = SV_STAGES.get(String(k == null ? "" : k)); return r ? r.seq : 0; }, stagePlaceOf: svPlaceOf, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, heldNoPiece, unplacedPre, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, discardStaged, stageFace, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, pendingOrderIds, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, placeOf, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { viewFaceOf, setViewFace, showFace, showStage: svShowStage, stageNow: svStageNow, stageSeq: k => { const r = SV_STAGES.get(String(k == null ? "" : k)); return r ? r.seq : 0; }, stagePlaceOf: svPlaceOf, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, heldNoPiece, unplacedPre, settleStuckBacks, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, discardStaged, stageFace, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, pendingOrderIds, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, placeOf, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
    list of pieces, the Pieces counts and a monogram line's pieces (the same slots and piece keys: "<line>" for one piece, "<line>#C<u>" for several) read THIS. Added beside the Engrave object, not inside its return. */
