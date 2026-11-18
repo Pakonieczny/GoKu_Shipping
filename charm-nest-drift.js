@@ -50,8 +50,16 @@
   /** (BACKFOLDER, Paul 18 Nov 2026) approvals made on this computer whose back files are not saved: Ana's and Michelle's waited hours behind "Reconnect to save the approved back files" and nothing said so. How many, and how long the oldest has waited. */
   function waiting() {
     const items = safe(() => root.B.engrave.items, null), out = { n: 0, min: 0 }; if (!items || typeof items.values !== "function") return out;
-    const now = Date.now();
-    for (const j of items.values()) { if (!j || !j.backPending || j.editingBack) continue; out.n++; const at = +j.approvedAt || +(j.approving && j.approving.at) || 0; if (at) out.min = Math.max(out.min, Math.round((now - at) / 60000)); }
+    const now = Date.now(), held = new Map();
+    for (const p of pages()) { for (const c of (p && p.charms) || []) if (c && c.poolId) held.set(String(c.poolId), p); for (const id of (p && p.recalled && p.recalled.poolIds) || []) held.set(String(id), p); }
+    for (const j of items.values()) {
+      if (!j || !j.backPending || j.editingBack) continue;
+      const at = +j.approvedAt || +(j.approving && j.approving.at) || 0, copies = (j.copies || []).map(String).filter(id => held.has(id));
+      if (!copies.length) continue;   // (none of its pieces is on a sheet any more, replaced or taken off: there is nothing to save for it; 13 of the 19 "waiting" on Michelle's computer were of this kind)
+      const have = id => (held.get(id).backPool || []).some(b => b && String(b.poolId) === id && !b.invalidated && !b.pending && (+b.approvedAt || 0) >= at && (at > 0 || +b.approvedAt > 0));
+      if (copies.every(have)) continue;   // (the cloud already holds this approval's back: the flag is only the page's own, not yet cleared)
+      out.n++; if (at) out.min = Math.max(out.min, Math.round((now - at) / 60000));
+    }
     return out;
   }
 
