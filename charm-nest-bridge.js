@@ -8895,10 +8895,11 @@ const Engrave = window.Engrave = (() => {
     try {
       if (!job || job.editingBack || job.editCharm || job.fit || ["approved", "written", "skipped", "none"].includes(job.state)) return "";   // (a decided piece keeps its own card)
       const line = lineOf(job.row); if (!line) return "";
-      const ids = job.copies || [];
-      if (ids.some(id => Pool.sheetOf(id) || (B.pool.rows && B.pool.rows.has(id)) || Pool.charmOf(id) || Pool.previewCharmOf(id))) return "";
-      const t = charmAsked.get(line.key); if (ids.length && t && Date.now() - t < 15000) return "";   // (a charm being drawn for it right now: not this)
-      return line.state === "held" || line.hold ? "This order is on hold, so its piece is not on a sheet yet. The engraving opens here once the order is released and placed." : "This order has no piece on a sheet yet. The engraving opens here once it is placed.";
+      const ids = job.copies || [], rowOf = id => { try { return (B.pool.rows && B.pool.rows.get(id)) || null; } catch (_) { return null; } };
+      const gone = r => !r || ["abandoned", "superseded", "gone", "removed", "cancelled"].includes(r.state);   // (a pool row left behind by a removal or a hold is a piece that is not there: order 4225100553 kept its row, state "abandoned", heldBy Ana_M)
+      if (ids.some(id => Pool.sheetOf(id) || !gone(rowOf(id)) || Pool.charmOf(id) || Pool.previewCharmOf(id))) return "";
+      const held = line.state === "held" || !!line.hold || ids.some(id => { const r = rowOf(id); return !!(r && (r.heldAt || r.heldReason)); });
+      return held ? "This order is on hold, so its piece is not on a sheet yet. The engraving opens here once the order is released and placed." : "This order has no piece on a sheet yet. The engraving opens here once it is placed.";
     } catch (_) { return ""; }
   }
   /** ENGPRE: a job made before its piece was on a sheet (`job.pre`) and not on one now: nothing waits for the sheet, no back file is written or retried until it is. */

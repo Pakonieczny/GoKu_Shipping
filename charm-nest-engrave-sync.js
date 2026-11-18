@@ -255,6 +255,7 @@
     const keep = { state: j.state, approvedAt: j.approvedAt, approvedBy: j.approvedBy };
     try {
       await outline(j);
+      { const pid = (j.copies || [])[0]; if (pid && !safe(() => root.Pool.charmOf(pid) || root.Pool.previewCharmOf(pid), null)) return false; }   // (HELDENGRAVE: no charm to fit the words on (an order on hold, its piece taken off): the job is not made "ready" and fitted for nothing, and the card is not drawn again for it)
       const c = CLOUD.get(line.key), rj = c && c.rec && (c.rec.jobs || []).find(x => x.key === j.key);
       if (rj && rj.place && !j.keepPlace) { j.keepPlace = plain(rj.place); if (j.keepPlace) j.keepPlace.fontKey = j.fontKey || j.keepPlace.fontKey; }
       j.state = "ready"; try { await E().fitJob(j); } catch (_) {}
