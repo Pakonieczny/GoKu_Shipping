@@ -13140,6 +13140,13 @@ const Engrave = window.Engrave = (() => {
     try { if (!job.fit || !job.view) { await loadFonts(); restoreWritten(job); } return await writeBacksOnce(job); }
     finally { job._writingBacks--; }
   }
+  /** The folder a sheet's back files are saved in: the page's own (a sheet saved from this page) or, for a sheet this computer only FOLLOWS or rebuilt from the cloud, the one its record's files are in (BACKFOLDER: none of a following
+      computer's 35 sheets had a folderPath, so no back approved there was ever uploaded: every one ended "Reconnect to save the approved back files"). "" when the sheet has no saved files yet. */
+  function backFolderOf(sh) {
+    if (sh && sh.folderPath) return sh.folderPath;
+    const o = (sh && sh.cloud && sh.cloud.ai && sh.cloud.ai.path) || (sh && sh.recalled && sh.recalled.outputs && sh.recalled.outputs.ai && sh.recalled.outputs.ai.path) || "";
+    return o ? String(o).replace(/\/[^/]*$/, "") : "";
+  }
   async function writeBacksOnce(job) {
     if (!apLive(job) || !job.fit || !job.view) return;
     const approval = apAt(job);
@@ -13169,7 +13176,8 @@ const Engrave = window.Engrave = (() => {
         const verified = await verifyBackFile(built.bytes, job);                 // 7.4 · flip integrity re-run on the written, re-parsed file
         if (!verified.ok) throw Object.assign(new Error(`the written ${faceWord(job)} file did not re-verify (${verified.why})`),{engravingInvalid:true});
         let ai = null, pngUp = null;
-        if (S.cloud.ok && sh.folderPath) { ai = await uploadBytes(`${sh.folderPath}/${faceWord(job)}/${name}.ai`, built.bytes, "application/illustrator", `Saving ${faceWord(job)} ${copy}`); pngUp = await uploadBytes(`${sh.folderPath}/${faceWord(job)}/${name}.png`, pngBlob, "image/png"); }
+        const dir = backFolderOf(sh);   // (BACKFOLDER, Paul 18 Nov 2026: "Not approved yet ... Reconnect to save the approved back files" on Ana's and Michelle's computers)
+        if (S.cloud.ok && dir) { ai = await uploadBytes(`${dir}/${faceWord(job)}/${name}.ai`, built.bytes, "application/illustrator", `Saving ${faceWord(job)} ${copy}`); pngUp = await uploadBytes(`${dir}/${faceWord(job)}/${name}.png`, pngBlob, "image/png"); }
         rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, materialVersion:2, ...(fit.artOnly ? { artOnly:true } : {}), upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, ...pieceFields(job), text: job.text, lines: job.lines, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), ...(job.fontAsked ? { fontAsked: job.fontAsked } : {}), weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: apBy(job), approvedAt: apAt(job), engravingSeals: job.approving ? [sealOfApproving(job)] : CNEngravingSeals.keep(job), nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: fileViewOf(job), reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
         if(!rec.outputs.ai?.url || !rec.outputs.png?.url)throw new Error("Reconnect to save the approved back files");
         // Keep the exact uploaded payload before sending it. A lost reply must replay
