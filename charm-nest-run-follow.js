@@ -266,6 +266,21 @@
         } finally { step.stop(); }
       }
     }
+    // (FOLLOWRELEASE, Paul 18 Nov 2026: order 4235861617 released on Michelle's computer was on hold again minutes later: a hold released on a computer that only follows the run lifted nothing in the cloud, the run's line stayed "held", and the next
+    //  look at the order held it again): the release is done HERE, by the page that carries the run, exactly as its own Release Hold does it (charm-nest-order-release.js OrderHold.release: the questions set aside, the pieces made up and put on their sheet, the
+    //  timeline step), in the name of the person who pressed it
+    else if (c.type === "release") {
+      const OH = root.OrderHold, rid = String((a.ids || [])[0] || "").replace(/\D/g, "");
+      if (!OH || typeof OH.release !== "function" || !rid) r = { ok: false, why: "not ready" };
+      else {
+        const step = stepper(c); step({ text: `Releasing order ${rid} from hold…` });
+        try {
+          const v = await OH.release(rid, { name: String(c.by || "").trim() || undefined, onStep: s => { if (s && s.type === "target" && s.label) step({ text: `Placing on ${s.label}…` }); } });
+          const where = ((v && v.sheets) || []).map(x => x && x.label).filter(Boolean).join(", ");
+          r = v && v.released ? { ok: true, text: `Order ${rid} released from hold${where ? " and placed on " + where : ", at the front of the queue"}${v.error ? " · " + String(v.error).slice(0, 200) : ""}`.slice(0, 380) } : { ok: false, why: String((v && (v.error || (v.steps && v.steps[v.steps.length - 1] && v.steps[v.steps.length - 1].message))) || "The order was not released").slice(0, 380) };
+        } catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); }
+      }
+    }
     else return { ok: false, text: "Unknown command" };
     return r && r.ok !== false ? { ok: true, text: r.text || "Done", ...(r.freed && r.freed.stockId ? { freed: r.freed.stockId } : {}) } : { ok: false, text: (r && (r.why || r.text)) || "Not done" };
   }

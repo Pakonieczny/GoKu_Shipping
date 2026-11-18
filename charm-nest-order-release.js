@@ -325,6 +325,34 @@
       if (G.PlacementFeed && G.PlacementFeed.nudge) G.PlacementFeed.nudge();
     } catch (e) { try { console.warn('[OrderHold.release] the hold marks in the cloud were not cleared', e && e.message || e); } catch (_) { /* none */ } }
   }
+  /** Asks the computer that carries the run to release this order (runCmdPut release) and waits for its answer: up to 150 s, looked at every 2.5 s. Nothing is changed on this page: the order's lines come back from the cloud as the carrier leaves them. */
+  async function relayRelease(rid, who, emit, out, fail) {
+    const RF = G.CharmNestRunFollow, runId = RF.state().runId, dev = RF.dev && RF.dev(), call = body => G.CN.api('charmNestLibrary', body, { quiet: true, timeoutMs: 30000 });
+    const said = e => str(e && e.message || e).slice(0, 160);
+    if (!runId || !dev || !G.CN || typeof G.CN.api !== 'function') return fail(`Order ${rid} is still on hold: this computer cannot reach the run yet. Press Release hold again in a moment.`, 'start');
+    let c = null;
+    try { c = await call({ op: 'runCarrier', runId, dev, check: true }); } catch (e) { return fail(`Order ${rid} is still on hold: the computer that carries the run could not be reached (${said(e)}). Press Release hold again in a moment.`, 'start'); }
+    if (!c || !c.alive || c.mine) return fail(`Order ${rid} is still on hold: the computer that carries the run is not answering, so it cannot be released from here yet. Press Release hold again in a minute.`, 'start');
+    let put = null;
+    try { put = await call({ op: 'runCmdPut', runId, dev, by: who, cmd: { type: 'release', ids: [rid], label: `Release order ${rid} from hold` } }); } catch (e) { return fail(`Order ${rid} is still on hold: the release could not be sent (${said(e)}). Press Release hold again in a moment.`, 'start'); }
+    if (!put || put.error || !put.id) return fail(`Order ${rid} is still on hold: the release was not sent${put && put.error ? ' (' + said({ message: put.error }) + ')' : ''}.`, 'start');
+    const by = (c.carrier && c.carrier.by) || 'the computer that carries the run';
+    emit({ type: 'queued', rid, front: true, via: by, text: `Asked ${by}'s computer to release it` });
+    const t0 = Date.now(); let last = null;
+    while (Date.now() - t0 < 150000) {
+      await new Promise(res => setTimeout(res, 2500));
+      let l = null; try { l = await call({ op: 'runCmdList', runId }); } catch (_) { continue; }
+      last = ((l && l.cmds) || []).find(x => x && x.id === put.id) || last;
+      if (last && (last.state === 'done' || last.state === 'failed')) break;
+    }
+    if (last && last.state === 'done') {
+      refresh();
+      emit({ type: 'released', rid, sheets: [], placed: true }); emit({ type: 'done', placed: true, why: 'released by the computer that carries the run' });
+      return out(true, { released: true, placed: true, via: 'carrier', text: str(last.text) });
+    }
+    if (last && last.state === 'failed') return fail(`Order ${rid} was not released: ${str(last.text || 'the computer that carries the run could not do it').slice(0, 300)}`, 'place', { released: false });
+    return fail(`Order ${rid} is still on hold: ${by}'s computer has not answered yet. It is released as soon as it does (within 10 minutes), or press Release hold again.`, 'place', { pending: true });
+  }
   async function doRelease(rid, opts) {
     const steps = [], emit = s => { s.at = Date.now(); steps.push(s); LAST.set(rid, { step: s }); try { if (opts.onStep) opts.onStep(s); } catch (e) { try { console.warn('[OrderHold.release] onStep', e); } catch (_) { /* none */ } } return s; };
     const out = (ok, extra) => Object.assign({ ok, released: false, rid, placed: false, sheets: [], steps }, extra);
@@ -339,6 +367,12 @@
     if (!rows0.some(r => isHeld(r) || r.releasing)) return fail('This order is not on hold.', 'start');
     const who = str(opts.name || (rows0.find(r => r.releasing) || { releasing: {} }).releasing.by || nameNow()).trim();
     if (!who) return fail('A name is needed for the record.', 'start');
+    // (FOLLOWRELEASE, Paul 18 Nov 2026: "this order was released by a user and then it disappeared for several minutes and then it reappeared again under the review tab"): a computer that only FOLLOWS the run has no run to release into: what it did here (the line's
+    //  questions set aside, a timeline step) never reached the run's line in the cloud, so the order stayed on hold there and came back here at the next read. The release is asked of the computer that carries the run, which does it, and answered
+    if (!(G.B && G.B.run) && G.CharmNestRunFollow && typeof G.CharmNestRunFollow.state === 'function' && G.CharmNestRunFollow.state().runId) {
+      for (const r of rows0) delete r.releasing;   // (a flag a follower kept from before: nothing finishes it here)
+      return relayRelease(rid, who, emit, out, fail);
+    }
 
     /* 1 · the place at the front of the queue, saved before anything else changes (a reload from here on finishes it) */
     const frontAt = resumed ? +rows0.find(r => r.releasing).releasing.at || Date.now() : Date.now();
