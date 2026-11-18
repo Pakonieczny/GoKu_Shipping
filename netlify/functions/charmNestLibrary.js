@@ -3096,6 +3096,23 @@ async function op_madeThumbPut(b) {
      engraveSyncGet { orders: [receipt ids] (at most 600) } | { keys: [line keys] } | { since: ms (the lines written after it, at most 500) }   → { lines: [{ key, order, rec, at, by, dev, sig }] }
    No placement counter moves (nothing a placement reads is written); the feed names p:<order>, which every page's placement feed already follows. ── */
 const ENGR = "Charm_Nest_Engrave", ENGR_MAX = 400000, ENGR_LINE = /^\d{4,30}_[\w\-]{1,80}$/;
+/* KEEPPLACED (Paul, 18 Nov 2026, order 4225100553: a computer that opened the order with no charm wrote its job with no place and back in Review over the approved placement): a job sent with NO place, for the very same words as
+   the stored job that has one, keeps the stored place; and when the stored job was approved (or written), its approval too. A job whose words changed, or that was never placed, is written as it is sent. */
+function keepPlaced(curJson, nextJson) {
+  let c, n; try { c = JSON.parse(curJson); n = JSON.parse(nextJson); } catch (_) { return nextJson; }
+  if (!c || !n || !Array.isArray(c.jobs) || !Array.isArray(n.jobs)) return nextJson;
+  let kept = 0;
+  n.jobs = n.jobs.map(nj => {
+    if (!nj || nj.place) return nj;
+    const cj = c.jobs.find(x => x && x.key === nj.key);
+    if (!cj || !cj.place || String(cj.text == null ? "" : cj.text) !== String(nj.text == null ? "" : nj.text)) return nj;
+    kept++;
+    const keep = Object.assign({}, nj, { place: cj.place });
+    if (["approved", "written"].includes(cj.state) && !["approved", "written"].includes(nj.state)) Object.assign(keep, { state: cj.state, approvedAt: cj.approvedAt, approvedBy: cj.approvedBy });
+    return keep;
+  });
+  return kept ? JSON.stringify(n) : nextJson;
+}
 async function op_engraveSyncPut(b) {
   const list = Array.isArray(b.lines) ? b.lines.slice(0, 40) : [], dev = MADE_DEV.test(String(b.dev || "")) ? String(b.dev) : null, by = str(b.by, 80).trim() || null;
   const out = [], stale = [], todo = [];
@@ -3115,6 +3132,7 @@ async function op_engraveSyncPut(b) {
         const cur = snaps[i].exists ? snaps[i].data() : null, rev = cur && Number.isFinite(+cur.rev) ? +cur.rev : 0;
         if (t.base != null && cur && t.base !== rev) { old.push({ key: t.key, rev }); return; }
         const at = Date.now(), next = rev + 1;
+        if (cur && cur.rec) t.json = keepPlaced(cur.rec, t.json);   // (KEEPPLACED)
         tx.set(col(ENGR).doc(t.key), { key: t.key, order: t.key.split("_")[0], rec: t.json, at, by, dev, sig: t.sig, rev: next, updatedAt: FV.serverTimestamp() });
         done.push({ key: t.key, at, rev: next });
       });
