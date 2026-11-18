@@ -3256,9 +3256,10 @@ async function op_setAllocate(b) {
 }
 async function op_setUpdate(b) {
   const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" };
-  revTouch(b, ["t:" + id]);   // COST (Oct 2026): it writes this set record alone
   const ref=col(SETS).doc(id);
+  let wrote = true;
   await db.runTransaction(async tx=>{
+    wrote = true;
     const old=await tx.get(ref),patch=await withoutTakenOff(tx,old.exists?old.data():null,await keepListed(tx,id,old.exists?old.data():null,keepEditedSheets(old.exists?old.data():null,withoutCleared(old.exists?old.data():null,b.patch || {})))),next={...(old.exists?old.data():{}),...patch};
     // the numbers a set has given out (`sheetNos`, the highest of each metal) only go up: a page holding an older copy cannot lower them (charm-nest-sheet-name.js)
     // (SETSTAYSCLOSED, Paul 16 Nov 2026: "why this sheet was allowed to be added to an existing set"): the time a set formed is kept for good: the earliest one wins, and no page takes it back
@@ -3298,9 +3299,27 @@ async function op_setUpdate(b) {
     delete doc.flowHistory;
     // COST (Oct 2026): the current flag is the server's (CURRENT_MARK): a set made here has no laser mark, so it is current
     delete doc.current; if(!old.exists)doc.current=true;
+    if(old.exists && !/^complete/.test(String(next.status || '')) && setSame(old.data(),doc)){ wrote=false; return; }   // (SETNOOP: the very record it already is; a completed set is saved as it always was)
     if(old.exists)tx.update(ref,doc);else tx.set(ref,doc);
   });
-  return { ok: true };
+  if (wrote) revTouch(b, ["t:" + id]);   // COST (Oct 2026): it writes this set record alone
+  else { revTouch(b, []); PLACE_QUIET = true; }   // (SETNOOP: nothing was written: it names nothing (an empty list, never the "*" an op that named nothing gets) and the placement counter stays)
+  return { ok: true, ...(wrote ? {} : { same: true }) };
+}
+/* SETNOOP (Paul, 18 Nov 2026: "We can't have an unintentional rewrite"): a computer saved every set of the run about every 19 s with the very record the cloud already held. Each save moved the set's updatedAt and
+   the change counters (and, with them, every other computer's placement counter), so every computer read again and redrew. A save that names nothing the stored record does not already say (every field it
+   carries equal, timestamps compared as the instant they are; one that carries a server stamp other than updatedAt is never "the same") writes nothing and moves no counter. */
+function setSame(old, doc) {
+  if (!old || !doc) return false;
+  const stamp = v => !!v && typeof v === "object" && (typeof v._methodName === "string" || (v.constructor && /FieldValue|Transform/.test(String(v.constructor.name))));
+  const norm = v => { if (v === undefined) return null; if (v && typeof v === "object") { if (stamp(v)) return { __stamp: 1 }; if (typeof v.toMillis === "function") return v.toMillis(); if (Array.isArray(v)) return v.map(norm); const o = {}; for (const k of Object.keys(v).sort()) if (v[k] !== undefined) o[k] = norm(v[k]); return o; } return v; };
+  for (const k of Object.keys(doc)) {
+    if (k === "updatedAt") continue;
+    if (doc[k] === undefined) { if (old[k] === undefined) continue; return false; }
+    if (stamp(doc[k])) return false;
+    if (JSON.stringify(norm(doc[k])) !== JSON.stringify(norm(old[k]))) return false;
+  }
+  return true;
 }
 /* (Paul, 27 Oct 2026, the false "Set 1 breaks your rules: 14K Sheet 1 shares an order with a sheet of this set but is not in it") A sheet's own record says which set it is in (the Library draws a
    set's sheets from them, SetEdit.inSetOf); the set's record keeps a list beside it. A page that saves an older list (a second screen that did not see the sheet join, a workspace from before it, a
