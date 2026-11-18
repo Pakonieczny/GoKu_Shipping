@@ -152,7 +152,7 @@
     const id = identity(ctx.repo);
     css();
     const wrap = doc.createElement('div'); wrap.className = 'ce-repo';
-    wrap.innerHTML = `<button type="button" class="ce-repo__b" aria-haspopup="dialog" aria-expanded="false"${id.ok ? '' : ' data-off="1"'} title="${esc(id.ok ? `Update ${id.sku}${id.size ? ' · ' + id.size : ''} in the charm repository with this drawing` : id.why)}">${ICON}<span>Repository</span><i class="ce-repo__dot"></i></button>`;
+    wrap.innerHTML = `<button type="button" class="ce-repo__b" aria-haspopup="dialog" aria-expanded="false"${id.ok ? '' : ' data-off="1"'} title="${esc(id.ok ? `Update ${id.sku}${id.size ? ' · ' + id.size : ''} in the charm repository with this drawing` : id.why)}">${ICON}<span>Update repository</span><i class="ce-repo__dot"></i></button>`;   // (the label says what it does: "Repository" alone read as a second Library button; greyed and dashed it still says why in its tip)
     const lib = head.querySelector('[data-xpanel="library"]'), hist = head.querySelector('.ce-hist');
     if (lib) lib.insertAdjacentElement('afterend', wrap); else if (hist) head.insertBefore(wrap, hist); else head.appendChild(wrap);
     const btn = wrap.querySelector('.ce-repo__b');

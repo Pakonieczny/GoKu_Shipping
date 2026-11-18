@@ -1380,6 +1380,13 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
 .ce-ctl__lab{ flex:none; font-size:var(--ai-fs); color:var(--ai-text-dim); white-space:nowrap; text-decoration:underline dotted; text-underline-offset:2px; text-decoration-color:var(--ai-text-disabled); }
 .ce-ctl__sep{ flex:none; width:1px; height:20px; background:var(--ai-sep); opacity:.8; }
 .ce-ctl__grow{ flex:1 1 auto !important; min-width:0; }
+/* GROUPBTN (Paul, 18 Nov 2026: "I don't see the options to group and ungroup ... the same icons ... placed where an Illustrator-trained user would expect it"): Group (Cmd/Ctrl+G) and Ungroup (Shift+Cmd/Ctrl+G) are in the Object menu, the right-click menu and
+   the Properties panel's Quick Actions; the Control bar, which every window width shows, carries them as two icon buttons too, lit by the selection (two or more things: Group; a group: Ungroup). */
+.ce-ctl__grp{ display:inline-flex; align-items:center; gap:2px; flex:none; margin:0 6px 0 2px; }
+.ce-ctl__ib{ width:28px; height:24px; display:inline-flex; align-items:center; justify-content:center; padding:0; border:1px solid var(--ai-input-border,#6b6b6b); border-radius:4px; background:transparent; color:var(--ai-text,#efefef); cursor:pointer; }
+.ce-ctl__ib svg{ width:16px; height:16px; }
+.ce-ctl__ib:not(:disabled):hover{ background:rgba(255,255,255,.12); }
+.ce-ctl__ib:disabled{ opacity:.38; cursor:default; }
 .ce-prop{ display:inline-flex; align-items:center; gap:6px; white-space:nowrap; height:22px; border:1px solid var(--ai-input-border); border-radius:2px; background:var(--ai-input); cursor:pointer; padding:0 6px;
   font-size:var(--ai-fs); font-weight:400; letter-spacing:0; text-transform:none; color:var(--ai-text); flex:0 0 auto; }
 .ce-prop:not(:disabled):hover{ border-color:var(--ai-text-dim); }
@@ -1979,6 +1986,10 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
     <span class="ce-ctl__lab" data-ai-when="text" hidden>Paragraph:</span>
     <div class="ce-ctl__para" data-ai-when="text" role="group" aria-label="Paragraph alignment" hidden><button class="ce-tsbtn" type="button" data-talign="left" aria-label="Align left" title="Align Left (${esc(keyText('Mod+Shift+L'))})">${IC.alignL}</button><button class="ce-tsbtn" type="button" data-talign="center" aria-label="Align center" title="Align Center (${esc(keyText('Mod+Shift+C'))})">${IC.alignC}</button><button class="ce-tsbtn" type="button" data-talign="right" aria-label="Align right" title="Align Right (${esc(keyText('Mod+Shift+R'))})">${IC.alignR}</button></div>
     <div class="ce-xbar" data-when="xbar" hidden></div>
+    <span class="ce-ctl__grp" role="group" aria-label="Group">
+      <button class="ce-ctl__ib" type="button" data-act="group" data-ctl-group title="Group (${esc(keyText('Mod+G'))})" aria-label="Group" disabled>${IC.group}</button>
+      <button class="ce-ctl__ib" type="button" data-act="ungroup" data-ctl-ungroup title="Ungroup (${esc(keyText('Mod+Shift+G'))})" aria-label="Ungroup" disabled>${IC.ungroup}</button>
+    </span>
     <span class="ce-ctl__grow ce-grow" aria-hidden="true"></span>
     <span class="ce-ctl__lab" data-ai-transform>Transform:</span>
     <span class="ce-refpt" role="radiogroup" aria-label="Reference point" title="Reference point: the point of the selection X and Y read and W and H keep">${[0, 0.5, 1].map(fy => [0, 0.5, 1].map(fx => `<button type="button" data-refpt="${fx},${fy}" role="radio" aria-label="Reference point ${fy === 0 ? 'top' : fy === 1 ? 'bottom' : 'middle'} ${fx === 0 ? 'left' : fx === 1 ? 'right' : 'centre'}"></button>`).join('')).join('')}</span>
@@ -2856,6 +2867,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
       const kind = !n ? (S.tool === 'text' ? 'Characters' : 'No Selection') : n > 1 ? (es.every(e => e.it.kind === 'text') ? 'Type' : es.every(e => e.it.kind === 'path') ? 'Paths' : 'Mixed Objects')
         : es[0].it.kind === 'text' ? (S.editing ? 'Characters' : 'Type') : es[0].it.kind === 'group' ? (es[0].it.clipOf ? 'Clip Group' : 'Group') : (es[0].it.subpaths || []).length > 1 ? 'Compound Path' : 'Path';
       const kEl = $('[data-selkind]'); if (kEl.textContent !== kind) kEl.textContent = kind;
+      { const g = $('[data-ctl-group]'), u = $('[data-ctl-ungroup]'); if (g) g.disabled = n < 2; if (u) u.disabled = !es.some(e => e.it.kind === 'group'); }   // (GROUPBTN)
       $$('[data-ai-when="text"]').forEach(el => { el.hidden = !showText; });
       // the paint the selection has (or the next shape or words will have): a fill engraves as a hatch, a stroke along the line; the swatch shows the role's colour or None
       const paint = list => {

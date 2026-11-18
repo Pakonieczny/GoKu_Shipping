@@ -1354,6 +1354,8 @@
   const SV = (d, extra) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${extra || ''}>${d}</svg>`;
   const SQ_A = 'M4 4h10v10H4z', SQ_B = 'M10 10h10v10H10z';
   const IC = {
+    group: SV('<path d="M3 8V3h5"/><path d="M16 3h5v5"/><path d="M21 16v5h-5"/><path d="M8 21H3v-5"/><rect x="6.5" y="6.5" width="6" height="6"/><rect x="11.5" y="11.5" width="6" height="6"/>'),
+    ungroup: SV('<path d="M3 7V3h4"/><path d="M17 21h4v-4"/><rect x="3" y="9.5" width="7" height="7"/><rect x="14" y="4.5" width="7" height="7"/>'),
     unite: SV(`<path d="M4 4h10v6h6v10H10v-6H4z" fill="currentColor" fill-opacity=".85"/>`),
     minus: SV(`<path d="M4 4h10v6h-4v4H4z" fill="currentColor" fill-opacity=".85"/><path d="${SQ_B}" stroke-dasharray="2 2"/>`),
     intersect: SV(`<path d="${SQ_A}"/><path d="${SQ_B}"/><path d="M10 10h4v4h-4z" fill="currentColor"/>`),
@@ -1494,6 +1496,7 @@
       const lb = (id, icon, label, title, on) => `<button class="cops-b cops-b--lab" type="button" data-ops="${id}" title="${esc(title)}"${on ? '' : ' disabled'}>${icon}<span>${esc(label)}</span></button>`;
       el.innerHTML = `<div class="ce-menu__head">Shape modes</div><div class="cops-grid cops-grid--4">${lb('pf:unite', IC.unite, 'Unite', 'Unite: one shape of them all', two || canUniteOne(ctx))}${lb('pf:minus', IC.minus, 'Minus front', 'Minus Front: the backmost less everything in front of it', two)}${lb('pf:intersect', IC.intersect, 'Intersect', 'Intersect: only where they all overlap', two)}${lb('pf:exclude', IC.exclude, 'Exclude', 'Exclude: where they overlap becomes a hole', two)}</div>`
         + `<div class="ce-menu__head">Pathfinders</div><div class="cops-grid cops-grid--4">${lb('pf:divide', IC.divide, 'Divide', 'Divide: every overlap its own piece', two)}${lb('pf:trim', IC.trim, 'Trim', 'Trim: each shape less what is in front of it', two)}${lb('pf:merge', IC.merge, 'Merge', 'Merge: Trim, and the pieces of one colour that touch become one', two)}${lb('pf:crop', IC.crop, 'Crop', 'Crop: what shows of the others inside the frontmost shape', two)}${lb('pf:outline', IC.outline, 'Outline', 'Outline: every piece as a line with no fill', two)}${lb('pf:minusBack', IC.minusBack, 'Minus back', 'Minus Back: the frontmost less everything behind it', two)}</div>`
+        + `<div class="ce-menu__head">Group</div><div class="cops-grid cops-grid--4">${lb('gr:group', IC.group, 'Group', 'Group (⌘G): the selection becomes one object', two)}${lb('gr:ungroup', IC.ungroup, 'Ungroup', 'Ungroup (⇧⌘G): a group gives its parts back', selEntries(ctx).some(e => e.it.kind === 'group'))}</div>`   // (GROUPBTN, Paul 18 Nov 2026: "the group and ungroup should be part of the Pathfinder options")
         + `<div class="cops-note">Curves stay curves. The answer is one step: ⌘Z takes it back.</div>`;
       return;
     }
@@ -1519,6 +1522,7 @@
     const { ctx } = fly, [kind, v] = t.dataset.ops.split(':');
     if (kind === 'to') { memo.alignTo = v; paintFly(); return; }
     const gapNum = memo.gap === '' ? null : parseFloat(String(memo.gap).replace(',', '.').replace(/−/g, '-'));
+    if (kind === 'gr') { closeFly(); const gb = ctx.root.querySelector(v === 'group' ? '[data-ctl-group]' : '[data-ctl-ungroup]'); if (gb && !gb.disabled) gb.click(); return; }   // (the editor's own Group / Ungroup, as its Control bar button and the keys run it)
     if (kind === 'pf') { closeFly(); runPathfinder(ctx, v); return; }
     let r;
     if (kind === 'al') r = ops.alignItems(ctx.items(), ctx.selection(), ctx.geo, v, { to: memo.alignTo || (nSel(ctx) >= 2 ? 'selection' : 'charm'), key: memo.key, frame: ctx.frame() });
