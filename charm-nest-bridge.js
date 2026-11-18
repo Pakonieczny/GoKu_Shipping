@@ -28681,7 +28681,7 @@ const Recall = window.Recall = (() => {
   /* (CACHEONLY, Paul 15 Nov 2026: "Computers are only fed the truth ... never duplicating the truth in their own way"): what this computer holds of the run it follows is a COPY, and the cloud's replaces it: a page of
      that run (or one holding only what was shown from the cloud) is given up to the cloud's sheets, whatever this computer's saved workspace says. A card is left alone only while something is really in hand on it:
      a nest at work, an uncut contour planned here, or pieces of no run at all (files a person dropped here). */
-  const atWorkHere = p => (p.workers || []).length > 0 || ["nesting", "finishing", "queued"].includes(p.status) || !!p._operationStarting || ((p.rosePlan || p.roseProtected) && !p.roseCutAt && !p.recalled);
+  const atWorkHere = p => (p.workers || []).length > 0 || ["nesting", "finishing", "queued"].includes(p.status) || !!p._operationStarting || ((p.rosePlan || p.roseProtected) && !p.roseCutAt && !p.recalled && (!p.followed || !!p._rosePlanning || !!p._roseAction));   // (FOLLOWROSE, Paul 18 Nov 2026: "why her nesting is not updating"): the contour of a followed sheet is the cloud's, loaded here, not one planned here: it kept the whole Rose Gold card from ever being read again
   const keepsCard = (prim, runId) => prim.pages.some(p => atWorkHere(p) || ((p.charms || []).length && (p.runId || null) !== runId));
   const ownWork = () => false;
   const emptyCard = prim => { for (const pg of prim.pages.slice(1)) { (pg.workers || []).forEach(w => w.terminate()); }

@@ -74,7 +74,15 @@
   /** The revision of every sheet this page holds as a live sheet whose copy is the cloud's. Run once a page is up; a page that differs keeps saving as before. */
   async function learn() {
     for (const p of pages()) {
-      if (!p || !p.sheetId || p.recalled || revOf(p) !== null || atWork(p) || p.dirty) continue;
+      if (!p || !p.sheetId || p.recalled || atWork(p) || p.dirty) continue;
+      /* (RESTOREDSTALE, Paul 18 Nov 2026: "why her nesting is not updating"): a followed sheet that came back from this computer's saved workspace keeps the revision it was saved with and nothing had read its record, so the sweep (which looks only at
+         sheets this page has read) never looked at it again: Michelle's Rose Gold draft stayed at 7 pieces, revision 6, while the cloud held 27, revision 32. It is read once here; a newer one is rebuilt, the same one is now known to the sweep. */
+      if (revOf(p) !== null) {
+        if (!p.followed || REVS.has(p.sheetId)) continue;
+        let cur = null; try { cur = await getRec(p.sheetId); } catch (_) { continue; }
+        if (cur && (+cur.layoutRev || 0) > revOf(p) && !atWork(p) && !p.dirty) { try { await reload(p, "this computer's saved copy was older than the cloud's"); } catch (e) { console.warn("[cloud-sheets] restored sheet", p.sheetId, e && e.message); } }
+        continue;
+      }
       let rec = null; try { rec = await getRec(p.sheetId); } catch (_) { continue; }
       if (!rec) continue;
       if (near(sig(p.placements), sig(rec.placements))) { p.layoutRev = +rec.layoutRev || 0; st.learned++; }
