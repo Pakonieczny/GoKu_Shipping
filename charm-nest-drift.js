@@ -1,0 +1,223 @@
+/* charm-nest-drift.js — EVERY COMPUTER SAYS HOW FAR BEHIND THE CLOUD IT IS (DRIFT, Paul, 18 Nov 2026: "Make computers report how far behind the cloud they are. Each computer would compare every sheet's revision
+   with the cloud every few minutes. If it is behind, it rebuilds itself and shows a small 'out of date' mark. You would also see in one list which computer is behind").
+
+   Why: Michelle's Rose Gold card stayed at 7 pieces (revision 6) for days while the cloud held 27 (revision 32). Nothing said so, on her screen or anywhere else, and the changes feed only names what moves while a
+   page listens: a name it missed was never looked at again. The feed is the news; this is the check that nothing was missed.
+
+   What it does, on the visible tab of a computer, 75 s after the page is up and then every four minutes (and when a tab is shown again or the network is back, never more often than every two minutes):
+     1 asks the cloud for the run's sheets with only what is needed to compare (charmNestLibrary sheetRevsGet: one read of each sheet, nothing written, nothing named on the feed);
+     2 compares each sheet this page holds with it: the layout revision it holds against the cloud's (a saved picture holds its record's), a sheet the cloud has and this page lacks (missing), a sheet this page holds and the cloud
+       has not (extra); sheets that are cut cannot change and are left out; a sheet with a change of its own waiting (dirty, at work) is "in hand" and is never touched;
+     3 a computer that FOLLOWS the run (B.run is not its own) heals what it found, by the page's own ways and no others: a sheet behind is read again by CharmNestCloudSheets._changed (the very path the changes feed takes: rebuilt only
+       when the cloud's revision is newer and nothing is in hand), a set of sheets that differs is listed again by Recall.follow({ force }). At most four sheets a check, after the person has stopped touching the page, and a sheet that
+       could not be rebuilt is left alone for twenty minutes. The computer that CARRIES the run is only measured and reported, never rebuilt by this (its pages are the run's own);
+     4 shows a small "Out of date" mark in the top bar while something is still behind after that, and says in the activity log what it rebuilt;
+     5 tells the cloud what it found (computerReport: one small document per computer, no feed name), and Settings → Computers (#stComputers) lists every computer that reported: who, carrying or following, last seen, current or
+       how many sheets behind, the longest freeze of the last ten minutes, push or polling, and its own switch.
+   The switch, per computer (localStorage cn.drift): "on" (default: measure, heal, report), "report" (measure and report only), "off" (nothing). A cloud that does not know the calls (an older deploy) stops it for the page's life.
+   Production only: the sandbox neither asks nor reports. Nothing here writes a sheet, a piece, a run or an order.
+
+   window.CharmNestDrift: check(why) → report · state() · list() · mode(m?) */
+(function (root) {
+  "use strict";
+  const doc = root.document || null;
+  const safe = (f, d) => { try { const v = f(); return v === undefined ? d : v; } catch (_) { return d; } };
+  const EVERY = 240000, FIRST = 75000, MIN_GAP = 120000, MAX_HEAL = 4, RETRY = 20 * 60000, STALE_S = 900, BUILD = "drift-1118a";
+  const st = { checks: 0, errors: 0, healed: 0, reports: 0, unsupported: false, last: null, at: 0, started: false, pill: 0 };
+  const sandbox = () => safe(() => typeof WORKSPACE_SANDBOX !== "undefined" && WORKSPACE_SANDBOX, false);
+  const api = (body, o) => root.CN && typeof root.CN.api === "function" ? root.CN.api("charmNestLibrary", body, Object.assign({ quiet: true, timeoutMs: 30000 }, o || {})) : Promise.reject(new Error("no api"));
+  const pages = () => safe(() => (typeof allSheets === "function" ? allSheets() : []), []) || [];
+  const CS = () => root.CharmNestCloudSheets || null;
+  const mode = m => { const ls = safe(() => root.localStorage, null); if (m && ls) safe(() => ls.setItem("cn.drift", ["on", "report", "off"].includes(m) ? m : "on")); const v = ls && safe(() => ls.getItem("cn.drift"), null); return ["report", "off"].includes(v) ? v : "on"; };
+  const devId = () => safe(() => root.CharmNestRunFollow.dev(), "") || "";
+  const who = () => String(safe(() => root.B && root.B.employee, "") || "").trim();
+  const short = p => String(p.fileBase || p.sheetId || "").slice(0, 40);
+  const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  /* ── how long the page stood still (the browser's own long-task entries: the freezes a person feels) ── */
+  const longs = [];
+  safe(() => { new root.PerformanceObserver(l => { for (const e of l.getEntries()) longs.push([Date.now(), Math.round(e.duration)]); while (longs.length > 400) longs.shift(); }).observe({ entryTypes: ["longtask"] }); });
+  const freezeNow = () => { const cut = Date.now() - 600000, a = longs.filter(x => x[0] >= cut); return { freezeMs: a.reduce((m, x) => Math.max(m, x[1]), 0), freezes: a.filter(x => x[1] >= 1000).length }; };
+  let lastInput = Date.now();
+  safe(() => { for (const ev of ["pointerdown", "keydown", "wheel"]) root.addEventListener(ev, () => { lastInput = Date.now(); }, { capture: true, passive: true }); });
+
+  const ready = () => !!(root.CN && typeof root.CN.api === "function" && typeof allSheets === "function" && root.Recall && root.B && root.B.orders && CS());
+  const runOf = () => { const run = safe(() => root.B && root.B.run, null); if (run && run.runId) return { runId: run.runId, carrier: true }; const id = safe(() => root.CharmNestRunFollow.state().runId, null); return { runId: id || null, carrier: false }; };
+  const revOfPage = p => { if (p.recalled && !(p.charms || []).length) { const v = Number(p.recalled.layoutRev); return Number.isFinite(v) ? v : null; } return safe(() => CS().revOf(p), null); };
+  const inHand = p => safe(() => ["nesting", "finishing", "queued"].includes(p.status) || !!p._operationStarting || !!p._rebuilding || !!(p.persisted && !p.persistedDone && !p.problem) || !!p.saveOwed || !!p.dirty, false);
+  const cutPage = p => +p.laserDoneAt > 0 || +p.roseCutAt > 0 || !!(p.recalled && (+p.recalled.laserDoneAt > 0 || +p.recalled.roseCutAt > 0));
+  const failedAt = new Map(); let followAt = 0, prevStill = new Set();
+  /** (BACKFOLDER, Paul 18 Nov 2026) approvals made on this computer whose back files are not saved: Ana's and Michelle's waited hours behind "Reconnect to save the approved back files" and nothing said so. How many, and how long the oldest has waited. */
+  function waiting() {
+    const items = safe(() => root.B.engrave.items, null), out = { n: 0, min: 0 }; if (!items || typeof items.values !== "function") return out;
+    const now = Date.now();
+    for (const j of items.values()) { if (!j || !j.backPending || j.editingBack) continue; out.n++; const at = +j.approvedAt || +(j.approving && j.approving.at) || 0; if (at) out.min = Math.max(out.min, Math.round((now - at) / 60000)); }
+    return out;
+  }
+
+  /** What this page holds against what the cloud has: { behind: [{ p, from, to }], unverified, inHand, missing: [id], extra: [p], held, want } */
+  function compare(runId, sheets) {
+    const by = new Map();
+    for (const x of sheets || []) { const k = (x.set || "") + "|" + (x.fb || x.id), had = by.get(k); if (!had || (+x.upd || 0) > (+had.upd || 0)) by.set(k, x); }   // (one record per sheet name, the newest: as Recall.follow lists a run)
+    const gone = new Set(safe(() => (root.CharmNestRunFollow.state().retired || []).map(String), []));   // (a sheet the run has let go of is not listed here either: Recall.follow)
+    const want = new Map([...by.values()].filter(x => !gone.has(String(x.id))).map(x => [x.id, x])), held = pages().filter(p => p && p.sheetId && p.runId === runId);
+    const out = { behind: [], unverified: [], inHand: [], extra: [], missing: [], held: held.length, want: want.size };
+    const have = new Set(held.map(p => p.sheetId));
+    for (const p of held) {
+      const c = want.get(p.sheetId);
+      if (!c) { out.extra.push(p); continue; }
+      if (c.cut || cutPage(p)) continue;                    // (cut or sent: it can no longer change)
+      if (inHand(p)) { out.inHand.push(p); continue; }
+      const mine = revOfPage(p);
+      if (mine === null) { out.unverified.push(p); continue; }
+      if ((+c.rev || 0) > mine) out.behind.push({ p, from: mine, to: +c.rev || 0 });
+    }
+    for (const id of want.keys()) if (!have.has(id)) out.missing.push(id);
+    return out;
+  }
+  const idle = async () => { try { await (root.CharmNestInteraction && typeof root.CharmNestInteraction.idle === "function" ? root.CharmNestInteraction.idle() : null); } catch (_) {} const q = 5000 - (Date.now() - lastInput); if (q > 0) await new Promise(r => setTimeout(r, q)); };
+  const say = text => safe(() => root.CN && root.CN.agent ? root.CN.agent({ bridge: true }, "cloud", text) : console.info("[drift]", text));
+
+  /** Heal what a FOLLOWING computer found, by the page's own ways only (see the head of this file). */
+  async function heal(runId, sheets, first) {
+    const done = { rebuilt: 0, listed: false, healed: [] }, cs = CS();
+    if ((first.missing.length || first.extra.length) && Date.now() - followAt > RETRY) {   // (a set of sheets that cannot be made to match is not listed again every four minutes)
+      // (it builds the cards again: not while a window is open or the person has touched the page in the last half minute; the next check looks again)
+      const open = !!(doc && doc.querySelector("dialog[open]"));
+      if (typeof root.Recall.follow === "function" && !open && Date.now() - lastInput > 30000) { followAt = Date.now(); await idle(); try { await root.Recall.follow(runId, { force: true }); done.listed = true; } catch (e) { console.warn("[drift] follow", e && e.message); } }
+    }
+    let cur = compare(runId, sheets), n = 0;
+    for (const b of cur.behind) {
+      if (n >= MAX_HEAL) break;
+      const bad = failedAt.get(b.p.sheetId); if (bad && Date.now() - bad < RETRY) continue;
+      await idle(); if (inHand(b.p)) continue;
+      n++;
+      try { await cs._changed(["s:" + b.p.sheetId]); } catch (e) { failedAt.set(b.p.sheetId, Date.now()); console.warn("[drift] rebuild", b.p.sheetId, e && e.message); continue; }
+      const now = revOfPage(b.p);
+      if (now !== null && now >= b.to) { done.rebuilt++; done.healed.push(short(b.p) + " " + b.from + "→" + now); } else failedAt.set(b.p.sheetId, Date.now());
+    }
+    return done;
+  }
+
+  let checking = false, lastDone = 0;
+  async function check(why) {
+    if (checking || st.unsupported || sandbox() || mode() === "off") return st.last;
+    if (!ready()) return null;
+    checking = true;
+    try {
+      const { runId, carrier } = runOf(), m = mode();
+      const rep = { station: safe(() => root.localStorage.getItem("station_computer_id"), "") || "", role: !runId ? "none" : carrier ? "carrier" : "follower", runId: runId || "", build: BUILD + "/" + (safe(() => (/[?&]v=([^&]+)/.exec((doc.querySelector('script[src*="charm-nest-bridge.js"]') || {}).src || "") || [])[1], "") || ""),
+        checked: 0, backWaitN: 0, backWaitMin: 0, behindN: 0, behind: [], stillN: 0, still: [], healed: [], unverifiedN: 0, missingN: 0, extraN: 0, inHandN: 0, rebuilt: 0, mode: m, feed: safe(() => root.CNSync.push.status().state, ""), heapMB: safe(() => Math.round(root.performance.memory.usedJSHeapSize / 1e6), 0), idleS: Math.round((Date.now() - lastInput) / 1000), ...freezeNow() };
+      { const w = waiting(); rep.backWaitN = w.n; rep.backWaitMin = w.min; }
+      let state = null;
+      if (runId) {
+        let res = null; try { res = await api({ op: "sheetRevsGet", runId }); } catch (e) { st.errors++; rep.error = String(e && e.message || e).slice(0, 160); }
+        if (res && res.error) { if (/unknown|not a function|no such/i.test(String(res.error))) { st.unsupported = true; return null; } rep.error = String(res.error).slice(0, 160); res = null; }
+        // (a set opened on purpose ("Earlier sets…", Recall.open) puts some of the run's sheets on the cards: that is not a computer that is behind; it is measured, said so, and nothing is rebuilt or marked)
+        const opened = safe(() => { const q = root.Recall.state(); return !!(q && (q.runId || q.setId)); }, false);
+        if (res && Array.isArray(res.sheets) && opened) { rep.note = "a set is opened on purpose on this computer"; rep.checked = pages().filter(p => p && p.sheetId && p.runId === runId).length; }
+        else if (res && Array.isArray(res.sheets)) {
+          const first = compare(runId, res.sheets);
+          rep.checked = first.held; rep.behindN = first.behind.length; rep.behind = first.behind.map(b => short(b.p) + " " + b.from + "→" + b.to); rep.unverifiedN = first.unverified.length; rep.missingN = first.missing.length; rep.extraN = first.extra.length; rep.inHandN = first.inHand.length;
+          let after = first;
+          if (m === "on" && !carrier && (first.behind.length || first.missing.length || first.extra.length)) {
+            const done = await heal(runId, res.sheets, first); rep.rebuilt = done.rebuilt; rep.healed = done.healed; st.healed += done.rebuilt;
+            after = compare(runId, res.sheets);
+            if (done.healed.length) say("Out of date: " + done.healed.length + " sheet(s) read again from the cloud — " + done.healed.join(", "));
+          }
+          let still = after.behind.map(b => short(b.p) + " " + b.from + "→" + b.to).concat(after.missing.map(id => id + " (not on this page)"), after.extra.map(p => short(p) + " (not in the cloud)"));
+          // (the computer that carries the run saves its own sheets: one that reads behind at a single look may be the instant before its own save is noted; it is said only when it is behind at two looks in a row)
+          if (carrier) { const was = prevStill; prevStill = new Set(still); still = still.filter(x => was.has(x)); } else prevStill = new Set();
+          rep.stillN = still.length; rep.still = still;
+          state = after;
+        }
+      }
+      st.checks++; st.last = rep; st.at = Date.now(); lastDone = st.at;
+      mark(rep);
+      try { await api({ op: "computerReport", dev: devId(), by: who(), report: rep }); st.reports++; } catch (e) { if (/unknown|not a function/i.test(String(e && e.message || ""))) st.unsupported = true; }
+      if (root.dispatchEvent && root.CustomEvent) safe(() => root.dispatchEvent(new root.CustomEvent("cn:drift", { detail: { report: rep, state } })));
+      return rep;
+    } catch (e) { st.errors++; console.warn("[drift]", e && e.message); return null; }
+    finally { checking = false; }
+  }
+  /** Once per computer at a time: a Web Lock, never held longer than the check. */
+  function run(why) {
+    if (doc && doc.hidden) return Promise.resolve(null);
+    if (Date.now() - lastDone < MIN_GAP && why !== "manual") return Promise.resolve(null);
+    const L = safe(() => root.navigator.locks, null);
+    if (L && typeof L.request === "function") return L.request("cn-drift:production", { ifAvailable: true }, lock => (lock ? check(why) : null)).catch(() => null);
+    return check(why);
+  }
+
+  /* ── the mark in the top bar, and the list ── */
+  let pill = null, pop = null;
+  const css = ".cnDrift{flex:0 0 auto;margin:0 8px;padding:3px 10px;border-radius:999px;border:1px solid #c9852c;background:#fff4e0;color:#8a5200;font:600 12px/1.4 system-ui,sans-serif;cursor:pointer}.cnDrift[hidden]{display:none}.cnDriftPop{position:fixed;z-index:9000;top:52px;right:16px;width:min(720px,94vw);max-height:70vh;overflow:auto;background:#fff;color:#1c1d1d;border:1px solid #b9b2a4;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:12px 14px;font:13px/1.45 system-ui,sans-serif}.cnDriftPop[hidden]{display:none}.cnComp{width:100%;border-collapse:collapse;margin-top:6px}.cnComp th,.cnComp td{text-align:left;padding:4px 8px;border-bottom:1px solid #e6e1d6;vertical-align:top}.cnComp th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#777}.cnComp .bad{color:#b0412e;font-weight:600}.cnComp .ok{color:#2a7a4b}.cnComp .old{color:#999}";
+  function ensureUi() {
+    if (!doc || pill) return;
+    if (!doc.getElementById("cnDriftCss")) { const s = doc.createElement("style"); s.id = "cnDriftCss"; s.textContent = css; (doc.head || doc.documentElement).appendChild(s); }
+    const bar = doc.querySelector(".topbar"); if (!bar) return;
+    pill = doc.createElement("button"); pill.type = "button"; pill.className = "cnDrift"; pill.hidden = true; pill.id = "cnDriftPill"; pill.setAttribute("aria-live", "polite");
+    const tools = bar.querySelector(".topTools"); if (tools) bar.insertBefore(pill, tools); else bar.appendChild(pill);
+    pop = doc.createElement("div"); pop.className = "cnDriftPop"; pop.hidden = true; pop.id = "cnDriftPop"; doc.body.appendChild(pop);
+    pill.addEventListener("click", () => { pop.hidden = !pop.hidden; if (!pop.hidden) paintPop(); });
+    doc.addEventListener("keydown", e => { if (e.key === "Escape" && !pop.hidden) pop.hidden = true; });
+    doc.addEventListener("click", e => { if (pop && !pop.hidden && !pop.contains(e.target) && e.target !== pill) pop.hidden = true; }, true);
+  }
+  function mark(rep) {
+    if (!doc) return; ensureUi(); if (!pill) return;
+    const n = rep && rep.stillN || 0, w = rep && rep.backWaitMin >= 10 ? rep.backWaitN : 0, parts = [];   // (an approval that has waited ten minutes to be saved is not "still being saved")
+    if (n) parts.push("Out of date · " + n);
+    if (w) parts.push("Approvals not saved · " + w);
+    pill.hidden = !parts.length; st.pill = n + w;
+    if (parts.length) { pill.textContent = parts.join(" · "); pill.title = (n ? (rep.role === "carrier" ? "This computer carries the run, so it does not rebuild itself: " : "Still behind the cloud after a rebuild: ") + (rep.still || []).slice(0, 6).join("; ") + ". " : "") + (w ? w + " approval(s) made here have waited " + rep.backWaitMin + " min to be saved to the cloud. " : "") + "Click for the list of computers."; }
+  }
+  const ago = s => s < 90 ? "just now" : s < 5400 ? Math.round(s / 60) + " min ago" : Math.round(s / 3600) + " h ago";
+  function table(list, me) {
+    if (!list || !list.length) return '<div class="help">No computer has reported yet.</div>';
+    const rows = list.map(c => {
+      const old = c.ageS > STALE_S, behind = (c.stillN || 0) > 0, sheets = old ? '<span class="old">not seen</span>' : behind ? '<span class="bad" title="' + esc((c.still || []).join("; ")) + '">' + c.stillN + " behind</span>" : '<span class="ok">current</span>' + (c.note ? ' <span class="old" title="' + esc(c.note) + '">· set opened</span>' : '') + (c.unverifiedN ? ' <span class="old">(' + c.unverifiedN + " unchecked)</span>" : "") + (c.healed && c.healed.length ? ' <span class="old" title="' + esc(c.healed.join("; ")) + '">· rebuilt ' + c.healed.length + "</span>" : "");
+      const bw = c.backWaitN ? '<div class="' + (c.backWaitMin >= 10 ? "bad" : "old") + '">' + c.backWaitN + " approval" + (c.backWaitN === 1 ? "" : "s") + " waiting to save" + (c.backWaitMin ? " (oldest " + (c.backWaitMin >= 90 ? Math.round(c.backWaitMin / 60) + " h" : c.backWaitMin + " min") + ")" : "") + "</div>" : "";
+      const fr = c.freezeMs >= 1000 ? '<span class="' + (c.freezeMs >= 3000 ? "bad" : "") + '">' + (c.freezeMs / 1000).toFixed(1) + " s</span>" : "—";
+      return "<tr><td>" + esc(c.by || "?") + (c.dev === me ? " <b>(this one)</b>" : "") + '<div class="old">' + esc(String(c.station || c.dev).slice(-8)) + "</div></td><td>" + (c.role === "carrier" ? "carries the run" : c.role === "follower" ? "follows" : "no run") + "</td><td" + (old ? ' class="old"' : "") + ">" + ago(c.ageS) + "</td><td>" + sheets + bw + "</td><td>" + fr + "</td><td>" + esc(c.feed || "—") + "</td><td>" + esc(c.mode === "on" ? "heals" : c.mode === "report" ? "report only" : "off") + '</td><td class="old">' + esc(String(c.build || "").slice(0, 22)) + "</td></tr>";
+    }).join("");
+    return '<table class="cnComp"><thead><tr><th>Computer</th><th>Role</th><th>Seen</th><th>Sheets</th><th>Longest freeze (10 min)</th><th>Updates</th><th>Rebuilds itself</th><th>Build</th></tr></thead><tbody>' + rows + "</tbody></table>";
+  }
+  async function list() { const r = await api({ op: "computerList" }); return (r && r.computers) || []; }
+  async function paintPop() {
+    if (!pop) return; pop.innerHTML = '<b>Computers</b> <span class="old">— how each compares its sheets with the cloud, every four minutes</span><div data-body>reading…</div>';
+    try { pop.querySelector("[data-body]").innerHTML = table(await list(), devId()); } catch (e) { pop.querySelector("[data-body]").textContent = "Could not read the list: " + (e && e.message || e); }
+  }
+  function settingsRow() {
+    if (!doc) return;
+    const mount = () => {
+      const host = doc.getElementById("stComputers"); if (!host || host.dataset.drift) return; host.dataset.drift = "1";
+      host.innerHTML = '<label>Computers</label><div class="help">Each computer compares its sheets with the cloud every four minutes and says how far behind it is. A computer that follows the run rebuilds a sheet that is behind; the computer that carries the run only reports.</div>'
+        + '<div class="fieldRow3" style="align-items:center;gap:8px"><select data-m aria-label="This computer rebuilds itself when behind"><option value="on">This computer: measure, rebuild, report</option><option value="report">This computer: measure and report only</option><option value="off">This computer: off</option></select><button class="btn ghost sm" type="button" data-r>Check now</button></div><div data-body class="help">…</div>';
+      const sel = host.querySelector("[data-m]"), body = host.querySelector("[data-body]"); sel.value = mode();
+      sel.addEventListener("change", () => { mode(sel.value); });
+      const paint = async () => { try { body.innerHTML = table(await list(), devId()); } catch (e) { body.textContent = "Could not read the list: " + (e && e.message || e); } };
+      host.querySelector("[data-r]").addEventListener("click", async () => { body.textContent = "checking…"; await run("manual"); paint(); });
+      const dlg = doc.getElementById("dlgSettings");
+      if (dlg && typeof root.MutationObserver === "function") new root.MutationObserver(() => { if (dlg.open) paint(); }).observe(dlg, { attributes: true, attributeFilter: ["open"] });
+    };
+    if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", mount, { once: true }); else mount();
+  }
+
+  function boot() {
+    let tries = 0;
+    const go = () => {
+      tries++;
+      if (!ready() && tries < 180) return setTimeout(go, 1000);
+      if (!ready() || st.started) return;
+      st.started = true;
+      const tick = () => { run("timer").catch(() => {}); setTimeout(tick, EVERY + Math.floor(Math.random() * 20000)); };
+      setTimeout(tick, FIRST + Math.floor(Math.random() * 30000));
+      if (doc) doc.addEventListener("visibilitychange", () => { if (!doc.hidden && Date.now() - lastDone > MIN_GAP) setTimeout(() => run("shown").catch(() => {}), 4000 + Math.floor(Math.random() * 3000)); });
+      if (root.addEventListener) root.addEventListener("online", () => setTimeout(() => run("online").catch(() => {}), 5000 + Math.floor(Math.random() * 5000)));
+    };
+    go();
+  }
+  root.CharmNestDrift = { check: why => (why === "manual" ? run("manual") : check(why || "test")), state: () => Object.assign({}, st), list, mode, compare, _paint: mark, _quiet: () => { lastInput = 0; } };
+  settingsRow();
+  if (doc) { if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", boot); else boot(); }
+})(typeof self !== "undefined" ? self : this);
