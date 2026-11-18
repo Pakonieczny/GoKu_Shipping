@@ -2493,6 +2493,7 @@ function openIframePrinterForListing(cellIndex, timelineChecked) {
 
   // Order timeline: this order's sticker is printed → sorted
   try { window.SortTL && window.SortTL.sorted(orderID, "print"); } catch (_) {}
+  markQrPrinted(orderID);   // (ONEQR: this order has its sticker)
 }
 
 async function printBatch(batchArr) {
@@ -2578,6 +2579,13 @@ async function printBatch(batchArr) {
   });
 }
 
+/* ONEQR (Paul, 18 Nov 2026: "it forces the user to print an individual QR code per each individual piece in a multi-piece order that has individual coloured charm ... one QR code per order only"):
+   an order has ONE sticker, whatever its pieces are (any colour, any metal, any number of them). Print Row printed one sticker for each order of the row it was pressed on, so an order whose
+   pieces stood on both sides of the end of a row (or whose row came round again) got its sticker again with every row that held one of its pieces. Every order that has had its sticker
+   on this page is remembered here: Print Row leaves it out, and the one Print button of an order (a person's own press) still prints it, for a sticker that has to be made again. */
+window._qrPrintedOrders = window._qrPrintedOrders || new Set();
+function markQrPrinted(orderId) { const id = String(orderId == null ? "" : orderId); if (id) window._qrPrintedOrders.add(id); }
+const hasQrPrinted = (orderId) => window._qrPrintedOrders.has(String(orderId == null ? "" : orderId));
 // === Print Row: state & helpers =====================================
 window._rowPrintCursor = 0;            // which visible row to print next (0-based)
 const ROW_COLS = 9;                    // layout uses 9 columns for Etsy items (see layout code)
@@ -2658,10 +2666,11 @@ function stashQrBatch(batch) {
 }
 
 /** Kick off printing for the next visible row of up to 9 Etsy Order Items. */
-async function handlePrintRowClick() {
+async function handlePrintRowClick(opts) {
   try {
+    const again = !!(opts && opts.again);   // (ONEQR: Shift + Print Row prints the row's stickers again, orders already printed too: a sticker that has to be made again)
     // nobody signed in: the name is asked for first and the row prints once it is set (SortTL.nameFirst)
-    if (window.SortTL && typeof window.SortTL.nameFirst === "function" && !window.SortTL.nameFirst(() => handlePrintRowClick())) return;
+    if (window.SortTL && typeof window.SortTL.nameFirst === "function" && !window.SortTL.nameFirst(() => handlePrintRowClick(opts))) return;
     const visible = getVisibleCellIndices();
     if (!visible.length) {
       if (window.M?.toast) M.toast({ html: "No visible Etsy items to print." });
@@ -2677,20 +2686,23 @@ async function handlePrintRowClick() {
     const rowSlice = visible.slice(rowStart, rowStart + ROW_COLS);
 
     // Build unique-by-order list from this row (avoid duplicate labels for same order)
+    // ONEQR: and leave out every order whose sticker was already printed (an earlier row held another of its pieces)
     const seenOrders = new Set();
     const toPrintIndices = [];
+    let alreadyPrinted = 0;
     for (const idx of rowSlice) {
       const item = window.cachedOrderItems?.[idx];
       const orderId = item?.receipt_id ?? item?.receiptId ?? "";
       if (!orderId) continue;
       if (!seenOrders.has(orderId)) {
         seenOrders.add(orderId);
+        if (!again && hasQrPrinted(orderId)) { alreadyPrinted++; continue; }
         toPrintIndices.push(idx);
       }
     }
 
     if (!toPrintIndices.length) {
-      if (window.M?.toast) M.toast({ html: "No printable items in this row." });
+      if (window.M?.toast) M.toast({ html: alreadyPrinted ? "Every order in this row already has its one sticker (hold Shift to print them again)." : "No printable items in this row." });
       // advance cursor anyway so next click moves on
       window._rowPrintCursor = (window._rowPrintCursor + 1) % totalRows;
       return;
@@ -2728,6 +2740,7 @@ async function handlePrintRowClick() {
       document.body.appendChild(ifr);
       // Order timeline: each printed sticker's order → sorted
       try { inBatch.forEach(i => window.SortTL && window.SortTL.sorted(orderIdOfCell(i), "row")); } catch (_) {}
+      inBatch.forEach(i => markQrPrinted(orderIdOfCell(i)));   // (ONEQR)
     }
 
     // Advance to the next row (wraps to 0 after the last)
@@ -2746,7 +2759,7 @@ async function handlePrintRowClick() {
 }
 
 // Hook up the button
-document.getElementById("printRowBtn")?.addEventListener("click", handlePrintRowClick);
+document.getElementById("printRowBtn")?.addEventListener("click", (ev) => handlePrintRowClick({ again: !!(ev && ev.shiftKey) }));
 
     /* ===== Hard-coded fallback positions & sizes (no calculations) ===== */
     const defaultPos = {

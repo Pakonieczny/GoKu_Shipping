@@ -493,6 +493,15 @@ async function printBatch(batchArr) {
   document.body.appendChild(hiddenQRContainer);
 
   const allContent = [];
+  // ONEQR (Paul, 18 Nov 2026: "one QR code per order only"): a job that names an order twice (its pieces, in any colour or metal, are ONE sticker) prints it once
+  const printedHere = new Set();
+  batchArr = (Array.isArray(batchArr) ? batchArr : []).filter(o => {
+    const its = o && Array.isArray(o.items) ? o.items : [];
+    const id = String((o && o.userTypedOrderNum) || (its[0] && (its[0].receipt_id || its[0].receiptId)) || "");
+    if (!id || id === "UnknownOrder") return true;
+    if (printedHere.has(id)) return false;
+    printedHere.add(id); return true;
+  });
 
   for (let i = 0; i < batchArr.length; i++) {
     const dataObj = batchArr[i] || {};

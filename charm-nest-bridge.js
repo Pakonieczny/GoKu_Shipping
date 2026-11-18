@@ -5934,6 +5934,24 @@ const Pool = window.Pool = (() => {
   }
   /** The charm a piece that is not on any sheet yet WILL have (null once it has its real one, or for a piece never previewed). */
   const previewCharmOf = poolId => (poolId && !charmOf(poolId) && previews.get(poolId)) || null;
+  /* HELDCHARM: a piece of a custom order that is on no sheet (its pool row abandoned or held) gets the charm its design file draws, kept as a preview (never recorded, never placed). A read that failed is not asked again for two minutes.
+     The row is the page's, else the cloud's (an order on hold is not loaded on every computer). -> the charm, or null. */
+  const heldTasks = new Map(), heldFailed = new Map();
+  async function previewHeld(poolId) {
+    if (!poolId || charmOf(poolId)) return null;
+    if (previews.has(poolId)) return previews.get(poolId);
+    const t0 = heldFailed.get(poolId); if (t0 && Date.now() - t0 < 120000) return null;
+    let task = heldTasks.get(poolId); if (task) return task;
+    task = (async () => {
+      let p = B.pool.rows.get(poolId) || null;
+      if (!p || !p.aiPath) { const rid = String(poolId).split("_")[0], r = await api("charmNestLibrary", { op: "getOrderPieces", orderId: rid }, { quiet: true }); p = (((r && r.orders && r.orders[rid] && r.orders[rid].pools) || []).find(x => x && x.poolId === poolId)) || null; }
+      if (!p || !p.custom || !p.aiPath || !window.CustomSheet || !window.CustomSheet.heldCharm) { heldFailed.set(poolId, Date.now()); return null; }
+      const c = await window.CustomSheet.heldCharm(p);
+      if (!c) { heldFailed.set(poolId, Date.now()); return null; }
+      previews.set(poolId, c); previewKeep.add(poolId); return c;
+    })().catch(e => { heldFailed.set(poolId, Date.now()); console.warn("Held custom piece: its design could not be read", e); return null; }).finally(() => heldTasks.delete(poolId));
+    heldTasks.set(poolId, task); return task;
+  }
   /* THISORDER (Paul, 12 Nov 2026, order 4227069460: the handwriting drawn on a heart's front in the Charm Editor, saved, and "nothing on the order changed"): a piece not pooled yet (nesting paused)
      keeps its Charm Editor edit under the pool id it will have (ARTPRE), but every picture of it and its engraving jobs read the charm it WILL have, this preview, which kept the master's drawing.
      The edit is put on the preview too (the art-edit host's swap): the order window, the engraving card and the jobs show it at once. → whether a preview took it. */
@@ -6036,7 +6054,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(ListMedia.oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pairResume, keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewSwap, previewIds, previewAll: true, previewEntries: () => [...previews.entries()].filter(([id, c]) => c && !charmOf(id)), previewSig: trySig, greenFits, partnerSheets, greenPage, greenResume, greenHeld, greenLeftover };
+  return { pairResume, previewHeld, keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewSwap, previewIds, previewAll: true, previewEntries: () => [...previews.entries()].filter(([id, c]) => c && !charmOf(id)), previewSig: trySig, greenFits, partnerSheets, greenPage, greenResume, greenHeld, greenLeftover };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -8884,7 +8902,7 @@ const Engrave = window.Engrave = (() => {
     charmAsked.set(row.key, Date.now());
     // (RAISEDSYNC, Paul 13 Nov 2026, order 4222483240 SEA_59109 on another computer: None and no grid where the run computer shows Back with its grid): a piece marked made-before-its-sheet whose early pass makes no charm (its line is not read as an engraving here) is drawn from its preview all the same
     // (FASTGRID, Paul 13 Nov 2026: "The grid doesn't come up it comes up very late"): the charm is drawn from its preview AT ONCE, beside the early pass (which read the words and fit them first, and only then drew it)
-    (job.pre && early(row).catch(() => {}), Pool.preview(row)).then(() => { if (!(Pool.charmOf(pid) || Pool.previewCharmOf(pid))) return; charmAsked.delete(row.key); if (EG.card && EG.card.isConnected && cardJobOf(job)) render(); }).catch(() => {});
+    (job.pre && early(row).catch(() => {}), Promise.all([Pool.preview(row), Pool.previewHeld ? Pool.previewHeld(pid) : null])).then(() => { if (!(Pool.charmOf(pid) || Pool.previewCharmOf(pid))) return; charmAsked.delete(row.key); if (EG.card && EG.card.isConnected && cardJobOf(job)) render(); }).catch(() => {});   // (HELDCHARM: a custom piece on hold is read from its design file)
     return true;
   }   // (ENGPRE: a piece not on any sheet yet has the charm it WILL have, Pool.preview)
   /* HELDENGRAVE (Paul, 18 Nov 2026, order 4225100553 after a removal from its sheet that failed: "it keeps on flashing the screen ... this is not the high-quality image. The grade is gone and the options underneath the
@@ -19174,6 +19192,18 @@ const CustomSheet = window.CustomSheet = (() => {
     row.engrave = { needed: false, state: "none", approved: true,seals:CNEngravingSeals.merge(row.engrave) };
     return { sp: Object.assign({}, sp, { material: charms[0].metal, quantity: charms.length, designSku: sp.designSku || row.line.sku || "CUSTOM" }), pools, charms, custom: true };
   }
+  /* HELDCHARM (Paul, 18 Nov 2026, order 4225100553: "It doesn't matter whether the charm is on hold or not it should still be fully visible and fully accessible and fully approvable inside the engraving menu"):
+     the charm of a custom piece that is on no sheet (on hold, or taken off its sheet: its pool row stays, "abandoned", with its design file's path and the hash of its piece) is read from that file, as sourceOf reads
+     it for a sheet, so its engraving card has the real outline, the grid and the text frame. Reads the file (a read of the cloud, nothing written). -> the charm, or null when the file has no such piece. */
+  async function heldCharm(p) {
+    if (!p || !p.poolId || !p.aiPath) return null;
+    const F = { id: "held:" + p.poolId, name: String(p.customFile || "custom.ai"), bytes: null, cloud: { path: p.aiPath }, metal: p.material || "gold" };
+    const { charms } = await read(F);
+    const base = charms.find(c => c && c.hash && String(c.hash) === String(p.charmHash || "")) || (charms.length === 1 ? charms[0] : null);
+    if (!base) return null;
+    const id = "cust:held:" + String(p.poolId);
+    return Object.assign({}, base, { id: `${id}:${p.poolId}`, pinned: null, sourceId: id, name: `${p.orderId || ""} · Custom · ${F.name.replace(ACCEPT, "")}`, custom: true, order: String(p.orderId || ""), poolId: p.poolId, metal: p.material || F.metal, lineKey: p.lineKey || null, excluded: false, engravable: false, backKeepOut: null });
+  }
   /** One pool source per file, as a master's (Pool.masterCharm): its pieces traced once, every copy sharing them. */
   async function sourceOf(e, F) {
     const id = "cust:" + String(F.hash || F.id).slice(0, 16);
@@ -20489,7 +20519,7 @@ const CustomSheet = window.CustomSheet = (() => {
     }, delay || 0);
     return true;
   }
-  return { touched: () => { ver++; redraw(); }, add, remove, send, prepare, sentOf, decisionOf, sending, recover, load, hydrate, applyRemote, askCarrier, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, sheetStamps, sheetSealsHtml, sentButtonHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
+  return { touched: () => { ver++; redraw(); }, add, remove, send, prepare, heldCharm, sentOf, decisionOf, sending, recover, load, hydrate, applyRemote, askCarrier, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, sheetStamps, sheetSealsHtml, sentButtonHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════
