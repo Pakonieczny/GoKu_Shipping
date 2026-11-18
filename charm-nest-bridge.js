@@ -8906,8 +8906,25 @@ const Engrave = window.Engrave = (() => {
      a reload has none, and with nesting paused no engraving pass (background / earlyAll) makes them again; or the cache let it go) has it made again as soon as its card is drawn or a control needs it:
      early() previews the line again (nothing written, nothing paid) and fits a face that was left waiting for it; the open card is drawn again once the charm is back. -> true while it is being made. */
   const charmAsked = new Map();
+  /* HELDCHARM 3 (Paul, 18 Nov 2026, Michelle's computer, order 4225100553): a job with NO piece named (copies empty) in ANY state, drawn as a card, asks the cloud for the pool ids of its line's custom pieces (a line on hold, taken off its
+     sheet, that this computer did not pool) and takes them as its own, so the charm is read from its design file and the card is drawn whole. Once in thirty seconds for a job; the cloud answers are kept two minutes (Pool.heldPoolIds). */
+  const heldCopiesAsked = new Map();
+  function heldCopiesFor(job) {
+    try {
+      if (!job || job.editingBack || job.editCharm || (job.copies || []).length || !Pool.heldPoolIds) return;
+      const row = lineOf(job.row); if (!row || !row.key || !row.order) return;
+      const t = heldCopiesAsked.get(job.key); if (t && Date.now() - t < 30000) return; heldCopiesAsked.set(job.key, Date.now());
+      Pool.heldPoolIds(row).then(ids => {
+        if (!ids || !ids.length || (job.copies || []).length) return;
+        const m = /^D(\d+)$/.exec(String(job.slot || "")), pick = job.slot ? (m ? [ids[Math.min(+m[1] - 1, ids.length - 1)]] : []) : ids.slice();
+        if (!pick.length) return; job.copies = pick; job.pre = true;
+        if (EG.card && EG.card.isConnected && cardJobOf(job)) render();
+      }).catch(() => {});
+    } catch (_) { /* the card as it was */ }
+  }
   function charmBack(job) {
     const pid = job && (job.copies || [])[0];
+    if (!pid) { heldCopiesFor(job); return false; }
     // (EVERYPC, Paul 13 Nov 2026, on another computer: "why there's no grid why there's no options at the bottom of the grid" / "My computer doesn't do that"): not only a piece made before it was on a sheet: ANY piece whose charm this page does not hold (a computer that has not opened its sheet, a fresh load) has it drawn, in memory only
     if (!pid || job.editCharm || Pool.charmOf(pid) || Pool.previewCharmOf(pid)) return false;
     const row = lineOf(job.row); if (!row || !row.key) return false;

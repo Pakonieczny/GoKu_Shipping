@@ -48,6 +48,27 @@
   const cutPage = p => +p.laserDoneAt > 0 || +p.roseCutAt > 0 || !!(p.recalled && (+p.recalled.laserDoneAt > 0 || +p.recalled.roseCutAt > 0));
   const failedAt = new Map(); let followAt = 0, prevStill = new Set();
   /** (BACKFOLDER, Paul 18 Nov 2026) approvals made on this computer whose back files are not saved: Ana's and Michelle's waited hours behind "Reconnect to save the approved back files" and nothing said so. How many, and how long the oldest has waited. */
+  /** What the engraving card open on this computer holds of its piece ("" when none is open): order, state, pieces named, the first piece's row, whether a charm is held, pre, fit. */
+  function heldCard() {
+    return safe(() => {
+      const c = root.document && root.document.querySelector(".rvItem.full"), j = c && c._job; if (!j) return "";
+      const pid = (j.copies || [])[0], row = pid && root.B.pool.rows.get(pid), ch = pid && (root.Pool.charmOf(pid) || root.Pool.previewCharmOf(pid)), rid = String(((j.row && (j.row.parentRow || j.row)).order || {}).receiptId || "");
+      return ("eng:" + rid + " st=" + j.state + " cp=" + (j.copies || []).length + " row=" + (pid ? (row ? row.state : "none") : "-") + " ch=" + (ch ? 1 : 0) + " pre=" + (j.pre ? 1 : 0) + " fit=" + (j.fit ? 1 : 0) + " ln=" + ((root.Orders.rows().find(r => r === (j.row.parentRow || j.row)) || {}).state || "?")).slice(0, 100);
+    }, "");
+  }
+  /** WHY each approval counted by waiting() is not being saved: the conditions the retry (Engrave.resumeBacks) tests, the first one that holds; as "bk:<order> <why>" in the report's `still` list, for reading in the cloud (never shown). */
+  function stuckWhy() {
+    const items = safe(() => root.B.engrave.items, null), out = []; if (!items || typeof items.values !== "function") return out;
+    const cloudOk = safe(() => root.S.cloud.ok === true, true);
+    for (const j of items.values()) {
+      if (!j || !j.backPending || j.editingBack) continue;
+      const rid = String(((j.row && (j.row.parentRow || j.row)).order || {}).receiptId || "?"), at = +j.approvedAt || +(j.approving && j.approving.at) || 0, live = ["approved", "written"].includes(j.state) || !!(j.approving && j.state === "review");
+      const why = !live ? "notLive:" + j.state + (j.approving ? "+ing" : "") + (j.approvedAt ? "+at" : "") : j.backSaving ? "saving" : j.approvalPreparing ? "preparing" : j.stamping ? "stamping" : !at ? "noAt" : !(j.fit && j.view || j.writtenFit && j.writtenFit.approvedAt === j.approvedAt) ? "noFit:" + (j.fit ? 1 : 0) + (j.view ? 1 : 0) + (j.writtenFit ? 1 : 0) : !(j.copies || []).length ? "noCopies" : (j.pre && !safe(() => (j.copies || []).some(id => root.Pool.sheetOf(id)), false)) ? "pre" + (safe(() => root.Engrave.unplacedPre(j), false) ? ":unplaced" : ":onSaved") : !cloudOk ? "cloudAway" : "retrying:" + String(j.backError || j.reason || "").slice(0, 40);
+      out.push(("bk:" + rid + " " + why).slice(0, 90));
+      if (out.length >= 12) break;
+    }
+    return out;
+  }
   function waiting() {
     const items = safe(() => root.B.engrave.items, null), out = { n: 0, min: 0 }; if (!items || typeof items.values !== "function") return out;
     const now = Date.now(), held = new Map();
@@ -117,6 +138,7 @@
       const rep = { station: safe(() => root.localStorage.getItem("station_computer_id"), "") || "", role: !runId ? "none" : carrier ? "carrier" : "follower", runId: runId || "", build: BUILD + "/" + (safe(() => (/[?&]v=([^&]+)/.exec((doc.querySelector('script[src*="charm-nest-bridge.js"]') || {}).src || "") || [])[1], "") || ""),
         checked: 0, backWaitN: 0, backWaitMin: 0, behindN: 0, behind: [], stillN: 0, still: [], healed: [], unverifiedN: 0, missingN: 0, extraN: 0, inHandN: 0, rebuilt: 0, mode: m, feed: safe(() => root.CNSync.push.status().state, ""), heapMB: safe(() => Math.round(root.performance.memory.usedJSHeapSize / 1e6), 0), idleS: Math.round((Date.now() - lastInput) / 1000), ...freezeNow() };
       { const w = waiting(); rep.backWaitN = w.n; rep.backWaitMin = w.min; }
+      { const d = heldCard(); if (d) rep.note = d; }   // (HELDCHARM: what the open engraving card holds, for a computer whose card is not drawn whole: said in the report, 100 characters)
       let state = null;
       if (runId) {
         let res = null; try { res = await api({ op: "sheetRevsGet", runId }); } catch (e) { st.errors++; rep.error = String(e && e.message || e).slice(0, 160); }
@@ -142,6 +164,7 @@
       }
       st.checks++; st.last = rep; st.at = Date.now(); lastDone = st.at;
       mark(rep);
+      try { const why = stuckWhy(); if (why.length) rep.still = (Array.isArray(rep.still) ? rep.still : []).concat(why).slice(0, 40); } catch (_) { /* a report without it */ }
       try { await api({ op: "computerReport", dev: devId(), by: who(), report: rep }); st.reports++; } catch (e) { if (/unknown|not a function/i.test(String(e && e.message || ""))) st.unsupported = true; }
       if (root.dispatchEvent && root.CustomEvent) safe(() => root.dispatchEvent(new root.CustomEvent("cn:drift", { detail: { report: rep, state } })));
       return rep;
