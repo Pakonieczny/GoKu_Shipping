@@ -107,9 +107,10 @@ const RUN = 'run-drift-t', SHEETS = 'Charm_Nest_Sheets';
   await setup();
   await page.evaluate(() => {
     const pg = allSheets().find(p => p.sheetId === 'p-same'); pg.charms = [{ poolId: 'pool-1' }, { poolId: 'pool-2' }]; pg.backPool = [{ poolId: 'pool-2', approvedAt: Date.now() - 1000 }];
-    B.engrave.items.set('t-wait-1', { copies: ['pool-1'], backPending: 'Reconnect to save the approved back files', approvedAt: Date.now() - 3600000 });   // counts: on a sheet, no saved back
-    B.engrave.items.set('t-wait-2', { copies: ['pool-gone'], backPending: 'x', approvedAt: Date.now() - 7200000 });                                          // not counted: its piece is on no sheet any more
-    B.engrave.items.set('t-wait-3', { copies: ['pool-2'], backPending: 'x', approvedAt: Date.now() - 3600000 });                                              // not counted: the sheet already holds its saved back
+    B.engrave.items.set('t-wait-1', { state: 'approved', copies: ['pool-1'], backPending: 'Reconnect to save the approved back files', approvedAt: Date.now() - 3600000 });   // counts: on a sheet, no saved back
+    B.engrave.items.set('t-wait-2', { state: 'approved', copies: ['pool-gone'], backPending: 'x', approvedAt: Date.now() - 7200000 });                                          // not counted: its piece is on no sheet any more
+    B.engrave.items.set('t-wait-3', { state: 'approved', copies: ['pool-2'], backPending: 'x', approvedAt: Date.now() - 3600000 });                                              // not counted: the sheet already holds its saved back
+    B.engrave.items.set('t-wait-4', { state: 'review', copies: ['pool-1'], backPending: 'x', approvedAt: Date.now() - 3600000 });   // not counted (STALEBACK): not an approval in force (back in Review): nothing waits to be saved
   });
   await run(); const o8f = await out();
   await page.evaluate(() => { for (const k of ['t-wait-1', 't-wait-2', 't-wait-3']) B.engrave.items.delete(k); const pg = allSheets().find(p => p.sheetId === 'p-same'); pg.charms = []; pg.backPool = []; });

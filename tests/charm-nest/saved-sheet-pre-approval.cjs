@@ -4,6 +4,8 @@
 //   2  a pre job whose piece is on a live page is placed
 //   3  a pre job whose piece is on a SAVED sheet (its pool row names the sheet, this page holds the sheet as a card) is placed: its back is written and retried
 //   4  a pre job whose pool row was abandoned (taken off its sheet) is still unplaced
+//   5  STALEBACK: a flag "its back waits to be saved" on a job that is no longer an approval in force (Review, Blocked, None) is cleared, and an approval in force keeps it; the drift count counts only approvals in force
+//   6  an approval of a piece the cloud has since taken off its sheet (pool row abandoned) is cleared too
 // Real charm-nest-1.html over the repo's fake site.   PW_DIR=... CHROMIUM=... node tests/charm-nest/saved-sheet-pre-approval.cjs
 const path = require('path');
 const { start } = require('./bridge-server.cjs');
@@ -36,6 +38,25 @@ const { start } = require('./bridge-server.cjs');
       list.pop();
       return out;
     });
+    // 5, 6 · stale "waits to be saved" flags
+    srv.st.put('Charm_Pool', '4290000009_42900000091_1', { poolId: '4290000009_42900000091_1', orderId: '4290000009', state: 'abandoned', sheetId: null });
+    const sb = await page.evaluate(async () => {
+      const mk = async (rid, patch) => {
+        const ORDER = { receiptId: rid, orderNumber: rid, createTs: 1, updateTs: 2, shipBy: 3, buyer: { name: 'N' }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], lines: [{ transactionId: rid + '1', listingId: '4458930445', sku: 'MINI_0445', title: 'Mini', quantity: 1, expectedShipDate: 3, metalKey: 'gold', metalLabel: 'GF 14/20', variations: [], personalization: ['A'] }] };
+        const key = rid + '_' + rid + '1', row = { key, order: ORDER, line: ORDER.lines[0], arrivedAt: Date.now(), spec: null, problems: [], state: 'pooled', reason: null, claimedBy: null, poolIds: [key + '_1'], engrave: null, material: null };
+        B.orders.rows.push(row); B.orders.byKey.set(key, row); Orders.interpretAll(); row.spec.engraveCandidate = true;
+        const j = Engrave.ensureJob(row); Object.assign(j, { copies: [key + '_1'], text: 'A', lines: ['A'], lineInput: ['A'], backPending: true }, patch); return j;
+      };
+      const stale = await mk('4290000007', { state: 'review', approvedAt: Date.now() - 1e8 });
+      const live = await mk('4290000008', { state: 'approved', approvedAt: Date.now() - 1e8, fit: { size: 10, centre: [0, 0], angle: 0 }, view: {} });
+      const gone = await mk('4290000009', { state: 'approved', approvedAt: Date.now() - 1e8, fit: { size: 10, centre: [0, 0], angle: 0 }, view: {} });
+      const n = await Engrave.settleStuckBacks();
+      return { n, stale: !!stale.backPending, live: !!live.backPending, gone: !!gone.backPending };
+    });
+    console.log('   settle:', JSON.stringify(sb));
+    check(sb.stale === false, '5a a flag on a job that went back to Review is cleared (not an approval in force)');
+    check(sb.live === true, '5b an approval in force keeps its flag: it still waits to be saved');
+    check(sb.gone === false, '6 an approval of a piece the cloud has taken off its sheet (abandoned) is cleared');
     console.log('   ', JSON.stringify(r));
     check(r.none === true && r.notPre === false, '1 a pre job whose piece is on no sheet is unplaced; a job that is not pre never is');
     check(r.rowButNoSheet === true, '1b a pool row that names a sheet this page does not hold at all: unplaced (nothing to write to)');
