@@ -156,6 +156,11 @@
     return n;
   }
   /** One line the cloud holds put on this page, when it is another's newer work. -> true when it was taken. */
+  const REPAIR = new Set();
+  /** KEEPAPPROVED: this computer's own record of a line, sent again over a degraded one (its approval and its placement). */
+  async function repairSend(key) {
+    try { const line = linesNow().get(key), rec = line && lineRec(line); if (!rec) return; LOCAL_AT.set(key, Date.now()); await send([{ key, rec, sig: sigOf(line) }]); } catch (_) { /* the next read of the line tries again */ }
+  }
   async function take(l, why) {
     const all = linesNow(), line = all.get(l.key); if (!l.rec) return false;
     if (!line) { WAITING.set(l.key, l); return false; }   // (NEWLINES, Paul 13 Nov 2026: "What about future orders?"): the line has not reached this computer yet: taken when it does (retryWaiting)
@@ -174,6 +179,9 @@
       const items = safe(() => E().items(), null);
       for (const rj of rec.jobs || []) {
         const j = items && items.get(rj.key); if (!j) continue;
+        /* KEEPAPPROVED (Paul, 18 Nov 2026, Michelle's computer: "the only thing missing is the approved engraving of the emoji heart"): a computer that opened the order with no charm wrote its job with NO place and back to Review, over the
+           approved placement in the cloud. A cloud job with no place and no approval, for the very same words, is never taken over an approved placement this computer holds: it is kept, and sent again, so the cloud (and every computer) has it back. */
+        if (["approved", "written"].includes(j.state) && j.fit && +j.approvedAt > 0 && !rj.place && !["approved", "written"].includes(rj.state) && String(rj.text == null ? "" : rj.text) === String(j.text == null ? "" : j.text)) { REPAIR.add(l.key); continue; }
         for (const f of JOB_FIELDS) { if (rj[f] === undefined) delete j[f]; else j[f] = plain(rj[f]); }
         if (rj.place && FIT_STATES.has(rj.state) && (j.lineInput || j.lines || []).length) {
           // the same words, in the same font, at the same place: fitJob keeps a placement made for them (keepPlace), then the state it had there goes back on
@@ -193,6 +201,7 @@
           finally { j.state = keepState; if (keepApproved.approvedAt !== undefined) Object.assign(j, keepApproved); }
         } else if (!FIT_STATES.has(rj.state)) { j.fit = null; }
       }
+      if (REPAIR.has(l.key)) { REPAIR.delete(l.key); setTimeout(() => repairSend(l.key), 400); }
       safe(() => root.CharmNestMadeThumb && root.CharmNestMadeThumb.changed("engrave-sync", (line.poolIds || []).slice()));
       safe(() => S().schedule());
       SIGS.set(l.key, sigOf(line));
