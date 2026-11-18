@@ -14951,11 +14951,16 @@ const Engrave = window.Engrave = (() => {
      it had (job.keepPlace, numbers only: it travels with the job and the worker's input), and the worker keeps it: unchanged when the words still sit on the metal, else only smaller about the same
      centre and at the same angle, else within 1 % of the charm's size of that centre (CharmNestEngraveFit keepPlacement). Only when nothing fits there are the words placed afresh, and the note says so. */
   const KEPT = new WeakMap();   // job -> the fit it had (the very object, given back when nothing moved)
-  function keepPlace(j) {
-    const f = j && (j.fit || j.writtenFit); if (!f || f.artOnly || !Array.isArray(f.centre) || !(f.size > 0)) return;
-    const v = j.view, lines = (Array.isArray(f.lines) && f.lines.length ? f.lines : j.lines || []).slice(); if (!lines.length) return;
-    j.keepPlace = { centre: f.centre.slice(), angle: f.angle || 0, size: f.size, lines, weight: f.weight || "Regular", lineGap: f.lineGap != null ? f.lineGap : fitOpts(j).lineGap, fittedMax: f.fittedMax || f.size,
+  /** The placement of a face as numbers only (keepPlace's own), or null: what a fit of the same words keeps; the checkpoint keeps it for a decided face it leaves the drawn fit out of (Session.capture, LEAN). */
+  function placeOf(j) {
+    const f = j && (j.fit || j.writtenFit); if (!f || f.artOnly || !Array.isArray(f.centre) || !(f.size > 0)) return null;
+    const v = j.view, lines = (Array.isArray(f.lines) && f.lines.length ? f.lines : j.lines || []).slice(); if (!lines.length) return null;
+    return { centre: f.centre.slice(), angle: f.angle || 0, size: f.size, lines, weight: f.weight || "Regular", lineGap: f.lineGap != null ? f.lineGap : fitOpts(j).lineGap, fittedMax: f.fittedMax || f.size,
       upAngle: v ? v.upAngle : f.upAngle, ...(v ? { cx: v.cx, cy: v.cy } : {}), fontKey: fontIdOf(j) };
+  }
+  function keepPlace(j) {
+    const k = placeOf(j); if (!k) return;
+    j.keepPlace = k;
     if (j.fit) KEPT.set(j, j.fit); else KEPT.delete(j);
   }
   /** The placement to keep in the next fit of `job`: only for the very words and font it was made with (words or a font changed since are a person's new choice, placed afresh). */
@@ -15053,7 +15058,7 @@ const Engrave = window.Engrave = (() => {
     return n;
   }
   artChanged._again = new Map();
-  return { viewFaceOf, setViewFace, showFace, showStage: svShowStage, stageNow: svStageNow, stageSeq: k => { const r = SV_STAGES.get(String(k == null ? "" : k)); return r ? r.seq : 0; }, stagePlaceOf: svPlaceOf, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, discardStaged, stageFace, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, pendingOrderIds, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { viewFaceOf, setViewFace, showFace, showStage: svShowStage, stageNow: svStageNow, stageSeq: k => { const r = SV_STAGES.get(String(k == null ? "" : k)); return r ? r.seq : 0; }, stagePlaceOf: svPlaceOf, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, discardStaged, stageFace, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, pendingOrderIds, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, placeOf, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
    list of pieces, the Pieces counts and a monogram line's pieces (the same slots and piece keys: "<line>" for one piece, "<line>#C<u>" for several) read THIS. Added beside the Engrave object, not inside its return. */
@@ -28980,14 +28985,17 @@ const Session = window.Session = (() => {
   /* Master designs that no sheet charm, pool row, open order line or back being edited uses are left out: a line that
      needs one again fetches it from the library (Pool.masterCharm; restore does not bring back that cache either), and
      the checkpoint kept every master ever loaded, bytes and all. */
-  function poolSourcesInUse() {
+  /* (LEAN, Paul 18 Nov 2026: "make the browser checkpoint small enough that no page freezes while it saves"; Michelle's computer: a 191 MB checkpoint every ~3 minutes, 4 to 7 s of frozen page each time) `lean` is the
+     pages the checkpoint holds as a record only (leanPage below): the masters only their pieces, their pool rows and the order lines made of them use are left out with them. */
+  function poolSourcesInUse(lean) {
     const all = S.poolSources || {}, ids = Object.keys(all); if (!ids.length) return all;
     const keep = new Set(), viaPath = p => { if (p) keep.add("pool:" + String(p).replace(/[^\w]+/g, "_")); };
-    for (const p of allSheets()) for (const c of p.charms || []) keep.add(c.sourceId);
+    const off = new Set(); if (lean && lean.size) for (const p of lean) for (const c of p.charms || []) if (c && c.poolId) off.add(String(c.poolId));
+    for (const p of allSheets()) if (!(lean && lean.has(p))) for (const c of p.charms || []) keep.add(c.sourceId);
     for (const c of S.unassigned || []) keep.add(c.sourceId);
-    for (const p of B.pool.rows.values()) if (p.state !== "committed") viaPath(p.aiPath);
+    for (const [id, p] of B.pool.rows) if (p.state !== "committed" && !off.has(String(id))) viaPath(p.aiPath);
     if (B.carry?.pools instanceof Map) for (const p of B.carry.pools.values()) viaPath(p.aiPath);
-    for (const r of B.orders.rows || []) if (r.spec?.designSku && !["gone", "committed"].includes(r.state)) { try { const e = window.Master?.entryFor?.(r.spec.designSku); viaPath(e && window.Pool?.sizeEntry?.(e, r.spec.size)?.aiPath); } catch (_) {} }
+    for (const r of B.orders.rows || []) if (r.spec?.designSku && !["gone", "committed"].includes(r.state) && !((r.poolIds || []).length && r.poolIds.every(id => off.has(String(id))))) { try { const e = window.Master?.entryFor?.(r.spec.designSku); viaPath(e && window.Pool?.sizeEntry?.(e, r.spec.size)?.aiPath); } catch (_) {} }
     for (const j of B.engrave.items.values()) if (j.editCharm) keep.add(j.editCharm.sourceId);
     return ids.every(id => keep.has(id)) ? all : Object.fromEntries(ids.filter(id => keep.has(id)).map(id => [id, all[id]]));
   }
@@ -29002,12 +29010,66 @@ const Session = window.Session = (() => {
     const out = copy(Object.assign({}, r, { lines: Object.fromEntries(Object.entries(r.lines).filter(([k]) => !from.has(k))) }), seen);
     out.linesFromRows = [...from]; return out;
   }
+  /* (LEAN, Paul 18 Nov 2026: "make the browser checkpoint small enough that no page freezes while it saves"): Michelle's computer follows the run, so every sheet of the run was built here from the cloud's records, ~72 KB a piece, and the
+     whole of it was copied and cloned on the page's thread every three minutes (191 MB, 4 to 7 s each time). A sheet this computer only FOLLOWS (Recall.follow: another computer carries the run) and holds exactly as the cloud has it
+     is the cloud's, and Recall.follow puts the cloud's sheets on the cards at every start whatever the checkpoint says (CACHEONLY): it goes into the checkpoint as the record it is shown from (the state Recall.follow itself leaves
+     before the pieces are built: drawn from its saved picture, built again by makeLive), without its pieces. A sheet with anything of this computer's own on it is written whole as before: not followed, a run of its own here,
+     changed or waiting to be saved (dirty, saveOwed, _writeOwed, a problem, no revision confirmed), at work (nesting, workers, a hold), a Rose Gold contour or cut, a piece with no pool row (a file dropped here). */
+  const LEAN_BUSY = ["nesting", "finishing", "queued"], LEAN_ROSE = ["rosePlan", "roseProtected", "roseStock", "roseHistory", "roseChoice", "roseMore", "roseCutAt", "roseStockId", "recStockId", "roseReopened", "roseRevision"];
+  function leanPage(p) {
+    try {
+      if (!p || B.run || !p.followed || p.recalled || !p.sheetId || !p.runId || (p.metal === "rose")) return false;
+      const charms = p.charms || []; if (!charms.length || !(p.placements || []).length) return false;
+      if (p.dirty || p.saveOwed || p._writeOwed || p.problem || p.persistedDone !== true || p.layoutRev == null || +p.laserDoneAt > 0) return false;
+      if (LEAN_BUSY.includes(p.status) || (p.workers || []).length || p._operationStarting || p._rosePlanning || p._roseAction || p._roseStep || p._manualHold || p._inplaceHold || p._byHand || p._liveFailed) return false;
+      if (LEAN_ROSE.some(k => p[k] && !(Array.isArray(p[k]) && !p[k].length))) return false;   // (a metal's own sheet record, its contour or its cuts: written whole; recStockId is "" on every sheet built from a record)
+      if (!p.cloud || typeof p.cloud !== "object") return false;
+      return charms.every(c => c && c.poolId);
+    } catch (_) { return false; }
+  }
+  /** The record a lean page comes back as (what Recall.follow shows a sheet from before its pieces are built): from the fields the page holds, all of them the cloud's. */
+  function leanRecord(p) {
+    const pv = p.cloud && p.cloud.preview, li = p.liveInfo || {}, free = Number.isFinite(+li.freePt2) ? +li.freePt2 : undefined, usable = Number.isFinite(+li.usablePt2) && +li.usablePt2 > 0 ? +li.usablePt2 : undefined;
+    return copy({ id: p.sheetId, metal: p.metal, runId: p.runId, setId: p.setId || null, setSeq: p.seq == null ? null : p.seq, day: p.setDay || null, fileBase: p.fileBase || null, sheetIndex: p.sheetIndex == null ? null : p.sheetIndex,
+      cardStartedAt: p.cardStartedAt || null, draftOrder: p.draftOrder == null ? null : p.draftOrder, draft: !!p.draft, layoutRev: p.layoutRev, preview: typeof pv === "string" ? pv : (pv && pv.url) || "", outputs: p.cloud || {}, verification: p.verification || null,
+      placedCount: (p.placements || []).length, charmCount: (p.charms || []).length, poolIds: (p.charms || []).map(c => String(c.poolId)), laserDoneAt: p.laserDoneAt || null,
+      ...(free === undefined ? {} : { freePt2: free }), ...(free !== undefined && usable ? { density: Math.max(0, Math.min(1, 1 - free / usable)) } : {}), ...(p.keptStock || p.newStock ? { stock: p.keptStock || p.newStock } : {}) });
+  }
+  /** One sheet page as the checkpoint holds it: a lean page as its record (no pieces, no places), any other whole. */
+  function pageCopy(p, seen, lean) {
+    if (!lean.has(p)) return copy(p, seen);
+    const out = copy(Object.assign({}, p, { charms: [], placements: [], rejects: [], best: undefined, outputs: null }), seen);
+    out.lean = { at: Date.now(), pieces: (p.charms || []).length, rec: leanRecord(p) };
+    return out;
+  }
+  /** Restore: a lean page comes back as the record it is shown from, as Recall.follow shows a followed sheet before its pieces are built (makeLive builds them). */
+  function unlean(p) {
+    if (!p || !p.lean) return p;
+    const rec = p.lean.rec; delete p.lean;
+    if (rec && rec.id) { p.recalled = rec; p.charms = []; p.placements = []; p.rejects = []; p.followed = true; p.status = "complete"; }
+    return p;
+  }
+  /* (LEAN, Paul 18 Nov 2026) The same for a decided face (approved, written) on a computer that follows: its drawn placement (view, mask, fit: 1 to 2 MB a face, the 61 MB of Michelle's 622 jobs; the computer that carries the run lets
+     it go as the back is written, Engrave.shelveWritten) is not written. The numbers of its place are (keepPlace, what a refit keeps to within 1 %), and Engrave.fitMissing / the open card fit it again from them after a reload, as
+     it does for every face this computer reads from the cloud without a fit (charm-nest-engrave-sync.js). A face being edited, approved or written, an art-only face and a computer with a run of its own keep it whole. */
+  function leanJob(j) {
+    try {
+      if (B.run || !j || j.editingBack || !["approved", "written"].includes(j.state) || !j.approvedAt || !j.fit || !j.view || !j.mask) return null;
+      if (j.stamping || j.backSaving || j.approvalPreparing || j.approvalIntent || j._writingBacks > 0 || window.Engrave?.isWorking?.(j)) return null;
+      if (j.backPending || j.approving) return null;   // (BACKFOLDER, 18 Nov 2026: an approval whose back file is still waiting to be saved needs its drawn fit to write it: a reload must find it whole; it shrinks once its back is saved)
+      return window.Engrave?.placeOf?.(j) || null;
+    } catch (_) { return null; }
+  }
+  function jobCopy(j, seen) {
+    const k = leanJob(j), out = k ? Object.assign(copy(Object.assign({}, j, { fit: null, view: null, mask: null, verify: null, keepPlace: undefined }), seen), { keepPlace: copy(k) }) : copy(j, seen);
+    return j.editingBack ? Object.assign(out, { editRow: copy(j.row, new WeakMap()) }) : out;
+  }
   function capture() {
-    const seen = new Map();
+    const seen = new Map(), lean = new Set(allSheets().filter(leanPage));
     return { v: 1, at: Date.now(), epoch: pageEpoch, streamId: (WORKSPACE_SANDBOX && window.Sandbox && Sandbox.runId && Sandbox.runId()) || "", packingCatalog:copy(S.packingCatalog, seen), carry: copy(B.carry, seen), run: runCopy(seen), orders: copy(B.orders, seen),
-      sources: copy(S.sources, seen), poolSources: copy(poolSourcesInUse(), seen), unassigned: copy(S.unassigned, seen),
-      sheets: METALS.map(m => ({ metal: m.key, active: S.sheets[m.key].active, pages: allSheets().filter(p => p.metal === m.key).map(p => copy(p, seen)) })),
-      pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), customDesigns: copy(B.customDesigns || {}, seen), cleared: copy(B.cleared || {}, seen), jobs: [...B.engrave.items.values()].map(j => ({...copy(j, seen), ...(j.editingBack ? {editRow:copy(j.row, new WeakMap())} : {})})),
+      sources: copy(S.sources, seen), poolSources: copy(poolSourcesInUse(lean), seen), unassigned: copy(S.unassigned, seen),
+      sheets: METALS.map(m => ({ metal: m.key, active: S.sheets[m.key].active, pages: allSheets().filter(p => p.metal === m.key).map(p => pageCopy(p, seen, lean)) })),
+      pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), customDesigns: copy(B.customDesigns || {}, seen), cleared: copy(B.cleared || {}, seen), jobs: [...B.engrave.items.values()].map(j => jobCopy(j, seen)),
       review: B.review.items.map(it => Object.assign(copy(it, seen), { rowKey: it.row?.key, jobKey: it.job?.key })),
       mode: S.mode, orderViewVersion: 1, orderView: copy(Orders.view()), engravingView: copy(Engrave.view?.()), reviewView: copy(Review.view?.()), settled: copy(Review.settled?.()), gate: copy(Gate.state()), recall: copy(Recall.state()), logs: copy(LiveStrip.rows) };
   }
@@ -29180,6 +29242,7 @@ const Session = window.Session = (() => {
       B.pool.rows = d.pools || new Map(); B.sets = d.sets || new Map(); B.customDesigns = d.customDesigns || {}; B.cleared = d.cleared || {};
       for (const group of d.sheets) {
         const prim = S.sheets[group.metal], card = prim.cardEl;
+        group.pages.forEach(unlean);   // (LEAN: a followed sheet kept as its record comes back as the record it is shown from)
         const saved = group.pages[0]; Object.assign(prim, saved); prim.cardEl = card; prim.pages = [prim];
         for (const p of group.pages.slice(1)) prim.pages.push(p);
         for (const p of prim.pages) {
