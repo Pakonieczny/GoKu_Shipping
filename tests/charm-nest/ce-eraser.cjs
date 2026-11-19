@@ -160,6 +160,16 @@ async function partA() {
     assert.ok(area(faceOf(r.items, 'in')) < area(items[2].children[0].subpaths), 'its part erased');
   });
 
+  await step('A5b a stroke that takes nothing says why (Paul, 18 Nov 2026: "The Eraser tool is not working"): over the cut line only, over a part the selection leaves out, over a locked part, over empty ground', async () => {
+    const mk = () => [cutOutline(), path0('a', rectSP(5, 5, 12, 12)), path0('b', rectSP(13, 5, 20, 12)), path0('lk', rectSP(5, 14, 12, 20), { locked: true })];
+    const why = (sel, pts) => { const items = mk(), er = ER.eraserOf(stroke(pts, 1)), job = ER.eraseJob(items, sel, geo, er); return { n: job.ts.length, say: ER.whyNone(items, sel, geo, er) }; };
+    let r = why([], [[1, 10], [1, 20]]); assert.equal(r.n, 0); assert.match(r.say, /cut line/, 'along the cut line: ' + r.say);
+    r = why(['a'], [[14, 8], [19, 8]]); assert.equal(r.n, 0); assert.match(r.say, /selected/, 'b is not selected: ' + r.say); assert.match(r.say, /deselect/i);
+    r = why([], [[6, 17], [11, 17]]); assert.equal(r.n, 0); assert.match(r.say, /locked/, 'over the locked part: ' + r.say);
+    r = why([], [[24.5, 3], [24.8, 25]]); assert.equal(r.n, 0); assert.match(r.say, /not over a line/, 'over the empty ground: ' + r.say);
+    r = why([], [[3, 8], [22, 8]]); assert.equal(r.n, 2, 'a stroke over two lines still has its two targets');
+  });
+
   await step('A6 Alt\'s marquee: the rectangle dragged is taken out (a 4 × 3 mm box over a 10 mm square\'s edge: 94 mm² left, one path with a notch; a box inside it: a hole)', async () => {
     const items = [path0('sq', rectSP(7, 10, 17, 20))];
     const r = ER.eraseItems(items, [], geo, { kind: 'rect', a: P(15, 12), b: P(19, 15) });
@@ -266,7 +276,7 @@ async function partB(browser, base) {
   await step('B1 the Tools panel: the Eraser, its own button right after the Scissors ("Eraser Tool (Shift+E)", Illustrator\'s eraser); Shift+E arms it, C the Scissors, Esc goes back to Select', async () => {
     const head = await page.evaluate(() => { const b = document.querySelector('.ce-rail .ce-tool[data-tool="eraser"]'); return b ? { label: b.getAttribute('aria-label'), inFly: !!b.closest('.ce-drop'), svg: !!b.querySelector('svg') } : null; });
     assert.ok(head, 'an Eraser button on the rail');
-    assert.equal(head.label, 'Eraser Tool (Shift+E)'); assert.equal(head.inFly, false, 'its own button'); assert.ok(head.svg);
+    assert.equal(head.label, 'Eraser Tool (⇧E)');   // (the Illustrator-style shell writes the key as ⇧E) assert.equal(head.inFly, false, 'its own button'); assert.ok(head.svg);
     const rail = await page.evaluate(() => [...document.querySelectorAll('.ce-rail .ce-tools > .ce-tool, .ce-rail .ce-tools > .ce-drop > .ce-tool')].map(b => b.dataset.tool));
     assert.ok(rail.indexOf('eraser') === rail.indexOf('scissors') + 1, 'right after the Scissors: ' + rail.join(','));
     await page.keyboard.press('Shift+E'); await settle(); assert.equal(await tool(), 'eraser');
@@ -427,6 +437,19 @@ async function partB(browser, base) {
     assert.ok(p95 < 16, 'pointermove p95 ' + p95);
     await shot('B9-photo.png');
     return `${b0.length} bands, ${ms} ms from mouse-up to drawn, spinner ${spin ? 'shown' : 'not needed'} · ${work.length} moves, p95 ${p95.toFixed(2)} ms · union ${t0b.union.toFixed(2)} → ${t1b.union.toFixed(2)} mm², overlap ${t0b.overlap.toExponential(1)} → ${t1b.overlap.toExponential(1)}`;
+  });
+
+  await step('B9b a stroke over the locked cut line only changes nothing and the work area says why ("Nothing erased: that is the charm\'s cut line…")', async () => {
+    await page.keyboard.press('Escape'); await settle();
+    await C(c => { c.select([]); c.setTool('eraser'); });
+    const said = () => page.evaluate(() => { const e = document.querySelector('.ce-root .ce-say'); return e && e.classList.contains('is-in') ? e.textContent : ''; });
+    const before = await C(c => JSON.stringify(c.items().map(i => [i.id, i.subpaths && i.subpaths.length])));
+    await drag([[1, 12], [1, 20]]); await settle();
+    const after = await C(c => JSON.stringify(c.items().map(i => [i.id, i.subpaths && i.subpaths.length])));
+    assert.equal(after, before, 'nothing changed');
+    const t = await said(); assert.match(t, /Nothing erased/, 'the work area says so: "' + t + '"'); assert.match(t, /cut line/);
+    await page.evaluate(() => { const e = document.querySelector('.ce-root .ce-say'); if (e) e.classList.remove('is-in'); });
+    return t.slice(0, 70);
   });
 
   await step('B10 Save: the result carries the erased heart (two paths) and the erased image bands; no page error', async () => {
