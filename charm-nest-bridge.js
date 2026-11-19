@@ -2163,7 +2163,8 @@ const Orders = window.Orders = (() => {
       ...(hand ? { handDone: { at: +cd.completedAt || 0, by: cap(cd.completedBy, 80), how: cd.how === "button" ? "button" : "print" } } : {}),
       activityAt:row.activityAt || 0, changePending:!!row.changePending,repoolChanged:!!row.repoolChanged,arrivedAt: row.arrivedAt || 0, createTs: o.createTs || 0, materialOverride: row.materialOverride || null, sizeOverride: row.sizeOverride || null, ...(row.engravingOverride ? { engravingOverride: row.engravingOverride } : {}), problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
       ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), ...(row.releasing ? { releasing: { at: +row.releasing.at || 0, by: cap(row.releasing.by, 80), stage: String(row.releasing.stage || "").slice(0, 20) } } : {}), ...(row.skuOverride && typeof row.skuOverride === "object" && row.skuOverride.sku ? { skuOverride: { sku: cap(row.skuOverride.sku, 80), by: cap(row.skuOverride.by, 80), at: +row.skuOverride.at || 0, was: cap(row.skuOverride.was, 80) } } : {}), ...(row.blockOverride && typeof row.blockOverride === "object" && row.blockOverride.sku ? { blockOverride: { sku: cap(row.blockOverride.sku, 80), by: cap(row.blockOverride.by, 80), at: +row.blockOverride.at || 0, ...(Array.isArray(row.blockOverride.skus) && row.blockOverride.skus.length ? { skus: row.blockOverride.skus.slice(0, 20).map(x => cap(x, 80)) } : {}) } } : {}), ...(row.releaseHold && +row.releaseHold.at > 0 ? { releaseHold: { at: +row.releaseHold.at, by: cap(row.releaseHold.by, 80), id: cap(row.releaseHold.id, 120) } } : {}), ...(row.releaseAnyway && +row.releaseAnyway.at > 0 ? { releaseAnyway: { at: +row.releaseAnyway.at, by: cap(row.releaseAnyway.by, 80), kinds: (row.releaseAnyway.kinds || []).slice(0, 8).map(x => cap(x, 24)) } } : {}),   // (RELEASE, Paul 19 Oct 2026: the questions a Release Hold set aside for this line; RELHOLD: the Review card's Release Hold press, who and when; BLOCKREL: a person's "Release to nesting queue" on a blocked SKU; released from hold: ahead of the orders coming in; a release not finished yet, taken up again by the next page, OrderHold)
-      snap: { title: cap(l.title, 160), listingId: cap(l.listingId, 24), metalKey: cap(l.metalKey, 24), metalLabel: cap(l.metalLabel, 40),
+      snap: { title: cap(l.title, 160), listingId: cap(l.listingId, 24), metalKey: cap(l.metalKey, 24), metalLabel: cap(l.metalLabel, 40), bought: cap(row.spec && row.spec.boughtSku != null ? row.spec.boughtSku : l.sku, 80),   // (ANYWHERE: the SKU Etsy sold it under, for a computer that follows the run)
+
         orderNumber: cap(o.orderNumber, 24), buyer: cap(o.buyer && o.buyer.name, 60), shipBy: +o.shipBy || 0, isGift: !!o.isGift,
         vars: (l.variations || []).map(v => String(v.name ?? v.formatted_name ?? "") + "\u241f" + String(v.value ?? v.formatted_value ?? "")),
         pers: (l.personalization || []).slice(0, 4).map(x => cap(x, 200)) } }];
@@ -2180,6 +2181,7 @@ const Orders = window.Orders = (() => {
     const line = { transactionId: String(l.transactionId || ""), listingId: s2.listingId || "", sku: l.sku || "", title: s2.title || (me ? `${me.sku}${me.size ? " · " + me.size : ""}` : ""), quantity: +l.quantity || 1,
       metalKey: s2.metalKey || "", metalLabel: s2.metalLabel || (l.material ? labelOf(l.material) : ""), personalization: s2.pers || [], buyerMessage: "", expectedShipDate: 0,
       variations: (s2.vars || []).map(v => { const i = String(v).indexOf("\u241f"); return { name: String(v).slice(0, i < 0 ? 0 : i), value: i < 0 ? String(v) : String(v).slice(i + 1) }; }) };
+    if (typeof s2.bought === "string") line.etsySku = s2.bought;   // (ANYWHERE: the SKU Etsy sold it under; a record from before has none, ensureBought asks Etsy's stored table)
     O.cleanLine(line);   // (a line recorded while Etsy's text still carried entities is read decoded; the record is not rewritten)
     order.lines = [line];
     return { key, order, line, activityAt:+l.activityAt || 0, changePending:!!l.changePending,repoolChanged:!!l.repoolChanged, arrivedAt: +l.arrivedAt || 0, sizeOverride: l.sizeOverride || null, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
@@ -21369,7 +21371,7 @@ const Review = window.Review = (() => {
   }
   /** The listing and the SKU each line of a card came with (a huggie set's "X (HUGGIE)"): on a listing whose variations each have a SKU, the others keep theirs; a huggie set with no SKU answers for the listing's huggie, never its necklace. */
   const answerKeysOf = (it, rows) => { const m = new Map();   // (REVLINK: `via` = which product of the listing each line is, for a line read under the SKU Etsy's inventory gave it: charm-nest-orders.js linkedSku)
-    for (const x of (rows || rowsOf(it))) { const from = x.spec && x.spec.boughtSku != null ? x.spec.boughtSku : String(x.line.sku || "").trim().toUpperCase(), hug = !from && !!(x.spec && x.spec.huggieSet), k = String(x.line.listingId) + "\u0000" + from + (hug ? "\u0000huggie" : ""), via = from && x.spec && x.spec.viaInventory ? O.linkViaKeys(x.line) : [];
+    for (const x of (rows || rowsOf(it))) { const from = typeof x.line.etsySku === "string" ? x.line.etsySku.trim().toUpperCase() : x.spec && x.spec.boughtSku != null ? x.spec.boughtSku : String(x.line.sku || "").trim().toUpperCase(), hug = !from && !!(x.spec && x.spec.huggieSet), k = String(x.line.listingId) + "\u0000" + from + (hug ? "\u0000huggie" : ""), via = from && x.spec && x.spec.viaInventory ? O.linkViaKeys(x.line) : [];
       const q = m.get(k) || { lid: String(x.line.listingId), from, hug, title: x.line.title, via: [] }; q.via = [...new Set(q.via.concat(via))]; m.set(k, q); }
     return m; };
   /** REVLINK (Paul, 12 Oct 2026: a charm a person picks for a listing is remembered forever, in the sandbox too): the cloud writes a pick ONCE and READS IT BACK before it answers verified:true (aliasPut, optionMapPut);
@@ -21535,6 +21537,22 @@ const Review = window.Review = (() => {
     return { ok: true, why: "", lid, from: from || "", cur: String(row.spec.designSku || "").toUpperCase(), viaLink: !!fix.ok };
   }
   /** The lines one SKU edit covers: the open lines of the same listing with the same Etsy SKU. */
+  /* ANYWHERE (Paul, 19 Nov 2026: the Iguana order: "SKU charm was updated ... system refused to place newly updated charm on the original sheet. This must be allowed to happen from any computer"): a line a computer that FOLLOWS the run
+     reads from the run's record knows the charm it is cut as, not the SKU Etsy sold it under, so Change SKU there saved the charm under "no SKU", a listing-wide answer the matcher does not apply to a line that has an Etsy SKU:
+     the order stayed unmatched for hours. The record carries the Etsy SKU now (snap.bought → line.etsySku); a record from before has none, and Etsy's stored table of the listing (read only, from the cloud's cache) says it when every
+     product of the listing has the one SKU. → true when the line knows its Etsy SKU */
+  function ensureBought(row) {
+    if (!row || !row.fromRecord || !row.line || typeof row.line.etsySku === "string" || (row.spec && row.spec.boughtSku != null && !row.fromRecord)) return Promise.resolve(true);
+    if (row._boughtAsk) return row._boughtAsk;
+    if (row._boughtAt && Date.now() - row._boughtAt < 60000) return Promise.resolve(false);
+    const lid = String(row.line.listingId || "").replace(/\D/g, ""); if (!lid) return Promise.resolve(false);
+    row._boughtAt = Date.now();
+    return (row._boughtAsk = api("charmNestLibrary", { op: "listingSkus", listingIds: [lid], cacheOnly: true }).then(res => {
+      const t = res && res.tables && res.tables[lid];
+      if (t && typeof t.uni === "string") { row.line.etsySku = String(t.uni).trim().toUpperCase(); try { Orders.interpretAll(); } catch (_) { /* read at the next pass */ } return true; }
+      row._boughtAsk = null; return false;
+    }).catch(() => { row._boughtAsk = null; return false; }));
+  }
   function editSkuSame(off) {
     const lidOf = rr => String((rr.line && rr.line.listingId) || "").replace(/\D/g, ""), fromOf = rr => (window.CharmNestReviewLink && CharmNestReviewLink.fromOf ? CharmNestReviewLink.fromOf(rr.line, rr.spec) : String(rr.line.sku || "").toUpperCase());
     return rr => lidOf(rr) === off.lid && (!off.from || fromOf(rr) === off.from);
@@ -21568,7 +21586,9 @@ const Review = window.Review = (() => {
     const onceWas = row && row.skuOverride; if (onceWas) { delete row.skuOverride; delete row.poolTry; try { Orders.interpretAll(); } catch (_) { /* read at the next pass */ } }
     let started = false;
     const no = (why, tone) => { if (onceWas && !started && !row.skuOverride) { row.skuOverride = onceWas; try { Orders.interpretAll(); } catch (_) { /* read at the next pass */ } } if (why) toast(why, tone || "bad", 7000); return { ok: false, why }; };
+    if (row && row.fromRecord) await ensureBought(row);   // (ANYWHERE: a computer that follows the run needs the SKU Etsy sold the line under, or the answer is saved under no SKU)
     const off = editSkuOffer(row); if (!off.ok) return no(off.why);
+    if (row.fromRecord && typeof row.line.etsySku !== "string") return no("This computer does not know the SKU Etsy sold this piece under yet (the computer that carries the run sends it with its next save). Press Change SKU again in a minute: nothing was changed");
     if (!sku) return no("Pick a charm from the repo first");
     const e = Master.entryFor(sku); if (!e || !B.master.entries.has(sku)) return no(`${sku} is not in the charm repo`);
     if (O.entryBlock(e)) return no(`${sku} is blocked in the master, so it cannot be cut`);
@@ -21642,16 +21662,26 @@ const Review = window.Review = (() => {
      purchases that given listing it will revert back to the original SKU". The charm is kept on THIS line only (row.skuOverride = { sku, by, at, was }, in the run's lines like blockOverride;
      charm-nest-orders.js reads it before any rule): no saved link or alias, no Etsy write, no other order of the listing. The line is made up again with it (its piece swapped in its spot on an
      open sheet, INPLACE; a piece already cut is kept and the line held for a person, as for any change). A later Change SKU for the listing replaces it (editSku). → { ok, why, sku, via } */
-  async function editSkuOnce(row, sku) {
+  async function editSkuOnce(row, sku, opts) {   // (ANYWHERE: opts.by = who asked, when another computer asked and this one carries the run)
     sku = String(sku || "").trim().toUpperCase();
     const no = (why, tone) => { if (why) toast(why, tone || "bad", 7000); return { ok: false, why }; };
     const off = editSkuOffer(row); if (!off.ok) return no(off.why);
-    if (!B.run) return no("“Just this order” is done on the computer that carries the run: it changes one piece on its sheet. “Change SKU” for the listing can be used here");   // (SKUFOLLOW: a one-order charm lives in the run's own lines and its piece is swapped on its sheet, both the carrying computer's to write)
     if (!sku) return no("Pick a charm from the repo first");
     const e = Master.entryFor(sku); if (!e || !B.master.entries.has(sku)) return no(`${sku} is not in the charm repo`);
     if (O.entryBlock(e)) return no(`${sku} is blocked in the master, so it cannot be cut`);
     if (off.cur && (sku === off.cur || O.sameDesign(sku, off.cur, k => Master.entryFor(k)))) return no(`This piece is ${off.cur} already`, "ok");
-    const who = by(); if (!who) return no("Sign in first: the change is saved under your name");
+    const who = String((opts && opts.by) || "").trim() || by(); if (!who) return no("Sign in first: the change is saved under your name");
+    // (ANYWHERE, Paul 19 Nov 2026: "Just this order" on Michelle's computer: "is done on the computer that carries the run" ... "This must be allowed to happen from any computer. The cloud controls everything"): a one-order charm lives in the run's own lines and
+    //  its piece is swapped on its sheet, which the computer that carries the run writes. From any other computer the request is put in the cloud (runCmdPut skuonce) and that computer does it, in this person's name; asked even when it is not
+    //  answering at this moment: the request stays in the cloud and is done as soon as it is (hours, not ten minutes), so the person is never told no
+    if (!B.run) {
+      const rid0 = String(row.order.receiptId);
+      if (typeof window.CNRelayAsk !== "function") return no("The run's computer cannot be asked from this page: reload it and try again");
+      const ans = await window.CNRelayAsk({ type: "skuonce", ids: [row.key], sku, label: `Just this order: ${sku}` }, t => { try { if (opts && typeof opts.onStep === "function") opts.onStep(t); } catch (_) { /* a word only */ } }, 240000, { always: true });
+      if (ans && ans.ok) return { ok: true, sku, via: "once", rid: rid0, follower: true, text: ans.text };
+      if (ans && ans.queued) return { ok: true, queued: true, sku, via: "once", rid: rid0, follower: true, text: ans.text };
+      return no((ans && ans.text) || "The computer that carries the run did not change it");
+    }
     const rid = String(row.order.receiptId), was = off.cur || off.from || "", at = Date.now();
     // (an order this line sent to Review is answered by the choice first: REVHOLD would keep the old charm on its sheet)
     try { const M = window.CharmNestReviewMark; if (M && M.isMarked && M.resolve && M.isMarked(rid)) await Promise.resolve(M.resolve(rid, { by: who, how: "pick", sku })).catch(() => {}); } catch (_) { /* the line is made up below either way */ }
@@ -22480,6 +22510,7 @@ const Review = window.Review = (() => {
         return true;
       }
       const msg = String((res && res.error) || "something went wrong");
+      if (res && res.queued) { toast(msg, "ok", 12000); return false; }   // (ANYWHERE: the release is asked of the run's computer and waits in the cloud: nothing to press again)
       toast(res && res.released ? `${msg} What was done is kept, and Release Hold can be pressed again.` : `Order ${rid} was not released: ${msg}. It is still held.`, "bad", 9000);
       return false;
     }
@@ -23589,7 +23620,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, shown, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawStale, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
+  return { ensureBought, view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, shown, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawStale, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -25417,7 +25448,8 @@ const OrderWin = window.OrderWin = (() => {
      ... should be shown to me in a list and as I'm typing that list should get filtered down in real time": every word typed narrows the repo's SKUs (any order, part of a word is enough), shown
      as picture tiles; a tap (or the exact SKU pasted) is the new SKU. Before Save, what it changes as icon chips (the Etsy listing, the open orders, the sheets, the cut pieces kept). Save is
      Review.editSku, and the window turns into its progress (the bar, a line per place changed, "Completed at hh:mm"); Close never stops the work; a closed window toasts the end. */
-  function openEditSku(prefill) {
+  async function openEditSku(prefill) {
+    { const r0 = rowOf(W.key); if (r0 && r0.fromRecord && window.Review && Review.ensureBought) { try { await Review.ensureBought(r0); } catch (_) { /* the window opens with what is known */ } } }   // (ANYWHERE: the SKU Etsy sold the piece under, on a computer that follows the run)
     const r = rowOf(W.key), d = byId("owSkuDlg"); if (!r || !d || !window.Review || !Review.editSkuOffer) return;
     if (d.dataset.busy === "1") { try { d.showModal(); } catch (_) { d.setAttribute("open", ""); } return; }   // (a change still being made: its progress is shown again)
     const off = tryDo(() => Review.editSkuOffer(r)) || { ok: false, why: "" }; if (!off.ok) { toast(`Change SKU: ${off.why}`, "bad", 6000); return; }
@@ -25508,7 +25540,7 @@ const OrderWin = window.OrderWin = (() => {
         if (!res || !res.ok) { back(); if (res && res.why) say("bad", esc(res.why)); return; }
         try { d.close(); } catch (_) { d.removeAttribute("open"); }
         if (W.dlg && W.dlg.open && rowOf(W.key)) tryDo(paint);
-        toast(`Order ${rid}: ${k} for this order only · the listing and Etsy are not changed`, "ok", 7000);
+        toast(res.queued ? `Order ${rid}: ${k} for this order is asked of the run's computer · ${res.text || "it is done as soon as that computer is free"}` : `Order ${rid}: ${k} for this order only · the listing and Etsy are not changed`, "ok", res.queued ? 10000 : 7000);
         return;
       }
       d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Changing…"; input.disabled = true; once.disabled = true; cancel.textContent = "Close";
@@ -30882,32 +30914,32 @@ window.CNPairNow = async function (keys) {
 };
 /* CNRelayAsk(cmd, onStep, maxMs): a request put to the computer that carries the run, its steps passed on while it works, its answer waited for (the list is read every 3 s for the first minute,
    every 6 s after). → { ok, text, name } · { ok:false, none:true } when this page carries the run itself or no carrier is open. Never throws. */
-window.CNRelayAsk = async function (cmd, onStep, maxMs) {
+window.CNRelayAsk = async function (cmd, onStep, maxMs, o) {   // (o.always, ANYWHERE 19 Nov 2026: a request of a person is put in the cloud even when the computer that carries the run is not answering at this moment: it is done as soon as it is, never refused)
   try {
     const F = window.CharmNestRunFollow, runId = F && F.state && F.state().runId, dev = F && typeof F.dev === "function" ? F.dev() : "";
     if (B.run || !runId || !dev) return { ok: false, none: true, text: "No other computer carries the run." };
     const c = await api("charmNestLibrary", { op: "runCarrier", runId, dev, check: true }, { quiet: true });
-    if (!c || !c.alive || c.mine) return { ok: false, none: true, text: "The computer that carries the run is not open right now." };
-    const name = (c.carrier && c.carrier.by) || "the computer that carries the run";
+    if (!(o && o.always) && (!c || !c.alive || c.mine)) return { ok: false, none: true, text: "The computer that carries the run is not open right now." };
+    const name = (c && c.carrier && c.carrier.by) || "", nm = name ? `${name}'s computer` : "the computer that carries the run";   // (nm: how the carrying computer is called in a sentence)
     const put = await api("charmNestLibrary", { op: "runCmdPut", runId, dev, by: (typeof employeeName === "function" && employeeName()) || "", cmd }, { quiet: true });
     if (!put || !put.id) return { ok: false, text: (put && put.error) || "The request was not sent.", name };
-    if (typeof onStep === "function") onStep(`Waiting for ${name}'s computer…`, name);
+    if (typeof onStep === "function") onStep(`Waiting for ${nm}…`, name);
     for (const t0 = Date.now(); Date.now() - t0 < (maxMs || 600000);) {
       await new Promise(r => setTimeout(r, Date.now() - t0 < 60000 ? 3000 : 6000));
       let list = null; try { list = await api("charmNestLibrary", { op: "runCmdList", runId }, { quiet: true }); } catch (_) { continue; }
       const k = ((list && list.cmds) || []).find(x => x && x.id === put.id); if (!k) continue;
       if (k.state === "done" || k.state === "failed" || k.state === "cancelled") return { ok: k.state === "done", text: String(k.text || ""), name };
-      if (k.state === "running" && k.step && typeof onStep === "function") onStep(`${name}'s computer: ${k.step}`, name);
+      if (k.state === "running" && k.step && typeof onStep === "function") onStep(`${nm}: ${k.step}`, name);
       /* CARRIERGONE (Paul, 17 Nov 2026: "This process has caused me a lot of grief"): a computer counts as carrying the run for 90 s after its last beat (runCarrier FRESH), so a page closed a minute ago still read as open and
          the panel waited for it for the whole 7 minutes. While the request has not been started, the carrier is looked at again at each look: once it is not open, or after 25 s without the request starting,
          the answer is plain. The request stays queued: the carrier does it as soon as it is open (and free) again. */
       else if (k.state === "waiting") {
         let gone = false; try { const c2 = await api("charmNestLibrary", { op: "runCarrier", runId, dev, check: true }, { quiet: true }); gone = !!c2 && (!c2.alive || !!c2.mine); } catch (_) { /* not told: not gone */ }
-        if (gone) return { ok: false, queued: true, text: `${name}'s computer is not open right now. Nothing more is needed here: the request stays queued and is done as soon as that computer is open again.`, name };
-        if (Date.now() - t0 >= 25000) return { ok: false, queued: true, text: `${name}'s computer has not started it yet. Nothing more is needed here: the request stays queued and is done as soon as that computer is free.`, name };
+        if (gone) return { ok: false, queued: true, text: `${nm} is not open right now. Nothing more is needed here: the request stays queued and is done as soon as that computer is open again.`, name };
+        if (Date.now() - t0 >= 25000) return { ok: false, queued: true, text: `${nm} has not started it yet. Nothing more is needed here: the request stays queued and is done as soon as that computer is free.`, name };
       }
     }
-    return { ok: false, text: `${name}'s computer did not answer.`, name };
+    return { ok: false, text: `${nm} did not answer.`, name };
   } catch (e) { return { ok: false, text: String((e && e.message) || e) }; }
 };
 let askPlaceAt = 0;

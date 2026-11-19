@@ -33,7 +33,9 @@
   const up = s => String(s == null ? "" : s).trim().toUpperCase();
   const lid = line => String((line && line.listingId) == null ? "" : line.listingId).replace(/\D/g, "");
   /** The SKU the matcher looked the line up by: spec.boughtSku (the transaction's SKU, or the inventory's for the variation bought), else the line's own. */
-  const fromOf = (line, spec) => (spec && spec.boughtSku != null ? up(spec.boughtSku) : up(Orders() ? Orders().decodeEntities(line && line.sku) : line && line.sku));
+  // (ANYWHERE, Paul 19 Nov 2026: a charm picked on a computer that FOLLOWS the run was saved as "no SKU": its line is read from the run's record, which kept only the design's SKU, so the link went in under the listing, which the matcher
+  //  ignores for a line that has an Etsy SKU. The record now carries the SKU Etsy sold the line under (snap.bought) and a follower's line holds it as line.etsySku: it is the answer when it is there)
+  const fromOf = (line, spec) => (line && typeof line.etsySku === "string" ? up(line.etsySku) : spec && spec.boughtSku != null ? up(spec.boughtSku) : up(Orders() ? Orders().decodeEntities(line && line.sku) : line && line.sku));
   const SOURCES_BY_OPTION = new Set(["option", "letter", "zodiac"]);   // (skuSource values read from an option's value, ahead of the SKU)
 
   /** The option value that decided the line's design, when one did: { name, value, how } or null. The matcher reads an option's answer BEFORE the SKU's, so a line whose charm came from

@@ -117,6 +117,7 @@
   /* (SHEETSANYWHERE, Paul 15 Nov 2026: "I need that full capability ... drag the sheets from one sheet to another and amalgamate sheets as needed"): the computer that CARRIES the run does what a following computer asked for in the Sheets card
      (runCmdPut on the cloud): one at a time, in the order asked, through the Gate, then answers (runCmdDone) with the result line. Looked at when the feed names the run, at most every 3 s; a command older than 10 minutes is answered "too old". */
   let cmdAt = 0, cmdT = 0, cmdBusy = false; const cmdSeen = new Set();
+  const LONG_CMDS = new Set(["release", "skuonce"]);   // (ANYWHERE, Paul 19 Nov 2026: what a person asked of the run is kept in the cloud until a computer that carries it does it)
   /* MOVESHOW, Paul 15 Nov 2026: "no animation no feedback no progress nothing": while this computer does a request it says what step it is at (runCmdStep), so the computer that asked can show it.
      The first call also marks the request as running (it can no longer be cancelled). At most one write every 2.5 s (the Firebase budget): the newest step waits for the next slot. */
   function stepper(c) {
@@ -281,6 +282,18 @@
         } catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); }
       }
     }
+    // (ANYWHERE, Paul 19 Nov 2026: "Just this order" from a computer that only follows the run): the line's own charm for this one order, set and its piece swapped on its sheet exactly as the carrying computer's own window does it, in the name of the person who asked
+    else if (c.type === "skuonce") {
+      const Rv = root.Review, Or = root.Orders, key = String((a.ids || [])[0] || ""), sku = String(a.sku || "").trim().toUpperCase();
+      const row = Or && typeof Or.rows === "function" ? safe(() => Or.rows().find(x => x && x.key === key), null) : null;
+      if (!Rv || typeof Rv.editSkuOnce !== "function" || !key || !sku) r = { ok: false, why: "not ready" };
+      else if (!row) r = { ok: false, why: `The piece ${key} is not in the run on the computer that carries it` };
+      else {
+        const step = stepper(c); step({ text: `${sku} for this order only…` });
+        try { const v = await Rv.editSkuOnce(row, sku, { by: String(c.by || "").trim() }); r = v && v.ok ? { ok: true, text: `${sku} for order ${row.order && row.order.receiptId} only` } : { ok: false, why: String((v && v.why) || "not changed").slice(0, 300) }; }
+        catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); }
+      }
+    }
     else return { ok: false, text: "Unknown command" };
     return r && r.ok !== false ? { ok: true, text: r.text || "Done", ...(r.freed && r.freed.stockId ? { freed: r.freed.stockId } : {}) } : { ok: false, text: (r && (r.why || r.text)) || "Not done" };
   }
@@ -295,7 +308,7 @@
         const next = ((res && res.cmds) || []).filter(c => c && c.id && c.state === "waiting" && c.dev !== me && !cmdSeen.has(c.id)).sort((x, y) => (+x.at || 0) - (+y.at || 0))[0];
         if (!next) break;
         cmdSeen.add(next.id); let out;
-        if (Date.now() - (+next.at || 0) > 600000) out = { ok: false, text: "too old" };
+        if (Date.now() - (+next.at || 0) > (LONG_CMDS.has(next.type) ? 6 * 3600000 : 600000)) out = { ok: false, text: "too old" };   // (ANYWHERE: a person's release or one-order charm waits for this computer for hours, as it is asked of the cloud, not of a computer)
         else { try { out = await execCmd(next); } catch (e) { out = { ok: false, text: String((e && e.message) || e) }; } }
         for (let k = 0; k < 3; k++) { try { await api({ op: "runCmdDone", runId: run.runId, id: next.id, ok: !!out.ok, text: String(out.text || "").slice(0, 400), ...(out.freed ? { freed: out.freed } : {}), dev: me }); break; } catch (_) { await new Promise(r => setTimeout(r, 1500)); } }
       }

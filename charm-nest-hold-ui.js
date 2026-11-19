@@ -358,7 +358,8 @@
     try { res = await runFn(feed); }
     catch (e) { res = { ok: false, error: msgOf(e) }; }
     res = res && typeof res === 'object' ? res : { ok: res !== false };
-    const failed = res.ok === false || !!res.error;
+    const queued = !!res.queued;   // (ANYWHERE, 19 Nov 2026: a release asked of the run and kept in the cloud is not a failure, and not yet a release: no seal, no red film)
+    const failed = !queued && (res.ok === false || !!res.error);
     // (an engine that failed without saying so in its steps still tells the film how it ended)
     if (failed && !steps.some(s => s.type === 'error')) feed({ type: 'error', message: msgOf(res.error), rid });
     if (fx && typeof fx.finish === 'function') { try { fx.finish(); } catch (e) { warn('film finish', e); } }
@@ -366,7 +367,7 @@
       await Promise.race([Promise.resolve(fx.done).catch(() => {}), wait(failed ? 4000 : 120000)]);
       if (failed && typeof fx.skip === 'function') tryDo(() => fx.skip());
     }
-    return { res, failed, steps };
+    return { res, failed, queued, steps };
   }
 
   // ── Hold ───────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -476,13 +477,14 @@
       const at = Date.now(), seal = { how: 'releaseHold', at, by: name, id: `releaseHold:${rid}:${at}` };
       const out = await runWithFilm('release', rid, plan, name, from, feed => H.release(rid, { name, onStep: feed, seal }));
       // (RELNOSEAL, Paul 20 Oct 2026: a press that did not fully release the order makes no seal: "that's deceiving and could confuse the user")
-      if (!out.failed) { const RR = root.ReviewRelease; if (RR && typeof RR.keep === 'function') { try { await RR.keep([rid], seal, 'hold'); } catch (e) { warn('release seal', e); } } }
+      if (!out.failed && !out.queued) { const RR = root.ReviewRelease; if (RR && typeof RR.keep === 'function') { try { await RR.keep([rid], seal, 'hold'); } catch (e) { warn('release seal', e); } } }
       refreshViews();
-      if (out.failed) say(`Order ${rid} was not fully released: ${msgOf(out.res.error).replace(/[.\s]+$/, '')}. What was done is kept, and Release hold can be pressed again.`);   // (a reason that ends in a full stop made "..")
+      if (out.queued) say(msgOf(out.res.error), 'ok');   // (ANYWHERE, 19 Nov 2026: asked of the computer that carries the run, kept in the cloud, done as soon as it is free: nothing is refused)
+      else if (out.failed) say(`Order ${rid} was not fully released: ${msgOf(out.res.error).replace(/[.\s]+$/, '')}. What was done is kept, and Release hold can be pressed again.`);   // (a reason that ends in a full stop made "..")
       // (RELEASE, Paul 19 Oct 2026: the press overrides the hold; what it set aside, and a line with nothing to place, are said, never refused)
       else if (out.res && (out.res.nothing || arr(out.res.anyway).length)) say(`Order ${rid} released${out.res.nothing ? `: nothing to place (${str(out.res.nothing)}), so it is released without a sheet and carries on` : ''}.${arr(out.res.anyway).length ? ` Released anyway: ${arr(out.res.anyway).join('; ')}.` : ''}`, 'ok');
       await goHome(rid, from);
-      return { ok: !out.failed, used: true, steps: out.steps, error: out.failed ? msgOf(out.res.error) : undefined };
+      return { ok: !out.failed && !out.queued, used: true, queued: out.queued || undefined, steps: out.steps, error: out.failed || out.queued ? msgOf(out.res.error) : undefined };
     } catch (e) {
       warn('release', e);
       say(`Order ${rid} was not released: ${msgOf(e)}. It is still on hold.`);

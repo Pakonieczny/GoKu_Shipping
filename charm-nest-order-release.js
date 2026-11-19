@@ -330,20 +330,29 @@
     const RF = G.CharmNestRunFollow, runId = RF.state().runId, dev = RF.dev && RF.dev(), call = body => G.CN.api('charmNestLibrary', body, { quiet: true, timeoutMs: 30000 });
     const said = e => str(e && e.message || e).slice(0, 160);
     if (!runId || !dev || !G.CN || typeof G.CN.api !== 'function') return fail(`Order ${rid} is still on hold: this computer cannot reach the run yet. Press Release hold again in a moment.`, 'start');
-    let c = null;
-    try { c = await call({ op: 'runCarrier', runId, dev, check: true }); } catch (e) { return fail(`Order ${rid} is still on hold: the computer that carries the run could not be reached (${said(e)}). Press Release hold again in a moment.`, 'start'); }
-    if (!c || !c.alive || c.mine) return fail(`Order ${rid} is still on hold: the computer that carries the run is not answering, so it cannot be released from here yet. Press Release hold again in a minute.`, 'start');
+    // (ANYWHERE, Paul 19 Nov 2026: "the user tried to release this order's hold, and it was refused ... The computers are just nodes that are sending and receiving information. The cloud controls everything so nothing belongs to any computer"):
+    //  a release is a request in the cloud, and it is put there WHATEVER the carrying computer is doing at this moment: it was refused with "the computer that carries the run is not answering" (a page busy, in the background, asleep for a minute).
+    //  It is done by that computer as soon as it answers (the request lives six hours there, not ten minutes) and every computer sees the order released from the cloud when it is; this page says so plainly and never calls it a failure
+    let c = null; try { c = await call({ op: 'runCarrier', runId, dev, check: true }); } catch (_) { c = null; }
+    const alive = !!(c && c.alive && !c.mine), by = (c && c.carrier && c.carrier.by) ? `${c.carrier.by}'s computer` : 'the computer that carries the run';
     let put = null;
     try { put = await call({ op: 'runCmdPut', runId, dev, by: who, cmd: { type: 'release', ids: [rid], label: `Release order ${rid} from hold` } }); } catch (e) { return fail(`Order ${rid} is still on hold: the release could not be sent (${said(e)}). Press Release hold again in a moment.`, 'start'); }
     if (!put || put.error || !put.id) return fail(`Order ${rid} is still on hold: the release was not sent${put && put.error ? ' (' + said({ message: put.error }) + ')' : ''}.`, 'start');
-    const by = (c.carrier && c.carrier.by) || 'the computer that carries the run';
-    emit({ type: 'queued', rid, front: true, via: by, text: `Asked ${by}'s computer to release it` });
+    emit({ type: 'queued', rid, front: true, via: by, text: alive ? `Asked ${by} to release it` : `Asked the run in the cloud: ${by} is not answering at this moment` });
+    const queued = (why) => {
+      const text = `Order ${rid}: the release is asked of the run (the cloud keeps it) and ${why}. Nothing more is needed here: the order leaves the hold on every computer as soon as it is done.`;
+      emit({ type: 'queuedPending', rid, text });
+      return out(false, { released: false, queued: true, pending: true, error: text, stage: 'queued', cmdId: put.id });
+    };
+    if (!alive) return queued(`${by} is not answering at this moment, so it is placed as soon as it does`);
     const t0 = Date.now(); let last = null;
     while (Date.now() - t0 < 150000) {
       await new Promise(res => setTimeout(res, 2500));
       let l = null; try { l = await call({ op: 'runCmdList', runId }); } catch (_) { continue; }
       last = ((l && l.cmds) || []).find(x => x && x.id === put.id) || last;
       if (last && (last.state === 'done' || last.state === 'failed')) break;
+      // (still waiting after 30 s and the carrier no longer answering: it stays in the cloud, nothing to wait for here)
+      if (last && last.state === 'waiting' && Date.now() - t0 > 30000) { let c2 = null; try { c2 = await call({ op: 'runCarrier', runId, dev, check: true }); } catch (_) { c2 = null; } if (c2 && (!c2.alive || c2.mine)) return queued(`${by} stopped answering, so it is placed as soon as it does`); }
     }
     if (last && last.state === 'done') {
       refresh();
@@ -351,7 +360,7 @@
       return out(true, { released: true, placed: true, via: 'carrier', text: str(last.text) });
     }
     if (last && last.state === 'failed') return fail(`Order ${rid} was not released: ${str(last.text || 'the computer that carries the run could not do it').slice(0, 300)}`, 'place', { released: false });
-    return fail(`Order ${rid} is still on hold: ${by}'s computer has not answered yet. It is released as soon as it does (within 10 minutes), or press Release hold again.`, 'place', { pending: true });
+    return queued(`${by} has not finished it yet, so it is placed as soon as it does`);
   }
   async function doRelease(rid, opts) {
     const steps = [], emit = s => { s.at = Date.now(); steps.push(s); LAST.set(rid, { step: s }); try { if (opts.onStep) opts.onStep(s); } catch (e) { try { console.warn('[OrderHold.release] onStep', e); } catch (_) { /* none */ } } return s; };
