@@ -155,8 +155,8 @@
     const resize = section => {
       const host = section.parentElement, next = host?.nextElementSibling;
       const front = next?.matches('img,canvas') ? next : next?.querySelector('canvas,img');
-      const sw = +section.dataset.stockW, sh = +section.dataset.stockH;
-      let scale = sw > 0 ? section.clientWidth / sw : 0;
+      const sw = +section.dataset.stockW, sh = +section.dataset.stockH, cw = section.clientWidth;   // (CALM: read once: a read after each figure's style write made the browser lay the page out again for every figure)
+      let scale = sw > 0 ? cw / sw : 0;
       if (front && sw > 0 && sh > 0) {
         const box = front.getBoundingClientRect();
         // a saved picture at true scale sits in its frame's content box (the padding is the rest of the 100 × 50 mm frame)
@@ -170,17 +170,18 @@
         const w = +fig.dataset.previewW, h = +fig.dataset.previewH, pad = +fig.dataset.previewPad;
         const thumb = fig.querySelector('.backThumb'), img = thumb?.querySelector('img');
         if (!img || !scale || !w || !h) continue;
-        const k = Math.min(scale * .9, section.clientWidth / (w - 2 * pad));
+        const k = Math.min(scale * .9, cw / (w - 2 * pad));
         const width = (w - 2 * pad) * k, height = (h - 2 * pad) * k;
         fig.style.setProperty('--back-width', width + 'px');
         fig.style.setProperty('--back-height', height + 'px');
-        const slot = Math.max(0, (section.clientWidth - 15) / 6 - width / .9);
+        const slot = Math.max(0, (cw - 15) / 6 - width / .9);
         fig.style.marginRight = slot * .34 + 'px';
         img.style.cssText = `width:${w*k}px;height:${h*k}px;max-width:none;left:${-pad*k}px;top:${-pad*k}px`;
       }
     };
     const ro = new ResizeObserver(() => schedule());
-    const sync = () => {
+    let syncDur = 0, syncAt = 0;   // (CALM, Paul 19 Nov 2026: the shelves were sized again and again after a reload, 3 s of an 80 s look: a sizing that took long waits three times as long, at most 1 s, unless a hand has touched the page)
+    const syncNow = () => {
       frame = 0;
       for (const s of observed) if (!s.isConnected) { ro.unobserve(s); observed.delete(s); }
       document.querySelectorAll('.sheetBacks').forEach(s => { if (!observed.has(s)) { observed.add(s); ro.observe(s); } resize(s); s.querySelectorAll('.backThumb img').forEach(img => { if (img.complete && !img.naturalWidth && !img.dataset.recovered) recover(img); }); });
@@ -200,7 +201,13 @@
       }
       if (active && !active.isConnected) hide();
     };
-    const schedule = () => { if (!frame) frame = requestAnimationFrame(sync); };
+    const sync = () => { const t0 = performance.now(); try { syncNow(); } finally { syncDur = performance.now() - t0; syncAt = Date.now(); } };
+    const schedule = () => {
+      if (frame) return;
+      const wait = syncAt + Math.min(1000, syncDur * 3) - Date.now();
+      if (wait > 40 && !(window.CNTouch && window.CNTouch.recent())) frame = setTimeout(() => { frame = requestAnimationFrame(sync); }, wait);
+      else frame = requestAnimationFrame(sync);
+    };
     async function recover(img, manual = false) {
       const fig = img.closest('.backPieces figure'), thumb = img.closest('.backThumb');
       if (!fig || !thumb || img.dataset.recovering || (!manual && img.dataset.recovered)) return;

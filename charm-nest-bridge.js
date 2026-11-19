@@ -1033,13 +1033,21 @@ const TL = window.CNTimeline = (() => {
    request now draws once, at the next animation frame. A hidden tab gets its frames from the page clock's 16 ms timer
    (charm-nest-clock.js swaps requestAnimationFrame while the tab is hidden, which is why it is looked up at each call);
    without the clock the browser holds them until the tab is shown, and a request is kept once, not piled up. */
+/* (CALM, Paul 19 Nov 2026) when a hand last touched the page: what is drawn for a person is drawn at once, what is drawn for the page's own upkeep waits its turn (CNFrame, LaserReview.refresh) */
+try { window.__calmBuild = "c1"; } catch (_) { /* a marker only: the computers' reports say which build they run */ }
+const CNTouch = window.CNTouch = (() => { let at = 0; if (typeof document !== "undefined") for (const t of ["pointerdown", "keydown", "wheel", "touchstart"]) document.addEventListener(t, () => { at = Date.now(); }, { capture: true, passive: true }); return { at: () => at, recent: ms => Date.now() - at < (ms || 900) }; })();
 const CNFrame = window.CNFrame = (() => {
   const due = new Map(); let asked = false;
   // the banner draws the strip with itself, and the strip the ladder: asked for, they wait behind it, which draws them
   // (and takes them off), so each is drawn once in a frame whichever was asked for first
   const WITH = { banner: ["strip", "ladder"], strip: ["ladder"] };
-  // a drawing asked for by another in the same frame is drawn in it too; one asked for again after it ran waits a frame
-  function flush() { asked = false; const ran = new Set(); for (const [key, f] of due) { if (ran.has(key)) continue; ran.add(key); due.delete(key); try { f(); } catch (e) { console.error(e); } } }
+  /* (CALM, Paul 19 Nov 2026: "Michelle's computer is still doing the exact same thing after a refresh"; measured on a fresh follower of the live run, 80 s: the page busy 72 % of the time): the drawings of one frame are ONE pass:
+     each order is worked out once for all of them (PiecePlacement.memoized), not once per line per drawing. (Holding a slow drawing back was tried and left out: it made the engraving card read a stale state in engrave-stage-flow.cjs S7.) */
+  function flush() {
+    asked = false; const ran = new Set();
+    const pass = () => { for (const [key, f] of due) { if (ran.has(key)) continue; ran.add(key); due.delete(key); try { f(); } catch (e) { console.error(e); } } };
+    const PP = window.PiecePlacement; if (PP && typeof PP.memoized === "function") PP.memoized(pass); else pass();
+  }
   function later(key, f) {
     due.set(key, f);
     for (const k of WITH[key] || []) if (due.has(k)) { const g = due.get(k); due.delete(k); due.set(k, g); }
@@ -2392,7 +2400,12 @@ const Orders = window.Orders = (() => {
      read for it; worked out at most once every 1.5 s (placeNow over every line is the cost). */
   let flowMemo = null;
   /** CNT1: the two queues the flow reads by order, and their signature (a press in Review or Design & Engrave changes it: the counts are then made again at once, not at the next idle moment). */
+  let qMemo = null;   // (CALM: Review's Open list is worked out over every line: once per 1.5 s, and again at once after a hand has touched the page)
   function queues() {
+    if (qMemo && Date.now() - qMemo.at < 1500 && !(window.CNTouch && CNTouch.at() > qMemo.at)) return qMemo.v;
+    const v = queuesNow(); qMemo = { at: Date.now(), v }; return v;
+  }
+  function queuesNow() {
     let revOpen = null, eng = null;
     try { revOpen = window.Review && Review.openOrders ? Review.openOrders() : null; } catch (_) { revOpen = null; }
     try { eng = window.Engrave && Engrave.pendingOrderIds ? Engrave.pendingOrderIds() : null; } catch (_) { eng = null; }
@@ -2420,7 +2433,7 @@ const Orders = window.Orders = (() => {
     const F = window.CNFlow; if (!F) return null;
     if (flowMemo && Date.now() - flowMemo.at < (maxAge == null ? 1500 : maxAge)) return flowMemo;
     cmpWorld(); try { F.world(WORKSPACE_SANDBOX ? "sandbox" : "production"); } catch (_) {}
-    let out, sig = ""; try { const c = flowCtx(); sig = c.sig; out = F.count(rowsOf().filter(openRow), c, window.CNCompleted ? CNCompleted.list() : []); } catch (e) { console.warn("[flow]", e && e.message); return flowMemo; }
+    let out, sig = ""; try { const c = flowCtx(); sig = c.sig; const PP = window.PiecePlacement, count = () => F.count(rowsOf().filter(openRow), c, window.CNCompleted ? CNCompleted.list() : []); out = PP && typeof PP.memoized === "function" ? PP.memoized(count) : count(); } catch (e) { console.warn("[flow]", e && e.message); return flowMemo; }
     out.at = Date.now(); out.sig = sig; return (flowMemo = out);
   }
   const stageWord = id => { const s = window.CNFlow && CNFlow.STAGES.find(x => x.id === id); return s ? s.label : String(id || ""); };
@@ -10632,7 +10645,7 @@ const Engrave = window.Engrave = (() => {
       if (res && res.ok) for (const f of ["front", "back"]) { const pc = places[f]; if (!Array.isArray(pc) || pc.length < 2 || !pc.every(Number.isFinite)) continue; const nj = jobsOf(line).find(j => !had.has(j.key) && faceOf(j) === f && (!slot0 || (j.slot || null) === slot0)); if (nj) { nj._placeAt = [pc[0], pc[1]]; const lk = looks[f]; if (lk) { nj._placeLook = lk; if (lk.lineGap != null) nj.lineGap = lk.lineGap; } } }
       if (res && res.ok && jobsOf(line).some(j => !had.has(j.key))) prepareLate(line).catch(() => {});
       // (NONEPLAIN 2: None approved: the piece is a regular order now, said once, plainly; the tab moves on as after any Approve: the piece is in no list any more)
-      if (res && res.ok && patch && patch.mode === "none" && (res.none || []).length) { toast(`Order ${line.order.receiptId} · no engraving · now a regular order`, "ok", 6000); setTimeout(() => { try { render(); Orders.render(); } catch (_) {} }, 2700); }   // (NONESTAMP, Paul 13 Nov 2026: "I didn't see the seal and stamp animation on the computer where I pressed approve": the card stays until the CUT PLAIN stamp has come down on it (at most 2.5 s), then the piece moves on)
+      if (res && res.ok && patch && patch.mode === "none" && (res.none || []).length) { toast(`Order ${line.order.receiptId} · no engraving · now a regular order`, "ok", 6000); setTimeout(() => { try { render(); Orders.render(); } catch (_) {} }, 2700); }   // (NONESTAMP, Paul 13 Nov 2026: "I didn't see the seal and stamp animation on the computer where I pressed approve": the card stays until the CUT PLAIN stamp has come down on it (at most 1 s), then the piece moves on)
       return res;
     } finally { setupBusy.delete(line.key); }   // (a face job THIS Save made is read and fitted now, beside everything else; a Save that made none touches nothing more than it did)
   }
@@ -15177,7 +15190,7 @@ const LaserReview = window.LaserReview = (()=>{
      record (a changed record is a new object, so it is read again); outside a pass every call reads everything afresh. */
   let passDepth=0,passRows=null,passProjected=null;
   const rowDecisions=()=>passDepth?(passRows || (passRows=R.decisions(Orders.rows()))):R.decisions(Orders.rows());
-  function batch(fn){passDepth++;try{return fn();}finally{if(!--passDepth){passRows=null;passProjected=null;}}}
+  function batch(fn){passDepth++;try{const PP=window.PiecePlacement;return PP && typeof PP.memoized==='function'?PP.memoized(fn):fn();}finally{if(!--passDepth){passRows=null;passProjected=null;}}}
   /* The live read (below): its state. `sigs` and `shape` are what the last answers said (to redraw only what changed, and to see
      a sheet that moved to another set or was cut elsewhere); `revs` are the revisions of the documents the last full answer
      was made from, sent back so the cloud can answer "unchanged" without working anything out. */
@@ -15196,8 +15209,8 @@ const LaserReview = window.LaserReview = (()=>{
     if(window.LibraryDone)d.laserDoneAt=LibraryDone.isDone(base)?(base.laserDoneAt || 1):null;
     const rows=rowDecisions();
     for(const pid of ids)if(rows[pid] && !d.engraving[pid])d.engraving[pid]={...rows[pid]};
-    const holders=new Map();   // (a piece with a front has two jobs: its decision is the two faces together, not whichever job came last)
-    for(const j of Engrave.items().values())for(const pid of j.copies || [])if(ids.includes(pid)) {
+    const holders=new Map(), idSet=new Set(ids);   // (a piece with a front has two jobs: its decision is the two faces together, not whichever job came last; CALM: the pieces looked up in a set, not an array, for each of ~600 jobs on each of ~40 sheets)
+    for(const j of Engrave.items().values())for(const pid of j.copies || [])if(idSet.has(pid)) {
       if(!holders.has(pid))holders.set(pid,[]);holders.get(pid).push(j);
       if(j.state==='written' && !j.backSaving)continue; // cloud evidence wins once saved
       d.engraving[pid]={needed:!['none','skipped'].includes(j.state),state:j.state,approved:['none','skipped','approved'].includes(j.state)};
@@ -15508,10 +15521,15 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     for(const k of ROW_FIELDS){if(!(k in rec))continue;if(JSON.stringify(row[k])!==JSON.stringify(rec[k])){row[k]=rec[k];moved=true;}}
     if(moved)S.library.patchedAt=Date.now();
   }
-  function refresh(){
+  let govAt=0,govDur=0;   // (CALM, Paul 19 Nov 2026: the Library redrew all its cards again and again after a reload: a drawing that took long waits three times as long, at most 1 s, unless a hand has touched the page)
+  function refresh(force){
     frame=0;
     if(window.Seal?.defer("laser-refresh",refresh))return;
-    if(S.mode!=='library')return;   // its cards are the Library's: a closed Library has let its records go (below)
+    if(S.mode!=='library')return;
+    { const wait=govAt+Math.min(1000,govDur*3)-Date.now(); if(force!==true && wait>40 && !(window.CNTouch && CNTouch.recent())){frame=setTimeout(()=>refresh(true),wait);return;} }
+    const t0=performance.now();try{refreshNow();}finally{govDur=performance.now()-t0;govAt=Date.now();}
+  }
+  function refreshNow(){   // its cards are the Library's: a closed Library has let its records go (below)
     /* A live read that found some cards' records different draws THOSE cards (`only`: 's:<sheet>' / 't:<set>' keys), not all fifty: the card a Complete Order moved is on
        screen at once, not after the other forty-nine have been worked out. Anything else that asks for a drawing (changed() with no keys) draws every card, as before;
        when both are waiting the changed cards go first and the rest follows in the next frame. */
@@ -23106,7 +23124,8 @@ const Review = window.Review = (() => {
    *  (its seal and its words) and the sent card is marked `foldedInto` it, so the list shows the order once. */
   /** What Open holds (RVCOUNT): the decisions (a shared question narrowed to its orders still waiting) and the custom orders that still wait on a person
    *  (a line not on its way to the laser: no piece placed in the nesting queue, or its send under way). Open's chip and the Review tab's count are both its length. */
-  function openParts() {
+  function openParts() { const PP = window.PiecePlacement; return PP && typeof PP.memoized === "function" ? PP.memoized(openPartsRaw) : openPartsRaw(); }   // (CALM: each order worked out once for the whole pass)
+  function openPartsRaw() {
     const all = items().filter(it => mine(it) && !isNotice(it)).map(it => {
       const group=rowsOf(it),open=group.filter(r=>!CustomSheet.decisionOf(r));
       // A shared SKU/options question can cover several orders. A sent first order must not hide the controls of

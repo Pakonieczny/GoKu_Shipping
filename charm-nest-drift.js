@@ -137,7 +137,7 @@
     checking = true;
     try {
       const { runId, carrier } = runOf(), m = mode();
-      const rep = { station: safe(() => root.localStorage.getItem("station_computer_id"), "") || "", role: !runId ? "none" : carrier ? "carrier" : "follower", runId: runId || "", build: (BUILD + "/" + (safe(() => (/[?&]v=([^&]+)/.exec((doc.querySelector('script[src*="charm-nest-bridge.js"]') || {}).src || "") || [])[1], "") || "") + "/sw:" + (root.__swBuild || "old") + "/sup:" + (safe(() => typeof root.Engrave.settleStuckBacks === "function" ? 1 : 0, 0))).slice(0, 80),
+      const rep = { station: safe(() => root.localStorage.getItem("station_computer_id"), "") || "", role: !runId ? "none" : carrier ? "carrier" : "follower", runId: runId || "", build: (BUILD + "/" + (safe(() => (/[?&]v=([^&]+)/.exec((doc.querySelector('script[src*="charm-nest-bridge.js"]') || {}).src || "") || [])[1], "") || "") + "/sw:" + (root.__swBuild || "old") + "/sup:" + (safe(() => typeof root.Engrave.settleStuckBacks === "function" ? 1 : 0, 0)) + "/calm:" + (root.__calmBuild || "0")).slice(0, 80),
         checked: 0, backWaitN: 0, backWaitMin: 0, behindN: 0, behind: [], stillN: 0, still: [], healed: [], unverifiedN: 0, missingN: 0, extraN: 0, inHandN: 0, rebuilt: 0, mode: m, feed: safe(() => root.CNSync.push.status().state, ""), heapMB: safe(() => Math.round(root.performance.memory.usedJSHeapSize / 1e6), 0), idleS: Math.round((Date.now() - lastInput) / 1000), ...freezeNow() };
       try { await root.Engrave.settleStuckBacks(); } catch (_) { /* the count below is as the flags are */ }   // (STALEBACK)
       { const w = waiting(); rep.backWaitN = w.n; rep.backWaitMin = w.min; }

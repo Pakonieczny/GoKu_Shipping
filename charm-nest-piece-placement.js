@@ -357,7 +357,7 @@
         parts: mine.length > 1 ? mine.map(c => ({ key: c.poolId || c.key, lineKey: c.lineKey, groupKey: c.groupKey, groupSize: c.groupSize, kind: c.kind, side: c.side, copy: c.copy, on: !!c.nested, sheetId: c.sheetId || null, sheetLabel: c.sheetLabel || '', setId: c.setId || null, cut: c.state === 'cut', hold: !!(c.hold || c.problem === 'held'), hand: !!c.hand, gone: !!c.gone, loading: !!c.loading })) : undefined,
         sheets, copies: Math.max(mine.length, 1), copiesOn: mine.filter(c => c && c.nested).length, loading: mine.some(c => c && c.loading), unsure: mine.some(c => c && c.unsure), why: (mine.find(c => c && !c.nested && c.reason) || {}).reason || '' };
     }
-    function ofOrder(orderId, opts) {
+    function ofOrderRaw(orderId, opts) {
       hook();
       const rid = ridOf(orderId), out = { orderId: rid, order: null, pieces: [], byKey: new Map() };
       if (!rid) { out.order = roll([]); return out; }
@@ -372,6 +372,18 @@
       out.order = roll(out.pieces);
       return out;
     }
+    /* (CALM, Paul 19 Nov 2026: "Michelle's computer is still doing the exact same thing after a refresh"; measured on a fresh follower of the live run, 80 s: the page busy 72 % of the time, 22 s of it in ofRow): ofRow(row) works out the
+       whole ORDER and keeps one line of it, so a pass over the ~1,100 lines (the counts, Review's Open list, a held order's card) worked every order out once per line. Inside memoized(fn), a synchronous pass that only reads, an
+       order is worked out once and every line of it takes its answer from that. Outside a pass nothing is kept. */
+    let passMemo = null;
+    function ofOrder(orderId, opts) {
+      if (!passMemo) return ofOrderRaw(orderId, opts);
+      const rid = ridOf(orderId); if (!rid) return ofOrderRaw(orderId, opts);
+      const k = rid + '|' + (opts && opts.cloudOnly ? 1 : 0); let o = passMemo.get(k);
+      if (!o) { o = ofOrderRaw(orderId, opts); passMemo.set(k, o); }
+      return o;
+    }
+    function memoized(fn) { if (passMemo) return fn(); passMemo = new Map(); try { return fn(); } finally { passMemo = null; } }
     const of = (orderId, lineKey, opts) => { const o = ofOrder(orderId, opts); return lineKey ? o.byKey.get(lineKey) || null : o.order; };
     function ofRow(row, opts) { const rid = row && row.order ? ridOf(row.order.receiptId) : ''; return rid && row.key ? of(rid, row.key, opts) : null; }
     /** The words a sheet's (or a set's) piece count carries on hover: "24 pieces, 10 pairs, 3 half pairs", read from OrderPieces (every order on those sheets, whole, so a half pair is known).
@@ -389,7 +401,7 @@
         return countWords(c);
       } catch (_) { return ''; }
     }
-    return { of, ofOrder, ofRow, factsOf, subscribe: fn => { hook(); subs.add(fn); return () => subs.delete(fn); }, resolve, roll, history, withHistory, groups, pairWords, placeWords, sideWord, sheetCounts, countWords, sheetWords, STATES };
+    return { memoized, of, ofOrder, ofRow, factsOf, subscribe: fn => { hook(); subs.add(fn); return () => subs.delete(fn); }, resolve, roll, history, withHistory, groups, pairWords, placeWords, sideWord, sheetCounts, countWords, sheetWords, STATES };
   }
   return { resolve, roll, history, withHistory, groups, pairWords, placeWords, sideWord, sheetCounts, countWords, makePage, STATES, WAIT_TEXT, NEXT_TEXT };
 });
