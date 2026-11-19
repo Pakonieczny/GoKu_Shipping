@@ -92,20 +92,20 @@
   }
 
   /** Rebuild a sheet this page holds from the cloud, as it is there now (its pieces from the master files, its places from the record). */
-  async function reload(p, why) {
+  async function reload(p, why, o) {   // (QUIETLIVE, Paul 19 Nov 2026: o.background = the page's own building of the followed sheets after a reload: no progress pill, the page is let answer, no thumbnail redraw per sheet)
     if (!p || !p.sheetId || !root.Recall || typeof root.Recall.rebuild !== "function") return p;
     const rec = await getRec(p.sheetId); if (!rec) return p;
     p.charms = (p.charms || []).filter(c => !c.poolId); p.placements = [];
     p.recalled = rec; p.recStockId = rec.roseStockId || "";   // (MOVESHOW, Paul 15 Nov 2026: the physical sheet the record names, kept for the tile that says what a sheet lies on; a rebuilt sheet no longer carries the record)
     p.outputs = null; p.verification = rec.verification || null; p.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
     p.backPool = Array.isArray(rec.backPool) ? rec.backPool : p.backPool;
-    await root.Recall.rebuild(p);
+    await root.Recall.rebuild(p, o && o.background ? { background: true } : undefined);
     p.layoutRev = +rec.layoutRev || 0; p.persistedDone = true; p.persisted = Promise.resolve(); p.dirty = false; p.problem = null; delete p.saveOwed;
     st.reloads++; st.last = { at: Date.now(), id: p.sheetId, why: why || "" };
     say("cloud", `${rec.fileBase || p.sheetId}: read again from the cloud (${why || "changed on another computer"}) · ${(p.placements || []).length} pieces`);
     safe(() => root.CN.renderCard(p));
     // (FOLLOWFEED: the pieces of this sheet are other charms now, so every thumbnail on this page that shows one looks at its piece again: its picture key names the piece this sheet holds (charm-nest-bridge.js ListMedia pieceSig))
-    safe(() => root.CharmNestMadeThumb && typeof root.CharmNestMadeThumb.refreshSoon === "function" && root.CharmNestMadeThumb.refreshSoon());
+    if (!(o && o.background)) safe(() => root.CharmNestMadeThumb && typeof root.CharmNestMadeThumb.refreshSoon === "function" && root.CharmNestMadeThumb.refreshSoon());   // (a background build asks once, when the last sheet is built)
     return p;
   }
 

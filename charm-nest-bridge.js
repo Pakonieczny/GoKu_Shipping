@@ -28803,10 +28803,14 @@ const Recall = window.Recall = (() => {
   async function rebuildOnce(pg, opts) {
     const rec = pg.recalled; if (!rec) return;
     if((rec.roseCutAt || pg.roseCutAt) && !(opts && opts.cutOk === true && !(+rec.laserDoneAt > 0) && !(+pg.laserDoneAt > 0)))throw new Error("This layout was already cut. Start a new sheet for its remnant.");
-    const bar = window.CNProgress ? CNProgress.start(`Rebuilding ${rec.fileBase || rec.id}`) : null;
+    // (QUIETLIVE, Paul 19 Nov 2026: "whenever I refresh someone's computer after a while, it goes through this strange animation ... doesn't allow the user to use the system for a long time"; the video: "Rebuilding GF_Nov.12.26_Set-2_Sheet..." for 8, 11 seconds, then the next sheet, +1 more, the page frozen and the Library redrawn between them):
+    //  after every reload a computer that follows the run builds each of the run's sheets from the master files (makeLive); the same build, started by the page itself (opts.background), shows no bar and lets the page answer between pieces
+    const bar = window.CNProgress ? CNProgress.start(`Rebuilding ${rec.fileBase || rec.id}`, opts && opts.background ? { quiet: true } : undefined) : null;
+    let sliceAt = Date.now(); const breath = async () => { if (opts && opts.background && Date.now() - sliceAt > 20) { await new Promise(res => setTimeout(res, 6)); sliceAt = Date.now(); } };
     try {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: rec.id })).sheet; if (!d) throw new Error("the sheet record is gone");
       for (const { p, c: rc } of placedOfRecord(d)) {   // (DUPID: the charm the record's poolIds names, as the restore above)
+        await breath();
         if (!rc || !rc.poolId) continue;
         // (TAKENRELOAD, Paul 15 Nov 2026): a piece taken off this sheet on another computer leaves the record's list of pieces at once (poolIds, with dirty: the layout is still to be written again) while its place is still in the record's layout until that computer has written it: it is not drawn back here
         if (d.dirty === true && Array.isArray(d.poolIds) && !d.poolIds.map(String).includes(String(rc.poolId))) continue;
@@ -28912,7 +28916,8 @@ const Recall = window.Recall = (() => {
      be clicked and shows no piece. Each followed sheet is made a LIVE sheet here, built from its cloud record: every piece from the master files at the place its record gives it (charm-nest-cloud-sheets.js reload,
      which keeps the cloud's revision of its layout, so whatever is changed here later is checked against the cloud). Nothing is nested and nothing is written. The pieces of all the sheets are read together (300 a
      call), the sheet on screen is built first, and the page is let answer between sheets. A sheet already cut stays its picture (it can no longer change). */
-  let livening = null, liveT = 0;
+  let livening = null, liveT = 0, liveTouch = 0;
+  if (typeof document !== "undefined") for (const type of ["pointerdown", "keydown", "wheel"]) document.addEventListener(type, () => { liveTouch = Date.now(); }, { capture: true, passive: true });   // (QUIETLIVE: when a hand last touched the page)
   function liveLater(runId) { clearTimeout(liveT); liveT = setTimeout(() => { makeLive(runId).catch(e => console.warn("[follow sheets] live", e && e.message)); }, 400); }
   async function makeLive(runId) {
     if (livening) return livening;
@@ -28929,7 +28934,8 @@ const Recall = window.Recall = (() => {
         pages = todo(); if (!pages.length) break;
         const shown = pages.find(p => { const prim = S.sheets[p.metal]; return prim && prim.pages[prim.active || 0] === p; }), pg = shown || pages[0];
         const stockWas = pg.recalled && pg.recalled.roseStockId;
-        try { await CS.reload(pg, "this computer follows the run"); pg.followed = true; n++; } catch (e) { pg._liveFailed = true; console.warn("[follow sheets] " + (pg.fileBase || pg.sheetId) + ": " + (e && e.message)); }
+        if (n) { for (const t0 = Date.now(); Date.now() - liveTouch < 1500 && Date.now() - t0 < 10000;) await new Promise(res => setTimeout(res, 400)); }   // (QUIETLIVE: the next sheet is built when nobody has touched the page for a moment, at most ten seconds' wait)
+        try { await CS.reload(pg, "this computer follows the run", { background: true }); pg.followed = true; n++; } catch (e) { pg._liveFailed = true; console.warn("[follow sheets] " + (pg.fileBase || pg.sheetId) + ": " + (e && e.message)); }
         // (FOLLOWSTOCK, Paul 15 Nov 2026: "I'm still seeing the rose gold sheet like this ... it sometimes updates and sometimes it doesn't": the sheet with none of its earlier cuts, and "room for about 60 more"): a sheet's metal (its
         //  physical sheet, the cuts already made on it, its own line) was read only while the sheet was still shown from its record; a sheet built here before that read had finished never read it at all. It is read as part
         //  of building the sheet, as a run put back on a computer reads it (restoreRunSheets)
@@ -28937,9 +28943,9 @@ const Recall = window.Recall = (() => {
           try { const d = (await api("charmNestLibrary", { op: "getSheet", id: pg.sheetId }, { quiet: true })).sheet; if (d && d.roseStockId) { await RoseStock.restore(pg, d); try { CN.computeSaturation(pg); } catch (_) {} CN.renderCard(pg); if (CN.drawPreview) CN.drawPreview(pg); } }
           catch (e) { console.warn("[follow sheets] metal of " + (pg.fileBase || pg.sheetId) + ": " + (e && e.message)); }
         }
-        await new Promise(res => setTimeout(res, 30));
+        await new Promise(res => setTimeout(res, 350));
       }
-      if (n) { try { CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub(); } catch (_) {} agent({ run: runId }, "cloud", `${n} sheet(s) of the open run built on this computer from their cloud records: every piece where the cloud has it`); }
+      if (n) { try { CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub(); } catch (_) {} try { if (window.CharmNestMadeThumb && typeof CharmNestMadeThumb.refreshSoon === "function") CharmNestMadeThumb.refreshSoon(); } catch (_) {} agent({ run: runId }, "cloud", `${n} sheet(s) of the open run built on this computer from their cloud records: every piece where the cloud has it`); }
       return n;
     })();
     try { return await livening; } finally { livening = null; }
