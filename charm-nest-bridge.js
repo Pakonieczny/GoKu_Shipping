@@ -21527,7 +21527,10 @@ const Review = window.Review = (() => {
     // (SKUFOLLOW, Paul 15 Nov 2026: "I also can't click on the SKU update button in the detailed order view" on the computer that follows the run): an order of the OPEN run, read from the cloud on a computer that follows it, is an open order:
     //  its SKU is changed here (Etsy and the saved link), and the computer that carries the run makes the piece again. An order of an earlier run or set opened from the records is still not changed
     const followsOpen = !B.run && !Recall.on() && !!(window.CharmNestRunFollow && CharmNestRunFollow.state().runId);
-    if (row.fromRecord && !followsOpen) return { ok: false, why: "this order is read from the records, not the open orders" };
+    // (ANYWHERE, Paul 19 Nov 2026: "Just this order" asked of the carrying computer for an order another computer had added to the run: "this order is read from the records, not the open orders"): a line of the OPEN run is the carrying computer's own line
+    //  even when it was taken in from the run's record (a line a following computer added, CLOUDALL S3); only an order of an earlier run or set opened from the records is not changed
+    const inOpenRun = !!(B.run && B.run.lines && row.key && B.run.lines[row.key]);
+    if (row.fromRecord && !followsOpen && !inOpenRun) return { ok: false, why: "this order is read from the records, not the open orders" };
     // (a line with no design, "No vector available", is what Edit SKU is for: it is made up again with the charm; a committed, skipped or gone line is not changed here)
     if (row.state !== "noDesign" && O.FINISHED_LINE && O.FINISHED_LINE.has(row.state)) return { ok: false, why: row.state === "committed" ? "the piece's set was committed at the Design Station" : "the piece is skipped or gone" };
     if (row.spec.ownDesign || row.spec.customDone) return { ok: false, why: "this piece is made from its own artwork, not a library charm" };
