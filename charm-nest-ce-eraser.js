@@ -140,6 +140,36 @@
   /** How much work the operands are (their ops): over BIG the boolean goes to the Worker. */
   const workOf = job => { let n = 0; for (const o of job.operands) for (const sub of o.subpaths) n += sub.length; for (const sub of job.eraser) n += sub.length; return n; };
   const BIG = 6000;
+  /** Why a stroke took nothing (Paul, 18 Nov 2026: "The Eraser tool is not working in the Charm Editor"): a stroke that takes nothing used to end in silence, so a brush over
+   *  the locked cut line (or over a part the selection leaves out) looked like a dead tool. What the brush touched that the eraser may not take, in words. -> a sentence */
+  function whyNone(items, sel, geo, er) {
+    const M = MD(); let eb = null;
+    try { eb = KR().boxOfSps(er.subpaths); } catch (e) { eb = null; }
+    if (!eb) return 'Nothing erased: drag the brush over a line to erase it';
+    const chosen = new Set(sel || []), hit = { cut: 0, locked: 0, left: 0 };
+    const rec = (list, P, lock, inSel) => {
+      for (const it of list || []) {
+        if (!it || it.hidden) continue;
+        const lk = lock || !!it.locked, ins = inSel || chosen.has(it.id);
+        if (it.kind === 'group') { rec(it.children, M.mul(P, geo.matrix(it)), lk, ins); continue; }
+        if (it.kind !== 'path' || !Array.isArray(it.subpaths) || !it.subpaths.length) continue;
+        let b = null; try { b = geo.drawn(it, P); } catch (e) { b = null; }
+        const pad = M.paintFill(it) ? 0 : M.lwOf(it) / 2;
+        if (!b || b[0] - pad > eb[2] || b[2] + pad < eb[0] || b[1] - pad > eb[3] || b[3] + pad < eb[1]) continue;
+        // (the box says it may be near; the kernel says whether the brush really reaches the part: null when it misses)
+        const W = M.mul(P, geo.matrix(it)), fill = !!M.paintFill(it); let reach = true, ops = 0;
+        for (const sp of it.subpaths) ops += (sp || []).length;
+        if (ops <= 1500) try { reach = !!KR().erase([fill ? { subpaths: M.transformSubpaths(it.subpaths, W), evenOdd: evenOf(it) } : { subpaths: M.transformSubpaths(it.subpaths, W), open: true, step: er.step }], er.subpaths)[0]; } catch (e) { reach = true; }
+        if (!reach) continue;
+        if (it.role === 'cut') hit.cut++; else if (lk) hit.locked++; else if (chosen.size && !ins) hit.left++;
+      }
+    };
+    rec(items, M.I, false, false);
+    if (hit.left) return 'Nothing erased: the Eraser works only on what is selected, and the brush is not over a selected part. Click empty space to deselect, then erase';
+    if (hit.cut) return 'Nothing erased: that is the charm\'s cut line, which the Eraser leaves alone. Erase the engraving lines instead';
+    if (hit.locked) return 'Nothing erased: that part is locked (Object ▸ Unlock All)';
+    return 'Nothing erased: the brush was not over a line';
+  }
   /** A part's matrix kept when its geometry changes (the editor turns and scales a part about the middle of its own box): its move set again so every point nobody
    *  touched stays exactly where it was on the charm. */
   function keepMatrix(n, old, geo) {
@@ -358,19 +388,20 @@
       const er = g.alt ? eraserOf({ kind: 'rect', a: g.start, b: g.last }) : eraserOf({ kind: 'stroke', points: linePoints(g), tip: g.tip, tol: 0.35 / viewK(ctx) });
       if (!er.subpaths.length) return null;
       const items0 = ctx.items(), job = eraseJob(items0, ctx.selection(), ctx.geo, er); job.geo = ctx.geo;
-      if (!job.ts.length) return null;
+      if (!job.ts.length) { say(ctx, whyNone(items0, ctx.selection(), ctx.geo, er), 4200); return null; }
       const t0 = Date.now(), O = opsApi(), big = workOf(job) > BIG;
       const sync = () => { try { return KR().erase(job.operands, job.eraser); } catch (e) { say(ctx, 'The eraser could not do this: ' + String(e && e.message || e).slice(0, 100), 4000); return null; } };
-      if (!big) { land(ctx, job, sync()); return null; }
+      if (!big) { const rs = sync(); if (rs && !land(ctx, job, rs)) say(ctx, 'Nothing erased: the brush did not reach a line', 3000); return null; }
       let timer = setTimeout(() => { timer = 0; spinner(ctx, true); }, 150);
       const finish = rs => {
         if (timer) clearTimeout(timer);
         if (ctx.items() !== items0) { say(ctx, 'The work changed while the eraser worked: nothing was erased, try again', 3600); return; }
-        if (rs) land(ctx, job, rs);
+        if (rs && !land(ctx, job, rs)) say(ctx, 'Nothing erased: the brush did not reach a line', 3000);
         st.lastMs = Date.now() - t0;
       };
       const viaPage = () => { if (timer) { clearTimeout(timer); timer = 0; } spinner(ctx, true); return raf2().then(() => finish(sync())); };
-      if (O && typeof O.eraseInWorker === 'function') return O.eraseInWorker(job.operands, job.eraser).then(finish, viaPage);
+      // (a Worker that never answers must not hold every later stroke back: after 20 s the page does the boolean itself)
+      if (O && typeof O.eraseInWorker === 'function') { let late = 0; const wait = new Promise((ok, no) => { late = setTimeout(() => no(new Error('The Worker took too long')), 20000); }); return Promise.race([O.eraseInWorker(job.operands, job.eraser), wait]).then(rs => { clearTimeout(late); return finish(rs); }, e => { clearTimeout(late); return viaPage(e); }); }
       return viaPage();
     };
     st.pending++;
@@ -569,7 +600,7 @@
   }
 
   return {
-    tool, register, optionsDialog, tipOf, tipSub, support, sweep, rectSub, snap45, thin, eraserOf, targetsOf, eraseJob, placeErase, eraseItems, workOf, keepMatrix,
+    tool, register, optionsDialog, tipOf, tipSub, support, sweep, rectSub, snap45, thin, eraserOf, targetsOf, eraseJob, whyNone, placeErase, eraseItems, workOf, keepMatrix,
     options: () => Object.assign({}, OPT), setOptions: o => { OPT = normOpt(Object.assign({}, OPT, o || {})); saveOpt(); return Object.assign({}, OPT); },
     state: () => St, BIG, LIM, version: 1
   };
