@@ -99,6 +99,18 @@ const RUN = 'run-any-t', LID = '1697972740';
   say('4a the carrying computer does "Just this order" in the asker\'s name, half an hour after it was asked', JSON.stringify(carrier.once) === JSON.stringify(['4237444149_5301', 'ANYWHERE_TEST_1', 'Michelle_R']) && carrier.done.cA && carrier.done.cA.ok === true, [carrier.once, carrier.done.cA]);
   say('4b any other request that old is still "too old"', carrier.done.cB && carrier.done.cB.ok === false && /too old/.test(carrier.done.cB.text), carrier.done.cB);
 
+  // 4c ── a line of the open run that was taken in from the record (a following computer added it) is the carrier's own line
+  const offer = await page.evaluate(([RUN]) => {
+    const mk = key => ({ key, state: 'unmatched', fromRecord: true, problems: [{ kind: 'unmatchedSku' }], order: { receiptId: '4237444149' }, line: { listingId: '4620198805', sku: 'CUSTOM-H-060-849928', etsySku: 'CUSTOM-H-060-849928', title: 'Custom' }, spec: { boughtSku: 'CUSTOM-H-060-849928', designSku: 'CUSTOM-H-060-849928', quantity: 1 } });
+    const inRun = mk('4237444149_5298095720'), other = mk('4237444149_ELSEWHERE');
+    const realState = CharmNestRunFollow.state; CharmNestRunFollow.state = () => ({ runId: null });
+    B.run = { runId: RUN, status: 'running', lines: { '4237444149_5298095720': {} } };
+    const out = {};
+    try { out.inRun = Review.editSkuOffer(inRun); out.other = Review.editSkuOffer(other); } finally { B.run = null; CharmNestRunFollow.state = realState; }
+    return { inRun: { ok: out.inRun.ok, why: out.inRun.why }, other: { ok: out.other.ok, why: out.other.why } };
+  }, [RUN]);
+  say('4c on the carrying computer a line of the open run read from the record is offered "Change SKU / Just this order"; an order of another run read from the records is still not', offer.inRun.ok === true && offer.other.ok === false && /read from the records/.test(offer.other.why || ''), offer);
+
   // 5 ── the cloud
   const put = await page.evaluate(([RUN]) => CN.api('charmNestLibrary', { op: 'runCmdPut', runId: RUN, dev: 'dtestfoll02', by: 'Michelle_R', cmd: { type: 'skuonce', ids: ['4237444149_5301'], sku: 'basketball (huggie)' } }).then(r => r, e => ({ error: String(e.message || e) })), [RUN]);
   say('5 the cloud takes a skuonce command with the row and the charm (upper case)', put && put.ok && put.cmd.type === 'skuonce' && put.cmd.args.sku === 'BASKETBALL (HUGGIE)' && JSON.stringify(put.cmd.args.ids) === JSON.stringify(['4237444149_5301']), put);
