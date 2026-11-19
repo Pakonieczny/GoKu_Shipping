@@ -3,7 +3,7 @@
 // A release pressed on a following computer is now done by the computer that carries the run: asked through the run's command list (runCmdPut release), done there by OrderHold.release in the person's name, and answered.
 //   1 the cloud takes a release command (its order id kept) and still refuses an unknown one
 //   2 a FOLLOWING computer asks the carrier and changes nothing itself: no local release, no timeline step, the line stays as the cloud has it; it answers when the carrier has
-//   3 a refusal by the carrier is told in the carrier's words;  no carrier alive: nothing is sent and the order is said to be still on hold
+//   3 a refusal by the carrier is told in the carrier's words;  no carrier answering (ANYWHERE, 19 Nov 2026): the request is put in the cloud all the same and kept there, answered "queued" (never a refusal)
 //   4 the CARRYING computer picks the command up, releases the order in the asker's name, and answers done
 // Real sorter in Chromium against the repo's fake site; nothing live.   PW_DIR=... CHROMIUM=... node tests/charm-nest/follow-release.cjs
 const path = require('path');
@@ -41,7 +41,7 @@ const RUN = 'run-rel-t', RID = '4999000001';
       const t0 = Date.now(); const ok = await OrderHold.release(RID, { name: 'Michelle_R' });
       Object.assign(out, { ok: { ok: ok.ok, released: ok.released, via: ok.via, text: ok.text, ms: Date.now() - t0 }, calls: calls.slice(), events, hold: row.hold, releasing: !!row.releasing, state: row.state });
       calls = []; listN = 0; mode = 'refused'; const no = await OrderHold.release(RID, { name: 'Michelle_R' }); out.refused = { ok: no.ok, released: no.released, error: no.error };
-      calls = []; mode = 'nocarrier'; const nc = await OrderHold.release(RID, { name: 'Michelle_R' }); out.nocarrier = { ok: nc.ok, error: nc.error, calls: calls.slice() };
+      calls = []; mode = 'nocarrier'; const nc = await OrderHold.release(RID, { name: 'Michelle_R' }); out.nocarrier = { ok: nc.ok, queued: nc.queued, released: nc.released, error: nc.error, calls: calls.slice() };
     } finally { CN.api = realApi; Orders.rows = realRows; CharmNestRunFollow.state = realState; CharmNestRunFollow.dev = realDev; if (window.SheetEvents) SheetEvents.order = realEv; }
     return out;
   }, [RUN, RID]);
@@ -49,7 +49,7 @@ const RUN = 'run-rel-t', RID = '4999000001';
   say('2b it answers released through the carrier, once the carrier has', follower.ok.ok === true && follower.ok.released === true && follower.ok.via === 'carrier' && /released/.test(follower.ok.text) && follower.ok.ms >= 2400, follower.ok);
   say('2c nothing was done here: the line is as the cloud has it (still held), no timeline step written, a stale local flag cleared', follower.hold && follower.events === 0 && follower.releasing === false && follower.state === 'held', [follower.hold, follower.events, follower.releasing, follower.state]);
   say('3a a refusal is told in the carrier\'s words, not released', follower.refused.ok === false && follower.refused.released !== true && /a piece has no design yet/.test(follower.refused.error || ''), follower.refused);
-  say('3b no carrier alive: nothing sent, and it says the order is still on hold', follower.nocarrier.ok === false && /still on hold/.test(follower.nocarrier.error || '') && JSON.stringify(follower.nocarrier.calls) === JSON.stringify([['runCarrier']]), follower.nocarrier);
+  say('3b no carrier answering: the request is still put in the cloud (never refused), and the answer is "queued", not a failure', follower.nocarrier.ok === false && follower.nocarrier.queued === true && !/was not released|cannot be released/.test(follower.nocarrier.error || '') && /asked of the run/.test(follower.nocarrier.error || '') && JSON.stringify(follower.nocarrier.calls) === JSON.stringify([['runCarrier'], ['runCmdPut', 'release', RID, 'Michelle_R']]), follower.nocarrier);
 
   // 4 ── the computer that carries the run
   const carrier = await page.evaluate(async ([RUN, RID]) => {
