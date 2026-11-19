@@ -15551,18 +15551,28 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     r.setAttribute('aria-label',count?`${words}, ${count}`:words);r.innerHTML=`<span>${esc(words)}</span>${count?`<em>${count}</em>`:''}`;
     return r;
   }
+  /* ONELIST (Paul, 19 Nov 2026: "It should show me all the sets in order either descending or ascending based on date and then all the items, all the drafts, all the stuff in progress should be right at the bottom"; the Library showed
+     Laser cutting (Nov 15, Nov 12) and then In progress (Nov 18, 16, 13, and Nov 12 again): each block was in date order by itself, so the dates started over where the blocks met and one day stood in both): every set of both areas
+     goes in ONE list by its day (newest first, or oldest first when flipped; Set-1, Set-2, ... inside a day, as SETORDER), one date line for each day, and the groups of loose sheets and drafts after them. The cards stay in the area
+     that says where they stand (Approve, the drops, the step rail read it): only where they are DRAWN is one list (the two areas are drawn as no box of their own, their cards take their place in the Library's one row of cards by `order`). */
+  const oneListCss=()=>{if(document.getElementById('laserOneCss'))return;const st=document.createElement('style');st.id='laserOneCss';
+    st.textContent='#libBody.laserOne{display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px 12px}#libBody.laserOne>.laserSection{display:contents}#libBody.laserOne>.laserSection>h2,#libBody.laserOne>.laserSection>.laserEmpty{display:none}#libBody.laserOne>.laserSection>.laserAreaItems{display:contents}#libBody.laserOne>.laserDayRule{flex:0 0 100%;width:100%}';document.head.appendChild(st);};
   function arrange(areas){
-    if(!areas)for(const list of document.querySelectorAll('#libBody .laserAreaItems')){
-      const value=card=>({...card._laserSet,sheets:(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean)});
-      const cards=[...list.children].filter(c=>!isDayRule(c)).sort((a,b)=>CNListActivity.compareDays(value(a),value(b),CNListActivity.state('library').direction));   // (actual sets first by day and number, then the groups of loose sheets: charm-nest-activity.js)
-      const keys=cards.map(c=>{const v=value(c);return CNListActivity.isSet(v)?(CNListActivity.setDay(v) || 'nodate'):'loose';}),count=new Map();
+    if(!areas){
+      const body=document.getElementById('libBody'),lists=[...document.querySelectorAll('#libBody .laserAreaItems')];if(!body || !lists.length)return;
+      oneListCss();body.classList.add('laserOne');
+      const value=card=>({...card._laserSet,sheets:(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean)}),dir=CNListActivity.state('library').direction;
+      for(const l of lists)for(const r of [...l.children])if(isDayRule(r))r.remove();   // (the date lines are the Library's, one for each day: below)
+      const sorted=lists.flatMap(l=>[...l.children]).sort((a,b)=>CNListActivity.compareDays(value(a),value(b),dir));   // (actual sets first by day and number, then the groups of loose sheets and drafts: charm-nest-activity.js)
+      for(const l of lists){const mine=sorted.filter(c=>c.parentElement===l);mine.forEach((c,i)=>{if(l.children[i]!==c)l.insertBefore(c,l.children[i] || null);});}
+      const keys=sorted.map(c=>{const v=value(c);return CNListActivity.isSet(v)?(CNListActivity.setDay(v) || 'nodate'):'loose';}),count=new Map();
       for(const k of keys)count.set(k,(count.get(k) || 0)+1);
       const ruled=keys.some(k=>k!=='loose'),want=[];   // (a list of loose sheets alone has nothing to separate)
-      keys.forEach((k,i)=>{if(ruled && (!i || keys[i-1]!==k))want.push({day:k,n:count.get(k)});want.push(cards[i]);});
-      const have=[...list.children];
-      if(have.length===want.length && want.every((w,i)=>w.day?isDayRule(have[i]) && have[i].dataset.day===w.day && +have[i].dataset.n===w.n:have[i]===w))continue;   // (as it is: nothing moves)
-      for(const r of have)if(isDayRule(r))r.remove();
-      want.forEach((w,i)=>{const node=w.day?dayRule(w.day,w.n):w;if(list.children[i]!==node)list.insertBefore(node,list.children[i] || null);});
+      keys.forEach((k,i)=>{if(ruled && (!i || keys[i-1]!==k))want.push({day:k,n:count.get(k)});want.push(sorted[i]);});
+      const wantRules=want.filter(w=>w.day),haveRules=[...body.children].filter(isDayRule);
+      if(haveRules.length===wantRules.length && wantRules.every((w,i)=>haveRules[i].dataset.day===w.day && +haveRules[i].dataset.n===w.n))wantRules.forEach((w,i)=>{w.node=haveRules[i];});
+      else{haveRules.forEach(r=>r.remove());wantRules.forEach(w=>{w.node=dayRule(w.day,w.n);body.appendChild(w.node);});}
+      want.forEach((w,i)=>{const node=w.day?w.node:w,o=String(i+1);if(node.style.order!==o)node.style.order=o;});
     }
     else document.querySelectorAll('[data-laser-area]').forEach(area=>{const hasItems=!!area.querySelector('.laserAreaItems > :not(.laserDayRule)');area.hidden=area.dataset.laserArea!=='ready' && !hasItems;const empty=area.querySelector('.laserEmpty');if(empty)empty.hidden=hasItems;});
   }
