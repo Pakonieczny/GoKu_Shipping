@@ -320,7 +320,7 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
     // the place lights up where it stands, and says its name
     const lit = await page.evaluate(() => [...document.querySelectorAll('[data-dnd-state]')].map(e => [e.dataset.dndState, e.dataset.dndLabel, e.hasAttribute('data-dnd-hot')]));
     assert(lit.some(l => l[1].startsWith('Move to Set 1') && l[0] === 'armed'), 'the set cards show their names: ' + JSON.stringify(lit));
-    assert(lit.some(l => /Laser cutting/.test(l[1])), 'the sections show their names');
+    // (ONELIST, Paul 19 Nov 2026: the Library is one list by date, the two areas are no box of their own: the places Laser cutting and In progress are the dock's chips above, checked just before)
     // a dimmed place says why while the card is over it
     const dim = await box(page, chipSel('In progress')); await page.mouse.move(dim.x, dim.y, { steps: 6 });
     // (the fake LibraryFlow here is a plain list of the allowed places, with no answer of its own: the drag layer's own words stand; the real engine answers every place itself, see R)
