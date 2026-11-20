@@ -1179,6 +1179,14 @@ const Ladder = window.Ladder = (() => {
   function navBadges(pieces) {
     const f = window.CNFlow ? peek() : null;
     const rb = document.getElementById("tabReviewN"), eb = document.getElementById("tabEngraveN");
+    // (CLOUDWORLD, Paul 20 Nov 2026: "The two computers still don't match"): the two badges are the cloud's numbers (charm-nest-review-core.js reviewOrders / designOrders), the same on every computer
+    const cloudCounts = (() => { try { const CW = window.CloudWorld, rv = CW && CW.wanted && CW.wanted() && CW.review ? CW.review() : null; return rv && rv.counts && rv.counts.reviewOrders != null ? rv.counts : null; } catch (_) { return null; } })();
+    if (cloudCounts) {
+      const r = +cloudCounts.reviewOrders || 0, e = cloudCounts.designOrders != null ? +cloudCounts.designOrders || 0 : f && f.counts ? f.counts.design || 0 : 0;
+      if (rb) { rb.textContent = r ? String(r) : ""; rb.title = revWords(r); }
+      if (eb) { eb.textContent = e ? String(e) : ""; eb.title = engWords(e, pieces); }
+      return true;
+    }
     if (f && f.counts) {
       const r = f.counts.review || 0, e = f.counts.design || 0;
       if (rb) { rb.textContent = r ? String(r) : ""; rb.title = revWords(r); }
@@ -23508,7 +23516,10 @@ const Review = window.Review = (() => {
     // unmatchedSku: other code reads them); only the bar groups them. A filter that still names one of them (a note's Show,
     // a workspace saved before) lands on its chip.
     const CHIPS = { needResolution: { label: "Need Resolution", kinds: ["needsMapping", "unmatchedSku"] } };
-    const chipOf = k => Object.keys(CHIPS).find(c => CHIPS[c].kinds.includes(k)) || k, chipIt = it => chipOf(tabOf(it));
+    // (CLOUDWORLD, Paul 20 Nov 2026: "The two computers still don't match"): a card's chip is the one the cloud's Review gave it (charm-nest-review-core.js), so every computer files every card alike
+    const cloudRv = (() => { try { const CW = window.CloudWorld; return CW && CW.wanted && CW.wanted() && CW.review ? CW.review() : null; } catch (_) { return null; } })();
+    const cloudChip = new Map(((cloudRv && cloudRv.cards) || []).map(c => [c.key, c.chip]));
+    const chipOf = k => Object.keys(CHIPS).find(c => CHIPS[c].kinds.includes(k)) || k, chipIt = it => (cloudChip.has(it.key) && cloudChip.get(it.key) ? cloudChip.get(it.key) : chipOf(tabOf(it)));
     const wordOf = k => (CHIPS[k] && CHIPS[k].label) || KIND_WORDS[k] || k;
     if (RV.filter) RV.filter = chipOf(RV.filter);
     const doneMode = RV.cseg === "done";
@@ -23540,7 +23551,9 @@ const Review = window.Review = (() => {
     // (a line still listed in Open is not a released card: it waits on something else)
     const inOpen = new Set(all.concat(clWait).flatMap(it => rowsOf(it).map(r => r.key)));
     const releasedNow = releasedCards(inOpen, answeredCards).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }));
-    const finished = cl.done.concat(cl.sent.filter(it => !it.foldedInto), clLaid, answeredCards, releasedNow).sort((a, b) => doneAt(b) - doneAt(a));
+    let finished = cl.done.concat(cl.sent.filter(it => !it.foldedInto), clLaid, answeredCards, releasedNow).sort((a, b) => doneAt(b) - doneAt(a));
+    // (CLOUDWORLD: Resolved is the cloud's Resolved: a card shows here only when the cloud's Review holds it)
+    if (cloudRv && Array.isArray(cloudRv.resolvedKeys)) { const rk = new Set(cloudRv.resolvedKeys); finished = finished.filter(it => rk.has(it.key)); }
     const alive=new Set(all.concat(cl.open, cl.done, cl.sent).map(it=>it.key));for(const key of reviewRows.keys())if(!alive.has(key))reviewRows.delete(key);
     // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through
     const byKind = new Map(); for (const it of all) byKind.set(chipIt(it), (byKind.get(chipIt(it)) || 0) + 1);
