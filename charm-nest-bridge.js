@@ -13722,10 +13722,25 @@ const Engrave = window.Engrave = (() => {
     return out;
   }
   /** The Engrave tab's own lists: the engraving jobs and the monogram lines (every other reader of Engrave's jobs reads items() alone, as before). */
+  /* CLOUDWORLD (Paul, 20 Nov 2026: "when I filter them newest first the list don't match"): each piece of the tab is timed by the cloud (its line's latest activity: the order's Etsy times, the approvals and decisions every
+     computer saved, _charmNestWorld.js engraveAt), so Newest first, Oldest first and the date chips list the same pieces in the same order on every computer. A computer's own touches (a Team message read here) no longer move a piece. */
+  const cloudTimed = list => {
+    let rv = null; try { const CW = window.CloudWorld; rv = CW && CW.wanted && CW.wanted() && CW.review ? CW.review() : null; } catch (_) { rv = null; }
+    const map = rv && rv.engraveAt;
+    for (const j of list) {
+      if (!j || typeof j !== "object") continue;
+      if (!map) { if (j.cloudAt) j.cloudAt = 0; continue; }
+      const line = j.row && (j.row.parentRow || j.row), key = line && line.key;
+      let t = key ? +map[key] || 0 : 0;
+      if (!t && key) { try { const cl = window.CloudWorld.line(key), o = (cl && cl.order) || {}; t = Math.max(+o.updateTs || 0, +o.createTs || 0) * 1000; } catch (_) { t = 0; } }   // (a monogram line: its order's times)
+      j.cloudAt = t > 0 ? t : 0;
+    }
+    return list;
+  };
   const tabItems = () => { const a = [...items().values()].filter(j => !j.archived && inCloudEngrave(j)), m = monoItemsNow();   // (CLOUDWORLD: the lines the cloud holds engraving work for)   // (PIECES: a piece the line no longer has is kept with its approvals but is in no list)
-    return m.length ? a.concat(m) : a; };
+    return cloudTimed(m.length ? a.concat(m) : a); };
   const tabItem = key => items().get(key) || (key != null && monoItemsNow().find(m => m.key === key)) || null;
-  const decidedAll = () => { const m = monoItemsNow().filter(x => x.state === "approved"), d = decidedJobs().filter(inCloudEngrave); return m.length ? d.concat(m) : d; };
+  const decidedAll = () => { const m = monoItemsNow().filter(x => x.state === "approved"), d = decidedJobs().filter(inCloudEngrave); return cloudTimed(m.length ? d.concat(m) : d); };
   /** What the order model asks of a line: null (not a monogram line) | "to-approve" | "held" (its letters cannot be read yet, or it is being made) | "approved". */
   const monoStateOfItem = m => (m.st.approved ? "approved" : ["reading", "letters", "building", "error"].includes(m.st.state) ? "held" : "to-approve");
   const monoStateOf = row => {

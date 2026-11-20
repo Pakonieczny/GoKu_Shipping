@@ -32,7 +32,8 @@
     if(!fallback && /^\d{4}-\d{2}-\d{2}$/.test(value.day || ''))fallback=Date.parse(value.day+'T12:00:00Z');
     return [event,fallback];
   }
-  const at=value=>{const [event,fallback]=times(value);return event || fallback;};
+  // (CLOUDWORLD, Paul 20 Nov 2026: Design & Engrave's "Newest first" listed other pieces first on each computer): an item that carries the cloud's time for it (cloudAt) is timed by that alone, the same on every computer
+  const at=value=>{const c=value && typeof value==='object'?+value.cloudAt:0;if(c>0)return c;const [event,fallback]=times(value);return event || fallback;};
   function day(t){if(!ms(t))return '';const parts=fmt.formatToParts(new Date(ms(t))),get=k=>parts.find(p=>p.type===k).value;return `${get('year')}-${get('month')}-${get('day')}`;}
   const shift=(d,n)=>new Date(Date.parse(d+'T12:00:00Z')+n*86400000).toISOString().slice(0,10);
   function dayStart(d){let lo=Date.parse(d+'T00:00:00Z')-86400000,hi=lo+3*86400000;while(hi-lo>1){const mid=Math.floor((lo+hi)/2);if(day(mid)<d)lo=mid;else hi=mid;}return hi;}
