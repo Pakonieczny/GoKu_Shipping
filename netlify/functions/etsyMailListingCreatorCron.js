@@ -452,7 +452,6 @@ exports.handler = async function (event) {
 };
 
 // In-file schedule (works alongside or instead of netlify.toml).
-// ETSY PAUSE 2026-11-20 (daily limit hit) — restore by uncommenting:
-// exports.config = {
-//   schedule: "* * * * *"   // every minute
-// };
+exports.config = {
+  schedule: "* * * * *"   // every minute
+};
