@@ -188,7 +188,11 @@
       const painted = () => safe(() => {
         const bar = sel => { const b = doc && doc.querySelector(sel); if (!b) return null; return [...b.querySelectorAll("button")].filter(x => x.offsetParent !== null || x.closest(".hidden") == null).map(x => { const t = String(x.textContent || "").replace(/\s+/g, " ").trim(); return t ? (x.classList.contains("on") || x.getAttribute("aria-pressed") === "true" ? "[" + t + "]" : t) : ""; }).filter(Boolean).slice(0, 24).join(" | ").slice(0, 600); };
         const rail = (() => { const r = doc && doc.querySelector(".ldFlow"); return r ? [...r.querySelectorAll(".ldRow")].map(x => String(x.textContent || "").replace(/\s+/g, " ").trim()).join(" | ").slice(0, 500) : null; })();
-        return { tab: safe(() => root.CN.S.mode, null), review: bar("#reviewView .ordBar"), orders: bar("#ordersView .ordBar"), engrave: bar("#engraveView .ordBar"), rail };
+        // (and the first cards each list shows, in its order: the same cards first on every computer, or not; the Orders tab's three piles as their chips say them)
+        const top = sel => { const host = doc && doc.querySelector(sel); if (!host) return null; const ks = []; for (const x of host.querySelectorAll("[data-mkey]")) { const k = x.dataset.mkey; if (k && !/^(day|ordEmpty):/.test(k) && !ks.includes(k)) ks.push(k); if (ks.length >= 8) break; } return ks.length ? ks.join(" ") : null; };
+        const piles = { open: safe(() => (root.Orders && root.Orders.tabCount ? root.Orders.tabCount() : null), null), completed: safe(() => root.CNCompleted.count(), null), cancelled: safe(() => root.Cancelled.count(), null), chips: bar("#ordChips") };
+        return { tab: safe(() => root.CN.S.mode, null), review: bar("#reviewView .ordBar"), orders: bar("#ordersView .ordBar"), engrave: bar("#engraveView .ordBar"), rail, piles,
+          reviewTop: top("#reviewView #rvList"), ordersTop: top("#ordersView #ordBody"), engraveTop: top("#engraveView .egPlacementList") };
       }, null);
       safe(() => { const t = id => { const e = doc && doc.getElementById(id); return e ? +(String(e.textContent || "").replace(/\D/g, "")) || 0 : null; }, sc = root.Review && typeof root.Review.screen === "function" ? root.Review.screen() : null;
         // (every tab: the rail's steps as the rail draws them, the Design & Engrave tab's own numbers, the Library's totals as the rail's headline says them)
