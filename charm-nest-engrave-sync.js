@@ -168,8 +168,11 @@
     if (!line) { WAITING.set(l.key, l); return said(l.key, "line not here"); }   // (NEWLINES, Paul 13 Nov 2026: "What about future orders?"): the line has not reached this computer yet: taken when it does (retryWaiting)
     const mine = l.dev && l.dev === dev(), localAt = LOCAL_AT.get(l.key) || 0;
     if (Date.now() - localAt < OWN_HOLD) return said(l.key, "own press");   // (a press made here a moment ago: it is sent, and wins)
-    const sigNow = sigOf(line); if (l.sig && sigNow === l.sig) { SIGS.set(l.key, sigNow); return said(l.key, "same sig"); }
-    if (mine && why !== "start" && why !== "stale") return said(l.key, "mine");   // (this computer's own write coming back: already here)
+    /* (ENGSAME, Paul 20 Nov 2026: three pieces were "Saved to sheet" in the cloud and on Michelle's computer and "blocked" on Paul's, which never took the cloud's record: the record still carried the signature Paul's computer
+       had sent, so it was read as this computer's own write. The signature is trusted only when every piece's state is the cloud's too: a piece in another state than the record's takes the record.) */
+    const items0 = safe(() => E().items(), null), statesDiffer = (l.rec.jobs || []).some(rj => { const j = items0 && rj && items0.get(rj.key); return !!j && !j.archived && String(j.state || "") !== String(rj.state || ""); });
+    const sigNow = sigOf(line); if (l.sig && sigNow === l.sig && !statesDiffer) { SIGS.set(l.key, sigNow); return said(l.key, "same sig"); }
+    if (mine && !statesDiffer && why !== "start" && why !== "stale") return said(l.key, "mine");   // (this computer's own write coming back: already here)
     said(l.key, "taken (" + why + ")");
     TAKING.add(l.key);
     try {
