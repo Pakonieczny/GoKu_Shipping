@@ -337,7 +337,7 @@ async function build(opts) {
     try {
       const customSent = {}; for (const [k, v] of Object.entries(Object.assign({}, customKept, customDone))) if (v && v.sent && typeof v.sent === "object") customSent[k] = v.sent;
       review = ReviewCore.build({ now, lines: rows.map(coreLine), customDone, customKept, reviewMarks, customSheet: coreSends(customSheet), customSent, cancelled: [...cancelled], settled: [], engraving });
-      await db.collection(WORLD).doc("review").set({ v: VERSION, at: now, counts: JSON.parse(J(review.counts || {})), data: J({ cards: (review.cards || []).slice(0, 1500), openOrders: review.openOrders || [], openKeys: review.openKeys || [] }) });
+      await db.collection(WORLD).doc("review").set({ v: VERSION, at: now, counts: JSON.parse(J(review.counts || {})), data: J({ cards: (review.cards || []).slice(0, 1500), openOrders: review.openOrders || [], openKeys: review.openKeys || [], resolvedKeys: review.resolvedKeys || [], itemKeys: review.itemKeys || [] }) });
     } catch (e) { errors.push("review: " + String(e.message || e).slice(0, 200)); }
   }
 

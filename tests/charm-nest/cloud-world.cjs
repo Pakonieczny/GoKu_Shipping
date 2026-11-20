@@ -173,6 +173,7 @@ async function otherComputer(H) {
       const bar = document.querySelector('#reviewView .ordBar'), n = sel => { const e = bar && bar.querySelector(sel); return e ? +(e.querySelector('b') || {}).textContent || 0 : 0; };
       const chips = {}; for (const b of (bar ? bar.querySelectorAll('.egTab[data-k]') : [])) chips[b.dataset.k] = +((b.querySelector('b') || {}).textContent || 0);
       return { open: n('[data-cseg=open]'), resolved: n('[data-cseg=done]'), chips, review: +(document.getElementById('tabReviewN') || {}).textContent || 0, design: +(document.getElementById('tabEngraveN') || {}).textContent || 0 }; });
+    { const rvDoc = (await Lib.ops.worldGet({})).review; ok('7h · the cloud keeps its Resolved list (resolvedKeys) as well as its count, so every computer lists the same Resolved cards', Array.isArray(rvDoc.resolvedKeys) && rvDoc.resolvedKeys.length === rvDoc.counts.resolved && Array.isArray(rvDoc.openKeys), JSON.stringify({ keys: rvDoc.resolvedKeys && rvDoc.resolvedKeys.length, count: rvDoc.counts.resolved })); }
     const rvNow = (await Lib.ops.worldGet({})).review.counts, s1 = await screenOf(page), s2 = await screenOf(p2);
     const want7 = { open: rvNow.openCount, resolved: rvNow.resolved, review: rvNow.reviewOrders, design: rvNow.designOrders || 0 };
     const sameScreen = x => x.open === want7.open && x.resolved === want7.resolved && x.review === want7.review && x.design === want7.design && Object.entries(x.chips).every(([k, v]) => v === (k === 'customOrder' ? rvNow.customOrders : rvNow[k] || 0));
