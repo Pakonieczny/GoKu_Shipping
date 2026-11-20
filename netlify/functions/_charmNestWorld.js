@@ -376,8 +376,11 @@ async function build(opts) {
 
   /* 9b · the orders with engraving still to settle (Charm_Nest_Engrave: each line's engraving jobs as every computer saves them, charm-nest-engrave-sync.js), for the Design & Engrave badge:
      a job words / review / fitting / ready / classify, not archived, of a live line (charm-nest-bridge.js Engrave.pendingJobs) */
-  let engraving = null, engraveKeys = null, engravePending = null, engraveJobs = null;
+  let engraving = null, engraveKeys = null, engravePending = null, engraveJobs = null, engraveAt = null;
   try {
+    // (each line's latest activity for the Design & Engrave list, the same on every computer: its order's Etsy times, its pieces' approvals and decisions; seconds or ms or text, as they come)
+    const tms = v => { if (v == null || v === "") return 0; if (typeof v === "number") return v > 1e12 ? v : v > 1e9 ? v * 1000 : 0; const n = /^\d+(\.\d+)?$/.test(String(v)) ? tms(+v) : Date.parse(v); return Number.isFinite(n) && n > 0 ? n : 0; };
+    const rowOf = new Map(live.map(r => [r.key, r]));
     const ENG_PENDING = new Set(["words", "review", "fitting", "ready", "classify"]), keys = live.filter(r => r.order && r.key).map(r => r.key), set = new Set(), all = [], pend = [];
     for (let i = 0; i < keys.length; i += 300) for (const d of await db.getAll(...keys.slice(i, i + 300).map(k => db.collection("Charm_Nest_Engrave").doc(k)))) {
       if (!d.exists) continue; let rec = null; try { rec = JSON.parse((d.data() || {}).rec || "null"); } catch (_) { rec = null; }
@@ -385,6 +388,7 @@ async function build(opts) {
       all.push(d.id);   // (CLOUDWORLD: the lines whose engraving work the cloud holds: the Design & Engrave tab of every computer lists these, and no line one computer prepared alone)
       // (each piece's state as the cloud holds it: a computer whose piece says otherwise takes the cloud's record of the line, charm-nest-cloud-world.js engraveCheck)
       (engraveJobs || (engraveJobs = {}))[d.id] = Object.fromEntries(rec.jobs.filter(j => j && j.key && !j.archived).map(j => [String(j.key), String(j.state || "") + (j.editingBack ? "!" : "")]));
+      { const o = ((rowOf.get(d.id) || {}).order) || {}; (engraveAt || (engraveAt = {}))[d.id] = Math.max(tms(o.updateTs), tms(o.createTs), ...rec.jobs.filter(j => j && !j.archived).map(j => Math.max(tms(j.approvedAt), tms(j.decidedAt)))); }
       if (rec.jobs.some(j => j && ENG_PENDING.has(String(j.state)) && !j.archived && !j.editingBack)) { set.add(String(d.id).split("_")[0]); pend.push(d.id); }
     }
     engraving = [...set]; engraveKeys = all.sort(); engravePending = pend.sort();
@@ -446,7 +450,7 @@ async function build(opts) {
         review.counts.reviewOrders = flow.counts.review || 0; review.counts.designOrders = flow.counts.design || 0;
       }
       if (engraveKeys) { review.counts.engraveLines = engravePending.length; review.counts.engraveOrders = (engraving || []).length; review.counts.engraveHeld = engraveKeys.length; }
-      await db.collection(WORLD).doc("review").set({ v: VERSION, at: now, counts: JSON.parse(J(review.counts || {})), data: J({ cards: (review.cards || []).slice(0, 1500), openOrders: review.openOrders || [], openKeys: review.openKeys || [], resolvedKeys: review.resolvedKeys || [], itemKeys: review.itemKeys || [], flowByRid: flow ? flow.byRid : null, engraveKeys: engraveKeys || null, engravePending: engravePending || null, engraveJobs: engraveJobs || null }) });
+      await db.collection(WORLD).doc("review").set({ v: VERSION, at: now, counts: JSON.parse(J(review.counts || {})), data: J({ cards: (review.cards || []).slice(0, 1500), openOrders: review.openOrders || [], openKeys: review.openKeys || [], resolvedKeys: review.resolvedKeys || [], itemKeys: review.itemKeys || [], flowByRid: flow ? flow.byRid : null, engraveKeys: engraveKeys || null, engravePending: engravePending || null, engraveJobs: engraveJobs || null, engraveAt: engraveAt || null }) });
     } catch (e) { errors.push("review: " + String(e.message || e).slice(0, 200)); }
   }
 
