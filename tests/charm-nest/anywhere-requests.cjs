@@ -151,6 +151,41 @@ const RUN = 'run-any-t', LID = '1697972740';
   }, [RUN]);
   say('7 a release that takes a long time is waited for to its end: released (not queued, not a failure), with what the run\'s computer is doing said on the way', long.r.ok === true && long.r.released === true && !long.r.queued && long.r.ms >= 3000 && long.steps.some(s => /Its place at the front is saved/.test(s)) && long.steps.some(s => /Placing on GF Draft 2/.test(s)) && long.steps.some(s => /busy/.test(s)), long);
 
+  // 8, 9 ── RVSAME: the run's decisions reach a following computer; an unmatched line is read under its Etsy SKU
+  const same = await page.evaluate(async ([RUN]) => {
+    const realApi = CN.api, realRows = Orders.rows, realInterp = Orders.interpretAll, realState = CharmNestRunFollow.state, out = {}; let reads = 0;
+    const rec = { state: 'pooled', poolIds: ['4237444149_5298095720_1'], reason: null, hold: null, wait: null, sku: 'BASKETBALL (HUGGIE)', material: 'gold', quantity: 1, orderId: '4237444149', transactionId: '5298095720', problems: [],
+      skuOverride: { sku: 'BASKETBALL (HUGGIE)', by: 'Claude', at: 1, was: 'CUSTOM-H-060-849928' }, snap: { title: 'Custom huggie', listingId: '4620198805', bought: 'CUSTOM-H-060-849928', vars: [], pers: [] } };
+    const row = Orders.rowFromRecord('4237444149_5298095720', Object.assign({}, rec, { skuOverride: undefined, state: 'unmatched', poolIds: [] }));
+    row.spec = { problems: [{ kind: 'unmatchedSku' }] };
+    Orders.rows = () => [row]; B.run = null; Orders.interpretAll = () => { reads++; };
+    CN.api = async (fn, body) => { if (body.op === 'runList') return { runs: [{ runId: RUN, status: 'running' }] }; if (body.op === 'runGet') return { run: { runId: RUN, status: 'running', lines: { '4237444149_5298095720': rec }, orders: ['4237444149'] } }; return __origApi(fn, body); };
+    try { for (let i = 0; i < 40 && !(row.skuOverride && row.skuOverride.sku); i++) { await CharmNestRunFollow.now('test'); if (!(row.skuOverride && row.skuOverride.sku)) await new Promise(r => setTimeout(r, 250)); } out.ov = row.skuOverride && row.skuOverride.sku; out.state = row.state; out.specReset = row.spec === null; out.reads = reads; }   // (the follower's own read may be under way: asked again until it has run)
+    finally { CN.api = realApi; Orders.rows = realRows; Orders.interpretAll = realInterp; }
+    const un = Orders.rowFromRecord('4239217080_5300625029', { state: 'unmatched', sku: null, orderId: '4239217080', transactionId: '5300625029', problems: ['unmatchedSku'], snap: { title: 'Capybara', listingId: '1', bought: 'CAPYBARA1', vars: [], pers: [] } });
+    out.unSku = un.line.sku; out.unFrom = CharmNestReviewLink.fromOf(un.line, null);
+    const matched = Orders.rowFromRecord('x_1', { state: 'pooled', sku: 'MOON_3288', orderId: 'x', transactionId: '1', snap: { title: 'Moon', listingId: '2', bought: 'MOON', vars: [], pers: [] } });
+    out.matchedSku = matched.line.sku;
+    return out;
+  }, [RUN]);
+  say('8 a decision made on the computer that carries the run ("Just this order") reaches a following computer: the line takes it and is read again', same.ov === 'BASKETBALL (HUGGIE)' && same.state === 'pooled' && same.specReset === true && same.reads >= 1, same);
+  say('9 a line the run has not matched is read on a following computer under the SKU Etsy sold it under (so it asks what the run asks); a matched line keeps its design', same.unSku === 'CAPYBARA1' && same.unFrom === 'CAPYBARA1' && same.matchedSku === 'MOON_3288', same);
+
+  // 10 ── RVSAME: a following computer uses the run's reading of a line (Custom Orders or not), never one of its own, and never asks Claude
+  const rd = await page.evaluate(async () => {
+    const realApi = CN.api, realRows = Orders.rows, out = { asked: [], agent: 0 };
+    const mk = (key, crh) => { const r = Orders.rowFromRecord(key, { state: 'unmatched', sku: null, orderId: key.split('_')[0], transactionId: key.split('_')[1], problems: ['unmatchedSku'], crh, snap: { title: 'x', listingId: '1', bought: 'X', vars: [], pers: [] } }); r.spec = { readable: true, problems: [{ kind: 'unmatchedSku' }], special: null }; r.problems = [{ kind: 'unmatchedSku' }]; return r; };
+    const a = mk('4999000010_1', 'h-run-a'), b = mk('4999000011_1', null);
+    B.maps.customRead['4999000010_1'] = { hash: 'h-mine-a', kind: 'regular', at: Date.now() };   // (this computer's own older reading)
+    B.maps.customRead['4999000011_1'] = { hash: 'h-mine-b', kind: 'custom', at: Date.now() };   // (a reading the run does not have)
+    B.run = null; Orders.rows = () => [a, b];
+    CN.api = async (fn, body) => { if (body.op === 'customReadGet') { out.asked.push(...body.items.map(i => i.key + '|' + i.hash)); return { reads: { '4999000010_1': { hash: 'h-run-a', kind: 'custom', confidence: 0.9, at: 1 } }, decided: {} }; } if (body.op === 'startAgent' || body.op === 'getAgent') { out.agent++; return {}; } return __origApi(fn, body); };
+    try { await CustomRead.sync(); out.a = (B.maps.customRead['4999000010_1'] || {}).hash; out.b = B.maps.customRead['4999000011_1'] || null; }
+    finally { CN.api = realApi; Orders.rows = realRows; delete B.maps.customRead['4999000010_1']; delete B.maps.customRead['4999000011_1']; }
+    return out;
+  });
+  say('10 a following computer takes the run\'s own reading of each line (its own older one replaced, one the run does not have dropped) and never asks Claude itself', JSON.stringify(rd.asked) === JSON.stringify(['4999000010_1|h-run-a']) && rd.a === 'h-run-a' && rd.b === null && rd.agent === 0, rd);
+
   const errs = (H.errors || []).filter(e => !/firebase stub|favicon|HTTP 400|status of 400/.test(e));
   say('no page error', errs.length === 0, errs.slice(0, 3));
   await H.close?.();
