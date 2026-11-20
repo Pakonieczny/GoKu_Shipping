@@ -20877,6 +20877,7 @@ const CustomRead = window.CustomRead = (() => {
 
 /* ═══ 24 · Review — every decision a person must make ═════════════════════ */
 const Review = window.Review = (() => {
+  let screenNow = null;   // (SCREENCHECK: the numbers the tab showed, or would show now)
   const items = () => B.review.items;
   const mine = it => !String(it.key || "").startsWith("eng:") && !(it.row && it.row.state === "gone");   // engraving is the Engraving tab's
   const isNotice = it => String(it.key || "").startsWith("held:");        // an order left open, not a decision to make
@@ -23500,9 +23501,11 @@ const Review = window.Review = (() => {
   }
   function render(opts) {
     opts = opts && typeof opts === "object" && !(opts instanceof Event) ? opts : {};
-    if(window.Seal?.defer('review-view',()=>render(opts)))return;
-    if(!opts.still&&window.CharmNestInteraction?.defer('review-view',render))return;
-    const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) { rvWant = true; return; }
+    if(!opts.count&&window.Seal?.defer('review-view',()=>render(opts)))return;
+    if(!opts.still&&!opts.count&&window.CharmNestInteraction?.defer('review-view',render))return;
+    // (SCREENCHECK, Paul 20 Nov 2026: "you have access to the computers ... look at it yourself"): render({ count: true }) works out exactly the numbers this tab shows (Open, Resolved, every chip of both)
+    //  and draws nothing, whether the tab is on screen or not: each computer reports them (charm-nest-drift.js) and the cloud says whether they are its own
+    const v = document.getElementById("reviewView"); if (!opts.count) LiveStrip.render(); if (!v || (v.classList.contains("hidden") && !opts.count)) { rvWant = true; return; }
     rvWant = false; rvVer = typeof rvPiecesVer === "function" ? rvPiecesVer() : -1; rvDrawnAt = Date.now();
     try { CustomSheet.prune(); } catch (_) {}
     const active=v.contains(document.activeElement)?document.activeElement:null;
@@ -23596,6 +23599,8 @@ const Review = window.Review = (() => {
     // Open or Resolved first, then the filters: the switch holds for every chip, and pressing it shows all it holds
     // (one Resolved count: the cards listed under it, an order in both kinds counted once; "Resolved", RVRESOLVED: Paul, 18 Oct 2026)
     const openN = all.length + clWait.length;
+    screenNow = { at: Date.now(), open: openN, resolved: finished.length, openChips: Object.fromEntries(ORDER.filter(k => byKind.has(k)).map(k => [k, k === "customOrder" ? customN : byKind.get(k)])), doneChips: Object.fromEntries(ORDER.filter(k => doneKind.has(k)).map(k => [k, doneKind.get(k)])) };
+    if (opts.count) return screenNow;
     const seg = `<span class="rvSeg${f ? "" : " all"}" role="group" aria-label="Open or resolved"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="everything that still waits on a person">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything resolved: orders released to the nesting queue (Release Hold), orders whose QR label was printed or that were completed by hand (print again or reopen), custom orders sent to the sheets or on their way to the laser, and every decision answered">Resolved<b>${finished.length}</b></button></span>`;
     const chips = ORDER.filter(k => kinds.has(k)).map(k => doneMode ? chip(k, wordOf(k), kinds.get(k), "ok", `${wordOf(k)} resolved`)
       : k === "customOrder" ? chip(k, "Custom Orders", customN, customAsk ? "warn" : "info", `${customAsk} need a decision · ${clWait.length} wait for their label, their designs or Complete Order`) : chip(k, wordOf(k), kinds.get(k))).join("");
@@ -23716,7 +23721,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { ensureBought, view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, shown, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawStale, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
+  return { ensureBought, view: () => RV, settled: () => settled, screen: () => { try { return render({ count: true }) || screenNow; } catch (_) { return screenNow; } }, items, count, openCount, openOrders, mkeyOf, add, remove, render, shown, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawStale, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */

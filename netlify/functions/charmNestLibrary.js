@@ -5436,14 +5436,26 @@ async function op_computerReport(b) {
   const r = b.report && typeof b.report === "object" ? b.report : {}, n = v => Math.max(0, Math.min(1000000, Math.round(num(v)))), ids = a => (Array.isArray(a) ? a : []).slice(0, 40).map(x => str(x, 90)).filter(Boolean), at = Date.now();
   const rec = { dev, by: str(b.by, 80), station: str(r.station, 60), role: ["carrier", "follower"].includes(r.role) ? r.role : "none", runId: str(r.runId, 80), build: str(r.build, 80), at,
     checked: n(r.checked), backWaitN: n(r.backWaitN), backWaitMin: n(r.backWaitMin), behindN: n(r.behindN), behind: ids(r.behind), stillN: n(r.stillN), still: ids(r.still), healed: ids(r.healed), unverifiedN: n(r.unverifiedN), missingN: n(r.missingN), extraN: n(r.extraN), inHandN: n(r.inHandN), rebuilt: n(r.rebuilt),
-    mode: ["on", "report", "off"].includes(r.mode) ? r.mode : "on", feed: ["push", "polling"].includes(r.feed) ? r.feed : "", freezeMs: n(r.freezeMs), freezes: n(r.freezes), heapMB: n(r.heapMB), idleS: n(r.idleS), error: str(r.error, 160), note: str(r.note, 100), rv: str(r.rv, 160), cmp: str(r.cmp, 300), lines: n(r.lines), keysHash: str(r.keysHash, 40), rvOpen: ids(r.rvOpen), expireAt: new Date(at + 7 * 86400000) };
+    mode: ["on", "report", "off"].includes(r.mode) ? r.mode : "on", feed: ["push", "polling"].includes(r.feed) ? r.feed : "", freezeMs: n(r.freezeMs), freezes: n(r.freezes), heapMB: n(r.heapMB), idleS: n(r.idleS), error: str(r.error, 160), note: str(r.note, 100), rv: str(r.rv, 160), cmp: str(r.cmp, 300), screen: str(r.screen, 900), lines: n(r.lines), keysHash: str(r.keysHash, 40), rvOpen: ids(r.rvOpen), expireAt: new Date(at + 7 * 86400000) };
   await col(COMPUTERS).doc(dev).set(rec);
   return { ok: true, at };
 }
 async function op_computerList() {
   const q = await col(COMPUTERS).limit(60).get(), now = Date.now();
   const computers = q.docs.map(d => { const x = d.data() || {}; delete x.expireAt; return { ...x, ageS: Math.max(0, Math.round((now - (num(x.at) || 0)) / 1000)) }; }).sort((a, b) => a.ageS - b.ageS);
-  return { computers, at: now };
+  // (SCREENCHECK, Paul 20 Nov 2026: "you have access to the computers ... look at it yourself"): each computer's screen against the cloud's own Review (Charm_World/review): the same numbers, or which differ
+  let cloud = null;
+  try { const rs = PREFIX ? null : await db.collection("Charm_World").doc("review").get(); const c = rs && rs.exists ? (rs.data() || {}).counts || {} : null;
+    if (c) { const chips = (src, custom) => { const o = {}; for (const k of ["customOrder", "needResolution", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "heldOrder"]) { const v = k === "customOrder" && custom != null ? custom : src[k]; if (v) o[k] = v; } return o; };
+      cloud = { reviewBadge: num(c.reviewOrders), designBadge: c.designOrders == null ? null : num(c.designOrders), open: num(c.openCount), resolved: num(c.resolved), openChips: chips(c, num(c.customOrders)), doneChips: chips(c.resolvedChips || {}, null) }; } } catch (_) { cloud = null; }
+  if (cloud) for (const x of computers) {
+    let sc = null; try { sc = x.screen ? JSON.parse(x.screen) : null; } catch (_) { sc = null; }
+    if (!sc) continue;
+    const diff = []; for (const k of ["reviewBadge", "designBadge", "open", "resolved"]) if (sc[k] != null && cloud[k] != null && +sc[k] !== +cloud[k]) diff.push(`${k} ${sc[k]} (cloud ${cloud[k]})`);
+    for (const [kind, want] of [["openChips", cloud.openChips], ["doneChips", cloud.doneChips]]) { const have = sc[kind] || {}; for (const k of new Set(Object.keys(want).concat(Object.keys(have)))) if ((+have[k] || 0) !== (+want[k] || 0)) diff.push(`${kind === "openChips" ? "Open" : "Resolved"} ${k} ${+have[k] || 0} (cloud ${+want[k] || 0})`); }
+    x.screenSame = !diff.length; x.screenDiff = diff.slice(0, 12);
+  }
+  return { computers, at: now, cloudScreen: cloud };
 }
 OPS.sheetRevsGet = op_sheetRevsGet; OPS.computerReport = op_computerReport; OPS.computerList = op_computerList; ["sheetRevsGet", "computerReport", "computerList"].forEach(op => NO_GEN_BUMP.add(op));
 /* ── CLOUDWORLD (Paul, 20 Nov 2026: "Everything that was production related was supposed to be in the cloud ... Only the cloud can decide"; CLOUD-MIGRATION-EXECUTION.md
