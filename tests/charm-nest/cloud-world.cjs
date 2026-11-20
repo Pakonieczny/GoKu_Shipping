@@ -178,6 +178,10 @@ async function otherComputer(H) {
     const want7 = { open: rvNow.openCount, resolved: rvNow.resolved, review: rvNow.reviewOrders, design: rvNow.designOrders || 0 };
     const sameScreen = x => x.open === want7.open && x.resolved === want7.resolved && x.review === want7.review && x.design === want7.design && Object.entries(x.chips).every(([k, v]) => v === (k === 'customOrder' ? rvNow.customOrders : rvNow[k] || 0));
     ok('7g · both screens show the cloud\'s numbers: Open, Resolved, every chip, the Review and Design & Engrave badges', sameScreen(s1) && sameScreen(s2) && JSON.stringify(s1) === JSON.stringify(s2), JSON.stringify({ cloud: want7, first: s1, second: s2 }));
+    /* 7i · SCREENCHECK: each computer reports what its screen shows, and the cloud says whether it is its own (Settings → Computers, computerList) */
+    await page.evaluate(() => CharmNestDrift.check('test')); await p2.evaluate(() => CharmNestDrift.check('test'));
+    const cl7 = await Lib.ops.computerList({}), withScreen = cl7.computers.filter(c => c.screen);
+    ok('7i · both computers report their screen, and the cloud finds both the same as its own (badges, Open, Resolved, every chip)', withScreen.length >= 2 && withScreen.every(c => c.screenSame === true), JSON.stringify({ cloud: cl7.cloudScreen, computers: withScreen.map(c => ({ by: c.by, same: c.screenSame, diff: c.screenDiff, screen: c.screen })) }).slice(0, 900));
     ok('7c · it asked neither Etsy nor Claude for anything', !asked.length, JSON.stringify(asked.map(c => c.name + ':' + c.op)));
     await p2.reload(); await p2.waitForFunction(() => window.CN && CN.S && CN.S.cloud.ok !== null && window.Orders, null, { timeout: 90000 });
     const early = await p2.evaluate(() => Orders.rows().filter(r => r.state !== 'gone' && !r.cloud).length);
