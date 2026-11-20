@@ -59,11 +59,61 @@
   }
   function boot() { let n = 0; const go = () => { if (root.CN && typeof root.CN.api === "function" && safe(() => root.CN.S.cloud.ok, null) === true) return start(); if (++n < 240) setTimeout(go, 1000); }; go(); }
 
+  /* ── STAGE B (Paul, 20 Nov 2026): a computer that does not carry a run takes its order lines from the cloud, whole, and reads none itself ──
+     drives(): the switch is on (Settings, shared by every computer: settings.cloudWorld, "on" unless a person turned it off) and this page holds no run of its own.
+     applyToRows(): every line of the cloud world becomes this page's row exactly as the cloud has it (the order, the Etsy line, the reading, the questions, the
+     state, the pieces, every decision); a row the cloud does not hold is gone. Orders.interpretAll leaves a cloud row as it is (row.cloud), and nothing here
+     asks Etsy or Claude. Called when the cloud world moves (cn:world) and when the run is followed (charm-nest-run-follow.js). */
+  const wanted = () => safe(() => String((root.CN && root.CN.S && root.CN.S.settings && root.CN.S.settings.cloudWorld) || "on") !== "off", true);
+  const drives = () => !sandbox() && wanted() && !safe(() => root.B && root.B.run, null);
+  const RUNF = ["hold", "heldAt", "holdSeen", "wait", "arrivedAt", "activityAt", "changePending", "repoolChanged", "frontAt", "releasing", "skuOverride", "blockOverride", "releaseAnyway", "releaseHold",
+    "materialOverride", "sizeOverride", "engravingOverride", "etsyClosed", "crh", "_lp", "groupSize", "handDone"];
+  function toRow(l) {
+    const run = l.run || {}, row = { key: l.key, order: l.order, line: l.line, spec: l.spec, problems: (l.problems || []).slice(), state: l.state || "pulled", reason: l.reason == null ? null : l.reason,
+      poolIds: (run.poolIds || []).slice(), material: (l.spec && l.spec.material) || null, cloud: l.sig || String(l.at || ""), fromRecord: false };
+    for (const f of RUNF) if (run[f] !== undefined && run[f] !== null) row[f] = run[f] && typeof run[f] === "object" ? JSON.parse(JSON.stringify(run[f])) : run[f];
+    return row;
+  }
+  let applying = false;
+  function applyToRows(why) {
+    if (applying || !drives() || !W.loadedAt || !W.lines.size) return null;
+    // (the page's own start first: its restore empties the order lines of a computer the cloud drives, so the cloud's are put on after it, never before)
+    if (root.Session && typeof root.Session.ready === "function" && !root.Session.ready()) { clearTimeout(W.retry); W.retry = setTimeout(() => applyToRows(why), 800); return null; }
+    const O = root.Orders, B = root.B; if (!O || !B || !B.orders || !Array.isArray(B.orders.rows)) return null;
+    applying = true;
+    try {
+      let changed = 0, added = 0, gone = 0; const fresh = new Set();
+      if (!(B.orders.byKey instanceof Map)) B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
+      for (const [k, l] of W.lines) {
+        if (!l || !l.order || !l.line || !l.spec) continue;   // (a line whose receipt the cloud could not read yet: shown when it can)
+        const row = B.orders.byKey.get(k), next = toRow(l);
+        if (row && row.cloud === next.cloud) continue;
+        if (!row) { B.orders.rows.push(next); B.orders.byKey.set(k, next); added++; fresh.add(k.split("_")[0]); continue; }
+        const eng = row.engrave && typeof row.engrave === "object" ? row.engrave : null, cloudEng = l.run && l.run.engrave;
+        for (const f of RUNF) if (!(f in next)) delete row[f];
+        Object.assign(row, next);
+        if (eng) { row.engrave = eng; if (cloudEng && typeof cloudEng === "object") for (const x of ["state", "approved", "approvedAt", "approvedBy", "decidedAt", "seals", "text", "needed"]) if (cloudEng[x] !== undefined) eng[x] = cloudEng[x]; }
+        else if (cloudEng) row.engrave = JSON.parse(JSON.stringify(cloudEng));
+        changed++;
+      }
+      for (const row of O.rows()) if (row && row.key && !row.parentRow && row.state !== "gone" && !W.lines.has(row.key)) { row.state = "gone"; row.reason = row.reason || "not in the cloud"; row.poolIds = []; row.wait = null; gone++; }
+      if (added || changed || gone) {
+        safe(() => O.interpretAll());
+        safe(() => root.Review && root.Review.syncOrderItems()); safe(() => O.render()); safe(() => root.Review && root.Review.render());
+        if (fresh.size) safe(() => root.CharmNestEngraveSync && root.CharmNestEngraveSync.pull([...fresh], "keys"));
+      }
+      W.applied = { at: Date.now(), why, added, changed, gone, size: W.lines.size };
+      return W.applied;
+    } finally { applying = false; }
+  }
+  root.addEventListener("cn:world", () => { try { applyToRows("world"); } catch (e) { console.warn("[cloud world] apply", e && e.message); } });
+
   root.CloudWorld = {
+    drives, wanted, applyToRows,
     start, refresh, ready: () => readyP,
     summary: () => W.summary, review: () => W.review, lease: () => W.lease, lines: () => W.lines, line: key => W.lines.get(String(key)) || null, at: () => W.at,
     on: fn => { W.fns.add(fn); return () => W.fns.delete(fn); },
-    state: () => ({ size: W.lines.size, at: W.at, loadedAt: W.loadedAt, reads: W.reads, fails: W.fails, error: W.error, dead: !!W.dead, live: W.summary ? W.summary.live : null })
+    state: () => ({ size: W.lines.size, at: W.at, loadedAt: W.loadedAt, reads: W.reads, fails: W.fails, error: W.error, dead: !!W.dead, live: W.summary ? W.summary.live : null, drives: drives(), applied: W.applied || null })
   };
   if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", boot); else boot();
 })(typeof window !== "undefined" ? window : globalThis);

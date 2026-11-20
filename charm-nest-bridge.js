@@ -1923,6 +1923,8 @@ const Orders = window.Orders = (() => {
     for (const row of rowsOf()) {
       // a line cut and committed is done: a later change to the maps or the library could only raise a decision on it
       if (row.state === "gone" || (row.state === "committed" && row.spec)) continue;
+      // (CLOUDWORLD stage B, Paul 20 Nov 2026: "Only the cloud can decide"): a line the cloud read (charm-nest-cloud-world.js) is taken as the cloud has it: its reading, questions and state are never worked out here
+      if (row.cloud && row.spec) { window.Pool?.pinPooled?.(row); window.Engrave?.putAwayNever?.(row); window.Engrave?.raiseCandidate?.(row); window.CNBarFront?.follow?.(row); continue; }
       let inputs; try { inputs = inputsOf(row); } catch (_) { inputs = [row.order, row.line]; }   // (what a line is read from; a line that cannot even say that is read once, and again when its order or line is replaced)
       const was = readAs.get(row), prev = row.spec;
       // (26 Oct 2026, Paul 24 Sep "an update costs what changed": the inputs are kept as they stand AFTER the reading, since one of them is the library's word on the design the line was
@@ -20673,6 +20675,7 @@ const CustomRead = window.CustomRead = (() => {
   function later(ms = 2500) { clearTimeout(st.timer); st.timer = setTimeout(() => sync().catch(e => console.warn("custom read", e)), ms); }
   async function sync() {
     if (st.running) { st.again = true; return; }
+    if (window.CloudWorld && CloudWorld.drives && CloudWorld.drives()) return;   // (CLOUDWORLD stage B: the cloud reads every line, Claude's reading included; a computer it drives asks nothing)
     // (a page still starting, or a pause after a failed read: looked at again once it can be, with no call meanwhile)
     if (!S.cloud.ok || !B.master.loadedAt) { later(5000); return; }
     if (Date.now() < st.pauseUntil) { later(st.pauseUntil - Date.now() + 500); return; }
@@ -29277,7 +29280,7 @@ const Session = window.Session = (() => {
   }
   function capture() {
     const seen = new Map(), lean = new Set(allSheets().filter(leanPage));
-    return { v: 1, at: Date.now(), epoch: pageEpoch, streamId: (WORKSPACE_SANDBOX && window.Sandbox && Sandbox.runId && Sandbox.runId()) || "", packingCatalog:copy(S.packingCatalog, seen), carry: copy(B.carry, seen), run: runCopy(seen), orders: copy(B.orders, seen),
+    return { v: 1, at: Date.now(), epoch: pageEpoch, streamId: (WORKSPACE_SANDBOX && window.Sandbox && Sandbox.runId && Sandbox.runId()) || "", packingCatalog:copy(S.packingCatalog, seen), carry: copy(B.carry, seen), run: runCopy(seen), orders: (window.CloudWorld && CloudWorld.drives && CloudWorld.drives()) ? Object.assign({}, copy(Object.assign({}, B.orders, { rows: [], byKey: new Map() }), seen)) : copy(B.orders, seen),
       sources: copy(S.sources, seen), poolSources: copy(poolSourcesInUse(lean), seen), unassigned: copy(S.unassigned, seen),
       sheets: METALS.map(m => ({ metal: m.key, active: S.sheets[m.key].active, pages: allSheets().filter(p => p.metal === m.key).map(p => pageCopy(p, seen, lean)) })),
       pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), customDesigns: copy(B.customDesigns || {}, seen), cleared: copy(B.cleared || {}, seen), jobs: [...B.engrave.items.values()].map(j => jobCopy(j, seen)),
@@ -29439,6 +29442,8 @@ const Session = window.Session = (() => {
       B.run = d.run; B.orders = d.orders; B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
       // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"): the run this computer carried before it closed, carried meanwhile by another computer that is alive, is not taken back: this page follows it from the cloud
       try { if (B.run && B.run.runId && S.cloud && S.cloud.ok && window.RunCtl && RunCtl.carrier) { const c = await RunCtl.carrier(B.run.runId, { check: true }); if (c && c.ok && !c.mine && (c.alive || (c.carrier && c.carrier.dev))) { agent({ bridge: true }, "cloud", c.alive ? `${B.run.runId} is carried by ${(c.carrier && c.carrier.by) || "another computer"} on another computer: this computer follows it` : `${B.run.runId} was last carried on another computer: this computer's saved copy of it is older than the cloud's and is not used; the run is followed from the cloud (Resume takes it up here, from the cloud)`); B.run = null; } } } catch (_) { /* the heartbeat looks again in 20 s */ }   // (CACHEONLY, Paul 15 Nov 2026: "Computers are only fed the truth"): and a run another computer carried LAST, though that computer is gone now, is not carried on from this computer's older copy either (it was, and its next save put the older copy over the cloud's)
+      // (CLOUDWORLD stage B, Paul 20 Nov 2026: "the computers are never allowed to store their own information"): a computer that carries no run shows no order line of its own copy: the cloud's come in as soon as it is read (charm-nest-cloud-world.js)
+      if (!B.run && window.CloudWorld && CloudWorld.wanted && CloudWorld.wanted() && !WORKSPACE_SANDBOX) { B.orders.rows = []; B.orders.byKey = new Map(); d.review = []; d.jobs = (d.jobs || []).filter(j => j.editingBack && j.editRow); }
       /* (CLOUDLINES, Paul 13 Nov 2026: "Why is the other computer only showing seven orders ... I had to go and delete all the data on the computer again for it to actually show me all the
          orders"): this computer's checkpoint is a copy, never the authority. The run's lines the cloud holds and this copy lacks (taken on another computer, or a copy saved while this one held
          only the newest arrivals) are added from the cloud record, as a clean computer reads them; nothing this computer holds is dropped or changed. */
@@ -30039,6 +30044,7 @@ const Arrivals = window.Arrivals = (() => {
   }
   async function check() {
     if (busy || paused || S.settings.pollOrders === "off" || window.Sandbox?.held?.()) return;   // (a cleaned sandbox waits for Start)
+    if (window.CloudWorld && CloudWorld.drives && CloudWorld.drives()) return;   // (CLOUDWORLD stage B: the cloud reads the orders; a computer it drives takes them from it and pulls nothing)
     busy = true; paint(); const began = Date.now(), gen = epoch;
     try {
       { const other = await leaseOther();
