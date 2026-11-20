@@ -15,4 +15,5 @@ exports.handler = async function () {
     return { statusCode: 500, body: JSON.stringify({ ok: false, error: String((e && e.message) || e).slice(0, 160) }) };
   }
 };
-exports.config = { schedule: "*/2 * * * *" };
+// ETSY PAUSE 2026-11-20 (daily limit hit) — restore by uncommenting:
+// exports.config = { schedule: "*/2 * * * *" };
