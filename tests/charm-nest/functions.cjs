@@ -429,5 +429,12 @@ const post = async (h, body, headers = {}) => h.handler({ httpMethod: 'POST', he
   r = await post(lib, { op: 'poolList', runId: 'run-A' }); assert.strictEqual(r.body.pools.length, 0, 'no pool rows remain');
   r = await post(lib, { op: 'masterGet', sku: 'BR-CMP-01' }); assert(r.body.entry, 'the master index is not history and stays');
   r = await post(lib, { op: 'setAllocate', day: '2026-09-16', runId: 'run-A' }); assert.strictEqual(r.body.seq, 1, 'set numbering starts over after a purge'); assert(!r.body.existing);
+  // ETSYSTOP: the shop's one Etsy switch, read and resumed through the Library (Settings → Resume Etsy)
+  const EtsyStop = require(path.join(fnDir, '_etsyStop.js'));
+  r = await post(lib, { op: 'etsyStopGet' }); assert.strictEqual(r.body.ok, true); assert.strictEqual(r.body.stopped, false, 'Etsy runs until a 429');
+  await EtsyStop.stop({ fn: 'etsyOrderProxy', path: '/v3/application/shops/1/receipts/2', detail: '{"error":"Exceeded daily rate limit"}' });
+  r = await post(lib, { op: 'etsyStopGet' }); assert.strictEqual(r.body.stopped, true, 'a 429 stops Etsy'); assert.strictEqual(r.body.fn, 'etsyOrderProxy'); assert(r.body.since > 0);
+  r = await post(lib, { op: 'etsyResume', by: 'Paul' }); assert.strictEqual(r.body.stopped, false); assert.strictEqual(r.body.resumedBy, 'Paul'); assert(r.body.resumedAt >= r.body.since);
+  EtsyStop._clearCache(); r = await post(lib, { op: 'etsyStopGet' }); assert.strictEqual(r.body.stopped, false, 'Resume Etsy is in the cloud'); assert.strictEqual(r.body.resumedBy, 'Paul');
   console.log('functions OK ·', store.size, 'docs ·', blobs.size, 'blobs · server job placed', solved.placements.length, 'in', solved.trials, 'trial(s)');
 })().catch(e => { console.error(e); process.exit(1); });
