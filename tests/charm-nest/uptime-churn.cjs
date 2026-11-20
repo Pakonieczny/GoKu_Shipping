@@ -27,7 +27,7 @@ function poolTest() {
   const A = page('A', [['a1', 'p1'], ['a2', 'p2'], ['m1', undefined]], ['a1', 'm1']), Bp = page('B', [['b3', 'p3']], ['b3']);   // m1: a piece of no line
   const pages = [A, Bp];
   const ctx = { window: {}, allSheets: () => pages.slice(), ...base() };
-  vm.createContext(ctx);
+  vm.createContext(ctx); require('./_poolMake.cjs')(ctx);   // (PMAKE: the piece maker the Pool is host of, loaded as the page loads it)
   vm.runInContext(slice('const Pool = window.Pool = (() => {', '/* Carry-forward'), ctx);
   const Pool = ctx.window.Pool;
   // the walks the index replaced, as they were: every answer must be theirs

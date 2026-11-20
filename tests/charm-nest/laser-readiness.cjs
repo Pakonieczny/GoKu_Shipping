@@ -37,8 +37,8 @@ vm.runInContext(source.slice(source.indexOf('async function filingRecords'),sour
  const hydrated=await context.readinessRecords([data.get('sheets/sheet1')]);assert.equal(hydrated[0].laser.plain,1);assert.equal(hydrated[0].laser.waiting,1);
  // A line with nothing to engrave reads as plain on the server too, before its engraving check has run. The page let a
  // set with such a line commit at the station, and the server then refused to record the set as complete.
- const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),la=bridge.indexOf('  const cap = (v, n)'),lb=bridge.indexOf('  /** The other direction',la);
- const lines=vm.createContext({});vm.runInContext(bridge.slice(la,lb),lines);
+ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),la=bridge.indexOf('  /* The run record\'s copy of a line'),lb=bridge.indexOf('  /** The other direction',la);
+ const lines=vm.createContext({B:{run:null}});require('./_poolMake.cjs')(lines);vm.runInContext(bridge.slice(la,lb),lines);   // (PMAKE: the record is charm-nest-pool-make.js lineRecord; the page passes its B)
  const row=spec=>({key:'order1_t2',state:'written',poolIds:['copy2'],engrave:null,spec,line:{transactionId:'t2',variations:[]},order:{receiptId:'order1'}});
  const [,plainLine]=lines.lineRecord(row({engraveCandidate:false,designSku:'BR-1',material:'rose',quantity:1}));
  assert.deepEqual(R.decisions([plainLine]).copy2,R.decisions([row({engraveCandidate:false})]).copy2,'the page and the server read the line alike');

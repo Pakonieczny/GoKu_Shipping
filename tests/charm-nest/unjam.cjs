@@ -158,7 +158,8 @@ const solve = (job, cb) => S.solve(job, cb || {});
   /* 8. The page: asks for it on every metal but Rose Gold, never lifts a charm a person pinned, shows "Making room", saves the moved
         charms at their new spots and says so in the log. */
   {
-    const html = fs.readFileSync(path.join(L.REPO, 'charm-nest-1.html'), 'utf8');
+    // (the page's job, buildJob, is built by charm-nest-nest-plan.js, which the page loads: read with it)
+    const html = fs.readFileSync(path.join(L.REPO, 'charm-nest-1.html'), 'utf8') + '\n' + require('./_nestPlan.cjs').source();
     assert(/unjam: careful && sh\.metal !== "rose" && !sh\.roseCutAt/.test(html), 'buildJob: on for careful nests, never Rose Gold or a cut sheet');
     assert(/hold: !!\(c\.pinned && !c\.arrivalPin\)/.test(html), "buildJob: a person's pin is `hold`");
     assert(/pr\.unjam \? "Making room · " : ""/.test(html) && /m\.stage === "unjam"/.test(html), 'the card says "Making room"');

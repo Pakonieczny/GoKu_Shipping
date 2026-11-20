@@ -49,7 +49,7 @@ async function poolTest() {
     sheetDirty() {}, renderCard() {}, renderRail() {}, updateTopSub() {}, refreshAllCards() {}, agent() {},
   };
   ctx.CNProgress = ctx.window.CNProgress; ctx.LiveNest = ctx.window.LiveNest;   // the page reads them as globals
-  vm.createContext(ctx);
+  vm.createContext(ctx); require('./_poolMake.cjs')(ctx);   // (PMAKE: the piece maker the Pool is host of, loaded as the page loads it)
   vm.runInContext(slice('const Pool = window.Pool = (() => {', '/* Carry-forward'), ctx);
   const Pool = ctx.window.Pool;
   const run = { runId: 'run', lines: {} };

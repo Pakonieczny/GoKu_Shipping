@@ -160,9 +160,9 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
   {
     const src = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
     const cut = (from, to) => { const a = src.indexOf(from), b = src.indexOf(to, a); assert.ok(a > 0 && b > a, 'slice ' + from.slice(0, 50)); return src.slice(a, b); };
-    const SL = cut('  const cap = (v, n) =>', '  /* The claim is a courtesy');
-    const c = { console, JSON, Number, String, Array, Object, Date, Math, labelOf: m => m, Master: { entryFor: () => null }, O: { cleanLine() {} } };
-    vm.createContext(c); vm.runInContext(SL + '\nthis.lineRecord = lineRecord; this.rowFromRecord = rowFromRecord;', c);
+    const SL = cut('  /* The run record\'s copy of a line', '  /* The claim is a courtesy');   // (PMAKE: the record itself is charm-nest-pool-make.js lineRecord, the page passes its B)
+    const c = { console, JSON, Number, String, Array, Object, Date, Math, labelOf: m => m, Master: { entryFor: () => null }, O: { cleanLine() {} }, B: { run: null } };
+    vm.createContext(c); require('./_poolMake.cjs')(c); vm.runInContext(SL + '\nthis.lineRecord = lineRecord; this.rowFromRecord = rowFromRecord;', c);
     const base = { key: 'k_1', order: { receiptId: '4193111740', updateTs: 7, createTs: 1 }, line: { transactionId: '1', listingId: '9', title: 't', variations: [] }, state: 'held', poolIds: [], problems: [], spec: { designSku: 'DRAGON11', quantity: 1 } };
     const none = c.lineRecord(Object.assign({}, base))[1]; ok(!('blockOverride' in none), 'a line with no release carries none in its record');
     const rec = c.lineRecord(Object.assign({}, base, { blockOverride: { sku: 'DRAGON11', by: 'Paul', at: 5 } }))[1];
@@ -175,7 +175,7 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
     // the same list the materialOverride / sizeOverride sit in (resume), and Carry.adopt
     ok(/"materialOverride", "sizeOverride", "blockOverride", ("skuOverride", )?("releaseHold", )?("releaseAnyway", )?"engravingOverride"/.test(src), 'the resume keep-list carries it beside the other overrides');   // (ONESKU, 27 Oct 2026: "Just this order"'s charm sits beside it)   // (RELHOLD, 18 Oct 2026: the Release Hold press's who and when sits beside it; RELEASE, 19 Oct 2026: and the questions a Release Hold set aside)
     ok(/if \(row && row\.blockOverride && !fresh\.blockOverride\) fresh\.blockOverride = row\.blockOverride;/.test(src), 'Carry.adopt carries it to a changed order');
-    ok(/row\.sizeOverride, row\.blockOverride \? JSON\.stringify\(row\.blockOverride\) : "", (row\.skuOverride \? JSON\.stringify\(row\.skuOverride\) : "", )?m\.optionMaps/.test(src) && /row\.sizeOverride \|\| "", row\.blockOverride \? JSON\.stringify\(row\.blockOverride\) : "",/.test(src), 'the reading (inputsOf) and the pool\'s retry signature (trySig) depend on it, with no helper outside their own modules to be missing from a slice');
+    ok(/row\.sizeOverride, row\.blockOverride \? JSON\.stringify\(row\.blockOverride\) : "", (row\.skuOverride \? JSON\.stringify\(row\.skuOverride\) : "", )?m\.optionMaps/.test(src) && /row\.sizeOverride \|\| "", row\.blockOverride \? JSON\.stringify\(row\.blockOverride\) : "",/.test(src + require('./_poolMake.cjs').source), 'the reading (inputsOf) and the pool\'s retry signature (trySig) depend on it, with no helper outside their own modules to be missing from a slice');
     // the whole cycle on the real reader: a restored row, read again, is not asked
     ENT.DRAGON11 = design({ blocked: 'open outline', open: true });
     const restored = c.rowFromRecord('k_1', JSON.parse(JSON.stringify(rec)));

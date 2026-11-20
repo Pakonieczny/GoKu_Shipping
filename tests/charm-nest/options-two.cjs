@@ -214,7 +214,7 @@ if (fs.existsSync(IDX)) {
       allSheets: () => Object.values(pages), pagesOf: m => [pages[m]], sheetDirty: () => {}, renderCard: () => {}, Orders: { rows: () => [], interpretAll() {}, render() {} },
       CN: {}, Gate: {}, Review: {}, RunCtl: {}, Cleanups: null, CustomPrint: null, CustomSheet: null, LiveNest: null, addPage: () => { throw new Error('no new page expected'); }
     }, extra || {});
-    c.window.Cleanups = null; vm.createContext(c); vm.runInContext(src.slice(a, b), c);
+    c.window.Cleanups = null; vm.createContext(c); require('./_poolMake.cjs')(c); vm.runInContext(src.slice(a, b), c);   // (PMAKE: the piece maker the Pool is host of, loaded as the page loads it)
     return { c, logs, calls, pages, Pool: c.window.Pool, entries };
   }
   const lineRow = (rid, tid, sku, qty, members) => {

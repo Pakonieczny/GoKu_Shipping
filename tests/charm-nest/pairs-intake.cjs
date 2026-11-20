@@ -239,7 +239,7 @@ eq(CP.groupKey({ receiptId: order.receiptId, transactionId: '5200000001' }), '41
   eq(O.pinPieces(null, 3), null, 'nothing to pin'); const keep = row({ title: 'Moon Necklace' }); O.pinPieces(keep.spec, 0); eq(keep.spec.pieceCount, 1, 'no pool rows: untouched');
   // the pool maker's guard (the real function from the bridge, run on fakes)
   const src = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
-  const from = src.indexOf('  function pinPooled(row) {'), to = src.indexOf('  function cloneCharm(');
+  const from = src.indexOf('  function pinPooled(row) {'), to = src.indexOf('  /** §6.4 · one pooled charm per copy of the line');   // (PMAKE: cloneCharm, which followed, is in charm-nest-pool-make.js now)
   ok(from > 0 && to > from, 'pinPooled is in the bridge');
   const rows = new Map(); const c = { B: { pool: { rows } }, O };
   vm.createContext(c); vm.runInContext(src.slice(from, to) + ';this.pinPooled = pinPooled;', c);
@@ -262,7 +262,9 @@ eq(CP.groupKey({ receiptId: order.receiptId, transactionId: '5200000001' }), '41
 // ── 7 · the bridge reads ONE count (static: nothing counts a line's pieces any other way) ────────────────────────────────────────
 {
   const src = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
-  const mp = src.slice(src.indexOf('  async function makePool('), src.indexOf('  /** The recorded line joins its sheet.'));
+  // (PMAKE: makePool and makePoolRead are charm-nest-pool-make.js now; the rest of the old range is still the bridge's, up to attachPool)
+  const PM = require('./_poolMake.cjs').source, mp = PM.slice(PM.indexOf('async function makePool('), PM.indexOf('function poolAnswer(')) + src.slice(src.indexOf('  /** What the intake knows of the pieces of every order'), src.indexOf('  /** The recorded line joins its sheet.'));
+  ok(PM.indexOf('async function makePool(') > 0 && PM.indexOf('function poolAnswer(') > PM.indexOf('async function makePool('), 'the piece maker is where the test expects it');
   ok(/pinPooled\(row\)/.test(mp) && /sp\.pieceCount/.test(mp) && !/copy <= sp\.quantity/.test(mp), 'makePool pins an old line, then makes the intake\'s spec.pieceCount copies, not the Etsy quantity'); ok(/O\.glue\(sp\)/.test(mp), 'and falls back to the glued copy when a mismatched pair\'s bodies cannot be cut apart');
   ok(/copy, quantity: count/.test(mp), 'a pool row\'s quantity is the pieces of its line');
   for (const m of ['piecesOfRows = rows =>', 'charms+=O.pieceCountOf(r)', '* O.pieceCountOf(sp)', 'waiting.reduce((n, r) => n + O.pieceCountOf(r), 0)']) ok(src.includes(m), 'bridge count site: ' + m);
@@ -334,7 +336,7 @@ eq(CP.groupKey({ receiptId: order.receiptId, transactionId: '5200000001' }), '41
     const ln = row({ title: 'Mix Match Earrings', sku: 'A', variations: [V('Left Ear Charm', 'Heart'), V('Right Ear Charm', 'Cat')] });
     ok(ln.spec.problems.some(x => x.pairSecond) && !ln.spec.pair.mismatched, 'F7: the same options naming designs the master does not have: the line waits for the second design'); }
   // the run's line record carries the piece count (ADVLIFE): Readiness reads a pair of quantity 1 as 2
-  { const src = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8'); const lr = src.slice(src.indexOf('  function lineRecord(row) {'), src.indexOf('  function lineRecord(row) {') + 3000);
+  { const src = require('./_poolMake.cjs').source; const lr = src.slice(src.indexOf('  function lineRecord(row, B) {'), src.indexOf('  function lineRecord(row, B) {') + 3000);   // (PMAKE: the run record's line is charm-nest-pool-make.js lineRecord)
     ok(/pieceCount: row\.spec \? \(row\.spec\.pieceCount \|\| row\.spec\.quantity\) : 1/.test(lr), 'lineRecord stores pieceCount beside quantity'); }
 }
 

@@ -19,12 +19,13 @@ const ctx = {
   window: {}, S: { settings: { insetPt: 1, clearancePt: 0, maxFill: .8, budgetS: 180, seed: 1 }, nestQueue: [], cloud: { ok: true } },
   Set, Map, Math, JSON, Object, Array, String, Number, Uint32Array, crypto: { getRandomValues: a => { a[0] = 7; return a; } }, performance: { now: () => 0 },
   stockFor: () => ({ wPt: 200, hPt: 100 }), activeCharms: sh => sh.charms.filter(c => !c.excluded), angleSet: () => [0, 90],
+  CharmNestFinishCore: require(path.join(root, 'charm-nest-finish-core.js')),   // (FINISHCORE: the page's buildJob hands the sheet to the shared module)
   labelOf: m => m, renderCard() {}, drawPreview() {}, toast() {}, log() {}, agent: () => null, agentUpdate() {}, cancelGPUComparison() {}, renderProgress() {},
   uid: () => 'job' + jobs.length, parallelCount: () => 1, CharmNestSolver: { publicLayout: l => l },
   ensureWorkers: () => [{ postMessage: m => jobs.push(m.job) }], allSheets: () => [], startNest: sh => starts.push(sh),
   overflowToNextSheet: sh => { moved.push(sh.rejects.slice()); sh.charms = sh.charms.filter(c => !sh.rejects.includes(c.id)); sh.rejects = []; },
 };
-vm.createContext(ctx);
+vm.createContext(ctx); require('./_nestPlan.cjs').into(ctx);   // (the nest's helpers, charm-nest-nest-plan.js, loaded first as the page does)
 vm.runInContext(slice('const CAREFUL_ANGLES', 'function renderNestFlow('), ctx);
 vm.runInContext(slice('function startNestReady(', '/* ═══ 9b'), ctx);
 // ten orders, oldest last in the list; order o7 has two charms

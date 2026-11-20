@@ -184,8 +184,9 @@ const SCENES = {
     // (the real solver on this small sheet stops near 70-73% and closes a sheet itself by a missed single before 75% is in reach: the fill ceiling is lowered so that the release fill, min(75%, ceiling), is within its reach.
     //  --maxfill .80 --fill .66 is the same case with the gap fill (below the release fill) as the outcome)
     sc.sim.ctx.S.settings.maxFill = +opt('maxfill', .68);
-    // the page's own layoutKey (the test finishNest makes for "nothing new went in": the layout is the one already written), taken from its text
-    const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8'), at = html.indexOf('const layoutKey = '), layoutKey = require('node:vm').runInNewContext('(' + html.slice(at + 'const layoutKey = '.length, html.indexOf('\n', at)).replace(/;\s*$/, '') + ')');
+    // the page's own layoutKey (the test finishNest makes for "nothing new went in": the layout is the one already written): the shared module's when the root has it (FINISHCORE), else taken from the page's text
+    const fcFile = path.join(root, 'charm-nest-finish-core.js'), html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8'), at = html.indexOf('const layoutKey = ');
+    const layoutKey = fs.existsSync(fcFile) ? require(fcFile).layoutKey : require('node:vm').runInNewContext('(' + html.slice(at + 'const layoutKey = '.length, html.indexOf('\n', at)).replace(/;\s*$/, '') + ')');
     // sheet 1: mid-size singles to about 60%, then tiny ones (they fit the last gaps; a mid-size single that misses would close the sheet before the case starts) one at a time to where the real solver stops: near completion, still open
     await sc.fillTo(.56, .70);
     for (let i = 0; i < 80 && sc.fill(1) < +opt('fill', .677) && !sc.pages[0].releaseFull; i++) await sc.bring(mk(oid(), 950 + i, [{ kind: 'single', idx: i % 4, f: .55 + .1 * (i % 3) }]));

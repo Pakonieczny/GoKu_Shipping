@@ -42,7 +42,7 @@ const CUT = ['rose', 'gold10k', 'gold14k'], PLAIN = ['gold', 'silver'];
   {
     const FEED = html.slice(html.indexOf('/* A big batch goes onto a sheet'), html.indexOf('/* A stopped run starts none'));
     const jc = { S: { settings: { maxFill: .8, clearancePt: 0, insetPt: 1.5, budgetS: 180 } }, DEFAULTS: { cornerPt: 1.5 * 72 / 25.4 }, stockFor: () => ({ wPt: 283, hPt: 142 }), activeCharms: s => s.charms, angleSet: () => [0, 10], packingKey: () => '', CharmNestRose: Rose };
-    vm.createContext(jc);
+    vm.createContext(jc); require('./_nestPlan.cjs').into(jc);   // (the nest's helpers, charm-nest-nest-plan.js, loaded first as the page does)
     vm.runInContext(FEED, jc);
     // (the page's corner legs, CORNERS / CRN2: buildJob asks cornerPtSetting(sh) since 9 Nov, so it is run as the page has it)
     vm.runInContext(html.slice(html.indexOf('const NO_CORNER_METALS'), html.indexOf('function cornerSheet(')), jc);

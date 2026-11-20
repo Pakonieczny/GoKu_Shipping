@@ -159,7 +159,7 @@ const readLine = (tx, pers) => O.interpretLine({ receiptId: RID, updateTs: 0 }, 
 /* ═══ 7 · the root cause in the page: a piece is never the master's own charm ═══ */
 {
   const src = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
-  const line = src.split('\n').find(l => l.includes('const charm = pp ? cloneCharm(baseFor(cut,'));
+  const line = require('./_poolMake.cjs').source.split('\n').find(l => l.includes('const charm = pp ? cloneCharm(baseFor(cut,'));   // (PMAKE: makePool is charm-nest-pool-make.js now, the one the page runs)
   assert.ok(line, 'makePool\'s charm line is found');
   assert.ok(!/\?\s*base\s*:/.test(line) && !/!base\.poolId/.test(line), 'no copy of a line is the master\'s own charm (it was: copy === 1 && !base.poolId ? base : …): ' + line.trim().slice(0, 200));
   assert.ok(/: cloneCharm\(base, `\$\{src\.id\}:\$\{poolId\}`\);/.test(line), 'every plain copy is a clone named by its pool id');

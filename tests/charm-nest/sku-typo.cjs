@@ -176,7 +176,7 @@ eq(read('4170000009', lineOf(Object.assign({}, real, { sku: 'NITIAL_8391' })), c
   ok(/O\.knownTypo\(x\)/.test(search) && /const O = W\.CharmNestOrders/.test(search), 'the order search finds an order by the right spelling too');
   ok(/require\("\.\.\/\.\.\/charm-nest-orders\.js"\)/.test(live) && /ordersLib\.knownTypo/.test(live) && (live.match(/designKey\(/g) || []).length >= 4, 'the Design Station live data looks the vector design up under the right spelling (the same module)');
   // the Review question and the pool's "not in any master file" are raised from the resolved design: spec.designSku
-  ok(/Master\.entryFor\(sp\.designSku\) \|\| await Master\.fetchEntry\(sp\.designSku\)/.test(bridge), 'the pool asks the master for the RESOLVED design');
+  ok(/Master\.entryFor\(sp\.designSku\) \|\| await Master\.fetchEntry\(sp\.designSku\)/.test(bridge + require('./_poolMake.cjs').source), 'the pool asks the master for the RESOLVED design');
   const server = fs.readFileSync(path.join(root, 'netlify/functions/_charmNestListingSkus.js'), 'utf8');
   ok(!/knownTypo|NITIAL/i.test(server), "the stored listing table is Etsy's own text: never rewritten, read through the module above"); }
 (async () => {

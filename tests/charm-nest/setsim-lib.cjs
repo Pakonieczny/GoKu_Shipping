@@ -121,8 +121,10 @@ function pageWorld(root, ctl, extra = []) {
   ctx.window.CN.topupTakes = (sh, pieces, order) => typeof ctx.topupTakes === 'function' ? ctx.topupTakes(sh, pieces, order) : true;   // (NESTQUEUE: a multi-piece order that cannot fit a gap-filling sheet whole goes on; NOSPREAD: asked with the whole order)
   // (NOSPREAD, Paul 17 Oct 2026: the pure policy module, when the root has it; an older root has none, and the page code then does what it did)
   try { const NS = require(path.join(root || REPO, 'charm-nest-nospread.js')); ctx.CharmNestNoSpread = NS; ctx.window.CharmNestNoSpread = NS; } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
+  // (FINISHCORE, 20 Nov 2026: the page's buildJob hands the sheet to the shared module, when the root has it; an older root has buildJob in the page itself)
+  try { const FC = require(path.join(root || REPO, 'charm-nest-finish-core.js')); ctx.CharmNestFinishCore = FC; ctx.window.CharmNestFinishCore = FC; } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
   ctx.stockFor = () => ctl.stock; ctx.angleSet = () => ctl.angles();
-  vm.createContext(ctx);
+  vm.createContext(ctx); require('./_nestPlan.cjs').into(ctx, root);   // (the nest's helpers, charm-nest-nest-plan.js, loaded first as the page does)
   // pairs and groups, keepOrdersWhole, overflowToNextSheet, then sheetFull / the gap fill (TOPUP, topupSettle, topupRoom ...), then the feed (feedTurn, nestItems, feedOn)
   const ran = [], run = text => { ran.push(text); vm.runInContext(text, ctx); };
   run(sliceBetween(html, 'function groupOf(', 'function inflatedArea(', 'groupOf .. overflowToNextSheet'));

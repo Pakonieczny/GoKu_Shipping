@@ -33,7 +33,7 @@ vm.createContext(ctx);vm.runInContext(source.slice(start,end),ctx);const Gate=ct
  const html=fs.readFileSync('charm-nest-1.html','utf8'),ns=html.indexOf('function startNestReady('),ne=html.indexOf('/* ═══ 9b',ns);
  const nq=Ops.create();let unblock;const saving=nq.run({key:'saving',resources:['production:n']},()=>new Promise(r=>unblock=r));await Promise.resolve();await Promise.resolve();
  const np={runId:'n',metal:'gold',page:1,status:'complete',placements:['saved'],charms:[{}]},running={status:'nesting',metal:'silver'};
- const nc={window:{CharmNestOperations:nq},S:{settings:{},nestQueue:[]},navigator:{hardwareConcurrency:2},allSheets:()=>[np,running],activeCharms:p=>p.charms,renderCard(){},labelOf:x=>x};vm.createContext(nc);vm.runInContext(html.slice(ns,ne),nc);
+ const nc={window:{CharmNestOperations:nq},S:{settings:{},nestQueue:[]},navigator:{hardwareConcurrency:2},allSheets:()=>[np,running],activeCharms:p=>p.charms,renderCard(){},labelOf:x=>x};vm.createContext(nc);require('./_nestPlan.cjs').into(nc);vm.runInContext(html.slice(ns,ne),nc);
  const starting=nc.startNestReady(np);assert.equal(np.status,'queued');assert.equal(nc.S.nestQueue.length,0);assert.deepEqual(np.placements,['saved']);unblock();await Promise.all([saving,starting]);assert.equal(nc.S.nestQueue[0],np,'after writes finish the existing worker scheduler takes over');
  // Concurrent run-loop calls share one execution; stale labels cannot advance to commit.
  let finishLabels;const calls=[],lr={status:'running',step:'labels',membershipRevision:0,mode:'auto'};

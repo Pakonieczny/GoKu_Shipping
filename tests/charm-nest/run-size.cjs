@@ -99,7 +99,7 @@ const liveOf = rec => rec.liveLines ? Object.assign({}, ...rec.liveLines.ids.map
 const source = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
 let controller = source.slice(source.indexOf('const RunCtl ='), source.indexOf('/* ═══ ', source.indexOf('const RunCtl =')));   // (to the next section: the Custom Orders sections 23a-23c now follow RunCtl)
 controller = controller.slice(0, controller.indexOf('  function renderBanner()')) + '  function renderBanner() {}\n' + controller.slice(controller.search(/\n  return \{[^\n]*optionsChanged/) + 1);   // (the return list begins with the banner helpers now)
-const lineRecordSource = source.slice(source.indexOf('  const cap = (v, n)'), source.indexOf('  /** The other direction'));
+const lineRecordSource = source.slice(source.indexOf('  /* The run record\'s copy of a line'), source.indexOf('  /** The other direction'));   // (PMAKE: the page's lineRecord is charm-nest-pool-make.js lineRecord, given its B)
 const workTextSource = source.slice(source.indexOf('  function workText(r)'), source.indexOf('  // the state of the work as a short hash'));
 assert(lineRecordSource.includes('function lineRecord(row)') && workTextSource.includes('function workText(r)'), 'the page source still has the pieces this test runs');
 
@@ -130,7 +130,7 @@ function controllerFor({ rows = [], sandbox = false } = {}) {
     api, Session: { schedule() {} }, LiveStrip: { render() {} }, Arrivals: { start() {}, processPending: async () => {} },
     agent: (scope, kind, text) => { st.logs.push({ kind, text }); }, toast: text => st.toasts.push(text), notifyPerson() {}, ding() {}, CN: { renderCard() {} }, sheetName: s => s.metal,
     startNest() {}, sheetDirty() {}, METALS: [], document: { addEventListener() {}, removeEventListener() {} } };   // (the controller listens for the print buttons' clicks on the page)
-  vm.createContext(ctx); vm.runInContext(lineRecordSource, ctx); vm.runInContext(controller, ctx); vm.runInContext(workTextSource, ctx);
+  vm.createContext(ctx); require('./_poolMake.cjs')(ctx); vm.runInContext(lineRecordSource, ctx); vm.runInContext(controller, ctx); vm.runInContext(workTextSource, ctx);
   return { ctx, ctl: ctx.window.RunCtl, st };
 }
 const tick = () => new Promise(r => setImmediate(r));

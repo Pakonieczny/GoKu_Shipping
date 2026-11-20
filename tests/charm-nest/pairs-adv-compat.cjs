@@ -93,7 +93,7 @@ ok('inGroup / sharedKey: groupSize 2 or more, or an ear with no size, is a group
 const html = read('charm-nest-1.html');
 const sorter = () => {
   const log = [], ctx = { agent: (...a) => log.push(['agent', String(a[2] || '')]), toast: (...a) => log.push(['toast', a[0]]), console };
-  vm.createContext(ctx);
+  vm.createContext(ctx); require('./_nestPlan.cjs').into(ctx);   // (the nest's helpers, charm-nest-nest-plan.js, loaded first as the page does)
   let src = '';
   if (html.includes('function groupOf(')) src += slice(html, 'function groupOf(c)', '/** A multi-piece order is never split');
   src += slice(html, 'function keepOrdersWhole(sh, byId', 'function orderSummary(charms)') + slice(html, 'function orderSummary(charms)', 'function overflowToNextSheet') + ';this.keepOrdersWhole=keepOrdersWhole;this.orderSummary=orderSummary;';

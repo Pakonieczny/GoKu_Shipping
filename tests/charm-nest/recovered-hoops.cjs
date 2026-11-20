@@ -7,7 +7,7 @@ const outline={kind:'path',stroke:true,closed:true,strokeRGB:[0,0,0],lwPt:.2,sub
 const ring={...outline,strokeRGB:[0,1,1],subpaths:[circle(3),circle(1.65)],bbox:[17,17,23,23],index:1};
 const c={sourceId:'s',poolId:'p',outline,members:[outline,ring],bbox:[0,0,23,23],pinned:{angle:90}};
 let traces=0;const ctx={CNEngravingSeals:require('../../charm-nest-engraving-seals.js'),G:require('../../charm-nest-geom.js'),P:{...P,buildSilhouettes:async(_,charms)=>{traces++;charms[0].thumb='repaired';}},S:{settings:{silhouetteRes:6}}};vm.createContext(ctx);
-vm.runInContext(code.slice(code.indexOf('  async function repairRecoveredGeometry('),code.indexOf('  function cloneCharm(')),ctx);
+vm.runInContext(code.slice(code.indexOf('  async function repairRecoveredGeometry('),code.indexOf('  /** The hashes a line\'s folded (whole) charm goes by')),ctx);   // (PMAKE: what follows repairRecoveredGeometry in the bridge; cloneCharm moved to charm-nest-pool-make.js)
 (async()=>{
  const good={id:'good',ringGeometryVersion:3,outline},pg={charms:[c],placements:[{id:'c'}],outputs:{ai:'old'},verification:{ok:true},backPool:[{poolId:'p'},{poolId:'good'}]},untouched={charms:[good],placements:[{id:'good'}],outputs:{ai:'keep'}};
  const d={sources:[{id:'s',charms:[c],parsed:{}}],sheets:[{pages:[pg,untouched]}],jobs:[{key:'j',copies:['p'],state:'written',fit:{},approvedBy:'Operator',approvedAt:1000},{key:'good',copies:['good'],state:'written',fit:{good:true}}],orders:{rows:[{key:'j',engrave:{approved:true,seals:[{id:'earlier',how:'engraveApproved',by:'Earlier operator',at:500}]}}]},review:[{jobKey:'j'}],run:{status:'stopped',step:'commit'}};

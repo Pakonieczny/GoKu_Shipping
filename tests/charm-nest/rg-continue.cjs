@@ -20,7 +20,7 @@ assert(a > 0 && b > a && code.slice(a, b).includes('function attachPool(') && co
 const SLICE = code.slice(a, b);
 
 function world(o = {}) {
-  const c = vm.createContext({ console, log: [], OPTS: o });
+  const c = vm.createContext({ console, log: [], OPTS: o }); require('./_poolMake.cjs')(c);   // (PMAKE: attachPool reads poolPut's answer through the piece maker, charm-nest-pool-make.js poolAnswer)
   vm.runInContext(`
 const S = { sheets: { gold: { pages: [] }, silver: { pages: [] }, rose: { pages: [] }, gold14k: { pages: [] } }, settings: { nospread: 'off' } };
 const B = { run: { runId: 'r', step: 'pool' }, pool: { rows: new Map() } };
@@ -39,6 +39,8 @@ const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!p.lase
 const window = { LiveNest: { intakePage: (m) => pagesOf(m).at(-1) || addPage(m), closed, orderHome: () => null, lineFits: () => true, pairFits: () => true }, CN: { showPage() {} },
   PartialNest: { mode: m => (OPTS.mode && OPTS.mode[m]) || 'auto' }, Gate };
 const LiveNest = window.LiveNest;
+const P = {}, MM = 25.4 / 72, Master = {}, PoolPieces = null;
+const { poolAnswer } = CharmNestPoolMake.create({ window, get S() { return S; }, get B() { return B; }, get O() { return O; }, get P() { return P; }, get MM() { return MM; }, get Master() { return Master; }, get PoolPieces() { return PoolPieces; }, charmOf: id => charmOf(id), cancelled: rid => window.Cancelled?.has?.(rid) });
 ${SLICE}
 async function addAll(run) { for (const r of rows.filter(r => (r.state === 'pulled' || r.state === 'waiting') && due(r))) { r.state = 'pulled'; attachPool(r, run, r._prep, [], [], []); } }
 const RETRY_MS = 1, trySig = () => 'x';

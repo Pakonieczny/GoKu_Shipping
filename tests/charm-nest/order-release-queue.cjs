@@ -58,10 +58,10 @@ const SEC = 1790000000;            // an order date, s
   ok.push('planRelease (older runs\' rule): a line released from hold goes at once, ahead of lines that wait for a full sheet; the rest as before');
 
 // 4 · the nest's feed turn: the first three orders are placed now, the rest wait (feedTurn), and the next few come in (feedOn)
-  const feed = slice(html, 'const FEED_ORDERS = 3;', 'function nestItems(sh)');
+  const feed = slice(html, 'const FEED_ORDERS', 'function nestItems(sh)');
   const mkc = (id, order, orderDate, extra) => Object.assign({ id, order, orderDate, poolId: id }, extra);
   const fctx = { S: { settings: {} }, carefulNest: () => true, topupRoom: () => Infinity, CharmNestOrders: O };
-  vm.createContext(fctx); vm.runInContext(feed + ';this.feedTurn = feedTurn; this.orderRank = orderRank;', fctx);
+  vm.createContext(fctx); require('./_nestPlan.cjs').into(fctx); vm.runInContext(feed + ';this.feedTurn = feedTurn; this.orderRank = orderRank;', fctx);   // (the nest's helpers, charm-nest-nest-plan.js, loaded first as the page does)
   {
     const sh = { runId: 'r', metal: 'gold', placements: [], topup: null };
     const items = [mkc('o1', '1', SEC - 30), mkc('o2', '2', SEC - 20), mkc('o3', '3', SEC - 10), mkc('rel', 'R', SEC + 100, { frontAt: T0 })];
@@ -94,7 +94,7 @@ const SEC = 1790000000;            // an order date, s
     const kw = slice(html, 'function keepOrdersWhole(sh, byId', 'function orderSummary(charms)');
     const logs = [];
     const c = { orderRank: fctx.orderRank, agent: (...a) => logs.push(a) };
-    vm.createContext(c); vm.runInContext(kw + ';this.keepOrdersWhole = keepOrdersWhole;', c);
+    vm.createContext(c); require('./_nestPlan.cjs').into(c); vm.runInContext(kw + ';this.keepOrdersWhole = keepOrdersWhole;', c);
     const byId = new Map([['old', mkc('old', 'OLD', SEC - 50)], ['new', mkc('new', 'NEW', SEC + 50)], ['rel', mkc('rel', 'REL', SEC + 90, { frontAt: T0 + 60000 })], ['rel0', mkc('rel0', 'REL0', SEC + 95, { frontAt: T0 })]]);
     // a released order missed the sheet: it is the oldest waiting order, so the incoming orders placed before it make way and it goes first on the next sheet;
     // the order released before it keeps its place
@@ -115,7 +115,8 @@ const SEC = 1790000000;            // an order date, s
 
 // 6 · the job the solver reads (the server's solver reads the same job), and the real solver
   {
-    assert(/orderDate: sh\.topup && !sh\.topup\.closedAt && sh\.appendOnly \? 0 : orderRank\(c\)/.test(html), 'the job asks each piece for its rank date');
+    // (buildJob lives in charm-nest-nest-plan.js since the cloud's step 6; the page hands it its orderRank)
+    assert(/orderDate: sh\.topup && !sh\.topup\.closedAt && sh\.appendOnly \? 0 : rank\(c\)/.test(require('./_nestPlan.cjs').source()) && /orderRank: c => orderRank\(c\)/.test(html), 'the job asks each piece for its rank date');
     const solver = require(path.join(root, 'charm-nest-solver.js'));
     // a sheet 100 wide that holds two of three 38-wide orders: the oldest two when none is released, the released one and the oldest when one is
     const mkp = (id, order, date, extra) => { const w = 38; return { id, order, orderDate: O.rankDate(Object.assign({ orderDate: date }, extra || {})), w, h: 20, scale: 1, bits: new Uint8Array(w * 20).fill(1), areaPt2: w * 20, centerPt: [w / 2, 10] }; };

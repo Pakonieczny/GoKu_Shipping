@@ -64,7 +64,7 @@ const HTML = '<HTML> <HEAD> <TITLE>Inactivity Timeout</TITLE> </HEAD> <BODY BGCO
     sheetDirty() {}, renderCard() {}, renderRail() {}, updateTopSub() {}, refreshAllCards() {}, agent: (s, k, t) => logs.push(t),
   };
   ctx.CNProgress = ctx.window.CNProgress; ctx.LiveNest = ctx.window.LiveNest;
-  vm.createContext(ctx);
+  vm.createContext(ctx); require('./_poolMake.cjs')(ctx);   // (PMAKE: the piece maker the Pool is host of, loaded as the page loads it)
   vm.runInContext(slice(bridge, 'const Pool = window.Pool = (() => {', '/* Carry-forward'), ctx);
   const Pool = ctx.window.Pool, run = { runId: 'run', lines: {} };
   const a = mk('4330132720', 'OK'), b = mk('4330132721', 'OK');

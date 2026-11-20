@@ -11,7 +11,7 @@ const fmtLine = html.slice(html.indexOf('const fmt = { pct'), html.indexOf('\n',
 assert(FEED.length > 500 && GAP.length > 2000 && fmtLine.length > 100, 'the page slices were found');
 const logs = [];
 const ctx = { MM_PER_PT: 1, S: { settings: { maxFill: .8, runMode: 'auto' } }, window: { B: { run: { runId: 'run-1', status: 'processed' } } }, log: (sh, m) => logs.push(m), renderCard() {}, activeCharms: p => p.charms.filter(x => !x.excluded) };
-vm.createContext(ctx); vm.runInContext(fmtLine, ctx); vm.runInContext(FEED, ctx); vm.runInContext(GAP, ctx);
+vm.createContext(ctx); require('./_nestPlan.cjs').into(ctx); vm.runInContext(fmtLine, ctx); vm.runInContext(FEED, ctx); vm.runInContext(GAP, ctx);
 const sheet = (metal, extra = {}) => { const charms = Array.from({ length: 45 }, (_, i) => ({ id: 'p' + i, order: 'o' + i })); return { metal, runId: 'run-1', rejects: ['late'], charms, placements: charms.map(c => ({ id: c.id })), verification: { ok: true }, ...extra }; };
 const res = (density, extra = {}) => ({ density, placedPt2: density * 100, usablePt2: 100, freePt2: (1 - density) * 100, endedBy: 'no-room', smallRoom: true, ...extra });
 // one update of the live run: the orders that reach the sheet try its gaps; those that miss move on to the next sheet

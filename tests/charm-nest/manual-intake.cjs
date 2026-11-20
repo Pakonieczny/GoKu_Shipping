@@ -98,7 +98,7 @@ assert.equal(O.intakePlan({count:40,density:.5,optimized:true,area:99,capacity:1
   keepOrdersWhole(){},sheetFull:()=>true
  };
  fx.window.RunCtl=fx.RunCtl;fx.setTimeout=setTimeout;fx.clearTimeout=clearTimeout;   // (the geometry check's wait: finishNest sets it and clears it)
- vm.createContext(fx);
+ vm.createContext(fx);require('./_nestPlan.cjs').into(fx);   // (the nest's helpers, charm-nest-nest-plan.js, loaded first as the page does)
  vm.runInContext(FEED,fx);
  vm.runInContext(html.slice(html.indexOf('/* Gap fill (Paul, 24 Sep)'),html.indexOf('function usableArea(')),fx);
  vm.runInContext(html.slice(html.indexOf('const CHARM_SCALE'),html.indexOf('/** One charm at a time on every sheet')),fx);
@@ -152,7 +152,7 @@ assert.equal(O.intakePlan({count:40,density:.5,optimized:true,area:99,capacity:1
 // gaps; it goes to the laser at 75% shown full, once those 35 have tried it, or at once when not even one of the shop's
 // smallest charms would still fit (Paul, 24 Sep)
 {
- const logs=[],ctx={S:{settings:{maxFill:.8,runMode:'auto'}},window:{B:{run:{runId:'run-1',status:'processed'}}},fmt:{pct:v=>Math.round(v*100)+'%'},log:(sh,m)=>logs.push(m),renderCard(){},activeCharms:p=>p.charms.filter(x=>!x.excluded)};vm.createContext(ctx);
+ const logs=[],ctx={S:{settings:{maxFill:.8,runMode:'auto'}},window:{B:{run:{runId:'run-1',status:'processed'}}},fmt:{pct:v=>Math.round(v*100)+'%'},log:(sh,m)=>logs.push(m),renderCard(){},activeCharms:p=>p.charms.filter(x=>!x.excluded)};vm.createContext(ctx);require('./_nestPlan.cjs').into(ctx);
  vm.runInContext(FEED,ctx);
  vm.runInContext(html.slice(html.indexOf('/* Gap fill (Paul, 24 Sep)'),html.indexOf('function usableArea(')),ctx);
  const sheet=(extra={})=>{const charms=Array.from({length:60},(_,i)=>({id:'p'+i,order:'o'+i}));return {metal:'gold',runId:'run-1',rejects:['late'],charms,placements:charms.map(c=>({id:c.id})),verification:{ok:true},...extra};};
@@ -195,7 +195,7 @@ assert.equal(O.intakePlan({count:40,density:.5,optimized:true,area:99,capacity:1
  assert.equal(ctx.topupSettle(switched,res(.70),false),true,'leaving Auto ends a gap fill: the sheet is released as it would have been');ctx.S.settings.runMode='auto';
  ctx.window.B.run.status='complete';const ended=sheet();assert.equal(ctx.topupSettle(ended,res(.70),true),true,'a finished run brings no more orders');ctx.window.B.run.status='processed';
  // while it fills its gaps: any later order that fits may go in, not only the oldest, up to the usual fill ceiling
- const jc={S:{settings:{maxFill:.8,clearancePt:0,insetPt:1.5,budgetS:180,packingAI:'off'}},stockFor:()=>({wPt:283,hPt:142}),activeCharms:s=>s.charms,angleSet:()=>[0,10],packingKey:()=>''};vm.createContext(jc);
+ const jc={S:{settings:{maxFill:.8,clearancePt:0,insetPt:1.5,budgetS:180,packingAI:'off'}},stockFor:()=>({wPt:283,hPt:142}),activeCharms:s=>s.charms,angleSet:()=>[0,10],packingKey:()=>''};vm.createContext(jc);require('./_nestPlan.cjs').into(jc);   // (the nest's helpers, charm-nest-nest-plan.js, loaded first as the page does)
  vm.runInContext(FEED,jc);
  vm.runInContext(html.slice(html.indexOf('const CAREFUL_ANGLES'),html.indexOf('function packingKey(')),jc);
  const topping={metal:'gold',intakePhase:'fill',appendOnly:true,placements:[{id:'old'}],nestInitial:[{id:'old'}],topup:{base:.7,tried:[]},charms:[{id:'old',orderDate:5},{id:'new',orderDate:9}]};
@@ -210,7 +210,7 @@ assert.equal(O.intakePlan({count:40,density:.5,optimized:true,area:99,capacity:1
  assert.equal(job.nearFullContact,true,'a near-full Gold or Silver queue may be built from the contacts');assert.equal(jc.buildJob({...topping,metal:'rose'}).nearFullContact,false,'Rose Gold keeps its left-to-right build');
  assert.deepEqual(jc.buildJob({...topping,appendOnly:false,intakePhase:'repack'}).pieces.map(p=>p.orderDate),[5,9],'oldest first again outside the gap fill');
  topping.topup.closedAt=1;job=jc.buildJob(topping);assert.equal(job.maxFill,.8);assert.deepEqual(job.pieces.map(p=>p.orderDate),[5,9]);
- const kc={agent(){}};vm.createContext(kc);vm.runInContext(html.slice(html.indexOf('function keepOrdersWhole('),html.indexOf('function orderSummary(')),kc);
+ const kc={agent(){}};vm.createContext(kc);require('./_nestPlan.cjs').into(kc);vm.runInContext(html.slice(html.indexOf('function keepOrdersWhole('),html.indexOf('function orderSummary(')),kc);
  const byId=new Map([['old',{id:'old',order:'o1',orderDate:1}],['miss',{id:'miss',order:'o2',orderDate:2}],['young',{id:'young',order:'o3',orderDate:3}]]);
  const kept={placements:[{id:'old'},{id:'young'}],rejects:['miss'],topup:{base:.7,tried:[]}};kc.keepOrdersWhole(kept,byId);assert.deepEqual(kept.placements.map(p=>p.id),['old','young'],'a younger order that fits is kept while topping up');
  const fifo={placements:[{id:'old'},{id:'young'}],rejects:['miss']};kc.keepOrdersWhole(fifo,byId);assert.deepEqual(fifo.placements.map(p=>p.id),['old'],'otherwise oldest first, as before');

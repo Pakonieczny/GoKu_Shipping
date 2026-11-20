@@ -199,7 +199,7 @@ pass('a numbered family is used only when the master\'s own sign names agree wit
 /* ── 11 · wiring ── */
 { const orders = fs.readFileSync(path.join(root, 'charm-nest-orders.js'), 'utf8'), bridge = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8'), html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
   ok(/masterSkus: \(\) => \[\.\.\.B\.master\.entries\.keys\(\)\]/.test(bridge), 'the page hands the line reader its master list (every SKU the library holds)');
-  ok(/if \(sp\.formHold\) \{ const hp = \(sp\.problems \|\| \[\]\)\.find\(p => p\.formHold\); if \(hp\) row\.problems\.push\(hp\); row\.state = "unmatched"; row\.reason = sp\.formHold\.reason; return null; \}/.test(bridge), 'a held line is never pooled: the pool attempt re-raises the plain line (the form guard\'s own route)');
+  ok(/if \(sp\.formHold\) \{ const hp = \(sp\.problems \|\| \[\]\)\.find\(p => p\.formHold\); if \(hp\) row\.problems\.push\(hp\); row\.state = "unmatched"; row\.reason = sp\.formHold\.reason; return null; \}/.test(bridge + require('./_poolMake.cjs').source), 'a held line is never pooled: the pool attempt re-raises the plain line (the form guard\'s own route)');
   ok(/\$\{p\.zodiac \? SEP \+ p\.zodiac : ""\}/.test(bridge), 'each missing sign is its own Review decision');
   for (const name of ['charm-nest-orders.js', 'charm-nest-bridge.js']) { const m = new RegExp('src="' + name.replace('.', '\\.') + '\\?v=([^"]*)"').exec(html); ok(m && /-zs1(?:-|$)/.test(m[1]) && /^2026100/.test(m[1]), name + ' token carries -zs1'); }
   pass('wiring: master list from the page, the held line route, one decision per sign, cache tokens -zs1'); }

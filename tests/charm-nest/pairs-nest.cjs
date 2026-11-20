@@ -225,7 +225,8 @@ const gapMm = (r, a, b) => { const A = placedOf(r, a), B = placedOf(r, b); if (!
     const server = fs.readFileSync(path.join(L.REPO, 'netlify/functions/charmNestSolve-background.js'), 'utf8');
     assert(/\.\.\.Solver\.pairFields\(p\)/.test(server), 'the server fallback passes the pair fields on');
     const html = fs.readFileSync(path.join(L.REPO, 'charm-nest-1.html'), 'utf8');
-    assert(/hold: !!\(c\.pinned && !c\.arrivalPin\), \.\.\.\(typeof CharmNestSolver !== "undefined" && CharmNestSolver\.pairFields \? CharmNestSolver\.pairFields\(c\) : \{\}\)/.test(html), 'the page job carries the pair fields');
+    // (the page's job is built by charm-nest-nest-plan.js buildJob, with the page's CharmNestSolver handed to it)
+    assert(/hold: !!\(c\.pinned && !c\.arrivalPin\), \.\.\.\(Solver && Solver\.pairFields \? Solver\.pairFields\(c\) : \{\}\)/.test(require('./_nestPlan.cjs').source()) && /return CharmNestNestPlan\.buildJob\(sh, \{[\s\S]*?Solver: typeof CharmNestSolver !== "undefined" \? CharmNestSolver : null/.test(html), 'the page job carries the pair fields');
     const learned = fs.readFileSync(path.join(L.REPO, 'charm-nest-learned.js'), 'utf8');
     assert(/Sv\.linkGroups\(job\)/.test(learned), 'the learned solver joins groups too');
     // the worker, the page and the rose demo name the same solver and worker files (one cache token)

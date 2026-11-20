@@ -102,6 +102,7 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
     // each master read gives the same drawing, but a fresh object (the Pool writes into it)
     c.P.groupCharmsAsync = async () => ({ charms: [structuredClone(F.charmOf(c.__sku))], orphans: [] });
     const realLoad = null; void realLoad;
+    require('./_poolMake.cjs')(c);   // (PMAKE: the piece maker the Pool is host of, loaded as the page loads it)
     vm.runInContext(src.slice(a, b), c);
     return { c, logs, calls, pages, Pool: c.window.Pool, entries, use(sku) { c.__sku = sku; } };
   }

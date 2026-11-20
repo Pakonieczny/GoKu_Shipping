@@ -222,7 +222,7 @@ function wiring() {
   const bridge = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8'), ready = fs.readFileSync(path.join(root, 'charm-nest-readiness.js'), 'utf8'), html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
   ok(/masterShared: sku => Master\.sharedFor\(sku\)/.test(bridge), 'the page hands the orders module the library\'s design-file facts');
   ok(/function sharedFor\(sku\)/.test(bridge) && /return \{ entryFor, looseFor, sharedFor,/.test(bridge), 'Master.sharedFor exists and is exported');
-  ok(/if \(sp\.formHold\) \{[^}]*row\.state = "unmatched"/.test(bridge), 'the pool attempt re-raises a held line: it is never pooled');
+  ok(/if \(sp\.formHold\) \{[^}]*row\.state = "unmatched"/.test(bridge + require('./_poolMake.cjs').source), 'the pool attempt re-raises a held line: it is never pooled');
   ok(/formFacts\(l\.sku\)/.test(bridge), 'a line is read again when the library changes what its design is');
   ok(/p\.formHold \? p\.reason :/.test(bridge) && /sp\.formHold\) return sp\.formHold\.reason/.test(bridge), 'the row says the plain line');
   ok(/p\.formHold && p\.reason/.test(ready), 'readiness says it too');

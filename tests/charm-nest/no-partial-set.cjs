@@ -9,7 +9,8 @@ const html = fs.readFileSync(path.join(__dirname, '../../charm-nest-1.html'), 'u
 let fails = 0; const check = (id, ok, ev) => { if (!ok) fails++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${id}${ev ? '  ' + ev : ''}`); };
 const a = html.indexOf('function membershipOf(sh) {'), b = html.indexOf('async function persistSheet(', a); assert(a > 0 && b > a, 'membershipOf sits before persistSheet');
 const SR = require('../../charm-nest-set-rules.js');
-const run = (sh, modern = true) => { const ctx = vm.createContext({ window: { CharmNestSetRules: SR, Gate: { modern: () => modern } }, Gate: { modern: () => modern } }); vm.runInContext(html.slice(a, b) + '; this.f = membershipOf;', ctx); return JSON.parse(JSON.stringify(ctx.f(sh))); };
+const FC = require('../../charm-nest-finish-core.js');   // (FINISHCORE: the page's membershipOf hands the sheet to the shared module, which holds the rule)
+const run = (sh, modern = true) => { const ctx = vm.createContext({ window: { CharmNestSetRules: SR, Gate: { modern: () => modern } }, Gate: { modern: () => modern }, CharmNestFinishCore: FC }); vm.runInContext(html.slice(a, b) + '; this.f = membershipOf;', ctx); return JSON.parse(JSON.stringify(ctx.f(sh))); };
 const draft = o => Object.assign({ metal: 'gold', metalLabel: 'GF 14/20', runId: 'r1', draft: true, setId: null, seq: 15, placements: [1, 2, 3], releaseFull: false }, o || {});
 // the race: the set look has put the draft into Set 5 in memory (draft false, setId, the next number) and the sheet is saved
 check('1a a partial GF draft the set look has joined in memory is saved as the draft it is', JSON.stringify(run(draft({ draft: false, setId: 'set-2026-11-12-1', seq: 5, sheetIndex: 10 }))) === JSON.stringify({ draft: true, setId: null, setSeq: null, sheetIndex: null }));

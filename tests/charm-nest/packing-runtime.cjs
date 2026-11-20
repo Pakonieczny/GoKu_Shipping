@@ -4,7 +4,7 @@ const root = path.join(__dirname, '../..'), html = fs.readFileSync(path.join(roo
 const section = (from, to) => html.slice(html.indexOf(from), html.indexOf(to, html.indexOf(from)));
 const evaluate = (c, code) => vm.runInContext(code, c);
 (async () => {
-  const c = vm.createContext({ assert, console });
+  const c = vm.createContext({ assert, console }); require('./_nestPlan.cjs').into(c);   // (the nest's helpers, charm-nest-nest-plan.js, loaded first as the page does)
   evaluate(c, fs.readFileSync(path.join(root,'charm-nest-solver.js'),'utf8'));
   evaluate(c, `
     const window={}, finishes=[], messages=[], S={settings:{packingAI:'on',maxFill:.74},cloud:{ok:true}};
@@ -82,7 +82,7 @@ const evaluate = (c, code) => vm.runInContext(code, c);
   assert.equal(capturedJob.packingHints.priority[0],'right');assert.equal(capturedJob.packingPending,false);
   finishSolve({placements:[]});await running;assert.equal(posted[0].type,'done');
 
-  const q=vm.createContext({assert});
+  const q=vm.createContext({assert});require('./_nestPlan.cjs').into(q);   // (startNestReady's slice runs the page's feed, which calls charm-nest-nest-plan.js)
   evaluate(q, `
     const window={}, S={settings:{},nestQueue:[]}, renders=[], starts=[];
     const first={metal:'gold',status:'finishing'}, second={metal:'silver',status:'ready',charms:[{}]}, third={metal:'rose',status:'ready',charms:[{}]};

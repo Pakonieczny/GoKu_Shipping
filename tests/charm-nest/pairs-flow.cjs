@@ -17,7 +17,7 @@ let Pair = null; try { Pair = require(path.join(root, 'charm-nest-pair.js')); } 
 
 // the page's own policy code: the helpers, keepOrdersWhole, orderSummary and overflowToNextSheet in one slice
 const policy = slice(html, 'function groupOf(', 'function inflatedArea(');
-const feed = slice(html, 'const FEED_ORDERS = 3;', '/* A stopped run starts none of its sheets');
+const feed = slice(html, 'const FEED_ORDERS', '/* A stopped run starts none of its sheets');
 
 // a charm of an order line: the pool id is `receipt_transaction_copy`, as Pool.makePool writes it
 // (a piece of a GROUP, an earring pair or counted discs: groupSize 2; Paul 9 Oct, ruling after ADVCOMPAT 1 and 2: only a group has a group)
@@ -28,7 +28,7 @@ const placement = c => ({ id: c.id, cxPt: 5, cyPt: 5, angle: 0 });
 const ctxFor = (extra) => {
   const log = [], toasts = [], ctx = Object.assign({ Set, Map, Math, JSON, Object, Array, String, Number, window: {}, agent: (a, k, t) => log.push({ k, t }), toast: (t, k) => toasts.push({ t, k }), labelOf: m => m, renderCard() {}, renderRail() {}, updateTopSub() {}, computeSaturation() {}, manualSheetClosed: () => false,
     S: { sheets: {}, settings: {} }, startNest() {} }, extra);
-  ctx.log = log; ctx.toasts = toasts; vm.createContext(ctx); return ctx;
+  ctx.log = log; ctx.toasts = toasts; vm.createContext(ctx); require('./_nestPlan.cjs').into(ctx); return ctx;   // (the nest's helpers, charm-nest-nest-plan.js, loaded first as the page does)
 };
 
 // 1 · a charm's group: the same string the contract's groupKey gives, from the order fields or the pool id, none for a file dropped by hand
@@ -263,6 +263,9 @@ const ctxFor = (extra) => {
     lineCuts: m => m === 'rose', greenFits: () => true,   // (the rose partner-sheet rule of attachPool, as the bridge defines it; this gold world never cuts rose)
     Gate: null, agent: (a, k, t) => log.push({ k, t }), O: {} });
   c.LiveNest = c.window.LiveNest = { closed: p => !!p.closed, intakePage: (m, run, rid) => pages.find(p => p.charms.some(x => String(x.order) === String(rid)) && !p.closed) || pages.at(-1) };
+  // (PMAKE: attachPool reads what poolPut answered through the piece maker, charm-nest-pool-make.js poolAnswer, with the page's own host as the bridge makes it)
+  Object.assign(c, { P: {}, MM: 25.4 / 72, Master: {}, PoolPieces: null }); require('./_poolMake.cjs')(c);
+  vm.runInContext(slice(bridge, '  const Make = window.CharmNestPoolMake.create({', '  /* REDRAW (Paul, 19 Oct 2026'), c);
   vm.runInContext(policy + ';' + code + ';this.attachPool = attachPool;', c);
   const row = () => ({ key: 'r', order: { receiptId: '4100' }, spec: { designSku: 'MIS', material: 'gold', quantity: 2 }, state: 'pulled' });
   const A = piece(4100, 1, 1, { side: 'L' }), B = piece(4100, 1, 2, { side: 'R' });

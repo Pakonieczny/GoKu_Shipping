@@ -116,7 +116,7 @@ function liveCase({metal='rose',newRun=false,cut=false,full=false,committed=fals
   const recovery={sources:[],poolSources:{},unassigned:[],sheets:[{pages:[savedPage]}],jobs:[]};
   const recoverContext={CNEngravingSeals:require('../../charm-nest-engraving-seals.js'),G:{pathRole(){throw Error('protected geometry must not be rewritten');}},P:{integrateRings(){throw Error('protected geometry must not be rewritten');}},S:{settings:{}}};
   vm.createContext(recoverContext);
-  const ra=bridge.indexOf('  async function repairRecoveredGeometry('),rb=bridge.indexOf('  function cloneCharm(',ra);
+  const ra=bridge.indexOf('  async function repairRecoveredGeometry('),rb=bridge.indexOf('  /** The hashes a line\'s folded (whole) charm goes by',ra);   // (PMAKE: cloneCharm moved to charm-nest-pool-make.js; the next thing after it in the bridge)
   vm.runInContext(bridge.slice(ra,rb),recoverContext);
   assert.equal(await recoverContext.repairRecoveredGeometry(recovery),0);
   assert.equal(savedPage.placements[0].id,'protected');assert.equal(savedPage.roseStock.id,'reserved');assert.equal(savedPage.verification.ok,true);
@@ -141,7 +141,7 @@ function liveCase({metal='rose',newRun=false,cut=false,full=false,committed=fals
   const ops=[],nest={assert,window:{CharmNestOperations:{run:(o,work)=>{const p=Promise.resolve().then(()=>work({resources:o.resources,active:true}));ops.push(p);return p;}}},S:{settings:{},nestQueue:[]},
     labelOf:x=>x,renderCard(){},toast(){},activeCharms:sh=>sh.charms.filter(c=>!c.excluded)};
   const empty={metal:'rose',status:'ready',charms:[],placements:[]},excluded={metal:'gold',status:'ready',charms:[{excluded:true}],placements:[]};
-  nest.allSheets=()=>[empty,excluded];vm.createContext(nest);vm.runInContext(html.slice(sa,sb),nest);
+  nest.allSheets=()=>[empty,excluded];vm.createContext(nest);require('./_nestPlan.cjs').into(nest);vm.runInContext(html.slice(sa,sb),nest);
   nest.startNestReady(empty);nest.startNestReady(excluded);await Promise.all(ops);
   assert.deepEqual([empty.status,excluded.status,nest.S.nestQueue.length],['idle','ready',0],'a sheet with nothing to nest does not stay queued');
   console.log('Bridge append OK: same-run Rose green contour, cut/full/committed closure, cross-run isolation, retained sheet and stock on run clearing, no empty sheet left queued');

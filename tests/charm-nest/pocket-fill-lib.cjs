@@ -68,7 +68,7 @@ function pageRules(root, ctl) {
     activeCharms: sh => sh.charms.filter(c => !c.excluded), carefulNest: () => true, allSheets: () => ctl.pages,
     overflowToNextSheet: sh => ctl.overflow(sh), startNest: sh => ctl.work.push(sh),
   };
-  vm.createContext(ctx);
+  vm.createContext(ctx); require('./_nestPlan.cjs').into(ctx, root);   // (the nest's helpers, charm-nest-nest-plan.js, loaded first as the page does)
   vm.runInContext(slice('function keepOrdersWhole(', 'function orderSummary('), ctx);
   vm.runInContext(slice('function inflatedArea(', 'function usableArea('), ctx);
   vm.runInContext(slice('const FEED_ORDERS', '/* A stopped run starts none of its sheets'), ctx);
