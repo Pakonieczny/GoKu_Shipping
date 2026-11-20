@@ -244,18 +244,26 @@ async function build(opts) {
     O.cleanOrders({ order });
     for (const line of order.lines || []) {
       const key = lineKeyOf(order.receiptId, line.transactionId), rec = runLines[key];
-      rows.push(Object.assign({ key, order, line, state: "pulled", reason: null, poolIds: [] }, runFacts(rec), { etsyOpen: !!open[id], inRun: !!rec }));
+      rows.push(Object.assign({ key, order, line, state: "pulled", reason: null, poolIds: [] }, runFacts(rec), { etsyOpen: !!open[id], inRun: !!rec, _run: runFacts(rec) }));
     }
   }
+  { const seenKey = new Set(); for (let i = rows.length - 1; i >= 0; i--) { if (seenKey.has(rows[i].key)) rows.splice(i, 1); else seenKey.add(rows[i].key); } }   // (one record per line, whatever Etsy repeats)
   // the run's own lines whose receipt could not be read now: kept as the run has them (never dropped for a read that failed)
   const have = new Set(rows.map(r => r.key));
-  for (const [key, rec] of Object.entries(runLines)) if (rec && rec.state !== "gone" && !have.has(key) && !cancelled.has(String(key).split("_")[0])) rows.push(Object.assign({ key, order: null, line: null, fromRecord: true }, runFacts(rec), { etsyOpen: false, inRun: true }));
+  for (const [key, rec] of Object.entries(runLines)) if (rec && rec.state !== "gone" && !have.has(key) && !cancelled.has(String(key).split("_")[0])) rows.push(Object.assign({ key, order: null, line: null, fromRecord: true }, runFacts(rec), { etsyOpen: false, inRun: true, _run: runFacts(rec) }));
 
   /* 7 · readings: Claude's (custom) and the listings' SKU tables, from the stored copies */
   const readable = rows.filter(r => r.order);
-  const crItems = readable.map(r => ({ key: r.key, hash: r.crh || "" }));
+  // Claude's custom readings (Charm_Nest_CustomRead/<line>: reads by hash, latest, the person's decision): the one the run names for the line (crh), else the latest stored,
+  // as a page that holds no reading of its own takes the stored one (charm-nest-bridge.js CustomRead); a person's decision always
   const customRead = {}, customDecided = {};
-  for (let i = 0; i < crItems.length; i += 400) { try { const g = await ops.customReadGet({ items: crItems.slice(i, i + 400) }); Object.assign(customRead, g.reads || {}); Object.assign(customDecided, g.decided || {}); } catch (e) { errors.push("customRead: " + e.message); break; } }
+  try {
+    const keys = readable.map(r => r.key), byKey = new Map(readable.map(r => [r.key, r]));
+    for (let i = 0; i < keys.length; i += 300) {
+      const docs = await db.getAll(...keys.slice(i, i + 300).map(k => db.collection("Charm_Nest_CustomRead").doc(k)));
+      for (const d of docs) { if (!d.exists) continue; const x = d.data() || {}, r = byKey.get(d.id), reads = x.reads || {}, h = r && r.crh && reads[r.crh] ? r.crh : x.latest; if (h && reads[h]) customRead[d.id] = reads[h]; if (x.decided && x.decided.kind) customDecided[d.id] = x.decided; }
+    }
+  } catch (e) { errors.push("customRead: " + e.message); }
   const listingIds = [...new Set(readable.map(r => String(r.line.listingId || "")).filter(Boolean))];
   const listingSkus = {};
   for (let i = 0; i < listingIds.length; i += 100) { try { const g = await ops.listingSkus({ listingIds: listingIds.slice(i, i + 100), cacheOnly: true }); Object.assign(listingSkus, (g && (g.tables || g.listings)) || {}); } catch (e) { errors.push("listingSkus: " + e.message); break; } }
@@ -267,6 +275,21 @@ async function build(opts) {
     const idx = new Map(); for (const e of Object.values(customSheet)) if (e && (e.sent || e.sendIntent)) for (const k of Object.keys((e.sent || e.sendIntent).lines || {})) idx.set(k, e);
     sentOf = row => { const e = idx.get(row.key); if (!e) return null; const list = (((e.sent || e.sendIntent).lines || {})[row.key] || []).filter(pc => !(pc && pc.removed)), pc = list[0], F = pc && (e.files || []).find(x => x.id === pc.f); return { metal: (F && F.metal) || null, pieces: list.length, sent: !!e.sent }; };
   } catch (e) { errors.push("customSheet: " + e.message); }
+
+  /* 7b · where each line's pieces are (Charm_Pool: the pieces' own records, which every placement writes): a line whose live pieces are all on a written
+     (or committed) set is written (or committed), whatever a run record saved earlier says (RVSAME: the run record of order 4228567858 said "pooled" while its
+     piece was on RG_Nov.13.26_Set-1_Sheet-1). Only lines still before that are looked at. */
+  try {
+    const ask = rows.filter(r => Array.isArray(r.poolIds) && r.poolIds.length && !["written", "committed", "gone", "skipped"].includes(r.state));
+    const ids = [...new Set(ask.flatMap(r => r.poolIds.map(String)))], pool = new Map();
+    for (let i = 0; i < ids.length; i += 300) for (const d of await db.getAll(...ids.slice(i, i + 300).map(id => db.collection("Charm_Pool").doc(id)))) if (d.exists) pool.set(d.id, d.data() || {});
+    for (const r of ask) {
+      const live = r.poolIds.map(id => pool.get(String(id))).filter(p => p && !["abandoned", "superseded"].includes(String(p.state || "")));
+      if (!live.length || live.length !== r.poolIds.length) continue;
+      if (live.every(p => p.state === "committed")) r.state = "committed";
+      else if (live.every(p => ["written", "committed"].includes(String(p.state)) && p.sheetId)) r.state = "written";
+    }
+  } catch (e) { errors.push("pieces: " + e.message); }
 
   /* 8 · read every line */
   const seen = O.seenSkus ? O.seenSkus(readable.map(r => r.line)) : {};
@@ -286,7 +309,7 @@ async function build(opts) {
   const flush = async () => { if (inBatch) { await batch.commit(); batch = db.batch(); inBatch = 0; } };
   for (const r of rows) {
     const doc = { v: VERSION, key: r.key, receiptId: String(r.key).split("_")[0], order: r.order, line: r.line, spec: r.spec || null, problems: r.problems || [], state: r.state || "pulled", reason: r.reason || null,
-      run: runFacts(r), etsyOpen: !!r.etsyOpen, inRun: !!r.inRun, fromRecord: !!r.fromRecord, runId: run ? run.runId : null };
+      run: r._run || runFacts(r), etsyOpen: !!r.etsyOpen, inRun: !!r.inRun, fromRecord: !!r.fromRecord, runId: run ? run.runId : null };
     const data = J(doc), sig = sha(data); sigs[r.key] = sig;
     if (prevSigs[r.key] === sig) continue;
     // (the line is kept as the exact JSON text of what was read, beside the fields a query needs: Firestore refuses an empty field and an array inside an array, and the reader's spec may hold either)

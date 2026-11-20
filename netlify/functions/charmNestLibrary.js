@@ -5461,13 +5461,17 @@ async function op_worldGet(b) {
   const out = { summary, review: rev.exists ? W.reviewOf(rev.data()) : null, lease: lease.exists ? (({ state, at, startedAt, endedAt, error, by, again }) => ({ state, at, startedAt, endedAt, error, by, again }))(lease.data()) : null, now: Date.now() };
   if (!b.lines) return out;
   const lines = [], since = num(b.sinceAt);
-  let q = since > 0 ? db.collection(WORLD_LINES).where("at", ">", since).orderBy("at") : db.collection(WORLD_LINES).orderBy(admin.firestore.FieldPath.documentId());
+  // (changes: by the time each record was written, then its id: many records share a build's time, so the cursor is "at|id" and none is skipped)
+  const docId = admin.firestore.FieldPath.documentId();
+  let q = since > 0 ? db.collection(WORLD_LINES).where("at", ">", since).orderBy("at").orderBy(docId) : db.collection(WORLD_LINES).orderBy(docId);
   if (since <= 0 && b.cursor) q = q.startAfter(str(b.cursor, 80));
-  if (since > 0 && b.cursor) q = q.startAfter(num(b.cursor));
-  const snap = await q.limit(1500).get();
+  if (since > 0 && b.cursor) { const [ca, ci] = String(b.cursor).split("|"); q = q.startAfter(num(ca), str(ci, 80)); }
+  const snap = await q.limit(1500).get(), cap = Math.max(2000, Math.min(ANSWER_BYTES, num(b.maxBytes) || ANSWER_BYTES));   // (maxBytes: a smaller page, for the tests)
   let used = 0, next = null;
-  for (const d of snap.docs) { const x = d.data(); if (since <= 0 && x.gone) continue; const n = String(x.data || "").length + 200; if (lines.length && used + n > ANSWER_BYTES) { next = since > 0 ? x.at : d.id; break; } lines.push(W.lineOf(x)); used += n; }
-  if (!next && snap.size === 1500) { const last = snap.docs[snap.docs.length - 1]; next = since > 0 ? last.data().at : last.id; }
+  // (next: the last record this answer holds, so the next page starts right after it: none skipped)
+  let lastId = null, lastAt = null;
+  for (const d of snap.docs) { const x = d.data(), n = String(x.data || "").length + 200; if (lines.length && used + n > cap) { next = since > 0 ? lastAt + "|" + lastId : lastId; break; } lastId = d.id; lastAt = x.at; if (since <= 0 && x.gone) continue; lines.push(W.lineOf(x)); used += n; }
+  if (!next && snap.size === 1500) { const last = snap.docs[snap.docs.length - 1]; next = since > 0 ? last.data().at + "|" + last.id : last.id; }
   return Object.assign(out, { lines, next });
 }
 async function op_worldBuild(b) {

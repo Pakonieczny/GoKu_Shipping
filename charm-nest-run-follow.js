@@ -45,6 +45,15 @@
       { const was = st.run ? st.run.status + "|" + (st.run.stoppedBy || "") : ""; st.run = { status: run.status || null, stoppedBy: run.stoppedBy || null, step: run.step || null, at: Date.now() }; if (was !== st.run.status + "|" + (st.run.stoppedBy || "")) safe(() => root.RunCtl && root.RunCtl.renderBanner()); }
       const lines = run.lines, inRun = new Set((run.orders || []).map(String)), O = root.Orders, B = root.B;
       if (!O || !B || !B.orders) return st;
+      // (CLOUDWORLD stage B, Paul 20 Nov 2026: "Only the cloud can decide"): the lines come whole from the cloud world, never from the run record and this computer's own reading
+      const CW = root.CloudWorld;
+      if (CW && typeof CW.drives === "function" && CW.drives()) {
+        safe(() => CW.applyToRows("follow"));
+        st.retired = ((run.intakeRecovery && run.intakeRecovery.retire) || []).map(String);
+        { const sk = Object.keys(run.sheets || {}).sort().join("|") + "#" + st.retired.slice().sort().join("|"), force = st.sheetSig !== undefined && st.sheetSig !== sk; st.sheetSig = sk;
+          safe(() => { const f = root.Recall && root.Recall.follow; if (typeof f === "function") Promise.resolve(f(id, force ? { force: true } : undefined)).catch(() => {}); }); }
+        st.last = { at: Date.now(), why, cloud: true }; return st;
+      }
       let changed = 0, gone = 0, added = 0, needRead = false, crhMoved = false;
       for (const row of O.rows()) {
         if (!row || !row.key || row.parentRow) continue;
