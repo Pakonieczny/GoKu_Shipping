@@ -70,7 +70,9 @@ const RUN = 'run-drift-t', SHEETS = 'Charm_Nest_Sheets';
   say('4a the one clean sheet that is behind is read again through the feed\'s own path', JSON.stringify(o4.calls.changed) === JSON.stringify([['s:p-behind']]), o4.calls.changed);
   say('4b a sheet with a change of its own waiting, a cut one, a current one and one never read are left alone', o4.rev['p-dirty'] === 1 && o4.rev['p-cut'] === 1 && o4.rev['p-same'] === 4 && o4.rev['p-new'] === undefined && o4.rev['p-behind'] === 9, o4.rev);
   const rp = o4.calls.reports[0] || {};
-  say('5a it reports what it found: role, counts, the sheet healed', rp.role === 'follower' && rp.behindN === 1 && rp.rebuilt === 1 && rp.stillN === 0 && rp.inHandN === 1 && rp.unverifiedN === 1 && /p-behind/.test((rp.healed || [])[0] || ''), rp);
+  say('5a it reports what it found: role, counts, the sheet healed', rp.role === 'follower' && rp.behindN === 1 && rp.rebuilt === 1 && rp.stillN === 0 && rp.inHandN === 1 && rp.unverifiedN === 1 && /^(p-behind|B) /.test((rp.healed || [])[0] || ''), rp);
+  // (SHEETNAMES, 20 Nov 2026: a following computer takes each sheet's name, set and draft mark from its record: the healed sheet is told by the cloud's name, B)
+  say('5a2 a follower takes the sheets\' names from their records and says how many', rp.misnamedN >= 1 && rp.renamed === rp.misnamedN, { misnamedN: rp.misnamedN, renamed: rp.renamed, misnamed: rp.misnamed });
   say('5b nothing is behind afterwards: no mark', !o4.pill, o4.pillText);
   const mine = o4.calls.api.filter(op => /^(sheetRevsGet|computerReport|computerList|getSheet|getMany|listSheets|runGet)$/.test(op));   // (the page's other upkeep, shares and marks, runs on its own beat and is not this check's)
   say('4c the check asks the cloud for one sheet list and tells it one report, and reads no sheet record itself', JSON.stringify(mine) === JSON.stringify(['sheetRevsGet', 'computerReport']), o4.calls.api);

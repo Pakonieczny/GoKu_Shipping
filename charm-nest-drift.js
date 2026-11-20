@@ -92,11 +92,12 @@
     for (const x of sheets || []) { const k = (x.set || "") + "|" + (x.fb || x.id), had = by.get(k); if (!had || (+x.upd || 0) > (+had.upd || 0)) by.set(k, x); }   // (one record per sheet name, the newest: as Recall.follow lists a run)
     const gone = new Set(safe(() => (root.CharmNestRunFollow.state().retired || []).map(String), []));   // (a sheet the run has let go of is not listed here either: Recall.follow)
     const want = new Map([...by.values()].filter(x => !gone.has(String(x.id))).map(x => [x.id, x])), held = pages().filter(p => p && p.sheetId && p.runId === runId);
-    const out = { behind: [], unverified: [], inHand: [], extra: [], missing: [], held: held.length, want: want.size };
+    const out = { behind: [], unverified: [], inHand: [], extra: [], missing: [], misnamed: [], held: held.length, want: want.size };
     const have = new Set(held.map(p => p.sheetId));
     for (const p of held) {
       const c = want.get(p.sheetId);
       if (!c) { out.extra.push(p); continue; }
+      if (c.fb != null && misnamed(p, c)) out.misnamed.push({ p, c });   // (SHEETNAMES: its name, set or draft mark are not the record's)
       if (c.cut || cutPage(p)) continue;                    // (cut or sent: it can no longer change)
       if (inHand(p)) { out.inHand.push(p); continue; }
       const mine = revOfPage(p);
@@ -105,6 +106,24 @@
     }
     for (const id of want.keys()) if (!have.has(id)) out.missing.push(id);
     return out;
+  }
+  /* SHEETNAMES (Paul, 20 Nov 2026: "these gold filled sheets don't match between my computer and Michelle's computer. There's literal sheets and sets missing"): Michelle's cards held every sheet of the run, but named them from
+     what her page kept since Nov 12 (a sheet saved later as Set-1 Sheet-2 of Nov 18 still read "Sheet 3 · Set 5"; Set 3 read "Sheet 5 · Set 5"; a draft read as a sheet of Set 5). A sheet's name is made of its record's file name,
+     set, number in the set and draft mark (charm-nest-sheet-name.js): a page whose own differ from the record's takes the record's, on a computer that follows the run (the computer that carries it writes them). */
+  const fbOf = p => String((p && (p.fileBase || p.folder)) || "");
+  function misnamed(p, c) {
+    if (!p || !c) return false;
+    if (String(c.fb || "") && fbOf(p) !== String(c.fb)) return true;
+    if (String(p.setId || "") !== String(c.set || "")) return true;
+    if (!!p.draft !== !!c.d) return true;
+    if (c.si && +p.sheetIndex !== +c.si) return true;
+    return false;
+  }
+  function rename(p, c) {
+    if (c.fb) { p.fileBase = c.fb; if (p.folder != null) p.folder = c.fb; }
+    p.setId = c.set || null; p.draft = !!c.d;
+    p.sheetIndex = c.si || null; p.setSeq = c.sq || null; if (c.pg) p.page = c.pg;
+    if (c.so === 0) p.solidIncluded = false; else if (p.solidIncluded === false && c.so === 1) p.solidIncluded = true;
   }
   const idle = async () => { try { await (root.CharmNestInteraction && typeof root.CharmNestInteraction.idle === "function" ? root.CharmNestInteraction.idle() : null); } catch (_) {} const q = 5000 - (Date.now() - lastInput); if (q > 0) await new Promise(r => setTimeout(r, q)); };
   const say = text => safe(() => root.CN && root.CN.agent ? root.CN.agent({ bridge: true }, "cloud", text) : console.info("[drift]", text));
@@ -168,6 +187,14 @@
           const first = compare(runId, res.sheets);
           rep.checked = first.held; rep.behindN = first.behind.length; rep.behind = first.behind.map(b => short(b.p) + " " + b.from + "→" + b.to); rep.unverifiedN = first.unverified.length; rep.missingN = first.missing.length; rep.extraN = first.extra.length; rep.inHandN = first.inHand.length;
           let after = first;
+          // (SHEETNAMES: a following computer takes each sheet's name, set and draft mark from its record, then draws its cards again)
+          rep.misnamedN = first.misnamed.length; rep.misnamed = first.misnamed.slice(0, 12).map(x => fbOf(x.p).slice(0, 40) + " → " + String(x.c.fb || "").slice(0, 40));
+          if (m === "on" && !carrier && first.misnamed.length) {
+            for (const x of first.misnamed) safe(() => rename(x.p, x.c));
+            rep.renamed = first.misnamed.length;
+            safe(() => (typeof refreshAllCards === "function" ? refreshAllCards() : root.refreshAllCards && root.refreshAllCards()));
+            say("Sheet names: " + first.misnamed.length + " sheet(s) took their name, set and draft mark from the cloud");
+          }
           if (m === "on" && !carrier && (first.behind.length || first.missing.length || first.extra.length)) {
             const done = await heal(runId, res.sheets, first); rep.rebuilt = done.rebuilt; rep.healed = done.healed; st.healed += done.rebuilt;
             after = compare(runId, res.sheets);

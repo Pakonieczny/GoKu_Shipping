@@ -5426,16 +5426,17 @@ OPS.activityPut = op_activityPut; OPS.activityGet = op_activityGet; NO_GEN_BUMP.
 const COMPUTERS = "Charm_Nest_Computers";   // (not a sandboxed family: the sandbox neither asks nor reports (charm-nest-drift.js), and the sandbox reset has nothing of it to wipe)
 async function op_sheetRevsGet(b) {
   const runId = str(b.runId, 80); if (!isId(runId)) return { error: "bad run" };
-  const snap = await col(SHEETS).where("runId", "==", runId).select("layoutRev", "charmCount", "draft", "archived", "roseCutAt", "laserDoneAt", "fileBase", "setId", "updatedAt").limit(600).get();
+  const snap = await col(SHEETS).where("runId", "==", runId).select("layoutRev", "charmCount", "draft", "archived", "roseCutAt", "laserDoneAt", "fileBase", "setId", "updatedAt", "sheetIndex", "setSeq", "page", "solidIncluded").limit(600).get();
   const sheets = [];
-  for (const d of snap.docs) { const x = d.data() || {}; if (x.archived) continue; sheets.push({ id: d.id, rev: num(x.layoutRev), ch: num(x.charmCount), d: x.draft ? 1 : 0, cut: num(x.roseCutAt) || num(x.laserDoneAt) ? 1 : 0, fb: str(x.fileBase, 120), set: str(x.setId, 80), upd: ms(x.updatedAt) || 0 }); }
+  // (SHEETNAMES, Paul 20 Nov 2026: the Gold Filled sheets read other names on Michelle's computer: si / sq / pg / si0 are what a sheet's name is made of (charm-nest-sheet-name.js), so a computer can take them from the record)
+  for (const d of snap.docs) { const x = d.data() || {}; if (x.archived) continue; sheets.push({ id: d.id, rev: num(x.layoutRev), ch: num(x.charmCount), d: x.draft ? 1 : 0, cut: num(x.roseCutAt) || num(x.laserDoneAt) ? 1 : 0, fb: str(x.fileBase, 120), set: str(x.setId, 80), upd: ms(x.updatedAt) || 0, si: num(x.sheetIndex) || 0, sq: num(x.setSeq) || 0, pg: num(x.page) || 0, so: x.solidIncluded === false ? 0 : 1 }); }
   return { sheets, at: Date.now() };
 }
 async function op_computerReport(b) {
   const dev = str(b.dev, 60); if (!/^d[0-9a-z]{4,14}$/.test(dev)) return { error: "bad computer" };
   const r = b.report && typeof b.report === "object" ? b.report : {}, n = v => Math.max(0, Math.min(1000000, Math.round(num(v)))), ids = a => (Array.isArray(a) ? a : []).slice(0, 40).map(x => str(x, 90)).filter(Boolean), at = Date.now();
   const rec = { dev, by: str(b.by, 80), station: str(r.station, 60), role: ["carrier", "follower"].includes(r.role) ? r.role : "none", runId: str(r.runId, 80), build: str(r.build, 80), at,
-    checked: n(r.checked), backWaitN: n(r.backWaitN), backWaitMin: n(r.backWaitMin), behindN: n(r.behindN), behind: ids(r.behind), stillN: n(r.stillN), still: ids(r.still), healed: ids(r.healed), unverifiedN: n(r.unverifiedN), missingN: n(r.missingN), extraN: n(r.extraN), inHandN: n(r.inHandN), rebuilt: n(r.rebuilt),
+    checked: n(r.checked), backWaitN: n(r.backWaitN), backWaitMin: n(r.backWaitMin), behindN: n(r.behindN), behind: ids(r.behind), stillN: n(r.stillN), still: ids(r.still), healed: ids(r.healed), unverifiedN: n(r.unverifiedN), missingN: n(r.missingN), extraN: n(r.extraN), inHandN: n(r.inHandN), rebuilt: n(r.rebuilt), misnamedN: n(r.misnamedN), misnamed: ids(r.misnamed), renamed: n(r.renamed),
     mode: ["on", "report", "off"].includes(r.mode) ? r.mode : "on", feed: ["push", "polling"].includes(r.feed) ? r.feed : "", freezeMs: n(r.freezeMs), freezes: n(r.freezes), heapMB: n(r.heapMB), idleS: n(r.idleS), error: str(r.error, 160), note: str(r.note, 100), rv: str(r.rv, 160), cmp: str(r.cmp, 300), screen: str(r.screen, 4000), lines: n(r.lines), keysHash: str(r.keysHash, 40), rvOpen: ids(r.rvOpen), expireAt: new Date(at + 7 * 86400000) };
   await col(COMPUTERS).doc(dev).set(rec);
   return { ok: true, at };
