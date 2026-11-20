@@ -5436,7 +5436,7 @@ async function op_computerReport(b) {
   const r = b.report && typeof b.report === "object" ? b.report : {}, n = v => Math.max(0, Math.min(1000000, Math.round(num(v)))), ids = a => (Array.isArray(a) ? a : []).slice(0, 40).map(x => str(x, 90)).filter(Boolean), at = Date.now();
   const rec = { dev, by: str(b.by, 80), station: str(r.station, 60), role: ["carrier", "follower"].includes(r.role) ? r.role : "none", runId: str(r.runId, 80), build: str(r.build, 80), at,
     checked: n(r.checked), backWaitN: n(r.backWaitN), backWaitMin: n(r.backWaitMin), behindN: n(r.behindN), behind: ids(r.behind), stillN: n(r.stillN), still: ids(r.still), healed: ids(r.healed), unverifiedN: n(r.unverifiedN), missingN: n(r.missingN), extraN: n(r.extraN), inHandN: n(r.inHandN), rebuilt: n(r.rebuilt),
-    mode: ["on", "report", "off"].includes(r.mode) ? r.mode : "on", feed: ["push", "polling"].includes(r.feed) ? r.feed : "", freezeMs: n(r.freezeMs), freezes: n(r.freezes), heapMB: n(r.heapMB), idleS: n(r.idleS), error: str(r.error, 160), note: str(r.note, 100), rv: str(r.rv, 160), cmp: str(r.cmp, 300), screen: str(r.screen, 900), lines: n(r.lines), keysHash: str(r.keysHash, 40), rvOpen: ids(r.rvOpen), expireAt: new Date(at + 7 * 86400000) };
+    mode: ["on", "report", "off"].includes(r.mode) ? r.mode : "on", feed: ["push", "polling"].includes(r.feed) ? r.feed : "", freezeMs: n(r.freezeMs), freezes: n(r.freezes), heapMB: n(r.heapMB), idleS: n(r.idleS), error: str(r.error, 160), note: str(r.note, 100), rv: str(r.rv, 160), cmp: str(r.cmp, 300), screen: str(r.screen, 2500), lines: n(r.lines), keysHash: str(r.keysHash, 40), rvOpen: ids(r.rvOpen), expireAt: new Date(at + 7 * 86400000) };
   await col(COMPUTERS).doc(dev).set(rec);
   return { ok: true, at };
 }
@@ -5445,16 +5445,30 @@ async function op_computerList() {
   const computers = q.docs.map(d => { const x = d.data() || {}; delete x.expireAt; return { ...x, ageS: Math.max(0, Math.round((now - (num(x.at) || 0)) / 1000)) }; }).sort((a, b) => a.ageS - b.ageS);
   // (SCREENCHECK, Paul 20 Nov 2026: "you have access to the computers ... look at it yourself"): each computer's screen against the cloud's own Review (Charm_World/review): the same numbers, or which differ
   let cloud = null;
+  let lib = null; try { const sm = PREFIX ? null : await db.collection("Charm_World").doc("summary").get(); lib = sm && sm.exists ? (sm.data() || {}).library || null : null; } catch (_) { lib = null; }
   try { const rs = PREFIX ? null : await db.collection("Charm_World").doc("review").get(); const c = rs && rs.exists ? (rs.data() || {}).counts || {} : null;
     if (c) { const chips = (src, custom) => { const o = {}; for (const k of ["customOrder", "needResolution", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "heldOrder"]) { const v = k === "customOrder" && custom != null ? custom : src[k]; if (v) o[k] = v; } return o; };
-      cloud = { reviewBadge: num(c.reviewOrders), designBadge: c.designOrders == null ? null : num(c.designOrders), open: num(c.openCount), resolved: num(c.resolved), openChips: chips(c, num(c.customOrders)), doneChips: chips(c.resolvedChips || {}, null) }; } } catch (_) { cloud = null; }
+      cloud = { reviewBadge: num(c.reviewOrders), designBadge: c.designOrders == null ? null : num(c.designOrders), open: num(c.openCount), resolved: num(c.resolved), openChips: chips(c, num(c.customOrders)), doneChips: chips(c.resolvedChips || {}, null),
+        flow: c.flow || null, engraveOrders: c.engraveOrders == null ? null : num(c.engraveOrders), library: lib ? { sheets: num(lib.sheets), charms: num(lib.charms) } : null }; } } catch (_) { cloud = null; }
   if (cloud) for (const x of computers) {
     let sc = null; try { sc = x.screen ? JSON.parse(x.screen) : null; } catch (_) { sc = null; }
     if (!sc) continue;
     const diff = []; for (const k of ["reviewBadge", "designBadge", "open", "resolved"]) if (sc[k] != null && cloud[k] != null && +sc[k] !== +cloud[k]) diff.push(`${k} ${sc[k]} (cloud ${cloud[k]})`);
     for (const [kind, want] of [["openChips", cloud.openChips], ["doneChips", cloud.doneChips]]) { const have = sc[kind] || {}; for (const k of new Set(Object.keys(want).concat(Object.keys(have)))) if ((+have[k] || 0) !== (+want[k] || 0)) diff.push(`${kind === "openChips" ? "Open" : "Resolved"} ${k} ${+have[k] || 0} (cloud ${+want[k] || 0})`); }
-    x.screenSame = !diff.length; x.screenDiff = diff.slice(0, 12);
+    // (every tab: the rail's steps, the Design & Engrave tab's orders, the Library's totals)
+    if (cloud.flow && sc.flow) for (const k of Object.keys(cloud.flow)) if ((+sc.flow[k] || 0) !== (+cloud.flow[k] || 0)) diff.push(`rail ${k} ${+sc.flow[k] || 0} (cloud ${+cloud.flow[k] || 0})`);
+    if (cloud.engraveOrders != null && sc.engrave && sc.engrave.orders != null && +sc.engrave.orders !== cloud.engraveOrders) diff.push(`Design & Engrave orders ${sc.engrave.orders} (cloud ${cloud.engraveOrders})`);
+    if (cloud.library && sc.library) for (const k of ["sheets", "charms"]) if (sc.library[k] != null && +sc.library[k] !== cloud.library[k]) diff.push(`Library ${k} ${sc.library[k]} (cloud ${cloud.library[k]})`);
+    x.screenSame = !diff.length; x.screenDiff = diff.slice(0, 24);
   }
+  // (what the cloud does not count itself, the screens are compared with each other: every computer seen in the last 10 minutes, each field that is not the same on all of them)
+  try {
+    const recent = computers.filter(x => x.ageS < 600 && x.screen).map(x => { let sc = null; try { sc = JSON.parse(x.screen); } catch (_) { sc = null; } return sc ? { x, sc } : null; }).filter(Boolean);
+    const flat = (o, pre, out) => { for (const [k, v] of Object.entries(o || {})) { if (v && typeof v === "object" && !Array.isArray(v)) flat(v, pre + k + ".", out); else out[pre + k] = v; } return out; };
+    const fl = recent.map(e => flat(e.sc, "", {})), keys = new Set(fl.flatMap(f => Object.keys(f))), apart = [];
+    for (const k of keys) { const vals = fl.map(f => (k in f ? JSON.stringify(f[k]) : "—")); if (new Set(vals).size > 1) apart.push(k + ": " + recent.map((e, i) => `${e.x.by || e.x.dev} ${vals[i]}`).join(" / ")); }
+    for (const e of recent) e.x.screensApart = apart.slice(0, 30);
+  } catch (_) { /* the comparison with the cloud stands */ }
   return { computers, at: now, cloudScreen: cloud };
 }
 OPS.sheetRevsGet = op_sheetRevsGet; OPS.computerReport = op_computerReport; OPS.computerList = op_computerList; ["sheetRevsGet", "computerReport", "computerList"].forEach(op => NO_GEN_BUMP.add(op));
