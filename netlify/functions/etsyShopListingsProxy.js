@@ -117,8 +117,6 @@ async function fetchEtsy(url, headers, ctx) {
 }
 
 exports.handler = async function handler(event) {
-  // ETSY PAUSE 2026-11-20 (daily limit hit): refuse SKU-page requests before any Etsy call. Delete this block to restore.
-  { const _hd = (event && event.headers) || {}; const _h = String(_hd["x-forwarded-host"] || _hd.host || "").toLowerCase(); const _o = String(_hd.origin || _hd.referer || "").toLowerCase(); if (_h.startsWith("sku.goldenspike.app") || _o.includes("sku.goldenspike.app") || _o.includes("/sku_list")) return { statusCode: 503, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Retry-After": "86400" }, body: JSON.stringify({ ok: false, error: "etsy_paused", message: "Etsy access is paused for the SKU page (daily limit)." }) }; }
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: CORS, body: "ok" };
   }
