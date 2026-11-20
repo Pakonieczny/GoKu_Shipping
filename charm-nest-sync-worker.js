@@ -73,7 +73,7 @@
   'use strict';
   const V = 1;
   const PACE = { active: 3000, quiet: 15000, idle: 60000, activeFor: 120000, quietFor: 600000, gap: 600, failMax: 60000, verifyEvery: 600000, nudgeGap: 250, liveFor: 150000, fetchEvery: 30000, watchFor: 180000, cursorFor: 1800000, safety: 600000, watchNet: 60000, pushBeat: 60000 };
-  const KIND = /^[strcpxomadg*]$/;   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): g, a store every computer shares (charm-nest-cloud-share.js) and the Nest tray   // (d: the Orders head's sales day counts, SAL1)
+  const KIND = /^[strcpxomadgw*]$/;   // (CLOUDWORLD, Paul 20 Nov 2026: w, the cloud world was built again: charm-nest-cloud-world.js)   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): g, a store every computer shares (charm-nest-cloud-share.js) and the Nest tray   // (d: the Orders head's sales day counts, SAL1)
   const doc = root.document || null;
   const now = () => Date.now();
   const rand = () => Math.random().toString(36).slice(2, 10) + now().toString(36).slice(-4);

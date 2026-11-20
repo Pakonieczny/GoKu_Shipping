@@ -683,7 +683,8 @@ const REV_CAP = 1000, REV_TOUCHED = Symbol("revTouched");   // (FEED, 28 Oct 202
    '<kind>:*' says "some of this kind, not known which" (an op that may move placements and names no order is p:*, as the placement counter moves for it);
    '*' stays "not known at all". The Library's readers ask about their own kinds only (revQuiet, localAsk): a pool row moving costs them one read more, never
    a full answer. One bumpRev per op, with every name it touched. */
-const FEED_KEY = /^(?:[strcpxomadg]:(?:[\w\-]{4,80}|\*)|\*)$/;   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud" / "Make Firebase and Etsy cheaper without losing any real-time function"): g:<name> a shared store (op_sharePut) or the Nest tray (g:tray)
+const FEED_KEY = /^(?:[strcpxomadgw]:(?:[\w\-]{4,80}|\*)|\*)$/;   // (CLOUDWORLD, Paul 20 Nov 2026: w:world, the cloud world was built again: _charmNestWorld.js)
+   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud" / "Make Firebase and Etsy cheaper without losing any real-time function"): g:<name> a shared store (op_sharePut) or the Nest tray (g:tray)
 let FEED_TOUCHED = new Set(), PLACE_QUIET = false;   // (PLACE_QUIET, OUTBOX: this request wrote nothing a placement answer reads: a sheet's own field patch, op_putSheet)   // (names touched by code that has no request body at hand, stamp's events: emptied at every request, as DONE_TOUCH)
 const feedTouch = keys => { for (const k of keys || []) if (FEED_KEY.test(String(k))) FEED_TOUCHED.add(String(k)); };
 /** The orders of pool ids ("rid_tid_copy") and receipt ids, named p:<order> (at most 300; more is p:*). */
@@ -735,7 +736,7 @@ function revTouch(b, keys) { if (!b || typeof b !== "object") return; const t = 
    An op's one bumpRev writes the shards its names fall in, side by side; op changes reads all four in one getAll. A shard that could not be written is
    best-effort, never the person's write (feedBump): its readers are sent to their own question for that kind (<kind>:*), as a count that moved without
    its list says, or, lost altogether, at the ten-minute check. */
-const FEED_SHARDS = [{ id: "lib", kinds: ["*"] }, { id: "p", kinds: ["p"] }, { id: "o", kinds: ["o"] }, { id: "x", kinds: ["x", "m", "a", "g"] }];
+const FEED_SHARDS = [{ id: "lib", kinds: ["*"] }, { id: "p", kinds: ["p"] }, { id: "o", kinds: ["o"] }, { id: "x", kinds: ["x", "m", "a", "g", "w"] }];
 const SHARD_CAP = { lib: REV_CAP, p: 1000, o: 1000, x: 300 };
 const shardOf = k => (k === "*" || "strc".includes(k[0]) ? "lib" : k[0] === "p" ? "p" : k[0] === "o" ? "o" : "x");
 const shardRef = id => (id === "lib" ? revRef() : PREFIX ? db.collection(PREFIX + SB_REV_COLL).doc("_feed_" + id) : db.collection(REV).doc("feed-" + id));   // (the sandbox's in Sandbox_Order_Rev, a family its reset wipes)
@@ -5435,7 +5436,7 @@ async function op_computerReport(b) {
   const r = b.report && typeof b.report === "object" ? b.report : {}, n = v => Math.max(0, Math.min(1000000, Math.round(num(v)))), ids = a => (Array.isArray(a) ? a : []).slice(0, 40).map(x => str(x, 90)).filter(Boolean), at = Date.now();
   const rec = { dev, by: str(b.by, 80), station: str(r.station, 60), role: ["carrier", "follower"].includes(r.role) ? r.role : "none", runId: str(r.runId, 80), build: str(r.build, 80), at,
     checked: n(r.checked), backWaitN: n(r.backWaitN), backWaitMin: n(r.backWaitMin), behindN: n(r.behindN), behind: ids(r.behind), stillN: n(r.stillN), still: ids(r.still), healed: ids(r.healed), unverifiedN: n(r.unverifiedN), missingN: n(r.missingN), extraN: n(r.extraN), inHandN: n(r.inHandN), rebuilt: n(r.rebuilt),
-    mode: ["on", "report", "off"].includes(r.mode) ? r.mode : "on", feed: ["push", "polling"].includes(r.feed) ? r.feed : "", freezeMs: n(r.freezeMs), freezes: n(r.freezes), heapMB: n(r.heapMB), idleS: n(r.idleS), error: str(r.error, 160), note: str(r.note, 100), rv: str(r.rv, 160), rvOpen: ids(r.rvOpen), expireAt: new Date(at + 7 * 86400000) };
+    mode: ["on", "report", "off"].includes(r.mode) ? r.mode : "on", feed: ["push", "polling"].includes(r.feed) ? r.feed : "", freezeMs: n(r.freezeMs), freezes: n(r.freezes), heapMB: n(r.heapMB), idleS: n(r.idleS), error: str(r.error, 160), note: str(r.note, 100), rv: str(r.rv, 160), cmp: str(r.cmp, 300), lines: n(r.lines), keysHash: str(r.keysHash, 40), rvOpen: ids(r.rvOpen), expireAt: new Date(at + 7 * 86400000) };
   await col(COMPUTERS).doc(dev).set(rec);
   return { ok: true, at };
 }
@@ -5445,6 +5446,39 @@ async function op_computerList() {
   return { computers, at: now };
 }
 OPS.sheetRevsGet = op_sheetRevsGet; OPS.computerReport = op_computerReport; OPS.computerList = op_computerList; ["sheetRevsGet", "computerReport", "computerList"].forEach(op => NO_GEN_BUMP.add(op));
+/* ── CLOUDWORLD (Paul, 20 Nov 2026: "Everything that was production related was supposed to be in the cloud ... Only the cloud can decide"; CLOUD-MIGRATION-EXECUTION.md
+   phases 1-2). The open order lines, read ONCE by the server (_charmNestWorld.js, built by charmNestWorld-background every 2 minutes and on worldBuild), and the
+   Review built from them. Production only for now.
+     worldGet { lines?, sinceAt?, cursor? }   the summary (counts, states, the open keys' hash, when), the Review (cards and counts) and the lease; with `lines`,
+                                              the line records: all of them (paged, `next`), or those written after sinceAt (the world's own `at`)
+     worldBuild { by, sweep? }                build now (a build already running builds again when it ends)                                               ── */
+const WORLD_COLL = "Charm_World", WORLD_LINES = "Charm_World_Lines";
+async function op_worldGet(b) {
+  if (PREFIX) return { error: "the cloud world is production only for now" };
+  const [sum, rev, lease] = await db.getAll(db.collection(WORLD_COLL).doc("summary"), db.collection(WORLD_COLL).doc("review"), db.collection(WORLD_COLL).doc("lease"));
+  const summary = sum.exists ? Object.assign({}, sum.data()) : null; if (summary) delete summary.sigs;
+  const W = require("./_charmNestWorld");
+  const out = { summary, review: rev.exists ? W.reviewOf(rev.data()) : null, lease: lease.exists ? (({ state, at, startedAt, endedAt, error, by, again }) => ({ state, at, startedAt, endedAt, error, by, again }))(lease.data()) : null, now: Date.now() };
+  if (!b.lines) return out;
+  const lines = [], since = num(b.sinceAt);
+  let q = since > 0 ? db.collection(WORLD_LINES).where("at", ">", since).orderBy("at") : db.collection(WORLD_LINES).orderBy(admin.firestore.FieldPath.documentId());
+  if (since <= 0 && b.cursor) q = q.startAfter(str(b.cursor, 80));
+  if (since > 0 && b.cursor) q = q.startAfter(num(b.cursor));
+  const snap = await q.limit(1500).get();
+  let used = 0, next = null;
+  for (const d of snap.docs) { const x = d.data(); if (since <= 0 && x.gone) continue; const n = String(x.data || "").length + 200; if (lines.length && used + n > ANSWER_BYTES) { next = since > 0 ? x.at : d.id; break; } lines.push(W.lineOf(x)); used += n; }
+  if (!next && snap.size === 1500) { const last = snap.docs[snap.docs.length - 1]; next = since > 0 ? last.data().at : last.id; }
+  return Object.assign(out, { lines, next });
+}
+async function op_worldBuild(b) {
+  if (PREFIX) return { error: "the cloud world is production only for now" };
+  const Lease = require("./_charmNestWorldLease"), got = await Lease.dispatch(db, str(b.by, 60) || "page", { sweep: !!b.sweep });
+  if (!got.nonce) return { ok: true, queued: true, state: got.state };
+  const fetch = require("node-fetch"), origin = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
+  const r = await fetch(`${String(origin).replace(/\/+$/, "")}/.netlify/functions/charmNestWorld-background`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nonce: got.nonce }) }).catch(e => ({ status: 599, e }));
+  return { ok: r.status < 400, started: true, status: r.status };
+}
+OPS.worldGet = op_worldGet; OPS.worldBuild = op_worldBuild; ["worldGet", "worldBuild"].forEach(op => NO_GEN_BUMP.add(op));
 /* (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"). The run is carried by ONE computer at a time, any computer: the run record's `carrier` { dev, by, at, since } says which, renewed by that computer every 20 s.
    runCarrier { runId, dev, by, take?, check? }: check only reads; the carrier itself renews it; another computer becomes the carrier when nobody carries it or the carrier has not been
    seen for 90 s (closed, asleep, offline), or when a person there chose to take it over (take). → { ok, mine, alive, carrier } */
@@ -6328,6 +6362,8 @@ function feedHeader(keys, counts) {
 exports.ops = OPS;   // the connections check runs the same queries the app runs
 exports.engApprovedByBack = engApprovedByBack;   // (ENGLABEL; tests: tests/charm-nest/eng-label.cjs)
 exports.feedStats = feedStats;   // (FEED: bumpRev's counts, for the contention test)
+/** CLOUDWORLD: the world was built again (charmNestWorld-background.js): every page that follows w:world reads it. Production only. */
+exports.worldBump = async () => { PREFIX = ""; FEED_TOUCHED = new Set(); return feedBump(["w:world"]); };
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: require("./_charmNestAuth").CORS, body: "" };
   // SAL1: Etsy's order.paid webhook (no passcode: Etsy signs it instead; _etsyOrderWebhook.js verifies the signature before anything is read or written)
