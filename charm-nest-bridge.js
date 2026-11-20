@@ -23589,6 +23589,10 @@ const Review = window.Review = (() => {
     let finished = cl.done.concat(cl.sent.filter(it => !it.foldedInto), clLaid, answeredCards, releasedNow).sort((a, b) => doneAt(b) - doneAt(a));
     // (CLOUDWORLD: Resolved is the cloud's Resolved: a card shows here only when the cloud's Review holds it)
     if (cloudRv && Array.isArray(cloudRv.resolvedKeys)) { const rk = new Set(cloudRv.resolvedKeys); finished = finished.filter(it => rk.has(it.key)); }
+    /* (CLOUDWORLD, Paul 20 Nov 2026: "The sorting of these orders doesn't match under the review tab"): every card is timed by the cloud's own card (charm-nest-review-core.js `at`: its latest activity, from the shared data), so Newest first,
+       Oldest first and the date chips list the same cards in the same order on every computer; a computer's own touches no longer move a card. Without the cloud's Review each card is timed here, as before. */
+    { const atMap = cloudRv && Array.isArray(cloudRv.cards) ? (cloudRv._atMap || (cloudRv._atMap = new Map(cloudRv.cards.filter(c => c && c.key).map(c => [String(c.key), +c.at || 0])))) : null;
+      for (const it of all.concat(clWait, finished)) { if (!it || typeof it !== "object") continue; const t = atMap ? atMap.get(String(it.key)) || 0 : 0; if (t > 0 || it.cloudAt) it.cloudAt = t > 0 ? t : 0; } }
     const alive=new Set(all.concat(cl.open, cl.done, cl.sent).map(it=>it.key));for(const key of reviewRows.keys())if(!alive.has(key))reviewRows.delete(key);
     // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through
     const byKind = new Map(); for (const it of all) byKind.set(chipIt(it), (byKind.get(chipIt(it)) || 0) + 1);
