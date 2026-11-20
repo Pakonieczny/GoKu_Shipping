@@ -5,7 +5,7 @@
  *  dispatched by the one running when it ends, so a change is never left out.                                                                   */
 "use strict";
 const crypto = require("crypto");
-const WORLD = "Charm_World", STALE_MS = 14 * 60000, DISPATCH_STALE_MS = 2 * 60000;
+const WORLD = "Charm_World", STALE_MS = 14 * 60000, DISPATCH_STALE_MS = 2 * 60000, MIN_GAP_MS = 30000;   // (MIN_GAP_MS: builds start at most every 30 s; a change meanwhile is built right after)
 
 async function dispatch(db, by, opts = {}) {
   const ref = db.collection(WORLD).doc("lease"), now = Date.now(), nonce = crypto.randomBytes(12).toString("hex");
@@ -13,6 +13,7 @@ async function dispatch(db, by, opts = {}) {
     const s = await tx.get(ref), d = s.exists ? s.data() || {} : {};
     const busy = (d.state === "running" && now - (+d.startedAt || +d.at || 0) < STALE_MS) || (d.state === "dispatched" && now - (+d.at || 0) < DISPATCH_STALE_MS);
     if (busy) { tx.set(ref, { again: true, againBy: String(by || "").slice(0, 60), againAt: now }, { merge: true }); return { ok: true, queued: true, state: d.state }; }
+    if (opts.change && now - (+d.at || 0) < MIN_GAP_MS) { tx.set(ref, { again: true, againBy: String(by || "").slice(0, 60), againAt: now }, { merge: true }); return { ok: true, queued: true, state: "soon", wait: MIN_GAP_MS - (now - (+d.at || 0)) }; }
     tx.set(ref, { nonce, state: "dispatched", at: now, by: String(by || "").slice(0, 60), sweep: !!opts.sweep, again: false, startedAt: null, endedAt: null, error: null });
     return { ok: true, nonce };
   });
@@ -25,7 +26,7 @@ async function begin(db, nonce) {
     const s = await tx.get(ref), d = s.exists ? s.data() || {} : {};
     if (!nonce || d.nonce !== nonce || d.state !== "dispatched") return null;
     tx.set(ref, { state: "running", startedAt: now }, { merge: true });
-    return { sweep: !!d.sweep, by: d.by || "" };
+    return { sweep: !!d.sweep, by: d.by || "", startedAt: now };
   });
 }
 
@@ -41,4 +42,4 @@ async function end(db, nonce, result, error) {
 
 async function state(db) { const s = await db.collection(WORLD).doc("lease").get(); return s.exists ? s.data() : null; }
 
-module.exports = { dispatch, begin, end, state, WORLD };
+module.exports = { dispatch, begin, end, state, WORLD, MIN_GAP_MS };
