@@ -5482,7 +5482,9 @@ OPS.sheetRevsGet = op_sheetRevsGet; OPS.computerReport = op_computerReport; OPS.
    Etsy switch (_etsyStop.js, EtsyApi_Config/stop). etsyStopGet → the switch; etsyResume { by } → turns it off for every function, station and computer. */
 async function op_etsyStopGet() { return { ok: true, ...(await EtsyStop.state(true)) }; }
 async function op_etsyResume(b) { const by = str(b.by, 80) || "someone"; const st = await EtsyStop.resume(by); console.warn(`[charmNestLibrary] Resume Etsy pressed by ${by}`); return { ok: true, ...st }; }
-OPS.etsyStopGet = op_etsyStopGet; OPS.etsyResume = op_etsyResume; ["etsyStopGet", "etsyResume"].forEach(op => NO_GEN_BUMP.add(op));
+// (Paul, 20 Nov 2026: "I want you to stop it now. Don't wait."): Stop Etsy, a person's press, turns the same switch on at once, as a 429 does
+async function op_etsyStopNow(b) { const by = str(b.by, 80) || "someone"; const st = await EtsyStop.stop({ fn: "Stop Etsy", path: "", detail: `Stopped by ${by} in Settings` }); console.warn(`[charmNestLibrary] Stop Etsy pressed by ${by}`); return { ok: true, ...st }; }
+OPS.etsyStopGet = op_etsyStopGet; OPS.etsyResume = op_etsyResume; OPS.etsyStopNow = op_etsyStopNow; ["etsyStopGet", "etsyResume", "etsyStopNow"].forEach(op => NO_GEN_BUMP.add(op));
 /* ── CLOUDWORLD (Paul, 20 Nov 2026: "Everything that was production related was supposed to be in the cloud ... Only the cloud can decide"; CLOUD-MIGRATION-EXECUTION.md
    phases 1-2). The open order lines, read ONCE by the server (_charmNestWorld.js, built by charmNestWorld-background every 2 minutes and on worldBuild), and the
    Review built from them. Production only for now.
