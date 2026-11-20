@@ -778,7 +778,7 @@ function real() {
         get: (path, query) => E.etsyFetch(path, { query }),
         put: (path, query, body) => E.etsyFetch(path, { method: "PUT", query, body }),
         scopes: async () => {   // POST /v3/application/scopes (form body token=<the access token>): what the connection may do. The token goes to Etsy only, never into an answer or a log.
-          const fetch = require("node-fetch"), token = await E.getValidEtsyAccessToken(), secret = process.env.CLIENT_SECRET || process.env.ETSY_SHARED_SECRET;
+          const fetch = require("./_etsyStop").guard(require("node-fetch"), "_charmNestEtsyZodiac"), token = await E.getValidEtsyAccessToken(), secret = process.env.CLIENT_SECRET || process.env.ETSY_SHARED_SECRET;
           const t = meter.bump(SITE + ".scopes");
           let res;
           try { res = await fetch("https://api.etsy.com/v3/application/scopes", { method: "POST", headers: { "x-api-key": process.env.CLIENT_ID + ":" + secret, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token }).toString(), timeout: SCOPES_MS }); }
@@ -790,7 +790,7 @@ function real() {
         }
       },
       kick: async ({ listingId, writeId }) => {   // the background function gets 15 minutes; it answers 202 at once. It sends nothing unless its own transaction (writing -> putting, this writeId) wins.
-        const fetch = require("node-fetch"), base = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
+        const fetch = require("./_etsyStop").guard(require("node-fetch"), "_charmNestEtsyZodiac"), base = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
         const res = await fetch(base + "/.netlify/functions/" + KICK_FN, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listingId, writeId }), timeout: 10000 });
         if (!(res.status === 202 || res.status === 200)) throw new Error("the background function answered " + res.status);
       }

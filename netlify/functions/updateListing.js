@@ -1,5 +1,5 @@
 // netlify/functions/updateListing.js
-const fetch = require('node-fetch');
+const fetch = require("./_etsyStop").guard(require("node-fetch"), "updateListing");
 
 exports.handler = async function (event) { 
 const corsHeaders = {

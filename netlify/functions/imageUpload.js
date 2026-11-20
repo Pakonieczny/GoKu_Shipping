@@ -3,7 +3,7 @@
 const formidable = require("formidable");
 const { Readable } = require("stream");
 const FormData = require("form-data");
-const fetch = require("node-fetch");
+const fetch = require("./_etsyStop").guard(require("node-fetch"), "imageUpload");
 const fs = require("fs");
 
 exports.handler = async function (event, context) {

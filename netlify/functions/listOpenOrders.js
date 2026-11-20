@@ -10,6 +10,8 @@ let fetchFn = global.fetch;
 if (!fetchFn) {
   try { fetchFn = require("node-fetch"); } catch (_) {}
 }
+// ETSYSTOP: every Etsy call stops at the shop's one switch (_etsyStop.js) once Etsy has answered 429
+if (fetchFn) fetchFn = require("./_etsyStop").guard(fetchFn, "listOpenOrders");
 
 exports.handler = async (event) => {
   try {

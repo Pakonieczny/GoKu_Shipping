@@ -1,5 +1,5 @@
 // netlify/functions/etsyListingGetProxy.js
-const fetch = require("node-fetch");
+const fetch = require("./_etsyStop").guard(require("node-fetch"), "etsyListingGetProxy");
 
 exports.handler = async (event) => {
   try {

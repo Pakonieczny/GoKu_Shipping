@@ -122,7 +122,7 @@
 
 "use strict";
 
-const fetch = require("node-fetch");
+const fetch = require("./_etsyStop").guard(require("node-fetch"), "etsyMailReceiptsMirrorCron");
 const admin = require("./firebaseAdmin");
 const meter = require("./_etsyApiMeter");
 // v5.1 — Use the shared OAuth helper from _etsyMailEtsy.js for token

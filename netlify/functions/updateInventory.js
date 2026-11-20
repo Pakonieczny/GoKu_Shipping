@@ -1,4 +1,4 @@
-const fetch = require("node-fetch");
+const fetch = require("./_etsyStop").guard(require("node-fetch"), "updateInventory");
 
 // Helper: Convert a price field into a float value
 function transformPrice(priceField) {

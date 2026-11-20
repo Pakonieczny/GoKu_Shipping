@@ -54,6 +54,7 @@ const EngravingSeals = require("../../charm-nest-engraving-seals.js");
 const PoolPieces = require("../../charm-nest-pool-pieces.js");   // the four fields a piece of a mismatched pair carries (side, bodyIndex, groupKey, groupSize) and how an old row is read
 // the one cloud rule for "is this piece on a sheet" (what is authoritative, the take-off in one commit, the repair on read, placementRev)
 const Placement = require("./_charmNestPlacement");
+const EtsyStop = require("./_etsyStop");   // (ETSYSTOP: the shop's one Etsy switch; read and resumed from Settings)
 const Mutations = require("./_charmNestMutations");   // OUTBOX (Paul, 28 Oct 2026): a press sent twice from the page's outbox is written once (its mutation id), and the same field written by two people: the later wins, both are told
 const Push = require("./_charmNestPush");   // PUSH (Paul, 28 Oct 2026: "a change made on one computer to appear on the others at once"): after every bump of the feed the counter a computer listens to moves (Charm_Nest_Push/counter, Sandbox_ in the sandbox): see bumpRev
 const MID_READ = /^(get|list|ping|lookup|history|check)|(Get|List|Check|Status|Preview|Read|Url|Info)$/;   // (the reads, by the names the page's api() knows them: a mid on one of them is ignored)
@@ -5476,6 +5477,12 @@ async function op_computerList() {
   return { computers, at: now, cloudScreen: cloud };
 }
 OPS.sheetRevsGet = op_sheetRevsGet; OPS.computerReport = op_computerReport; OPS.computerList = op_computerList; ["sheetRevsGet", "computerReport", "computerList"].forEach(op => NO_GEN_BUMP.add(op));
+/* ETSYSTOP (Paul, 20 Nov 2026: "Once a 429 is reached the application must stop all work related to Etsy" … "a manual reset somewhere in the
+   settings … I should be able to select this on my computer and then all the other computers should comply through the cloud"): the shop's one
+   Etsy switch (_etsyStop.js, EtsyApi_Config/stop). etsyStopGet → the switch; etsyResume { by } → turns it off for every function, station and computer. */
+async function op_etsyStopGet() { return { ok: true, ...(await EtsyStop.state(true)) }; }
+async function op_etsyResume(b) { const by = str(b.by, 80) || "someone"; const st = await EtsyStop.resume(by); console.warn(`[charmNestLibrary] Resume Etsy pressed by ${by}`); return { ok: true, ...st }; }
+OPS.etsyStopGet = op_etsyStopGet; OPS.etsyResume = op_etsyResume; ["etsyStopGet", "etsyResume"].forEach(op => NO_GEN_BUMP.add(op));
 /* ── CLOUDWORLD (Paul, 20 Nov 2026: "Everything that was production related was supposed to be in the cloud ... Only the cloud can decide"; CLOUD-MIGRATION-EXECUTION.md
    phases 1-2). The open order lines, read ONCE by the server (_charmNestWorld.js, built by charmNestWorld-background every 2 minutes and on worldBuild), and the
    Review built from them. Production only for now.

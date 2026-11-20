@@ -28,7 +28,7 @@
 
 "use strict";
 
-const fetch     = require("node-fetch");
+const fetch     = require("./_etsyStop").guard(require("node-fetch"), "etsyMailListingCreator-background");
 const FormData  = require("form-data");
 
 const admin     = require("./firebaseAdmin");
