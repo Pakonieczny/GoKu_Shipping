@@ -1170,7 +1170,7 @@ async function op_putSheet(b) {
       const was = SetEdit.inSetOf(old), want = SetEdit.inSetOf({ setId: mine("setId") ? doc.setId : old.setId, draft: mine("draft") ? doc.draft : old.draft, solidIncluded: mine("solidIncluded") ? doc.solidIncluded : old.solidIncluded });
       const differs = was !== want || (!!was && ((mine("sheetIndex") && num(doc.sheetIndex) !== num(old.sheetIndex)) || (mine("setSeq") && num(doc.setSeq) !== num(old.setSeq))));
       // (KEEPINSET, Paul 20 Nov 2026: "Back in the set"): a sheet the owner put back in its set stays there whatever a page's save says (a page on older code wrote it as a draft, half out of its set)
-      if (differs && old.keepInSet && old.keepInSet.setId && old.keepInSet.setId === was) for (const k of ["setId", "setSeq", "draft", "solidIncluded", "sheetIndex"]) delete doc[k];
+      if (differs && ((old.keepInSet && old.keepInSet.setId && old.keepInSet.setId === was) || (old.ownerSet && (old.ownerSet.setId || null) === (was || null)))) for (const k of ["setId", "setSeq", "draft", "solidIncluded", "sheetIndex"]) delete doc[k];   // (OWNEROVERRIDE: the owner's set change stands too)
       if (differs) {
         const ids = [...new Set([was, want].filter(Boolean))].filter(isId), sets = ids.length ? await txGetAll(tx, ids.map(id => col(SETS).doc(id))) : [];
         if (sets.some(d => d.exists && SetEdit.committedSet(d.data()))) for (const k of ["setId", "setSeq", "draft", "solidIncluded", "sheetIndex"]) delete doc[k];
@@ -3282,7 +3282,7 @@ async function op_setUpdate(b) {
   let wrote = true;
   await db.runTransaction(async tx=>{
     wrote = true;
-    const old=await tx.get(ref),patch=await withoutTakenOff(tx,old.exists?old.data():null,await keepListed(tx,id,old.exists?old.data():null,keepEditedSheets(old.exists?old.data():null,withoutCleared(old.exists?old.data():null,b.patch || {})))),next={...(old.exists?old.data():{}),...patch};
+    const old=await tx.get(ref),patch=await withoutTakenOff(tx,old.exists?old.data():null,await keepListed(tx,id,old.exists?old.data():null,await withoutOwnerOut(tx,id,keepEditedSheets(old.exists?old.data():null,withoutCleared(old.exists?old.data():null,b.patch || {}))))),next={...(old.exists?old.data():{}),...patch};
     // the numbers a set has given out (`sheetNos`, the highest of each metal) only go up: a page holding an older copy cannot lower them (charm-nest-sheet-name.js)
     // (SETSTAYSCLOSED, Paul 16 Nov 2026: "why this sheet was allowed to be added to an existing set"): the time a set formed is kept for good: the earliest one wins, and no page takes it back
     { const was=old.exists?+old.data().formedAt||0:0, now=+patch.formedAt||0; if(was>0||now>0){ const keep=was>0&&now>0?Math.min(was,now):(was||now); patch.formedAt=keep; next.formedAt=keep; } else delete patch.formedAt; }
@@ -3348,6 +3348,18 @@ function setSame(old, doc) {
    page whose own write of the sheet was refused) took the sheet off the set's list, labels and order lines while the sheet's record kept it in the set. A sheet the saved list leaves out stays
    listed, with its labels and its pieces in the order lines, while its own record says it is in this set; a sheet that really leaves is saved out of the set first (the page's assembly writes its
    draft before the set, tendSet; the Library's set edit writes both itself), so it goes as before. Only the sheets the save leaves out are read. */
+/** (OWNEROVERRIDE) A sheet the owner took out of this set (its record's ownerSet names another set or none) is not put back by a page's older list of the set's sheets. */
+async function withoutOwnerOut(tx, setId, patch) {
+  if (!patch || !Array.isArray(patch.sheetIds) || !patch.sheetIds.length) return patch;
+  const ids = [...new Set(patch.sheetIds.map(String))].filter(isId).slice(0, 60);
+  if (!ids.length) return patch;
+  const docs = await txGetAll(tx, ids.map(i => col(SHEETS).doc(i)), ["ownerSet"]);
+  const out = new Set(docs.filter(d => d.exists && d.data().ownerSet && (d.data().ownerSet.setId || null) !== setId).map(d => d.id));
+  if (!out.size) return patch;
+  const next = Object.assign({}, patch, { sheetIds: patch.sheetIds.filter(i => !out.has(String(i))) });
+  if (Array.isArray(patch.labelFiles)) next.labelFiles = patch.labelFiles.filter(f => !(f && out.has(String(f.sheetId))));
+  return next;
+}
 async function keepListed(tx, setId, old, patch) {
   if (!old || !patch || !Array.isArray(patch.sheetIds) || !Array.isArray(old.sheetIds)) return patch;
   const now = new Set(patch.sheetIds.map(String)), out = [...new Set(old.sheetIds.map(String))].filter(i => !now.has(i) && isId(i));
@@ -6211,7 +6223,10 @@ async function applySetMembers(step, by, device, via) {
   const near = (await sharedSheets(moves.map(m => m.id))).sheets.map(s => s.id).filter(id => !seen.has(id)).slice(0, 400);
   const engravings = await joinEngravings(moves);
   // (SETFIX B, Paul 17 Oct 2026) a move into a FORMED set that is not committed (a committed set's edit is SetEdit's rule, below): refused when the set would then break the owner's rules
-  for (const to of [...new Set(moves.filter(m => m.to).map(m => m.to))]) {
+  // (OWNEROVERRIDE, Paul 20 Nov 2026: "These are my fucking rules … you override them when I tell you"): the owner's own change of a set's sheets goes through whatever the set rules say;
+  //  it is written in the set's and the sheets' history, and the sheets carry ownerSet so no page's later save puts them back where they were
+  const override = step.override === true;
+  if (!override) for (const to of [...new Set(moves.filter(m => m.to).map(m => m.to))]) {
     const r = await joinRulesFor(to, moves.filter(m => m.to === to).map(m => m.id), { rules: JOIN_RULES_AT_WRITE });
     if (!r.ok) return joinRefusal(r);
   }
@@ -6235,7 +6250,7 @@ async function applySetMembers(step, by, device, via) {
     let v = verify();
     // a refusal for shared orders says WHAT the pieces are (a left and a right earring, two earrings, n discs): one small read of at most 24 pool rows, only here (never on a move that goes through)
     if (!v.ok && v.shared && v.shared.length) { const meta = await pieceMeta(tx, v.shared); if (meta) v = verify(meta); }
-    if (!v.ok) return { error: SetEdit.sayWhy(v), status: 409, reasons: v.reasons, shared: v.shared };
+    if (!v.ok && !override) return { error: SetEdit.sayWhy(v), status: 409, reasons: v.reasons, shared: v.shared };
     if (v.noop) return { ok: true, noop: true, changed: [], at };
     // the pieces' SKUs, for the order lines of the sheets that join (one small read of their pool rows)
     const joinIds = moves.filter(m => m.to && SetEdit.inSetOf(rec.get(m.id)) !== m.to).map(m => m.id), skus = {}, sides = {};
@@ -6297,6 +6312,7 @@ async function applySetMembers(step, by, device, via) {
       // (current: COST Oct 2026 — a sheet moved into or out of a set may be current again, CURRENT_MARK; one that is not is cleared by the next read)
       const patch = { ...view, flowHistory: history.slice(-100), current: true, updatedAt: FV.serverTimestamp() };
       if (hold !== undefined) patch.laserHold = hold; else delete patch.laserHold;
+      if (override) { patch.ownerSet = { setId: m.to || null, from: from || null, by, at }; if (!m.to) patch.keepInSet = null; }
       tx.set(col(SHEETS).doc(m.id), patch, { merge: true });
       membership.sheets.push({ id: m.id, patch: view, ...(!m.to && from ? { fromSetId: from } : {}), ...(m.run ? { run: true } : {}) });
       changed.push({ id: m.id, to: m.to, from, d: Object.assign({}, r, view), was: r });
