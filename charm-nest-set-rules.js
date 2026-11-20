@@ -301,7 +301,11 @@
   }
   /** The sheets a set holds that no order ties to its other sheets and that it could do without (SETRULE): it stays valid, a completed GF and a completed SS sheet, without them.
       The latest units leave first, so what is left is the smallest set the earliest sheets make. 10K, 14K and Rose Gold sheets are a person's choice and never count. [] for a minimal set. */
+  const MIN_IS_FLOOR = true;   // (MINFLOOR)
   function surplus(setSheets, shareGroups) {
+    // (MINFLOOR, Paul 20 Nov 2026: "Who gives a fuck if it's bigger than the minimum the minimum is so a sheet of a set of sheets conform … just because it's bigger than a minimum doesn't
+    //  make it wrong"): the minimum is a FLOOR, never a ceiling. No sheet is ever spare: nothing is refused, flagged, blocked from laser approval or taken out of a set for making it bigger
+    if (MIN_IS_FLOOR) return [];
     const units = unitsOf(list(setSheets).filter(Boolean), shareGroups); let keep = units.slice(); const out = [];
     for (const u of units.slice().reverse()) {
       if (!supplies(u, ['GF', 'SS'])) continue;
