@@ -443,5 +443,21 @@ const post = async (h, body, headers = {}) => h.handler({ httpMethod: 'POST', he
   let kis = (await db.collection('Charm_Nest_Sheets').doc('silver-kis1').get()).data(); assert.strictEqual(kis.draft, false); assert.strictEqual(kis.setId, 'set-kis-1'); assert.strictEqual(kis.keepInSet.by, 'Paul');
   r = await post(lib, { op: 'sheetKeepInSet', id: 'silver-kis1', setId: 'set-other', by: 'Paul' }); assert(r.body.error, 'a set that does not list it refuses');
   const SRk = require(path.join(__dirname, '../../charm-nest-set-rules.js')); assert.strictEqual(SRk.isPartial({ metal: 'silver', releaseFull: false, setId: 'set-kis-1', keepInSet: { setId: 'set-kis-1' } }), false, 'a kept sheet is not partial to the rules'); assert.strictEqual(SRk.isPartial({ metal: 'silver', releaseFull: false, setId: 'set-kis-1' }), true);
+  // OWNEROVERRIDE: the owner swaps a set's sheets against the rules in one change; a page's older list cannot put the taken-out sheet back
+  await db.collection('Charm_Nest_Runs').doc('run-ov').set({ runId: 'run-ov', status: 'stopped' });
+  await db.collection('Charm_Nest_Sets').doc('set-ov-1').set({ setId: 'set-ov-1', runId: 'run-ov', seq: 1, day: '2026-11-18', sheetIds: ['gold-ov1', 'gold-ov2'], status: 'awaiting review' });
+  await db.collection('Charm_Nest_Sheets').doc('gold-ov1').set({ id: 'gold-ov1', metal: 'gold', runId: 'run-ov', setId: 'set-ov-1', draft: false, releaseFull: true, sheetIndex: 1, poolIds: ['9000000001_1_1'], orders: ['9000000001'] });
+  await db.collection('Charm_Nest_Sheets').doc('gold-ov2').set({ id: 'gold-ov2', metal: 'gold', runId: 'run-ov', setId: 'set-ov-1', draft: false, releaseFull: true, sheetIndex: 2, poolIds: ['9000000002_1_1'], orders: ['9000000002'] });
+  await db.collection('Charm_Nest_Sheets').doc('silver-ov8').set({ id: 'silver-ov8', metal: 'silver', runId: 'run-ov', setId: null, draft: true, releaseFull: true, poolIds: ['9000000002_2_1'], orders: ['9000000002'] });
+  r = await post(lib, { op: 'flowApply', by: 'Paul', device: 'cloud', steps: [{ type: 'setMember', override: true, moves: [{ sheetId: 'gold-ov1', to: null }, { sheetId: 'silver-ov8', to: 'set-ov-1' }] }] });
+  assert(!r.body.error, 'the owner override goes through: ' + JSON.stringify(r.body).slice(0, 300));
+  let ov = (await db.collection('Charm_Nest_Sets').doc('set-ov-1').get()).data();
+  assert.deepStrictEqual(ov.sheetIds.slice().sort(), ['gold-ov2', 'silver-ov8'], 'the set holds GF 2 and SS 8: ' + JSON.stringify(ov.sheetIds));
+  const g1 = (await db.collection('Charm_Nest_Sheets').doc('gold-ov1').get()).data(), s8 = (await db.collection('Charm_Nest_Sheets').doc('silver-ov8').get()).data();
+  assert.strictEqual(g1.setId, null); assert.strictEqual(g1.ownerSet.setId, null); assert.strictEqual(s8.setId, 'set-ov-1'); assert.strictEqual(s8.draft, false); assert.strictEqual(s8.ownerSet.setId, 'set-ov-1');
+  r = await post(lib, { op: 'setUpdate', id: 'set-ov-1', patch: { sheetIds: ['gold-ov1', 'gold-ov2'] } });
+  ov = (await db.collection('Charm_Nest_Sets').doc('set-ov-1').get()).data();
+  assert(!ov.sheetIds.includes('gold-ov1') && ov.sheetIds.includes('silver-ov8'), 'an older page list neither puts GF 1 back nor drops SS 8: ' + JSON.stringify(ov.sheetIds));
+  r = await post(lib, { op: 'flowApply', by: 'Paul', device: 'cloud', steps: [{ type: 'setMember', moves: [{ sheetId: 'gold-ov1', to: 'set-ov-1' }] }] });
   console.log('functions OK ·', store.size, 'docs ·', blobs.size, 'blobs · server job placed', solved.placements.length, 'in', solved.trials, 'trial(s)');
 })().catch(e => { console.error(e); process.exit(1); });
