@@ -23580,9 +23580,15 @@ const Review = window.Review = (() => {
     const customAsk = byKind.get("customOrder") || 0, customN = customAsk + clWait.length;
     if (customN) byKind.set("customOrder", customN); else byKind.delete("customOrder");
     const doneKind = new Map(); for (const it of finished) doneKind.set(chipIt(it), (doneKind.get(chipIt(it)) || 0) + 1);
-    const kinds = doneMode ? doneKind : byKind;
+    /* CLOUDWORLD (Paul, 20 Nov 2026, Michelle's computer: "when I'm clicking through those tabs under review ... Resolved, Custom orders, needs resolution and held. They changed their quantities"): the numbers this bar
+       PAINTS (Open, Resolved and every chip of both) are the cloud's own counts (charm-nest-review-core.js, Charm_World/review), the same at every redraw and on every computer. They were counted again at each press from
+       the cards this page held at that moment, filtered by the cloud: a computer still filling its cards in painted other numbers from one press to the next. The cards listed under a chip are still this page's. */
+    const cc = cloudRv && cloudRv.counts && cloudRv.counts.openCount != null ? cloudRv.counts : null;
+    const shownOpenKind = cc ? new Map(ORDER.map(k => [k, k === "customOrder" ? +cc.customOrders || 0 : +cc[k] || 0]).filter(([, n]) => n > 0)) : byKind;
+    const shownDoneKind = cc ? new Map(ORDER.map(k => [k, +((cc.resolvedChips || {})[k]) || 0]).filter(([, n]) => n > 0)) : doneKind;
+    const kinds = doneMode ? shownDoneKind : shownOpenKind;
     // a filter emptied under Open goes back to Everything; under Resolved it is only not shown, so Open keeps it
-    if (!doneMode && RV.filter && !byKind.has(RV.filter)) RV.filter = null;
+    if (!doneMode && RV.filter && !shownOpenKind.has(RV.filter)) RV.filter = null;
     const f = RV.filter && kinds.has(RV.filter) ? RV.filter : null;
     // what asks nothing comes after what does, in Everything as under Custom Orders; one just completed there stays in
     // place while its card offers Undo (not counted as open)
@@ -23615,12 +23621,12 @@ const Review = window.Review = (() => {
     const chip = (id, label, n, cls, title) => `<button class="egTab${(f || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
     // Open or Resolved first, then the filters: the switch holds for every chip, and pressing it shows all it holds
     // (one Resolved count: the cards listed under it, an order in both kinds counted once; "Resolved", RVRESOLVED: Paul, 18 Oct 2026)
-    const openN = all.length + clWait.length;
-    screenNow = { at: Date.now(), open: openN, resolved: finished.length, openChips: Object.fromEntries(ORDER.filter(k => byKind.has(k)).map(k => [k, k === "customOrder" ? customN : byKind.get(k)])), doneChips: Object.fromEntries(ORDER.filter(k => doneKind.has(k)).map(k => [k, doneKind.get(k)])) };
+    const openN = cc ? +cc.openCount || 0 : all.length + clWait.length, resolvedN = cc ? +cc.resolved || 0 : finished.length, customShown = cc ? shownOpenKind.get("customOrder") || 0 : customN;
+    screenNow = { at: Date.now(), open: openN, resolved: resolvedN, openChips: Object.fromEntries(ORDER.filter(k => shownOpenKind.has(k)).map(k => [k, k === "customOrder" ? customShown : shownOpenKind.get(k)])), doneChips: Object.fromEntries(ORDER.filter(k => shownDoneKind.has(k)).map(k => [k, shownDoneKind.get(k)])) };
     if (opts.count) return screenNow;
-    const seg = `<span class="rvSeg${f ? "" : " all"}" role="group" aria-label="Open or resolved"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="everything that still waits on a person">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything resolved: orders released to the nesting queue (Release Hold), orders whose QR label was printed or that were completed by hand (print again or reopen), custom orders sent to the sheets or on their way to the laser, and every decision answered">Resolved<b>${finished.length}</b></button></span>`;
+    const seg = `<span class="rvSeg${f ? "" : " all"}" role="group" aria-label="Open or resolved"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="everything that still waits on a person">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything resolved: orders released to the nesting queue (Release Hold), orders whose QR label was printed or that were completed by hand (print again or reopen), custom orders sent to the sheets or on their way to the laser, and every decision answered">Resolved<b>${resolvedN}</b></button></span>`;
     const chips = ORDER.filter(k => kinds.has(k)).map(k => doneMode ? chip(k, wordOf(k), kinds.get(k), "ok", `${wordOf(k)} resolved`)
-      : k === "customOrder" ? chip(k, "Custom Orders", customN, customAsk ? "warn" : "info", `${customAsk} need a decision · ${clWait.length} wait for their label, their designs or Complete Order`) : chip(k, wordOf(k), kinds.get(k))).join("");
+      : k === "customOrder" ? chip(k, "Custom Orders", customShown, customAsk ? "warn" : "info", `${customAsk} need a decision · ${clWait.length} wait for their label, their designs or Complete Order`) : chip(k, wordOf(k), kinds.get(k))).join("");
     if(!v.querySelector('#rvList'))v.innerHTML='<div class="ordBar egBar"></div><div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>';
     // no Everything chip (it always read the same as Open): Open or Resolved, pressed, is everything in it
     // (REVMENU, 19 Oct 2026: a redraw of the tab, which a cloud read brings every few seconds, rebuilt the date menu closed under the pointer: the bar is carried across the redraw, as the search box is)
