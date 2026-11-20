@@ -2171,6 +2171,7 @@ const Orders = window.Orders = (() => {
       ...(hand ? { handDone: { at: +cd.completedAt || 0, by: cap(cd.completedBy, 80), how: cd.how === "button" ? "button" : "print" } } : {}),
       activityAt:row.activityAt || 0, changePending:!!row.changePending,repoolChanged:!!row.repoolChanged,arrivedAt: row.arrivedAt || 0, createTs: o.createTs || 0, materialOverride: row.materialOverride || null, sizeOverride: row.sizeOverride || null, ...(row.engravingOverride ? { engravingOverride: row.engravingOverride } : {}), problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
       ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), ...(row.releasing ? { releasing: { at: +row.releasing.at || 0, by: cap(row.releasing.by, 80), stage: String(row.releasing.stage || "").slice(0, 20) } } : {}), ...(row.skuOverride && typeof row.skuOverride === "object" && row.skuOverride.sku ? { skuOverride: { sku: cap(row.skuOverride.sku, 80), by: cap(row.skuOverride.by, 80), at: +row.skuOverride.at || 0, was: cap(row.skuOverride.was, 80) } } : {}), ...(row.blockOverride && typeof row.blockOverride === "object" && row.blockOverride.sku ? { blockOverride: { sku: cap(row.blockOverride.sku, 80), by: cap(row.blockOverride.by, 80), at: +row.blockOverride.at || 0, ...(Array.isArray(row.blockOverride.skus) && row.blockOverride.skus.length ? { skus: row.blockOverride.skus.slice(0, 20).map(x => cap(x, 80)) } : {}) } } : {}), ...(row.releaseHold && +row.releaseHold.at > 0 ? { releaseHold: { at: +row.releaseHold.at, by: cap(row.releaseHold.by, 80), id: cap(row.releaseHold.id, 120) } } : {}), ...(row.releaseAnyway && +row.releaseAnyway.at > 0 ? { releaseAnyway: { at: +row.releaseAnyway.at, by: cap(row.releaseAnyway.by, 80), kinds: (row.releaseAnyway.kinds || []).slice(0, 8).map(x => cap(x, 24)) } } : {}),   // (RELEASE, Paul 19 Oct 2026: the questions a Release Hold set aside for this line; RELHOLD: the Review card's Release Hold press, who and when; BLOCKREL: a person's "Release to nesting queue" on a blocked SKU; released from hold: ahead of the orders coming in; a release not finished yet, taken up again by the next page, OrderHold)
+      ...(B.run ? { crh: ((((B.maps && B.maps.customRead) || {})[row.key] || {}).hash) || null } : {}),   // (RVSAME: which of Claude's readings the run uses for this line, so every computer uses the same one)
       snap: { title: cap(l.title, 160), listingId: cap(l.listingId, 24), metalKey: cap(l.metalKey, 24), metalLabel: cap(l.metalLabel, 40), bought: cap(row.spec && row.spec.boughtSku != null ? row.spec.boughtSku : l.sku, 80),   // (ANYWHERE: the SKU Etsy sold it under, for a computer that follows the run)
 
         orderNumber: cap(o.orderNumber, 24), buyer: cap(o.buyer && o.buyer.name, 60), shipBy: +o.shipBy || 0, isGift: !!o.isGift,
@@ -2186,13 +2187,14 @@ const Orders = window.Orders = (() => {
     const me = !s2.title && l.sku ? Master.entryFor(l.sku) : null;
     const order = { receiptId: String(l.orderId || ""), orderNumber: s2.orderNumber || String(l.orderId || ""), shipBy: +s2.shipBy || 0, createTs: +l.createTs || 0, updateTs: +l.updateTs || 0,
       buyer: { name: s2.buyer || "", country: "", city: "" }, buyerMessage: "", isGift: !!s2.isGift, giftMessage: "", staffNote: "", messages: [], metals: {}, lines: [] };
-    const line = { transactionId: String(l.transactionId || ""), listingId: s2.listingId || "", sku: l.sku || "", title: s2.title || (me ? `${me.sku}${me.size ? " · " + me.size : ""}` : ""), quantity: +l.quantity || 1,
+    const line = { transactionId: String(l.transactionId || ""), listingId: s2.listingId || "", sku: l.sku || (typeof s2.bought === "string" ? s2.bought : ""), title: s2.title || (me ? `${me.sku}${me.size ? " · " + me.size : ""}` : ""), quantity: +l.quantity || 1,
       metalKey: s2.metalKey || "", metalLabel: s2.metalLabel || (l.material ? labelOf(l.material) : ""), personalization: s2.pers || [], buyerMessage: "", expectedShipDate: 0,
       variations: (s2.vars || []).map(v => { const i = String(v).indexOf("\u241f"); return { name: String(v).slice(0, i < 0 ? 0 : i), value: i < 0 ? String(v) : String(v).slice(i + 1) }; }) };
-    if (typeof s2.bought === "string") line.etsySku = s2.bought;   // (ANYWHERE: the SKU Etsy sold it under; a record from before has none, ensureBought asks Etsy's stored table)
+    if (typeof s2.bought === "string") line.etsySku = s2.bought;
+    const crhOf = Object.prototype.hasOwnProperty.call(l, "crh") ? { crh: l.crh || null } : {};   // (RVSAME: the run's reading for this line)   // (ANYWHERE: the SKU Etsy sold it under; a record from before has none, ensureBought asks Etsy's stored table)
     O.cleanLine(line);   // (a line recorded while Etsy's text still carried entities is read decoded; the record is not rewritten)
     order.lines = [line];
-    return { key, order, line, activityAt:+l.activityAt || 0, changePending:!!l.changePending,repoolChanged:!!l.repoolChanged, arrivedAt: +l.arrivedAt || 0, sizeOverride: l.sizeOverride || null, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
+    return { ...crhOf, key, order, line, activityAt:+l.activityAt || 0, changePending:!!l.changePending,repoolChanged:!!l.repoolChanged, arrivedAt: +l.arrivedAt || 0, sizeOverride: l.sizeOverride || null, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
       poolIds: l.poolIds || [], ...(+l.groupSize > 1 ? { groupSize: +l.groupSize } : {}), engrave: l.engrave || null, metal: l.material || null, materialOverride: l.materialOverride || l.material || null, ...(l.engravingOverride && typeof l.engravingOverride === "object" ? { engravingOverride: l.engravingOverride } : {}), ...(l.skuOverride && typeof l.skuOverride === "object" && l.skuOverride.sku ? { skuOverride: l.skuOverride } : {}), fromRecord: true, ...(+l.frontAt > 0 ? { frontAt: +l.frontAt } : {}), ...(l.releasing && +l.releasing.at > 0 ? { releasing: l.releasing } : {}), ...(l.blockOverride && typeof l.blockOverride === "object" && l.blockOverride.sku ? { blockOverride: l.blockOverride } : {}), ...(l.releaseHold && +l.releaseHold.at > 0 ? { releaseHold: l.releaseHold } : {}), ...(l.releaseAnyway && +l.releaseAnyway.at > 0 && Array.isArray(l.releaseAnyway.kinds) ? { releaseAnyway: l.releaseAnyway } : {}) };
   }
   /* The claim is a courtesy — a gold dot on the station's rows saying the sorter has these — never a lock. So it goes
@@ -20674,6 +20676,30 @@ const CustomRead = window.CustomRead = (() => {
     // (a page still starting, or a pause after a failed read: looked at again once it can be, with no call meanwhile)
     if (!S.cloud.ok || !B.master.loadedAt) { later(5000); return; }
     if (Date.now() < st.pauseUntil) { later(st.pauseUntil - Date.now() + 500); return; }
+    /* (RVSAME, Paul 19 Nov 2026: Review read Custom Orders 18 · Need Resolution 18 on Paul's computer and 33 · 5 on Michelle's): a reading is kept under the words it was made from, and a computer that FOLLOWS the run holds fewer words of a line
+       (no buyer message, no staff note, no Team messages: the run's record does not carry them), so it found none of the run's readings, asked Claude itself from what it had, got other answers, and kept them in this browser. A following
+       computer now takes, for each line, the very reading the run uses (the record names it: crh), drops any other, and never asks Claude; a person's decision still wins on every computer */
+    if (!B.run && Orders.rows().some(r => r && Object.prototype.hasOwnProperty.call(r, "crh"))) {
+      st.running = true; let moved = false;
+      try {
+        const known = Orders.rows().filter(r => r && r.key && Object.prototype.hasOwnProperty.call(r, "crh"));
+        for (const r of known) if (!r.crh && B.maps.customRead[r.key]) { delete B.maps.customRead[r.key]; moved = true; }   // (the run has no reading for it: nor has this computer)
+        const ask = known.filter(r => r.crh && (B.maps.customRead[r.key] || {}).hash !== r.crh && !st.looked.has(r.key + "|" + r.crh));
+        for (let i = 0; i < ask.length; i += 300) {
+          const part = ask.slice(i, i + 300);
+          const res = await api("charmNestLibrary", { op: "customReadGet", items: part.map(r => ({ key: r.key, hash: r.crh })) }, { quiet: true });
+          for (const r of part) {
+            st.looked.add(r.key + "|" + r.crh);
+            const got = res && res.reads && res.reads[r.key]; if (got) { B.maps.customRead[r.key] = got; moved = true; }
+            const dec = res && res.decided && res.decided[r.key], had = B.maps.customDecided[r.key];
+            if (had && had.pending) continue;
+            if (dec && (!had || had.at !== dec.at)) { B.maps.customDecided[r.key] = dec; moved = true; } else if (!dec && had) { delete B.maps.customDecided[r.key]; moved = true; }
+          }
+        }
+        if (moved) { keep(); apply(); }
+      } finally { st.running = false; Review.render(); }
+      return;
+    }
     const items = Orders.rows().filter(wanted).map(row => { const p = payloadOf(row); return { row, p, hash: hashOf(p) }; });
     if (!items.length) return;
     st.running = true; let changed = false;

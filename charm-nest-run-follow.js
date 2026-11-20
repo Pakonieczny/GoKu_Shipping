@@ -17,7 +17,11 @@
   const safe = (f, d) => { try { const v = f(); return v === undefined ? d : v; } catch (_) { return d; } };
   const api = body => root.CN && typeof root.CN.api === "function" ? root.CN.api("charmNestLibrary", body, { quiet: true }) : Promise.reject(new Error("no api"));
   const st = { runId: null, reads: 0, changed: 0, gone: 0, added: 0, last: null, busy: false, skipped: "" };
-  const FIELDS = ["state", "poolIds", "reason", "hold", "wait", "heldAt", "_lp"];   // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer"): and the stamp of a line another computer changed
+  const FIELDS = ["state", "poolIds", "reason", "hold", "wait", "heldAt", "_lp"];
+  /* (RVSAME, Paul 19 Nov 2026: "Michelle's computer still does not agree with my computer!": measured from the two computers' own reports, Review's Open held the same 34 orders but one each: 4237444149 on Michelle's only (its "Just this order" charm,
+     BASKETBALL (HUGGIE), was set on the computer that carries the run and never reached hers) and 4239217080 on Paul's only (its Etsy SKU names two drawings: a line read from the run's record here had no Etsy SKU to read, so the question was never asked here)).
+     A person's decisions on a line are the run's, as its state is: taken from the cloud, and the line is read again with them */
+  const DECIDE = ["skuOverride", "blockOverride", "releaseAnyway", "releaseHold", "materialOverride", "sizeOverride", "engravingOverride", "frontAt"];   // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer"): and the stamp of a line another computer changed
   const holdsRun = () => !!(root.B && root.B.run);
 
   async function openRunId() {
@@ -41,7 +45,7 @@
       { const was = st.run ? st.run.status + "|" + (st.run.stoppedBy || "") : ""; st.run = { status: run.status || null, stoppedBy: run.stoppedBy || null, step: run.step || null, at: Date.now() }; if (was !== st.run.status + "|" + (st.run.stoppedBy || "")) safe(() => root.RunCtl && root.RunCtl.renderBanner()); }
       const lines = run.lines, inRun = new Set((run.orders || []).map(String)), O = root.Orders, B = root.B;
       if (!O || !B || !B.orders) return st;
-      let changed = 0, gone = 0, added = 0;
+      let changed = 0, gone = 0, added = 0, needRead = false, crhMoved = false;
       for (const row of O.rows()) {
         if (!row || !row.key || row.parentRow) continue;
         const l = lines[row.key];
@@ -53,13 +57,19 @@
         let moved = false;
         for (const f of FIELDS) { const v = l[f] === undefined ? (f === "poolIds" ? [] : null) : l[f]; if (JSON.stringify(row[f] == null ? (f === "poolIds" ? [] : null) : row[f]) !== JSON.stringify(v)) { row[f] = Array.isArray(v) ? v.slice() : v; moved = true; } }
         if (l.engrave && row.engrave && typeof row.engrave === "object") { for (const k of ["state", "approved", "approvedAt", "approvedBy", "decidedAt", "seals", "text"]) if (l.engrave[k] !== undefined && JSON.stringify(row.engrave[k]) !== JSON.stringify(l.engrave[k])) { row.engrave[k] = l.engrave[k]; moved = true; } }
+        { let decided = false; for (const f of DECIDE) { const v = l[f] === undefined ? null : l[f]; if (JSON.stringify(row[f] == null ? null : row[f]) !== JSON.stringify(v)) { if (v == null) delete row[f]; else row[f] = v && typeof v === "object" ? JSON.parse(JSON.stringify(v)) : v; decided = true; } }   // (RVSAME: the run's decisions on the line)
+          const bought = l.snap && typeof l.snap.bought === "string" ? l.snap.bought : null;
+          if (row.fromRecord && row.line && bought != null && !l.sku && row.line.sku !== bought) { row.line.sku = bought; row.line.etsySku = bought; decided = true; }   // (RVSAME: a line the run has not matched is read here under the SKU Etsy sold it under, as the run reads it)
+          if (decided) { row.spec = null; needRead = true; moved = true; }
+          if (Object.prototype.hasOwnProperty.call(l, "crh") && (row.crh === undefined || row.crh !== (l.crh || null))) { row.crh = l.crh || null; crhMoved = true; moved = true; } }   // (RVSAME: the reading the run uses for this line)
         if (moved) changed++;
       }
       const newOrders = new Set();
       if (typeof O.rowFromRecord === "function") for (const [k, l] of Object.entries(lines)) { if (B.orders.byKey.has(k)) continue; const row = safe(() => O.rowFromRecord(k, l), null); if (row) { B.orders.rows.push(row); B.orders.byKey.set(k, row); added++; newOrders.add(k.split("_")[0]); } }
       // (NEWLINES, Paul 13 Nov 2026: "What about future orders?"): a line that arrives here takes its engraving work from the cloud at once (it may have been written before the line reached this computer)
       // (FOLLOWSPEC, Paul 15 Nov 2026: "Cannot read properties of null (reading 'fontText')"): a line added here from the run's record is READ at once (its charm, its words, its font: Orders.interpretAll), as the lines another computer added to the run's own page are; it was left unread, and the engraving view of such an order could not open
-      if (added || O.rows().some(r => r && !r.spec && !r.parentRow)) safe(() => O.interpretAll());
+      if (added || needRead || O.rows().some(r => r && !r.spec && !r.parentRow)) safe(() => O.interpretAll());
+      if (crhMoved || added) safe(() => root.CustomRead && root.CustomRead.later(300));   // (RVSAME: the run's readings, taken now)
       if (newOrders.size) safe(() => root.CharmNestEngraveSync && root.CharmNestEngraveSync.pull([...newOrders], "keys"));
       st.changed += changed; st.gone += gone; st.added += added; st.last = { at: Date.now(), why, changed, gone, added };
       if (changed || gone || added) { safe(() => root.Review && root.Review.syncOrderItems()); safe(() => O.render()); safe(() => root.Session && root.Session.schedule()); }
