@@ -3831,7 +3831,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
   <div class="dlgBody">
     <div class="section">Etsy</div>
     <div class="field" id="stEtsyField"><label>Etsy for the whole shop (every computer and station)</label>
-      <div class="fieldRow" style="align-items:center;gap:10px"><span class="pill neutral" id="stEtsyState" role="status">Checking…</span><button class="btn xs" type="button" id="btnEtsyResume" hidden>Resume Etsy</button></div>
+      <div class="fieldRow" style="align-items:center;gap:10px"><span class="pill neutral" id="stEtsyState" role="status">Checking…</span><button class="btn xs" type="button" id="btnEtsyResume" hidden>Resume Etsy</button><button class="btn xs danger" type="button" id="btnEtsyStop" hidden>Stop Etsy</button></div>
       <div class="help" id="stEtsyHelp">When Etsy answers 429 (its limit is reached), every computer and station stops calling Etsy at once and stays stopped until Resume Etsy is pressed here. The press reaches every computer through the cloud.</div></div>
     <div class="section">Display</div>
     <div class="field"><label>Rail density</label><div class="seg" id="railSeg"><button type="button" data-v="sm">Compact</button><button type="button" data-v="md">Normal</button><button type="button" data-v="lg">Large</button></div></div>
@@ -8971,10 +8971,10 @@ const EtsyStopUI = window.EtsyStopUI = (() => {
     if (!pill || !btn) return;
     if (!st) { pill.className = "pill neutral"; pill.textContent = "Could not read the cloud"; btn.hidden = true; return; }
     if (st.stopped) {
-      pill.className = "pill bad"; pill.textContent = `Stopped since ${fmtAt(st.since)}`; btn.hidden = false; btn.disabled = false; btn.textContent = "Resume Etsy";
+      pill.className = "pill bad"; pill.textContent = `Stopped since ${fmtAt(st.since)}`; btn.hidden = false; btn.disabled = false; btn.textContent = "Resume Etsy"; const sb = document.getElementById("btnEtsyStop"); if (sb) sb.hidden = true;
       if (help) help.textContent = `Etsy answered 429${st.fn ? ` to ${st.fn}` : ""}${st.detail ? `: ${String(st.detail).slice(0, 120)}` : ""}. No computer or station calls Etsy until Resume Etsy is pressed. Press it once Etsy's limit has reset; if Etsy still answers 429, everything stops again by itself.`;
     } else {
-      pill.className = "pill ok"; pill.textContent = st.resumedAt ? `Running · resumed ${fmtAt(st.resumedAt)}${st.resumedBy ? " by " + st.resumedBy : ""}` : "Running"; btn.hidden = true;
+      pill.className = "pill ok"; pill.textContent = st.resumedAt ? `Running · resumed ${fmtAt(st.resumedAt)}${st.resumedBy ? " by " + st.resumedBy : ""}` : "Running"; btn.hidden = true; const sb = document.getElementById("btnEtsyStop"); if (sb) { sb.hidden = false; sb.disabled = false; sb.textContent = "Stop Etsy"; }
       if (help) help.textContent = "When Etsy answers 429 (its limit is reached), every computer and station stops calling Etsy at once and stays stopped until Resume Etsy is pressed here. The press reaches every computer through the cloud.";
     }
   }
@@ -8999,8 +8999,14 @@ const EtsyStopUI = window.EtsyStopUI = (() => {
   }
   // a computer whose run Etsy stopped looks at the switch once a minute (one small read), only while that run stays stopped
   setInterval(() => { const r = window.B && window.B.run; if (etsyStopped(r) && !document.hidden) read().then(follow).catch(() => {}); }, 60000);
-  document.addEventListener("click", e => { if (e.target && e.target.id === "btnEtsyResume") { e.preventDefault(); press(); } });
-  return { refresh, read, follow, press, render, etsyStopped };
+  // Stop Etsy: a person stops every computer and station at once, as Etsy's own 429 does
+  async function stopNow() {
+    const b = document.getElementById("btnEtsyStop"); if (b) { b.disabled = true; b.textContent = "Stopping…"; }
+    try { const st = await api("charmNestLibrary", { op: "etsyStopNow", by: who() }, { label: "Stopping Etsy" }); last = st; render(st); toast("Etsy stopped for every computer and station", "ok", 5000); }
+    catch (e) { toast("Etsy could not be stopped: " + (e && e.message || e), "bad", 7000); render(last); }
+  }
+  document.addEventListener("click", e => { if (e.target && e.target.id === "btnEtsyResume") { e.preventDefault(); press(); } else if (e.target && e.target.id === "btnEtsyStop") { e.preventDefault(); stopNow(); } });
+  return { refresh, read, follow, press, stopNow, render, etsyStopped };
 })();
 function openSettingsNow(home) {
   try { EtsyStopUI.refresh(); } catch (_) { /* drawn at the next open */ }
