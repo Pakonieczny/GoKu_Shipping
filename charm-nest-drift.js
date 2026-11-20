@@ -183,13 +183,20 @@
       // (CLOUDWORLD, Paul 20 Nov 2026: "Only the cloud can decide"): the order lines this computer holds, compared with the cloud world's (_charmNestWorld.js): the same lines, or how they differ
       try { await cloudCompare(rep); } catch (_) { /* a report without it */ }
       // (SCREENCHECK, Paul 20 Nov 2026: "you have access to the computers ... look at it yourself"): what this computer's SCREEN shows: the three tab badges, and the Review tab's Open, Resolved and every chip of both
+      /* (SCREENPAINT, Paul 20 Nov 2026: "Michelle's computer doesn't match the customer orders that needs a resolution and the held orders"): what each tab's bar PAINTS, as the person reads it: each button's words and number,
+         and the one pressed (Open or Resolved, a chip's filter), for Review, Orders, Design & Engrave, and the rail; and the tab on screen. Read from the page itself, never worked out again. */
+      const painted = () => safe(() => {
+        const bar = sel => { const b = doc && doc.querySelector(sel); if (!b) return null; return [...b.querySelectorAll("button")].filter(x => x.offsetParent !== null || x.closest(".hidden") == null).map(x => { const t = String(x.textContent || "").replace(/\s+/g, " ").trim(); return t ? (x.classList.contains("on") || x.getAttribute("aria-pressed") === "true" ? "[" + t + "]" : t) : ""; }).filter(Boolean).slice(0, 24).join(" | ").slice(0, 600); };
+        const rail = (() => { const r = doc && doc.querySelector(".ldFlow"); return r ? [...r.querySelectorAll(".ldRow")].map(x => String(x.textContent || "").replace(/\s+/g, " ").trim()).join(" | ").slice(0, 500) : null; })();
+        return { tab: safe(() => root.CN.S.mode, null), review: bar("#reviewView .ordBar"), orders: bar("#ordersView .ordBar"), engrave: bar("#engraveView .ordBar"), rail };
+      }, null);
       safe(() => { const t = id => { const e = doc && doc.getElementById(id); return e ? +(String(e.textContent || "").replace(/\D/g, "")) || 0 : null; }, sc = root.Review && typeof root.Review.screen === "function" ? root.Review.screen() : null;
         // (every tab: the rail's steps as the rail draws them, the Design & Engrave tab's own numbers, the Library's totals as the rail's headline says them)
         const fl = safe(() => { const f = root.Orders && root.Orders.flowNow ? root.Orders.flowNow() : null; return f && f.counts ? Object.assign({}, f.counts) : null; }, null);
-        const E = root.Engrave, eng = E && E.pendingRows ? safe(() => ({ rows: E.pendingRows(), orders: E.pendingOrderIds ? E.pendingOrderIds().size : null, decided: E.reviewedRows ? E.reviewedRows() : null }), null) : null;
+        const E = root.Engrave, eng = E && E.pendingRows ? safe(() => ({ rows: E.pendingRows(), orders: E.pendingOrderIds ? E.pendingOrderIds().size : null, decided: E.reviewedRows ? E.reviewedRows() : null, offCloud: safe(() => root.CloudWorld.engraveOff().n, null) }), null) : null;
         const lt = safe(() => String((doc.getElementById("cloudText") || {}).textContent || ""), ""), lm = /Library · ([\d,]+) sheets?(?: · ([\d,]+) charms?)?/.exec(lt);
         const library = lm ? { sheets: +lm[1].replace(/,/g, ""), charms: lm[2] ? +lm[2].replace(/,/g, "") : 0 } : null;
-        rep.screen = JSON.stringify({ reviewBadge: t("tabReviewN"), designBadge: t("tabEngraveN"), ordersBadge: t("tabOrdersN"), open: sc ? sc.open : null, resolved: sc ? sc.resolved : null, openChips: sc ? sc.openChips : null, doneChips: sc ? sc.doneChips : null, flow: fl, flowFrom: safe(() => (root.Orders.flowPeek() || {}).cloud ? "cloud" : "here", null), engrave: eng, library }).slice(0, 2500); });
+        rep.screen = JSON.stringify({ reviewBadge: t("tabReviewN"), designBadge: t("tabEngraveN"), ordersBadge: t("tabOrdersN"), open: sc ? sc.open : null, resolved: sc ? sc.resolved : null, openChips: sc ? sc.openChips : null, doneChips: sc ? sc.doneChips : null, flow: fl, flowFrom: safe(() => (root.Orders.flowPeek() || {}).cloud ? "cloud" : "here", null), engrave: eng, library, painted: painted() }).slice(0, 3800); });
       st.checks++; st.last = rep; st.at = Date.now(); lastDone = st.at;
       mark(rep);
       try { const why = stuckWhy(); if (why.length) rep.still = (Array.isArray(rep.still) ? rep.still : []).concat(why).slice(0, 40); } catch (_) { /* a report without it */ }
