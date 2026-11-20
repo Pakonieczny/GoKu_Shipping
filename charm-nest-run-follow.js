@@ -276,7 +276,8 @@
       else {
         const step = stepper(c); step({ text: `Releasing order ${rid} from hold…` });
         try {
-          const v = await OH.release(rid, { name: String(c.by || "").trim() || undefined, onStep: s => { if (s && s.type === "target" && s.label) step({ text: `Placing on ${s.label}…` }); } });
+          const t0 = Date.now(), el = () => ` · ${Math.round((Date.now() - t0) / 1000)} s`;   // (RELWAIT: what it is doing and for how long, so the computer that asked can say it)
+          const v = await OH.release(rid, { name: String(c.by || "").trim() || undefined, onStep: s => { if (!s) return; if (s.type === "queued") step({ text: `Its place at the front is saved${el()}` }); else if (s.type === "target" && s.label) step({ text: `Placing on ${s.label}…${el()}` }); else if (s.type === "flight") step({ text: `Moving its pieces${el()}` }); else if (s.type === "placed") step({ text: `Placed on ${s.label || "the sheet"}${el()}` }); else if (s.type === "qr") step({ text: `Making the sheet's QR label${el()}` }); } });
           const where = ((v && v.sheets) || []).map(x => x && x.label).filter(Boolean).join(", ");
           r = v && v.released ? { ok: true, text: `Order ${rid} released from hold${where ? " and placed on " + where : ", at the front of the queue"}${v.error ? " · " + String(v.error).slice(0, 200) : ""}`.slice(0, 380) } : { ok: false, why: String((v && (v.error || (v.steps && v.steps[v.steps.length - 1] && v.steps[v.steps.length - 1].message))) || "The order was not released").slice(0, 380) };
         } catch (e) { r = { ok: false, why: String((e && e.message) || e).slice(0, 300) }; } finally { step.stop(); }

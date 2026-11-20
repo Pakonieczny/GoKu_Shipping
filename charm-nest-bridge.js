@@ -23162,7 +23162,7 @@ const Review = window.Review = (() => {
     for (const [rid, r] of first) {
       if (window.Cancelled && Cancelled.has && Cancelled.has(rid)) continue;
       const kept = items().find(x => x.key === "held:" + rid), why = `${rid} held \u2014 ${r.hold || (kept && kept.note) || "on hold"}`;
-      let it = heldMade.get(rid); if (!it) { it = { kind: "heldOrder", key: "held:" + rid, rid, t: (kept && kept.t) || +r.heldAt || Date.now() }; heldMade.set(rid, it); }
+      let it = heldMade.get(rid); if (!it) { it = { kind: "heldOrder", key: "held:" + rid, rid, t: (kept && kept.t) || +r.heldAt || (+(r.order && r.order.createTs) > 0 ? +r.order.createTs * 1000 : 0) || Date.now() }; /* (RVSAME: with no hold time known it took the time it was drawn, so the card jumped to the top each time it was made again: the order's own time keeps its place, the same on every computer) */ heldMade.set(rid, it); }
       Object.assign(it, { row: r, rows: rowsOfOrder(rid), line: r.key, why });
       out.push(it);
     }

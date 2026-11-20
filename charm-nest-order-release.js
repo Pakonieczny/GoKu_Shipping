@@ -345,16 +345,22 @@
       return out(false, { released: false, queued: true, pending: true, error: text, stage: 'queued', cmdId: put.id });
     };
     if (!alive) return queued(`${by} is not answering at this moment, so it is placed as soon as it does`);
-    const t0 = Date.now(); let last = null;
-    while (Date.now() - t0 < 150000) {
-      await new Promise(res => setTimeout(res, 2500));
+    /* (RELWAIT, Paul 19 Nov 2026: order 4237522021: "Michelle tried to release this order from hold and it failed ... you said you already fixed this problem"): the computer that carries the run took 158 s for that one release (it was busy first, then placing), and this page stopped
+       waiting at 150 s, 8 s before the release was done: the card said it was not released and it WAS. A release asked of the cloud is waited for until it is done (twenty minutes at most, as long as the computer that carries the run still answers), and what that computer is
+       doing is said as it goes; "queued" is only said when that computer stops answering */
+    const t0 = Date.now(), POLL = () => +OH.relayPollMs || 2500, LIMIT = () => +OH.relayLimitMs || 20 * 60000; let last = null, stepSaid = '', told = false;
+    while (Date.now() - t0 < LIMIT()) {
+      await new Promise(res => setTimeout(res, Date.now() - t0 < 60000 ? POLL() : Math.max(POLL(), 5000)));
       let l = null; try { l = await call({ op: 'runCmdList', runId }); } catch (_) { continue; }
       last = ((l && l.cmds) || []).find(x => x && x.id === put.id) || last;
       if (last && (last.state === 'done' || last.state === 'failed')) break;
-      // (still waiting after 30 s and the carrier no longer answering: it stays in the cloud, nothing to wait for here)
+      if (last && last.state === 'running' && last.step && last.step !== stepSaid) { stepSaid = last.step; emit({ type: 'queued', rid, text: `${by}: ${last.step}` }); }
+      if (!told && Date.now() - t0 > (+OH.relayNoticeMs || 60000)) { told = true; emit({ type: 'queued', rid, text: `${by} is busy: it releases the order as soon as it can (this page waits for it)` }); }
+      // (still waiting to be started after 30 s and the carrier no longer answering: it stays in the cloud, nothing to wait for here)
       if (last && last.state === 'waiting' && Date.now() - t0 > 30000) { let c2 = null; try { c2 = await call({ op: 'runCarrier', runId, dev, check: true }); } catch (_) { c2 = null; } if (c2 && (!c2.alive || c2.mine)) return queued(`${by} stopped answering, so it is placed as soon as it does`); }
     }
     if (last && last.state === 'done') {
+      try { if (RF && typeof RF.now === 'function') RF.now('released'); } catch (_) { /* read at the next feed */ }   // (RVSAME: the order's lines as the carrier left them, read now, so its held card leaves this computer's Review at once)
       refresh();
       emit({ type: 'released', rid, sheets: [], placed: true }); emit({ type: 'done', placed: true, why: 'released by the computer that carries the run' });
       return out(true, { released: true, placed: true, via: 'carrier', text: str(last.text) });

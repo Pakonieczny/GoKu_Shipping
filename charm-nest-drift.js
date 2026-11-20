@@ -141,7 +141,9 @@
         checked: 0, backWaitN: 0, backWaitMin: 0, behindN: 0, behind: [], stillN: 0, still: [], healed: [], unverifiedN: 0, missingN: 0, extraN: 0, inHandN: 0, rebuilt: 0, mode: m, feed: safe(() => root.CNSync.push.status().state, ""), heapMB: safe(() => Math.round(root.performance.memory.usedJSHeapSize / 1e6), 0), idleS: Math.round((Date.now() - lastInput) / 1000), ...freezeNow() };
       try { await root.Engrave.settleStuckBacks(); } catch (_) { /* the count below is as the flags are */ }   // (STALEBACK)
       { const w = waiting(); rep.backWaitN = w.n; rep.backWaitMin = w.min; }
-      { const d = heldCard(); if (d) rep.note = d; }   // (HELDCHARM: what the open engraving card holds, for a computer whose card is not drawn whole: said in the report, 100 characters)
+      { const d = heldCard(); if (d) rep.note = d; }
+      // (RVSAME, Paul 19 Nov 2026: "Why does Michelle's computer not match my computer ... I requested many times to have everything updated in real time": Review read Open 40 · Custom Orders 18 · Need Resolution 18 · Held 2 on one computer and 37 · 33 · 5 · 1 on another): what Review shows on THIS computer is reported, with the orders its Open list holds, so the computers can be compared in Settings → Computers and by whoever looks into it
+      safe(() => { const R = root.Review, O = root.Orders; if (!R || !O) return; const open = typeof R.openOrders === "function" ? [...R.openOrders().keys()].map(String).sort() : []; const rows = O.rows(); rep.rv = `open ${typeof R.openCount === "function" ? R.openCount() : "?"} · orders ${open.length} · held ${rows.filter(r => r && typeof O.heldNow === "function" && O.heldNow(r)).length} · lines ${rows.length}`; rep.rvOpen = open.slice(0, 40); });   // (HELDCHARM: what the open engraving card holds, for a computer whose card is not drawn whole: said in the report, 100 characters)
       let state = null;
       if (runId) {
         let res = null; try { res = await api({ op: "sheetRevsGet", runId }); } catch (e) { st.errors++; rep.error = String(e && e.message || e).slice(0, 160); }
