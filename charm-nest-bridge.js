@@ -28988,8 +28988,23 @@ const Recall = window.Recall = (() => {
   /* (CACHEONLY, Paul 15 Nov 2026: "Computers are only fed the truth ... never duplicating the truth in their own way"): what this computer holds of the run it follows is a COPY, and the cloud's replaces it: a page of
      that run (or one holding only what was shown from the cloud) is given up to the cloud's sheets, whatever this computer's saved workspace says. A card is left alone only while something is really in hand on it:
      a nest at work, an uncut contour planned here, or pieces of no run at all (files a person dropped here). */
-  const atWorkHere = p => (p.workers || []).length > 0 || ["nesting", "finishing", "queued"].includes(p.status) || !!p._operationStarting || ((p.rosePlan || p.roseProtected) && !p.roseCutAt && !p.recalled && (!p.followed || !!p._rosePlanning || !!p._roseAction));   // (FOLLOWROSE, Paul 18 Nov 2026: "why her nesting is not updating"): the contour of a followed sheet is the cloud's, loaded here, not one planned here: it kept the whole Rose Gold card from ever being read again
-  const keepsCard = (prim, runId) => prim.pages.some(p => atWorkHere(p) || ((p.charms || []).length && (p.runId || null) !== runId));
+  // (SHEETSAME, Paul 20 Nov 2026: Michelle's Gold Filled card kept the names, sets and pages of Nov 12 for a week: a page left "nesting" or "queued" in her saved workspace, with no worker at all, read as work in hand,
+  //  and the card was never given the cloud's sheets again. A computer that follows a run nests nothing: only a worker really running, an operation starting, or a contour being planned is work in hand)
+  const atWorkHere = p => (p.workers || []).length > 0 || (["nesting", "finishing", "queued"].includes(p.status) && (p.workers || []).length > 0) || !!p._operationStarting || ((p.rosePlan || p.roseProtected) && !p.roseCutAt && !p.recalled && (!p.followed || !!p._rosePlanning || !!p._roseAction));   // (FOLLOWROSE, Paul 18 Nov 2026: "why her nesting is not updating"): the contour of a followed sheet is the cloud's, loaded here, not one planned here: it kept the whole Rose Gold card from ever being read again
+  const keepsCard = (prim, runId) => prim.pages.some(p => atWorkHere(p) || ((p.charms || []).length && !p.runId && !p.followed && !p.recalled));   // (SHEETSAME: pieces of no run at all (files dropped here) keep a card; a page of another, older run does not)
+  const followState = { at: 0, result: "", kept: [], rebuilt: [], renamed: 0 };
+  /* SHEETSAME: what makes a sheet's name and place, as its record says it (charm-nest-sheet-name.js reads these): a sheet the cloud renamed, moved into a set or out of one, numbered or cut is taken again, even with
+     the same id; and a page that already shows it takes them in place (nothing emptied or built again) */
+  const nameSig = x => [x.id, x.setId || "", x.setSeq || "", x.sheetIndex || "", x.draft ? 1 : 0, x.solidIncluded === false ? 0 : 1, x.fileBase || "", x.page || "", x.draftOrder != null ? x.draftOrder : "", +x.laserDoneAt > 0 ? 1 : 0, +x.roseCutAt > 0 ? 1 : 0].join(":");
+  function takeNames(pg, rec, runId) {
+    if (!pg || !rec) return;
+    pg.setId = rec.setId || null; pg.seq = rec.setSeq || null; pg.setSeq = rec.setSeq || null; pg.setDay = setDayOfRec(rec); pg.sheetIndex = rec.sheetIndex || null; pg.fileBase = rec.fileBase || pg.fileBase || null;
+    pg.draft = !!rec.draft; if (rec.solidIncluded === false) pg.solidIncluded = false; else if (pg.solidIncluded === false) delete pg.solidIncluded;
+    if (Number.isFinite(+rec.page) && +rec.page > 0) pg.page = +rec.page;
+    if (rec.draftOrder != null && Number.isFinite(+rec.draftOrder)) { pg.draftOrder = +rec.draftOrder; pg._savedDO = pg.draftOrder; }
+    if (+rec.laserDoneAt > 0) pg.laserDoneAt = +rec.laserDoneAt; if (rec.roseCutAt) pg.roseCutAt = rec.roseCutAt;
+    pg.runId = rec.runId || runId || pg.runId; if (pg.recalled && typeof pg.recalled === "object") pg.recalled = rec;
+  }
   const ownWork = () => false;
   const emptyCard = prim => { for (const pg of prim.pages.slice(1)) { (pg.workers || []).forEach(w => w.terminate()); }
     prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; prim.recalled = null; prim.followed = false; prim.status = "idle"; prim.placements = []; prim.charms = []; prim.rejects = []; prim.liveInfo = null; prim.verification = null; prim.outputs = null; prim.dirty = false; prim.problem = null; delete prim._writeOwed; delete prim.saveOwed; delete prim.layoutRev; prim.fileBase = null; prim.sheetId = null; prim.runId = null; prim.setId = null; prim.seq = null; prim.sheetIndex = null; prim.cloud = null; prim.backPool = []; prim._img = null; };
@@ -29003,11 +29018,11 @@ const Recall = window.Recall = (() => {
       const byName = new Map(), gone = new Set((window.CharmNestRunFollow && CharmNestRunFollow.state().retired) || []);   // (GONESHEET: a sheet the run let go of (deleted on the carrying computer) is not listed, though its record is archived only at the run's next checkpoint)
       for (const x of ls.sheets || []) { if (gone.has(String(x.id))) continue; const k = (x.setId || "") + "|" + (x.fileBase || x.id); /* (NAMECLASH: as above: a follower showed 3 of 4 sheets when two sets held one name) */ const had = byName.get(k); if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) byName.set(k, x); }
       const startedOf = x => +x.cardStartedAt || +(x.createdAt && (x.createdAt._seconds || x.createdAt.seconds)) * 1000 || Date.parse(x.createdAt) || 0;
-      const sheets = [...byName.values()].sort((a, b) => startedOf(a) - startedOf(b));   // (oldest first, as a run put back here lists them: PAGEORDER)
+      const sheets = [...byName.values()].sort((a, b) => startedOf(a) - startedOf(b));   // (oldest first, as a run put back here lists them: PAGEORDER; an empty sheet is listed too: it is an Available sheet pieces are moved onto)
       // (SHEETSLIST: a metal's sheets the person ordered by hand (draftOrder) keep that order here too)
       { const seats = new Map(); sheets.forEach((x, i) => { if (!seats.has(x.metal)) seats.set(x.metal, []); seats.get(x.metal).push(i); }); const has = x => x.draftOrder != null && Number.isFinite(+x.draftOrder), copy = sheets.slice();
         for (const at of seats.values()) { const sub = at.map(i => copy[i]); if (!sub.some(has)) continue; sub.sort((a, b) => (has(a) ? 0 : 1) - (has(b) ? 0 : 1) || (has(a) ? +a.draftOrder - +b.draftOrder : 0)); at.forEach((i, k) => { sheets[i] = sub[k]; }); } }
-      const sig = runId + "|" + sheets.map(x => x.id).sort().join("|") + "#" + sheets.filter(x => x.draftOrder != null).map(x => x.id + ":" + x.draftOrder).join("|");   // (ORDERCLOUD 2, Paul 15 Nov 2026: a draft order changed on the carrying computer is a change here too: the cards are listed again in that order)
+      const sig = runId + "|" + sheets.map(nameSig).sort().join("|");   // (SHEETSAME: every field of a sheet's name and place, not only its id and draft order)   // (ORDERCLOUD 2, Paul 15 Nov 2026: a draft order changed on the carrying computer is a change here too: the cards are listed again in that order)
       if (sig === followSig && allSheets().some(p => p.followed) && !allSheets().some(p => !p.followed && (p.charms || []).length && (p.runId || null) === runId)) { liveLater(runId); return true; }
       // (ORDERINPLACE, Paul 15 Nov 2026: a reorder made the computer that follows build its whole card again, which closed the Options window it was looking at): when the run's sheets are the same and only their order changed, the sheets here are put in that order where they stand; nothing is emptied or built again
       { const idSig = runId + "|" + sheets.map(x => x.id).sort().join("|");
@@ -29017,18 +29032,21 @@ const Recall = window.Recall = (() => {
             const prim = S.sheets[m.key], mine = sheets.filter(x => x.metal === m.key); if (!mine.length) continue;
             const by = new Map(prim.pages.filter(p => p.sheetId).map(p => [p.sheetId, p])); if (!mine.every(x => by.has(x.id))) { all = false; break; }
             const arr = mine.map(x => by.get(x.id)), slots = arr.map(p => prim.pages.indexOf(p)).sort((x, y) => x - y), act = prim.pages[prim.active];
-            mine.forEach((x, k) => { const p = arr[k]; if (x.draftOrder != null && Number.isFinite(+x.draftOrder)) { p.draftOrder = +x.draftOrder; p._savedDO = p.draftOrder; } if (Number.isFinite(+x.page)) p.page = +x.page; });
+            mine.forEach((x, k) => takeNames(arr[k], x, runId));   // (SHEETSAME: its name, set, number, day, draft mark and order, as the record says them)
             if (slots.some((at, k) => prim.pages[at] !== arr[k])) { slots.forEach((at, k) => { prim.pages[at] = arr[k]; }); prim.active = Math.max(0, prim.pages.indexOf(act)); }
           }
-          if (all) { followSig = sig; try { CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub(); } catch (_) { /* drawn at the next look */ } liveLater(runId); return true; }
+          if (all) { followSig = sig; Object.assign(followState, { at: Date.now(), result: "names taken in place", kept: [], rebuilt: [], renamed: sheets.length }); try { CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub(); } catch (_) { /* drawn at the next look */ } liveLater(runId); return true; }
         }
         followIds = idSig; }
       followSig = sig;
       // (OPTSTAYS, Paul 16 Nov 2026: after a move with overflow, a combine or a delete, the Options window of the computer that follows closed under the person's hands: the card it belonged to was built again). The window that was open is opened again once the cards are back
       const reopen = (() => { try { return window.OptionsStudio && typeof OptionsStudio.isOpen === "function" ? (METALS.map(x => x.key).find(k => OptionsStudio.isOpen(k)) || null) : null; } catch (_) { return null; } })();
+      const kept = [], rebuilt = [];
       for (const m of METALS) {
         const prim = S.sheets[m.key], mine = sheets.filter(x => x.metal === m.key);
-        if (keepsCard(prim, runId)) continue;   // (something is in hand on this card: it is looked at again at the next read)
+        // (something is in hand on this card: it is looked at again at the next read; meanwhile the sheets it already shows take their names, sets and order from their records)
+        if (keepsCard(prim, runId)) { const by = new Map(mine.map(x => [x.id, x])); for (const p of prim.pages) if (p.sheetId && by.has(p.sheetId)) takeNames(p, by.get(p.sheetId), runId); kept.push(m.key + ": " + ((prim.pages.find(p => atWorkHere(p)) && "a nest at work") || "pieces of no run")); continue; }
+        rebuilt.push(m.key);
         if (!mine.length && !prim.pages.some(p => p.followed || p.recalled || (p.charms || []).length)) continue;
         emptyCard(prim);
         mine.forEach((rec, i) => {
@@ -29039,11 +29057,13 @@ const Recall = window.Recall = (() => {
           pg.backPool = (rec.backs || []).map(bk => ({ sheetId: rec.id, engravingSeals: bk.engravingSeals || [], approvedAt: bk.approvedAt, copy: bk.copy, previewWPt: bk.previewWPt, previewHPt: bk.previewHPt, pageWPt: bk.pageWPt, pageHPt: bk.pageHPt, poolId: bk.poolId, ...(bk.face === "front" ? { face: "front" } : {}), order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));
           pg.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
           pg.persistedDone = true; pg.persisted = Promise.resolve(); pg._img = null;
+          takeNames(pg, rec, runId);   // (SHEETSAME: its draft mark, page and cut marks too, as the record says them)
         });
         // the newest sheet that is not cut is the one shown, as on the computer that carries the run
         let show = 0; mine.forEach((rec, i) => { if (!(+rec.laserDoneAt > 0)) show = i; });
         prim.active = 0; prim.el = prim.cardEl; CN.showPage(m.key, show);
       }
+      Object.assign(followState, { at: Date.now(), result: "cards built from the cloud", kept, rebuilt, renamed: 0 });
       CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub();
       agent({ run: runId }, "cloud", `${sheets.length} sheet(s) of the open run shown on the Nest cards as the cloud has them: nothing is nested on this computer`);
       if (reopen) setTimeout(() => { try { if (!OptionsStudio.isOpen(reopen)) { const prim = S.sheets[reopen], el = prim && (prim.cardEl || prim.el), btn = el && el.querySelector(".sheetOptionsBtn"); if (btn) btn.click(); } } catch (_) { /* the person opens it again */ } }, 700);
@@ -29121,7 +29141,7 @@ const Recall = window.Recall = (() => {
     agent({ metal: pg.metal }, "cloud", `${pg.fileBase || sheetId}: its saved picture was drawn again as the sheet is now (nothing else of the sheet was written)`);
     return { ok: true, text: `${d.fileBase || sheetId}: its picture was drawn again` };
   }
-  return { open, rebuild, on, state: () => RC, follow, unfollow, repicture };
+  return { open, rebuild, on, state: () => RC, follow, unfollow, repicture, followState: () => Object.assign({}, followState) };
 })();
 
 

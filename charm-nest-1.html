@@ -4032,7 +4032,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-engrave-preview.js?v=20261012-pv1-r2th1-th2-bg1-sb2-cb1-rf2-mg1-up1-es1-bb1-fa2"></script>
 <script src="charm-nest-run-follow.js?v=1120-world2"></script>
 <script src="charm-nest-cloud-sheets.js?v=1117-dfdd13cc"></script>
-<script src="charm-nest-drift.js?v=1120-world11"></script><script src="charm-nest-cloud-world.js?v=1120-world8"></script><!-- charm-nest-cloud-world.js: the cloud world on this page, in memory only; a computer that carries no run takes its order lines from it (CLOUDWORLD stage B, Paul 20 Nov 2026) -->
+<script src="charm-nest-drift.js?v=1120-world13"></script><script src="charm-nest-cloud-world.js?v=1120-world8"></script><!-- charm-nest-cloud-world.js: the cloud world on this page, in memory only; a computer that carries no run takes its order lines from it (CLOUDWORLD stage B, Paul 20 Nov 2026) -->
 <script src="charm-nest-cloud-activity.js?v=20261113-ca1"></script>   <!-- CLOUDALL S4 (Paul 13 Nov 2026): every computer's activity log lines shared through the cloud -->   <!-- CLOUDALL (Paul 13 Nov 2026): every sheet is one cloud document, changed from any computer, followed by every computer -->   <!-- RUNFOLLOW (Paul 13 Nov 2026): a computer without the run follows the cloud run's lines (held, pooled, taken out) -->
 <script src="charm-nest-cloud-tray.js?v=20261114-ct1-cs1"></script>   <!-- (CLOUDTRAY, Paul 14 Nov 2026: "You must put all this in the cloud" -> "Yes, build it"): the Nest rail's dropped files shared by every computer through the cloud -->
 <script src="charm-nest-cloud-share.js?v=20261114-cs1-cs2"></script>   <!-- (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): what every computer keeps the same (Settings, the stock preset, set-aside notices, unsent drafts, the learned lists, Manual Control drafts), shared through the cloud and the changes feed -->
@@ -7905,24 +7905,31 @@ const sheetsLabel = metal => `Sheets of ${(METALS.find(x => x.key === metal) || 
 /* NAMES (Paul, 12 Nov 2026: the Gold Filled list read "Sheet 1, Draft 2, Sheet 1, Draft 4, Draft 5, Draft 6, Draft 7"). A draft is numbered among the drafts of its metal in its run,
    1, 2, 3 ... (CharmNestSheetName.setDraftSource), on every surface: the live pages for the run on this screen, the Library's rows for the others. In the list, the sheets in sets
    come first, each with its set ("Sheet 1 · Set 2" when the list holds more than one set), then the drafts in their order. */
+/* SHEETSAME (Paul, 20 Nov 2026: Michelle's Gold Filled list read "Draft 1, Draft 1, Draft 2" where Paul's read "Draft 1, Draft 2, Draft 3"): ONE rule numbers a draft, the same on every computer. Its place among the
+   drafts of its metal in its run (a saved empty sheet too: it is an Available sheet), by the order a person gave them (draftOrder), then their page in the run,
+   then their id. The card's own pages are read first (on a computer that follows the run they are the cloud's records), the Library's rows for a sheet not on the card. */
+function sheetPieces(x) {
+  if (!x) return 0;
+  const rec = x.recalled && typeof x.recalled === "object" ? x.recalled : null;
+  return (x.charms || []).length || +x.charmCount || +x.placedCount || (x.poolIds || []).length || (rec ? (rec.poolIds || []).length || +rec.charmCount || +rec.placedCount || 0 : 0);
+}
+const draftKey = x => (x && x.draftOrder != null && Number.isFinite(+x.draftOrder) ? +x.draftOrder : +(x && x.page) || 0);
+const draftCmp = (a, b) => draftKey(a) - draftKey(b) || (+a.page || 0) - (+b.page || 0) || String(a.sheetId || a.id || "").localeCompare(String(b.sheetId || b.id || ""));
 function draftNumberOf(r) {
   const N = window.CharmNestSheetName; if (!r || !N || N.numbered(r)) return 0;
   const id = r.sheetId || r.id || null, m = r.metal, prim = S.sheets && S.sheets[m];
   const live = prim && (prim.pages.includes(r) ? r : id ? prim.pages.find(p => p.sheetId === id) : null);
-  // (DRAFTCLOUD, Paul 13 Nov 2026: "Everything has to be updated in real time from the cloud"): a draft the cloud lists is numbered from the cloud's rows, the same on every computer; this page's own pages
-  //  (which differ from one computer to another) only number a draft the cloud does not list yet
-  { const rows0 = (S.library && S.library.rows) || [], run0 = r.runId || (live && live.runId) || null;
-    if (run0 && id && rows0.some(x => x && x.id === id)) { const d0 = rows0.filter(x => x && x.metal === m && !x.archived && (x.runId || null) === run0 && !N.numbered(x)).sort((a, b) => (Number.isFinite(+a.draftOrder) && a.draftOrder != null ? +a.draftOrder : +a.page || 0) - (Number.isFinite(+b.draftOrder) && b.draftOrder != null ? +b.draftOrder : +b.page || 0) || String(a.id).localeCompare(String(b.id))); const i0 = d0.findIndex(x => x.id === id); if (i0 >= 0) return i0 + 1; } }
-  if (live) { const drafts = prim.pages.filter(p => (p.runId || null) === (live.runId || null) && (p.charms.length || p.recalled || p === live) && !N.numbered(p));   /* (SAMENAMES, Paul 15 Nov 2026: "the names of the sheets and drafts seemed to differ"): a draft shown from its cloud record (a computer that follows the run) is counted too: every one of them read "Draft 1" */ const dk = x => x.draftOrder != null && Number.isFinite(+x.draftOrder) ? +x.draftOrder : +x.page || 0, sorted = drafts.some(x => x.draftOrder != null && Number.isFinite(+x.draftOrder)) ? drafts.slice().sort((a, b) => dk(a) - dk(b)) : drafts;   /* (ORDERCLOUD, Paul 15 Nov 2026: "Draft N" the same on every computer: by draftOrder, then page, then the array) */ const i = sorted.indexOf(live); return i >= 0 ? i + 1 : 0; }
+  if (live) { const drafts = prim.pages.filter(p => (p.runId || null) === (live.runId || null) && !N.numbered(p) && (p === live || sheetPieces(p) > 0 || p.sheetId)).sort(draftCmp); const i = drafts.indexOf(live); if (i >= 0) return i + 1; }
   const rows = (S.library && S.library.rows) || [], run = r.runId || null; if (!run) return 0;
-  const drafts = rows.filter(x => x && x.metal === m && (x.runId || null) === run && !N.numbered(x)).sort((a, b) => (Number.isFinite(+a.draftOrder) && a.draftOrder != null ? +a.draftOrder : +a.page || 0) - (Number.isFinite(+b.draftOrder) && b.draftOrder != null ? +b.draftOrder : +b.page || 0) || String(a.id).localeCompare(String(b.id)));
+  const drafts = rows.filter(x => x && x.metal === m && !x.archived && (x.runId || null) === run && !N.numbered(x)).sort(draftCmp);
   const i = drafts.findIndex(x => x.id === id); return i >= 0 ? i + 1 : 0;
 }
 try { if (window.CharmNestSheetName && CharmNestSheetName.setDraftSource) CharmNestSheetName.setDraftSource(draftNumberOf); } catch (_) { /* named by their page, as before */ }
 function sheetMenuOrder(pages) {
   const N = window.CharmNestSheetName; if (!N) return pages.slice();
-  const inSet = p => N.numbered(p), seq = p => N.setNoOf(p) || 0;
-  return pages.slice().sort((a, b) => (inSet(b) - inSet(a)) || (inSet(a) ? (seq(a) - seq(b)) || (N.numberOf(a) - N.numberOf(b)) : 0) || (pages.indexOf(a) - pages.indexOf(b)));
+  const inSet = p => N.numbered(p), seq = p => N.setNoOf(p) || 0, setKey = p => String(p.setId || ""), idKey = p => String(p.sheetId || "");
+  // (SHEETSAME: never this computer's own page order: sheets of a set by set, number, then the set itself (its id carries its day) and the sheet's id; drafts as draftNumberOf numbers them)
+  return pages.slice().sort((a, b) => (inSet(b) - inSet(a)) || (inSet(a) ? (seq(a) - seq(b)) || (N.numberOf(a) - N.numberOf(b)) || setKey(a).localeCompare(setKey(b)) || idKey(a).localeCompare(idKey(b)) : draftCmp(a, b)));
 }
 function sheetMenuLabel(pg, pages) {
   const N = window.CharmNestSheetName, w = pageWord(pg); if (!N || !N.numbered(pg)) return w;
@@ -9249,7 +9256,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=1120-world10"></script>
+<script src="charm-nest-bridge.js?v=1120-world12"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1-sy1-sy2"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1-ob1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
