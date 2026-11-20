@@ -7107,7 +7107,10 @@ function membershipOf(sh) {
   const own = { draft: !!sh.draft, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null };
   try {
     const R = window.CharmNestSetRules;
-    if (R && typeof R.isPartial === "function" && (sh.setId || !sh.draft) && R.isPartial(sh) && window.Gate && typeof Gate.modern === "function" && Gate.modern(sh.runId)) return { draft: true, setId: null, setSeq: null, sheetIndex: null };
+    // (SETSHUT, Paul 20 Nov 2026: "how the fuck did it get removed from a set?"): a partial sheet the set ALREADY holds (the set lists it) is kept in it. NOPARTIALSET keeps a partial sheet from
+    //  joining a set; it wrote SS_Nov.12.26_Set-1_Sheet-3, a member of the Nov 12 Set 1 since Nov 13, as a draft at its next save, half out of its set (the set and its pieces still named it)
+    const held = (() => { try { return !!(sh.setId && sh.sheetId && window.Sets && typeof Sets.ofRun === "function" && Sets.ofRun(sh.runId).some(s => s && s.setId === sh.setId && (s.sheetIds || []).includes(sh.sheetId))); } catch (_) { return false; } })();
+    if (!held && R && typeof R.isPartial === "function" && (sh.setId || !sh.draft) && R.isPartial(sh) && window.Gate && typeof Gate.modern === "function" && Gate.modern(sh.runId)) return { draft: true, setId: null, setSeq: null, sheetIndex: null };
   } catch (_) { /* its own, as before */ }
   return own;
 }
@@ -9316,7 +9319,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=1120-world12"></script>
+<script src="charm-nest-bridge.js?v=1120-setshut1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1-sy1-sy2"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1-ob1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>

@@ -30242,7 +30242,9 @@ const LiveNest = window.LiveNest = (() => {
   }
   // the page's own marks first; the sets of its run are looked at only when none says so
   const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!p.cardinalPull || !!window.Gate?.holding?.(p) || !!p.laserDoneAt || !!p._manualHold /* (a person is moving its charms by hand in the sheet window, Manual Control: nothing arrives on it meanwhile) */ || !!p._inplaceHold /* (INPLACE: a replaced piece is being put back into its old spot on it) */ || (!((p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal)))&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
-    Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId));
+    // (SETSHUT, Paul 20 Nov 2026: "How could the system add a new part to a sheet that's already in a set" … "fix it"): a sheet in ANY set (approved or not) takes no new orders; the
+    //  intake put order 4239821246 on SS_Nov.12.26_Set-1_Sheet-3, a 7% sheet of the Nov 12 Set 1 that was not approved yet. Only its own order's later pieces (orderHome / reopenHome) still go to it
+    (!!p.setId && !p.draft) || (!!p.sheetId && Sets.ofRun(p.runId).some(set=>(set.sheetIds||[]).includes(p.sheetId)));
   /* ═══ PAIR · one Gold Filled sheet and one Sterling Silver sheet share orders (Paul, 26 Oct 2026: "Why are there two full GF sheets when I gave you the rules for that?") ═══════════════════════════
      His Set 1 held GF Sheet 1, GF Sheet 2 and SS Sheet 1. The cause (sandbox run of 25-26 Oct): GF Sheet 1 closed and GF Sheet 2 opened; SS Sheet 1 was filling its gaps and took the Sterling Silver piece of
      order 4200987085, whose Gold Filled piece had gone to GF Sheet 2. The intake sent each piece to the earliest open sheet of its metal, one metal at a time, and nothing looked at where the order's
