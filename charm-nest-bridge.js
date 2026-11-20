@@ -7468,7 +7468,12 @@ const Gate = window.Gate = (() => {
    *  (STUCKSPIN, Paul 28 Oct 2026: a sheet open in Manual Control follows too: the claim and its hold are about its charms, and only its set, number and label are taken from the record, nothing written.
    *   Left out, the 14K sheet the record held in Set 3 stayed a draft on the page for as long as Manual Control was on, and its save would have written the draft over the record) */
   const followable = (run, p, owed) => !!p && !p.recalled && p.runId === run.runId && !inSetNow(p) && !p.leftSet && !!p.sheetId && (owed || (!p.dirty && !!p.persistedDone)) && !["nesting", "finishing", "queued"].includes(p.status) && !holding(p) && !(p._manualHold && !(window.CNManual && typeof CNManual.isOn === "function" && CNManual.isOn(p))) && !p._incBusy && !p._rosePlanning && !p._roseAction && !p._roseStep;
+  /* (KEEPINSET, Paul 20 Nov 2026: "This is from my computer": the cloud put SS_Nov.12.26_Set-1_Sheet-3 back in its set, and this page kept its own copy as the draft it had made of it (leftSet), so the
+     red line went on naming "SS Draft 1"): a sheet the OWNER put back in its set (the record's keepInSet) is followed whatever this page's leftSet says; the record is the truth */
+  const ownerKept = rec => !!(rec && rec.keepInSet && rec.keepInSet.setId && rec.keepInSet.setId === rec.setId && !rec.draft);
+  const leftForKeep = (p, r) => !!(p && p.leftSet && r && String(p.leftSet) === String(r.setId));
   function followOne(run, p, rec, owed) {
+    if (ownerKept(rec) && p && p.leftSet) delete p.leftSet;
     const st = followHeld(run, rec) ? followOpen(run).get(String(rec.setId)) : null; if (!st || !followable(run, p, owed)) return false;
     Object.assign(p, { draft: false, setId: st.setId, seq: +rec.setSeq || st.seq, setDay: st.day || p.setDay, group: st.group || p.group || "dispatch", sheetIndex: +rec.sheetIndex || null });
     p.fileBase = rec.fileBase || CN.sheetFileBase(p); if (rec.label) p.label = rec.label;
@@ -7482,15 +7487,17 @@ const Gate = window.Gate = (() => {
   async function followRecords(rows) {
     const run = B.run;
     if (!run || !modern(run.runId) || ["complete", "abandoned"].includes(run.status) || !S.cloud.ok || committing(run)) return 0;
-    const now = Date.now(), want = (rows || []).filter(r => followHeld(run, r) && followOpen(run).has(String(r.setId)) && followable(run, allSheets().find(p => p.sheetId === r.id && !p.recalled)) && !(now - (followTried.get(r.id) || 0) < 60000));
+    const now = Date.now(), want = (rows || []).filter(r => followHeld(run, r) && followOpen(run).has(String(r.setId)) && (() => { const pg = allSheets().find(p => p.sheetId === r.id && !p.recalled); if (followable(run, pg)) return true; if (!leftForKeep(pg, r)) return false; const was = pg.leftSet; delete pg.leftSet; try { return followable(run, pg); } finally { pg.leftSet = was; } })() && !(now - (followTried.get(r.id) || 0) < 60000));
     if (!want.length) return 0;
     for (const r of want) followTried.set(r.id, now);
     const work = async () => {
       if (R.membershipPending || run.membershipDirty) return 0;
       let n = 0;
       for (const r of want) {
-        const p = allSheets().find(q => q.sheetId === r.id && !q.recalled); if (!followable(run, p)) continue;
+        const p = allSheets().find(q => q.sheetId === r.id && !q.recalled); if (!p) continue;
         let rec = null; try { rec = ((await api("charmNestLibrary", { op: "getSheet", id: r.id }, { quiet: true })) || {}).sheet || null; } catch (_) { continue; }
+        if (ownerKept(rec) && p.leftSet) delete p.leftSet;   // (KEEPINSET: the owner's put-back is followed)
+        if (!followable(run, p)) continue;
         if (followOne(run, p, rec)) { followTried.delete(r.id); n++; }
       }
       if (n) { Session.schedule(); refreshAllCards(); }
