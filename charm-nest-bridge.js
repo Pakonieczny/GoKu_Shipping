@@ -5400,7 +5400,17 @@ const Pool = window.Pool = (() => {
     const skip = (o && o.skip) || null, add = partnerSheets([].concat(orderId), run, skip); if (!add.gold.size && !add.silver.size) return true;      // (an order with no GF / SS piece ties the sheet to nothing)
     const mine = partnerSheets(page.charms.filter(c => !(skip && skip.has(c))).map(orderOfCharm), run, skip);
     const gf = new Set([...mine.gold, ...add.gold]), ss = new Set([...mine.silver, ...add.silver]);
-    if (gf.size > 1 || ss.size > 1) return false;
+    if (gf.size > 2 || ss.size > 2) return false;
+    // (PAIR2, Paul 20 Nov 2026: "the rose gold and a 10 K and a 14 K should be allowed to match to such a set and be able to have mixed orders with all the sheets and the given set"): with two GF or two SS
+    //  partners, every partner is in ONE set, or none is in a set and they are one unit (tied together by shared orders): the sheet still goes with exactly one set
+    if (gf.size > 1 || ss.size > 1) {
+      const parts = [...gf, ...ss], setOf = p => (p.setId && !p.draft ? p.setId : null), sets = new Set(parts.map(setOf));
+      if (sets.size > 1) return false;
+      if (!sets.has(null)) return true;
+      const ord = p => new Set((p.charms || []).filter(c => !(skip && skip.has(c))).map(orderOfCharm).filter(Boolean)), seen = new Set([parts[0]]), todo = [parts[0]];
+      while (todo.length) { const a = todo.pop(), oa = ord(a); for (const b of parts) if (!seen.has(b) && [...ord(b)].some(x => oa.has(x))) { seen.add(b); todo.push(b); } }
+      return seen.size === parts.length;
+    }
     // (both partners in one set; or neither in a set yet and each the other's one partner, PAIR: they share an order, so they are one unit and one set; or both still unpaired and the same place in
     //  line, RGONE above. Two drafts that share nothing and are paired elsewhere could end in two sets)
     if (gf.size && ss.size) { const setOf = p => (p.setId && !p.draft ? p.setId : null), g = [...gf][0], s = [...ss][0], a = setOf(g), b = setOf(s); if (a !== b) return false; if (!a) { const og = new Set(g.charms.map(orderOfCharm).filter(Boolean)); if (!s.charms.some(c => og.has(orderOfCharm(c))) && !draftsMeet(g, s, run)) return false; } }
@@ -6804,7 +6814,23 @@ const Gate = window.Gate = (() => {
       //  on a sheet of Set 1)
       const V = cardinalView(run), pagesOfIds = ids => (ids || []).map(id => V.page.get(id)).filter(Boolean), links = V ? formationOf(V, true, choices).groups.map(g => ({ ids: pagesOfIds(g.ids), anchors: pagesOfIds(g.anchors), ends: pagesOfIds(g.ends) })) : [];
       const lastOpen = !!last && !formedOnce(last);   // (SETSTAYSCLOSED: a formed set is not offered to the rules as a set to complete: the free sheets form the NEXT set)
-      const f = SR.form(lastOpen ? formMembers(last) : [], free, lastOpen, last && last.name, links);
+      // (SPLITWAIT, Paul 20 Nov 2026: "no set can be formed when there are mixed orders between coloured sheets"): a GF or SS sheet holding an order whose GF / SS piece is still waiting to be placed
+      //  (on no sheet yet) waits, with every sheet it shares an order with: Set 1 of 18 Nov formed from GF Sheets 1 and 2 while the silver of three of GF Sheet 2's orders waited, and those orders were split
+      const waitingOf = (() => { try {
+        const onSheet = new Set(allSheets().flatMap(p => (p.charms || []).map(c => c.poolId)).filter(Boolean)), out = new Map();
+        for (const r of (typeof Orders !== "undefined" && Orders && typeof Orders.rows === "function" ? Orders.rows() : [])) {
+          if (!r || !r.order || !["pulled", "waiting", "pooled"].includes(r.state) || (r.spec && !["gold", "silver"].includes(r.spec.material))) continue;
+          const ids = r.poolIds || []; if (ids.length && ids.every(id => onSheet.has(id))) continue;
+          const k = String(r.order.receiptId); if (!out.has(k)) out.set(k, r.spec && r.spec.material === "silver" ? "silver" : "gold");
+        }
+        return out;
+      } catch (e) { console.warn("[SPLITWAIT]", e); return new Map(); } })();
+      const oid = c => String(c && c.order != null ? c.order : "").split("/")[0];
+      const holds = new Map(free.map(p => [p, [...new Set((p.charms || []).map(oid).filter(k => waitingOf.has(k)))]]).filter(([, ks]) => ks.length));
+      for (const g of links) if (g.ids.some(x => holds.has(x))) { const ks = [...new Set(g.ids.flatMap(x => holds.get(x) || []))]; for (const x of g.ids) if (free.includes(x) && !holds.has(x)) holds.set(x, ks); }
+      for (const [p, ks] of holds) p.setWait = `Waits for its set: order${ks.length === 1 ? "" : "s"} ${ks.slice(0, 3).join(", ")}${ks.length > 3 ? " and more" : ""} still ${ks.length === 1 ? "has" : "have"} ${waitingOf.get(ks[0]) === "silver" ? "Sterling Silver" : "Gold Filled"} pieces waiting to be placed, and no set forms while an order is split`;
+      const freeNow = free.filter(p => !holds.has(p));
+      const f = SR.form(lastOpen ? formMembers(last) : [], freeNow, lastOpen, last && last.name, links);
       for (const w of f.wait) w.sheet.setWait = w.why;
       if (f.where === "last") target = last;
       else if (f.where === "new") {
@@ -30290,7 +30316,11 @@ const LiveNest = window.LiveNest = (() => {
     const ids = new Set([].concat(orderIds == null ? [] : orderIds).map(String).filter(x => x && !free.has(x))); if (!ids.size) return true;
     const skip = o.skip || null, heldHere = ordersHeld(page, skip); for (const x of free) heldHere.delete(x);
     const mine = sheetsHolding(other, heldHere, run, skip), theirs = sheetsHolding(other, ids, run, skip);
-    if (new Set([...mine, ...theirs]).size > 1) return false;          // (a second partner of the other metal)
+    // (PAIR2, Paul 20 Nov 2026: sets of 2 GF + 1 SS are normal; "I'm afraid this new rule is gonna … create endless chains of sheets in one set"): a GF or SS sheet shares orders with at most TWO
+    //  sheets of the other metal, and only when neither of them shares orders with another sheet of this one's metal, so a unit is at most 2 + 1 sheets and never chains on
+    const partners = new Set([...mine, ...theirs]);
+    if (partners.size > 2) return false;
+    if (partners.size === 2) for (const q of partners) { const qs = sheetsHolding(page.metal, ordersHeld(q, skip), run, skip); qs.delete(page); if (qs.size) return false; }
     // (will go to: the order's lines of the other metal not on a sheet yet go to this sheet's one partner; when that partner takes nothing any more, they could not, so this sheet does not take the order)
     if (mine.size === 1 && !theirs.size && closed([...mine][0]) && linesToCome(ids, other)) return false;
     return true;
