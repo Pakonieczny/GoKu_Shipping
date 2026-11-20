@@ -3959,10 +3959,12 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-rose.js?v=20261007-edges-gc1-gf1-sh29"></script>
 <script src="charm-nest-partial.js?v=20261007-ps4-fit75-pp1-cg1"></script>
 <script src="charm-nest-solver.js?v=20261009-unjam1-pair2-ln1-cg1-nestfront-nq1-ovf1-mi1-crn1-str1-lf1-go1-tt4"></script>
+<script src="charm-nest-nest-plan.js?v=20261120-np1"></script><!-- charm-nest-nest-plan.js: the nest's pure helpers (buildJob, handLocks, feedTurn, orderRank, keepOrdersWhole, CHARM_SCALE, CAREFUL_ANGLES, the side-by-side searches and the KEEPSEARCH pick), one copy for this page and the cloud (cloud architecture v2, step 6) -->
 <script src="vendor/clipper-6.4.2.js?v=20261028-sw1"></script>
 <script src="charm-nest-vector.js?v=20261028-ops1-sw1"></script>
 <script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1-bd1-ovf1-ae1-im1-bm1-crn1-clp1-bb1-sf1"></script>
 <script src="charm-nest-overlap-fix.js?v=20261025-ovf1-sb1"></script>
+<script src="charm-nest-finish-core.js?v=20261120-fc1"></script><!-- charm-nest-finish-core.js: the pure parts of a sheet's finish and save (buildJob, sheetSpec, buildReport, layoutKey, the overlap planners, membershipOf, the record), shared with node (FINISHCORE, cloud plan step 7) -->
 <script src="charm-nest-dxf.js?v=20260927-custom-vi1"></script>
 <script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2-hdr1-ms1-cost18-rh1-hp2-ro1-sc1-ss1-vis1-rs1-rel1-sg1-apx1-sw1-pf1-cw1-es1"></script>
 <script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1-hdr1-pl1-ms1-pk1-cost18-rh1-ho1-ss1-rel1-sg1-nv3-sy1-nv6-sg2-fw1-flw1-bm1"></script>
@@ -3974,6 +3976,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pair.js?v=20261009-pr1-mi3-mi4-mi5-mi6-mi7-pm8-pm9-cg1-nk1-lm1-ko1-wo1-m2-m3-mc1-bd1"></script>
 <script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi2-rlp1-rlp3-lm1-mw1"></script>
 <script src="charm-nest-pool-pieces.js?v=20261009-pp1-adv2-cg1-oos1"></script>
+<script src="charm-nest-pool-make.js?v=1120-pmake1"></script><!-- charm-nest-pool-make.js: the piece maker (a line's design read and traced, its pieces made), the one copy this page and the cloud both run; the bridge's Pool is its host (PMAKE, cloud plan v2 step 3) -->
 <script src="charm-nest-engrave-fit.js?v=20261019-wd1-rf1"></script>
 <script src="charm-nest-assets.js?v=20261007-imgcache-perf1-nv2"></script>
 <script src="charm-nest-thumbs.js?v=20261009-th1-pb1"></script>
@@ -5202,43 +5205,10 @@ function splitWords(g, nameOf) {
     the sheet, they are lifted with it, so the line moves on whole (never split unless it cannot fit one sheet). Rose Gold's
     protected pieces and a piece a person pinned stay where they are; the line is then split, and overflowToNextSheet says so. */
 function keepOrdersWhole(sh, byId, pocket) {
-  // (NOSPREAD, Paul 17 Oct 2026: a unit is an order, or one chunk of an order bigger than a sheet, orderKey; a line's group is kept whole within its chunk)
-  const gid = typeof groupOf === "function" ? c => { const g = groupOf(c); return g && c && c.chunk ? g + "~" + c.chunk : g; } : () => null;
-  const orderOf = id => { const c = byId.get(id); return c ? (typeof orderKey === "function" ? orderKey(c) : c.order || c.id) : id; };
-  const rank = typeof orderRank === "function" ? orderRank : c => +(c && c.orderDate) || 0;   // (the date the nest ranks an order by; one released from hold is ahead of every date)
-  const bad = new Set(sh.rejects.map(orderOf));
-  // a topping-up sheet takes any later order that fits its gaps, so a younger one is not lifted for an older miss
-  const dated = !(sh.topup && !sh.topup.closedAt) && [...byId.values()].some(c => rank(c) > 0);
-  const cutoff = dated && sh.rejects.length ? Math.min(...sh.rejects.map(id => rank(byId.get(id)))) : Infinity;
-  const locked=new Set([...(sh.roseProtected?.placements||[]),...(sh.appendOnly?sh.nestInitial||[]:[])].map(p=>p.id));
-  // (an order the search seated in a pocket that every older order that missed does not fit is not lifted for being younger: result.pocketFilled, the solver's pocket pass)
-  const lifted = sh.placements.filter(p => !locked.has(p.id)&&(bad.has(orderOf(p.id)) || (dated && !(pocket && pocket.has(p.id)) && rank(byId.get(p.id)) > cutoff)));
-  // the saved mates of a line that missed: lifted with it, except protected Rose Gold pieces and pieces a person pinned (those stay: a split);
-  // a Merge sheets rerun (_mergeNext) never lifts the target's saved charms: they stay where they are, as its design promises
-  const missed = new Set(sh.rejects.map(id => gid(byId.get(id))).filter(Boolean)), fixed = new Set((sh.roseProtected?.placements || []).map(p => p.id));
-  const mates = missed.size && !sh._mergeNext ? sh.placements.filter(p => locked.has(p.id) && !lifted.includes(p) && !fixed.has(p.id) && missed.has(gid(byId.get(p.id))) && !(byId.get(p.id)?.pinned && !byId.get(p.id)?.arrivalPin)) : [];
-  lifted.push(...mates);
-  // The ORDER is the unit (Paul, 13 Oct 2026: "the priority should be to maintain all of the pieces for each given order on that one sheet"): a piece of an
-  // order that did not fit takes the order's other SAVED pieces off this sheet with it (another line of the order, a copy of a plain quantity-N line),
-  // so the whole order starts the next sheet, and the small room they leave is filled by single charms (the gap fill). Only when the whole order fits one
-  // empty sheet (otherwise lifting gains nothing), when other pieces stay on this sheet (an emptied sheet cannot pass anything on), and never a protected
-  // Rose Gold piece or one a person pinned; the same exceptions as for a pair's mates.
-  const wholeMates = orderMatesOf(sh, byId, bad, orderOf, locked, fixed, lifted);
-  lifted.push(...wholeMates);
-  // (R16 HARD, Paul 26 Oct 2026: a piece of an order that moves on, which came onto this sheet while it was searched (a later line of the order: neither seated nor turned away by this search), goes
-  //  with it, never left behind to be passed on alone later)
-  const unitOf = c => String(typeof orderKey === "function" ? orderKey(c) : c.order || c.id), going = new Set([...sh.rejects.map(orderOf), ...lifted.map(p => orderOf(p.id))].map(String));
-  const seatedNow = new Set(sh.placements.map(p => p.id)), waitTurn = new Set(sh.feedWait || []), turned = new Set(sh.rejects);
-  const behind = going.size ? (sh.charms || []).filter(c => !c.excluded && !seatedNow.has(c.id) && !turned.has(c.id) && !waitTurn.has(c.id) && going.has(unitOf(c))).map(c => c.id) : [];
-  if (behind.length) sh.rejects.push(...behind);
+  // (the rule itself: charm-nest-nest-plan.js keepOrdersWhole, one copy for this page and the cloud; this page hands it its own rules and names, then runs its net)
+  CharmNestNestPlan.keepOrdersWhole(sh, byId, pocket, { groupOf: typeof groupOf === "function" ? groupOf : undefined, orderKey: typeof orderKey === "function" ? orderKey : c => c.order || c.id,
+    orderRank: typeof orderRank === "function" ? orderRank : c => +(c && c.orderDate) || 0, orderMatesOf: (...a) => orderMatesOf(...a), agent: (...a) => agent(...a) });
   // (R16 HARD, Paul 26 Oct 2026: and an order whose pieces of this colour are apart, here and on its other sheet, is brought together before this sheet is written or released: homeward)
-  if (!lifted.length) { homeward(sh); return; }
-  sh.placements = sh.placements.filter(p => !lifted.includes(p));
-  sh.rejects.push(...lifted.map(p => p.id));
-  // a saved piece lifted off is no longer a saved placement of this sheet: the check that follows holds the saved layout in place (buildJob lockedPlacements) and would
-  // flag the sheet for a "moved" piece that was taken off on purpose
-  if (sh.nestInitial && lifted.some(p => sh.nestInitial.some(q => q.id === p.id))) sh.nestInitial = sh.nestInitial.filter(q => !lifted.some(p => p.id === q.id));
-  agent({ metal: sh.metal }, "nest", `Orders kept whole and oldest first: ${lifted.length} placed piece(s) of ${new Set(lifted.map(p => orderOf(p.id))).size} order(s) lifted off — the order moves to the next sheet as one${mates.length ? `; ${mates.length} saved piece(s) of ${new Set(mates.map(p => gid(byId.get(p.id)))).size} pair/group(s) whose other piece did not fit come with it, so none is left half on this sheet` : ""}${wholeMates.length ? `; ${wholeMates.length} saved piece(s) of ${new Set(wholeMates.map(p => String(orderOf(p.id)))).size} order(s) whose other piece did not fit come with it, so the order stays on one sheet` : ""}`);
   homeward(sh);
 }
 /* R16 HARD (Paul, 26 Oct 2026: "sheets of the same colour cannot have cross-pollination of charms from a multi-charm/earring orders ... All multi-piece orders that do not fit on a given sheet (Near the
@@ -5290,21 +5260,11 @@ function homeward(sh) {
   }
   return out;
 }
-/** The saved pieces keepOrdersWhole lifts with an order one of whose pieces did not fit (see there): placements of `sh` that are locked, not lifted yet, not protected, not
-    pinned by a person, of an order in `bad`, when that whole order fits one empty sheet (its area, grown by half the clearance, under ORDER_ROOM of the sheet's
-    usable area at the fill ceiling) and the sheet keeps some other piece. [] when the sheet's usable area is not known (a page without usableArea) or a Merge sheets rerun. */
-const ORDER_ROOM = 0.7;
+/** The saved pieces keepOrdersWhole lifts with an order one of whose pieces did not fit (see there), when that whole order fits one empty sheet (ORDER_ROOM of the sheet's usable
+    area at the fill ceiling) and the sheet keeps some other piece; [] when the sheet's usable area is not known or a Merge sheets rerun (charm-nest-nest-plan.js orderMatesOf). */
 function orderMatesOf(sh, byId, bad, orderOf, locked, fixed, lifted) {
-  if (!bad.size || sh._mergeNext || typeof usableArea !== "function") return [];
-  const key = id => String(orderOf(id)), badKeys = new Set([...bad].map(String));
-  // (NOSPREAD, Paul 17 Oct 2026: an order that asks for up to bigShare of what a sheet takes is taken to fit a fresh one, the same assumption the intake makes of a big order; ORDER_ROOM alone left an order of 70% to 90% of a sheet split by a late line)
-  const NS = typeof nospread === "function" ? nospread() : null, share = NS ? Math.max(ORDER_ROOM, NS.NOSPREAD.bigShare) : ORDER_ROOM;
-  const cap = +(typeof S !== "undefined" && S.settings && S.settings.maxFill) || .80, room = usableArea(sh) * cap * share;
-  if (!(room > 0)) return [];
-  const area = new Map();
-  for (const c of sh.charms || []) if (!c.excluded) { const k = typeof orderKey === "function" ? orderKey(c) : String(c.order || c.id); area.set(k, (area.get(k) || 0) + (typeof inflatedArea === "function" ? inflatedArea(c) : +c.areaPt2 || 0)); }
-  const mates = sh.placements.filter(p => locked.has(p.id) && !lifted.includes(p) && !fixed.has(p.id) && badKeys.has(key(p.id)) && !(byId.get(p.id)?.pinned && !byId.get(p.id)?.arrivalPin) && (area.get(key(p.id)) || 0) <= room);
-  return mates.length && sh.placements.length - lifted.length - mates.length > 0 ? mates : [];
+  return CharmNestNestPlan.orderMatesOf(sh, byId, bad, orderOf, locked, fixed, lifted, { usableArea: typeof usableArea === "function" ? usableArea : undefined, nospread: typeof nospread === "function" ? nospread : undefined,
+    get settings() { return typeof S !== "undefined" ? S.settings : undefined; }, inflatedArea: typeof inflatedArea === "function" ? inflatedArea : undefined, orderKey: typeof orderKey === "function" ? orderKey : c => String(c.order || c.id) });
 }
 function orderSummary(charms) {
   const by = new Map(); for (const c of charms) { const k = c.order || c.id; by.set(k, (by.get(k) || 0) + 1); }
@@ -5831,82 +5791,40 @@ function ensureWorkers(sh, n) {
 /** When the first file behind this sheet arrived — the clock the operator cares about starts there. */
 function sheetT0(sh) { const ids = new Set(sh.charms.map(c => c.sourceId)); const t = S.sources.concat(Object.values(S.poolSources || {})).filter(x => ids.has(x.id) && x.t0).map(x => x.t0); return t.length ? Math.min(...t) : (sh.startedAt || performance.now()); }
 function log(sh, msg) { sh.log.push(`${new Date().toLocaleTimeString()} ${msg}`); if (sh.log.length > 200) sh.log.shift(); if (window.DesignLink && DesignLink.feed) DesignLink.feed({ kind: (METAL_TAG && METAL_TAG[sh.metal]) || sh.metal, text: msg }); }
-/** After nesting, every charm is written and previewed 2.9 % smaller than drawn, scaled about its own centre: the layout is solved at full size and the shrink afterwards makes minor overlaps disappear.
-    (Paul, 25 Oct 2026: "Increase the 2.5% to 2.9%"; was 0.975.) Every place that writes or draws a placed charm reads this one number. */
-const CHARM_SCALE = 0.971;
+/** After nesting, every charm is written and previewed 2.9 % smaller than drawn, scaled about its own centre (Paul, 25 Oct 2026: "Increase the 2.5% to 2.9%"; was 0.975):
+    charm-nest-nest-plan.js CHARM_SCALE. Every place that writes or draws a placed charm reads this one number. */
+const CHARM_SCALE = CharmNestNestPlan.CHARM_SCALE;
 /** The size a person gave a piece by hand in the sheet window (Manual Control, 10K / 14K; Paul, 18 Oct 2026): 1 = its design size, bounded 0.8 to 1.2;
-    the piece is nested, checked and written at that size (buildJob, finishNest). */
-function manualSize(c) { const v = c && c.manual && !c.frozen ? +c.manual.size : 0; return v >= 0.8 && v <= 1.2 ? v : 1; }   // (CUSTOMPOOL, 28 Oct 2026: a custom design sent at its exact size has no other: c.frozen)
+    the piece is nested, checked and written at that size (buildJob, finishNest; charm-nest-nest-plan.js manualSize). */
+function manualSize(c) { return CharmNestNestPlan.manualSize(c); }
 /** (INPLACE SHRINK, Paul 9 Nov 2026: "if need be, it can be shrunk by up to 10% just to fill it") The size a replaced piece was shrunk to so it went back into its old spot (charm.manual { fit: "inplace", size }, 0.90 to 0.99), else 0. */
 function inPlaceShrink(c) { const m = c && c.manual, v = m && m.fit === "inplace" && !c.frozen ? +m.size : 0; return v >= 0.9 - 1e-9 && v < 1 ? v : 0; }
 /** A charm's size as it is cut: "94% · 16.9 × 12.0 mm" for a piece shrunk to go back into its old spot, its design size otherwise. */
 const cutSizeWords = c => { const f = inPlaceShrink(c), k = f || 1; return `${f ? Math.round(f * 100) + "% · " : ""}${fmt.mm(c.widthPt * k)} × ${fmt.mm(c.heightPt * k)}`; };
-/** What a sheet's written files depend on: each placed charm, where and how it lies, and its artwork and name. */
-const layoutKey = (sh, byId) => JSON.stringify([sh.sheetId, (sh.placements || []).map(p => { const c = byId.get(p.id); return [String(p.id), +(+p.cxPt).toFixed(3), +(+p.cyPt).toFixed(3), p.angle, p.scale || 1, c ? c.hash : null, c ? c.name : null]; }).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)]);
-/** One charm at a time on every sheet (Paul, 24 Sep): Gold, Silver, Rose Gold past its green line, a sheet's first
-    charms as much as later ones. Each is graded spot by spot at 2° steps with the others looked ahead, nudged into
-    place, and never moved again; a sheet is never re-arranged, except that an order turned away from a sheet with room left
-    lifts the few newest charms around the bottleneck and seats them again with it (9 Oct, "making room"). */
-const CAREFUL_ANGLES = Array.from({ length: 180 }, (_, i) => i * 2);
-const carefulNest = sh => sh.nestFlow !== "learned";
-/* ZEROGAP (Paul, 27 Oct 2026: a charm placed by hand in Manual Control may sit right against its neighbour or the sheet's edge, at any pose a 0.05 mm nudge gives): a nest that starts the
-   sheet afresh holds each such charm EXACTLY where the person put it, as a locked placement (the solver's append keeps those as they are and nests the rest round them), never seated again
-   on the nest's own half-point grid with its edge margin, where it could be moved a hair or turned away. Only charms Manual Control placed (c.manual with the person's pin); null when none. */
-function handLocks(sh, items) {
-  const Sv = typeof CharmNestSolver !== "undefined" ? CharmNestSolver : null, out = [];
-  for (const c of items || []) {
-    const pin = c && c.manual && c.pinned && !c.arrivalPin ? c.pinned : null; if (!pin || ![pin.cxPt, pin.cyPt].every(Number.isFinite)) continue;
-    const size = manualSize(c), angle = ((+pin.angle || 0) % 360 + 360) % 360, scale = c.frozen ? 1 : size !== 1 ? +(CHARM_SCALE * size).toFixed(5) : CHARM_SCALE;   // (CUSTOMPOOL: a custom design sent at its exact size is held at 100 %)
-    let wPt = (+c.widthPt || 20) * size, hPt = (+c.heightPt || 20) * size;
-    try { const v = Sv && c.bits && Sv.prepareVariant({ bits: c.bits, w: c.w, h: c.h, scale: size === 1 ? c.scale : c.scale / size }, angle, 0, 2); if (v) { wPt = v.solid.w / 2; hPt = v.solid.h / 2; } } catch (_) { /* its own size stands */ }
-    out.push({ id: c.id, angle, cxPt: +pin.cxPt, cyPt: +pin.cyPt, xPt: +pin.cxPt - wPt / 2, yPt: +pin.cyPt - hPt / 2, wPt, hPt, contact: 0, scale });
-  }
-  return out.length ? out : null;
-}
+/** What a sheet's written files depend on: each placed charm, where and how it lies, and its artwork and name (FINISHCORE: charm-nest-finish-core.js, shared with node). */
+const layoutKey = (sh, byId) => CharmNestFinishCore.layoutKey(sh, byId);
+/** One charm at a time on every sheet (Paul, 24 Sep): Gold, Silver, Rose Gold past its green line, a sheet's first charms as much as later ones, each graded
+    spot by spot at 2° steps and never moved again but to make room (charm-nest-nest-plan.js CAREFUL_ANGLES); the learned flow is the one exception (carefulNest). */
+const CAREFUL_ANGLES = CharmNestNestPlan.CAREFUL_ANGLES;
+const carefulNest = CharmNestNestPlan.carefulNest;
+/* ZEROGAP (Paul, 27 Oct 2026): a nest that starts the sheet afresh holds each charm a person placed in Manual Control EXACTLY where the person put it, as a locked placement
+   (charm-nest-nest-plan.js handLocks); null when none. */
+function handLocks(sh, items) { return CharmNestNestPlan.handLocks(sh, items, { Solver: typeof CharmNestSolver !== "undefined" ? CharmNestSolver : null, manualSize: c => manualSize(c) }); }
 /** (ZEROGAP, Paul 27 Oct 2026: "Same goes for the edge of the sheet") A 10K / 14K sheet with a charm placed by hand in Manual Control: its written check keeps no margin from the sheet's edge
  *  (its rendered ink is held to the sheet itself, as Manual Control's own check holds the charm). The nest keeps its inset for the charms it places itself, so only a hand-placed one can be
  *  in that band. */
 const handPlacedSheet = sh => !!sh && ["gold10k", "gold14k"].includes(sh.metal) && (sh.charms || []).some(c => c && c.manual && c.pinned && !c.arrivalPin);
 /** The placements a nest holds still: the saved layout it was given (`base`), and every charm a person placed in Manual Control that it does not list (handLocks); null when none. */
-function withHandLocks(sh, items, base) {
-  const list = (base || []).slice(), have = new Set(list.map(p => p.id));
-  for (const p of handLocks(sh, items) || []) if (!have.has(p.id)) list.push(p);
-  return list.length ? list : null;
-}
+function withHandLocks(sh, items, base) { return CharmNestNestPlan.withHandLocks(sh, items, base, { handLocks: (s, it) => handLocks(s, it) }); }
+/** The solver job of a sheet (charm-nest-nest-plan.js buildJob, one copy for this page and the cloud): this page hands it what the job reads of the page (its Settings, the
+    sheet's stock, corner keep-out and angles, the pieces' modules) and its own name for each helper, so a test that stands in for one is heard. */
 function buildJob(sh) {
-  const st = stockFor(sh.metal, sh), sizeOf = c => (typeof manualSize === "function" ? manualSize(c) : 1);   // (a test that slices buildJob out alone has no manualSize)
-  const items = nestItems(sh), careful = carefulNest(sh);
-  return {
-    sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, cornerPt: cornerPtSetting(sh), ...(sh.roseStock?.profileJson ? {remnant:JSON.parse(sh.roseStock.profileJson)} : {}) },
-    clearancePt: +S.settings.clearancePt || 0, writeScale: 1 /* (25 Oct 2026: nesting at the written size, CHARM_SCALE, made the append turns of a big file place 11 of 14 pieces on an 11 % sheet; off until that is fixed. The overlap the shrink can cause is cleared by fixOverlaps) */, angles: careful && angleSet().length < CAREFUL_ANGLES.length ? CAREFUL_ANGLES : angleSet(), fineRes: 2, coarseRes: 0.5,
-    timeBudgetMs: sh.intakeBudgetMs || (+S.settings.budgetS || 180) * 1000, fullBudget: sh.intakePhase !== "fill", stallMs: 60 * 1000, maxTrials: sh.intakePhase === "fill" ? 2000 : 1000000, seed: sh.runSeed || +S.settings.seed || 1,
-    // charms already on the sheet stay exactly where they are
-    protectedRose:sh.roseProtected||null,lockedPlacements:(typeof withHandLocks==="function"?withHandLocks:(sh,items,base)=>base)(sh,items,sh.appendOnly?sh.nestInitial||sh.placements:careful&&sh.nestInitial?.length?sh.nestInitial:null),   // (a test that slices buildJob out alone has no withHandLocks)
-    // a Gold or Silver sheet also reports whether one of the shop's smallest charms could still go in (see topupSettle)
-    careful, roomCheck: careful && ["gold", "silver"].includes(sh.metal),
-    // (GOLDOPT: solid 10K / 14K gold, small sheets, costly stock: up to six searches side by side, each its own placing order)
-    // (TIGHT, Paul 14 Nov 2026: Rose Gold too, and each layout carries its dead space so the least wasteful one is kept; GOLDLOCK below still nests a sheet with held pieces the single way)
-    ...(["gold10k", "gold14k", "rose"].includes(sh.metal) ? { tight: true } : {}),
-    ...(careful && ["gold10k", "gold14k", "rose"].includes(sh.metal) && !sh.appendOnly ? { multiStart: Math.min(6, Math.max(3, ((typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 4) - 1)) } : {}),
-    // an order turned away from a sheet with room left lifts the few newest charms near the bottleneck and seats them again beside it ("making room"; Rose Gold never, see the solver's unjam)
-    // (a sheet whose attempts found no arrangement tries less each time, and not at all after three)
-    // (INPLACE, Paul 20 Oct 2026: a sheet that takes a replaced charm that did not fit its old spot never moves a charm already on it to make room: sh._keepPlaced)
-    unjam: careful && sh.metal !== "rose" && !sh.roseCutAt && !sh._keepPlaced && (sh._unjamFails || 0) < 3, ...(sh._unjamFails ? { unjamMs: 15000 } : {}),
-    // every metal goes on as one tight block from the sheet's start, never spread along its edges (see BLOCK_WEIGHTS): Rose Gold, 10K and 14K
-    // (the metals with a green line) since September, Gold-filled and Sterling Silver since 11 Oct (Paul: "nest the pieces in a somewhat straight
-    // vertical line front exactly like we already do with the RG 14/20 sheet"); a sheet already saved keeps its charms, and its holes are filled first.
-    /* GFEASE (Paul, 11 Nov 2026: "the GF and SS sheets should be maintaining the same style of alignment" as Rose Gold): every careful sheet pays
-       the block's full price for growing the front, from the first charm to the last, so Gold and Silver keep a straight vertical front too.
-       (From 11 Oct Gold and Silver had job.blockEase { from: .45, to: .7, scale: .25 }: the price eased off over the second half of the sheet, for
-       a little more density on a sheet nothing is cut from, and the front slanted there. Removed 11 Nov for alignment; the solver still reads
-       job.blockEase, nothing asks for it.) */
-    block: careful,
-    initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.80, nearFullContact: !(sh.metal==="rose"||(typeof CharmNestRose!=="undefined"&&CharmNestRose.cuts(sh.metal))),
-    // filling its gaps, a sheet takes any later order that fits, not only the oldest; the pockets go to single-charm orders before a multi-piece order that was turned away (solver: singlesFirst)
-    ...(gapFilling(sh) ? { singlesFirst: true } : {}),
-    // (a piece a person resized by hand, Manual Control: its bitmap is read at that size, so the nest, its check and the written file all see the same piece)
-    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: sizeOf(c) === 1 ? c.scale : c.scale / sizeOf(c), bits: c.bits, areaPt2: sizeOf(c) === 1 ? c.areaPt2 : c.areaPt2 * sizeOf(c) ** 2, order: typeof orderKey === "function" ? orderKey(c) : c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : orderRank(c), pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null, hold: !!(c.pinned && !c.arrivalPin), ...(typeof CharmNestSolver !== "undefined" && CharmNestSolver.pairFields ? CharmNestSolver.pairFields(c) : {}) }))   // (hold: pinned by a person, never lifted; the run's own pin on every placed charm is arrivalPin; pairFields: the group, side and "seat near its mate" of a pair's pieces, nothing for any other charm)
-  };
+  return CharmNestNestPlan.buildJob(sh, {
+    get settings() { return S.settings; }, stockFor: (metal, s) => stockFor(metal, s), cornerPt: s => cornerPtSetting(s), angleSet: () => angleSet(), get carefulAngles() { return CAREFUL_ANGLES; },
+    nestItems: s => nestItems(s), carefulNest: s => carefulNest(s), gapFilling: s => gapFilling(s), orderRank: c => orderRank(c),
+    // (a test that slices buildJob out alone has no manualSize, no withHandLocks and no orderKey)
+    manualSize: typeof manualSize === "function" ? manualSize : () => 1, withHandLocks: typeof withHandLocks === "function" ? withHandLocks : (s, items, base) => base, orderKey: typeof orderKey === "function" ? orderKey : c => c.order || c.id,
+    Solver: typeof CharmNestSolver !== "undefined" ? CharmNestSolver : null, Rose: typeof CharmNestRose !== "undefined" ? CharmNestRose : null, cores: typeof navigator !== "undefined" ? navigator.hardwareConcurrency : 0 });
 }
 function packingKey(sh, items) {
   const st = stockFor(sh.metal, sh);
@@ -6021,19 +5939,15 @@ function startNestReady(sh, context) {
     if (useServer) return startServerNest(sh, job);
     // (GOLDOPT, Paul 12 Nov 2026: 10K and 14K are solid gold on small sheets, "nest the pieces the most efficient possible way": several careful searches at once, each
     //  placing the pieces in its own order (job.orderVariant), and the tightest layout wins, betterLayout)
-    // (GOLDLOCK, Paul 12 Nov 2026: 14K Draft 1 and 2 were flagged "Verification flagged": a sheet with pieces held where they are (lockedPlacements: a moved-in order, the saved layout; protectedRose) is
-    //  nested the single way it always was: the side-by-side searches are for a fresh nest only, where nothing is held)
-    if (job.multiStart && (job.lockedPlacements?.length || job.protectedRose)) delete job.multiStart;
-    // (SMALLSEARCH, Paul 14 Nov 2026: a 3-piece sheet ran six searches for a minute): a sheet of few pieces runs no more searches side by side than it has pieces
-    if (job.multiStart && job.tight) job.multiStart = Math.max(1, Math.min(job.multiStart, items.length));
-    const n = job.multiStart ? (job.tight ? job.multiStart : Math.max(parallelCount(job.angles.length), job.multiStart)) : parallelCount(job.angles.length);
+    // (GOLDLOCK: a sheet with pieces held where they are is nested the single way it always was; SMALLSEARCH: no more searches side by side than it has pieces: charm-nest-nest-plan.js searchCount)
+    const n = CharmNestNestPlan.searchCount(job, items.length, a => parallelCount(a));
     const workers = ensureWorkers(sh, n);
     sh.pool = { n, done: 0, results: [], trials: new Array(n).fill(0), winner: null };
     // (KEEPSEARCH, Paul 14 Nov 2026: "Why is the system finding good solutions and then scrapping them?" -> "Yes, do it"): a 10K, 14K or Rose Gold fresh nest keeps searching while its time lasts:
-    //  a search that finishes starts again in a new placing order (orderVariant: the next number, shaken by its own seed), up to KEEP_MAX finished layouts; the least wasteful one is kept (betterLayout, TIGHT)
-    if (job.multiStart && job.tight) { const t = performance.now(); sh.pool.keep = { job, t0: t, next: n, done: 0, started: new Array(n).fill(t), max: Math.min(36, Math.max(n, 2 * items.length)) }; }   // (SMALLSEARCH: at most two finished layouts per piece)
+    //  a search that finishes starts again in a new placing order, up to KEEP_MAX finished layouts; the least wasteful one is kept (charm-nest-nest-plan.js keepPlan; SMALLSEARCH: at most two per piece)
+    { const keep = CharmNestNestPlan.keepPlan(job, n, items.length, performance.now()); if (keep) sh.pool.keep = keep; }
     if (sh.evNest && !job.careful) agentUpdate(sh.evNest, { text: `${n} parallel search${n > 1 ? "es" : ""} on seeds ${job.seed}–${job.seed + n - 1} · ${items.length} pieces · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · standard and broader-rotation searches keep oldest-first sheet membership · ceiling ${fmt.s(job.timeBudgetMs)}` });
-    workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i, exploreRotations: i % 2 === 1, ...(job.multiStart ? { orderVariant: i } : {}), ...(sh.pool.keep && i % 2 === 1 ? { longFirstForce: true } : {}), useGPU: S.settings.computePipeline === "gpu" && i === n - 1 }) }));
+    workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: CharmNestNestPlan.slotJob(job, i, { keep: !!sh.pool.keep, useGPU: S.settings.computePipeline === "gpu" && i === n - 1 }) }));
   };
   const launchId=sh.jobId;
   launch();
@@ -6067,61 +5981,30 @@ function writeAsPlaced(sh) {
   log(sh, `written as it stands · ${sh.placements.length} pieces, none moved (a replaced piece; no nest search)`);
   return finishNest(sh, { result }).then(() => sh.persisted).then(() => !!sh.persistedDone && !sh.problem, () => false);
 }
-/* A big batch goes onto a sheet a few orders at a time, oldest first, the way orders come in from Etsy (Paul, 25 Sep:
-   "the charms were coming in a few at a time and then the system was placing them"). A run that took every open order
-   put 138 charms on one sheet, and its one-by-one fill weighed them all together, drawn as masks, before the sheet was
-   written. Now the oldest few orders are placed and the sheet written, then the next few come in (feedOn); the charms of
-   the later orders wait on the sheet for their turn, as later orders wait at Etsy, and each few is placed exactly as an
-   update's new orders are, gap fill included. Gold and Silver of a run. Rose Gold, 10K and 14K (the metals with a green
-   line) keep their own flow: the whole batch is placed in one search and built as one block from the sheet's start, as
-   Rose Gold is (Paul, 8 Oct: "the 14K gold sheet is a mess because the sheet was not initially forced to be aligned like
-   the RG 14/20"). Three orders at a time never saw the rest of the batch, and each little group was seated against the last one. */
-const FEED_ORDERS = 3;
-/** The unit the nest keeps whole: an order, or one chunk of an order bigger than a sheet (NOSPREAD, Paul 17 Oct 2026: `chunk`, 1.. in the order they are seated; the order itself, `c.order`, stays what the sets share). */
-const orderKey = c => String(c.order || c.id) + (c.chunk ? "~" + String(c.chunk).padStart(3, "0") : "");
-/* The date the nest's oldest-first rule reads for a piece: its order's date, and for a piece of an order released from hold
-   (frontAt) a time ahead of every real order date, so it is placed first, in the order the holds were released (Paul, 5 Oct). */
-const orderRank = c => (typeof CharmNestOrders !== "undefined" && CharmNestOrders.rankDate ? CharmNestOrders.rankDate(c) : +(c && c.orderDate) || 0);
+/* A big batch goes onto a sheet a few orders at a time, oldest first, the way orders come in from Etsy (Paul, 25 Sep): the oldest few orders are placed and the sheet written,
+   then the next few come in (feedOn); the charms of the later orders wait on the sheet for their turn. Gold and Silver of a run; Rose Gold, 10K and 14K (the metals with a green
+   line) place the whole batch in one search. The rule (feedTurn), the unit kept whole (orderKey), the rank date (orderRank) and the turn order live in charm-nest-nest-plan.js,
+   one copy for this page and the cloud; the names below are this page's own for them. */
+const FEED_ORDERS = CharmNestNestPlan.FEED_ORDERS;
+/** The unit the nest keeps whole: an order, or one chunk of an order bigger than a sheet (NOSPREAD, Paul 17 Oct 2026: `chunk`; charm-nest-nest-plan.js orderKey). */
+const orderKey = CharmNestNestPlan.orderKey;
+/* The date the nest's oldest-first rule reads for a piece: its order's date, and for a piece of an order released from hold (frontAt) a time ahead of every real order date
+   (Paul, 5 Oct; charm-nest-nest-plan.js orderRank with this page's CharmNestOrders). */
+const orderRank = c => CharmNestNestPlan.orderRank(c, typeof CharmNestOrders !== "undefined" ? CharmNestOrders : null);
 /** A Gold or Silver sheet filling its gaps (see topupSettle). */
-const gapFilling = sh => !!sh && !!sh.topup && !sh.topup.closedAt && ["gold", "silver"].includes(sh.metal);
+const gapFilling = CharmNestNestPlan.gapFilling;
 /** How many pieces each order of `charms` has: Map order -> count. */
-const orderSizes = charms => { const by = new Map(); for (const c of charms) { const k = orderKey(c); by.set(k, (by.get(k) || 0) + 1); } return by; };
-/** The order the orders of a sheet take their turn in: oldest first. A sheet filling its gaps takes the single-charm orders first (oldest
-    first among them) and the multi-piece orders after, so its few tries left go to the orders that fit a small gap (Paul, 13 Oct 2026). */
-function turnOrder(sh, items) {
-  const age = (a, b) => orderRank(a) - orderRank(b) || orderKey(a).localeCompare(orderKey(b));
-  if (!gapFilling(sh)) return age;
-  const size = orderSizes(items);
-  return (a, b) => ((size.get(orderKey(a)) > 1) - (size.get(orderKey(b)) > 1)) || age(a, b);
-}
-/** The charms this search places, and those it leaves waiting for their turn (sh.feedWait). */
+const orderSizes = charms => CharmNestNestPlan.orderSizes(charms, { orderKey: c => orderKey(c) });
+/** The order the orders of a sheet take their turn in: oldest first; a sheet filling its gaps takes the single-charm orders first (Paul, 13 Oct 2026; charm-nest-nest-plan.js turnOrder). */
+function turnOrder(sh, items) { return CharmNestNestPlan.turnOrder(sh, items, { orderRank: c => orderRank(c), orderKey: c => orderKey(c), gapFilling: s => gapFilling(s), orderSizes: ch => orderSizes(ch) }); }
+/** The charms this search places, and those it leaves waiting for their turn (sh.feedWait; charm-nest-nest-plan.js feedTurn: FEED_ORDERS at a time, a pair's or an order's later pieces with it). */
 function feedTurn(sh, items) {
-  sh.feedWait = null;
-  if (!carefulNest(sh) || sh.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(sh.metal)) || !sh.runId || (S.settings.engine || "solver") === "ai") return items;
-  const placed = new Set(sh.placements.map(p => p.id));
-  const fresh = items.filter(c => !placed.has(c.id)).sort(turnOrder(sh, items));
-  // a sheet filling its gaps: the orders it still owes a try try it together, in one search (topupRoom)
-  // (NOSPREAD, Paul 17 Oct 2026, B: a multi-piece order that cannot fit whole is no try of a sheet filling its gaps: it waits here only to be passed on whole to the next sheet, feedOn)
-  const names = [...new Set(fresh.map(orderKey))], mine = new Map(); for (const c of fresh) { const k = orderKey(c); if (!mine.has(k)) mine.set(k, []); mine.get(k).push(c); }
-  const stays = gapFilling(sh) && typeof nospread === "function" && nospread() ? nospreadAdmitted(sh, new Map(names.map(k => [k, mine.get(k)]))) : null, tryable = stays ? names.filter(k => stays.has(k)) : names;
-  const turn = new Set(tryable.slice(0, sh.topup && !sh.topup.closedAt ? Math.max(1, topupRoom(sh, false)) : FEED_ORDERS));
-  // a pair (a line of pieces) with a piece already placed on this sheet has its other pieces come in this turn, whatever their order's rank:
-  // they join their mate's sheet and are never left waiting to be passed on alone (rule R2; a line with nothing placed is unchanged)
-  // The same for any piece of an ORDER with a piece already placed on this sheet (another line of the order, a copy that came in after its mates were saved;
-  // Paul, 13 Oct 2026: all the pieces of an order on one sheet): it takes this turn with them, not the order's place in line.
-  const gid = typeof groupOf === "function" ? groupOf : () => null, placedLines = new Set(items.filter(c => placed.has(c.id)).map(gid).filter(Boolean)), placedOrders = new Set(items.filter(c => placed.has(c.id)).map(orderKey));
-  if (placedLines.size || placedOrders.size) for (const c of fresh) if (!turn.has(orderKey(c)) && (placedOrders.has(orderKey(c)) || placedLines.has(gid(c)))) turn.add(orderKey(c));
-  const wait = fresh.filter(c => !turn.has(orderKey(c)));
-  if (!wait.length) return items;
-  sh.feedWait = wait.map(c => c.id);
-  const later = new Set(sh.feedWait);
-  return items.filter(c => !later.has(c.id));
+  return CharmNestNestPlan.feedTurn(sh, items, { get settings() { return S.settings; }, carefulNest: s => carefulNest(s), turnOrder: (s, it) => turnOrder(s, it), orderKey: c => orderKey(c), gapFilling: s => gapFilling(s),
+    topupRoom: (s, w) => topupRoom(s, w), nospreadAdmitted: (s, m) => nospreadAdmitted(s, m), nospread: typeof nospread === "function" ? nospread : undefined, groupOf: typeof groupOf === "function" ? groupOf : undefined,
+    Rose: typeof CharmNestRose !== "undefined" ? CharmNestRose : undefined });
 }
 /** The charms on the sheet less those waiting for their turn: what the search places, is judged by and writes. */
-function nestItems(sh) {
-  const items = activeCharms(sh); if (!sh.feedWait?.length) return items;
-  const later = new Set(sh.feedWait); return items.filter(c => !later.has(c.id));
-}
+function nestItems(sh) { return CharmNestNestPlan.nestItems(sh, { activeCharms: s => activeCharms(s) }); }
 /** The few orders placed and the sheet saved, the next few come in. A sheet that is full, or whose check flagged it,
     passes the orders still waiting on to the next sheet, where they come in the same way. Run's Stop: they wait for
     Resume; a sheet stopped by hand or in trouble keeps them for its next Nest. */
@@ -6409,11 +6292,12 @@ function onWorkerMessage(sh, m, idx) {
     const K = pool.keep;
     if (K) {
       // (KEEPSEARCH) the worker keeps the best of its own layouts; while time is left (this pass fits again in what remains) it starts once more in the next placing order
-      const opts = { reachFirst: ["gold10k", "gold14k"].includes(sh.metal), tight: true }, now = performance.now(), pass = now - (K.started[idx] || K.t0);
-      if (m.result) { K.done++; if (!pool.results[idx] || CharmNestSolver.betterLayout(m.result, pool.results[idx], stockFor(sh.metal, sh), opts)) pool.results[idx] = m.result; }
-      if (m.result && !pool.stopAsked && m.result.endedBy !== "stopped" && sh.status === "nesting" && K.next < K.max && now - K.t0 + pass <= (K.job.timeBudgetMs || 180000) && sh.workers?.[idx]) {
-        const v = K.next++; K.started[idx] = now; pool.completed[idx] = false;
-        sh.workers[idx].postMessage({ type: "solve", jobId: sh.jobId + ":" + idx, job: Object.assign({}, K.job, { seed: K.job.seed + v, exploreRotations: v % 2 === 1, orderVariant: v, useGPU: false, ...(v % 2 === 1 ? { longFirstForce: true } : {}) }) });   // (LONGFIRST: every other search lays the bars flat along the edges)
+      // (charm-nest-nest-plan.js keepResult, keepAgain, keepNext)
+      const now = performance.now();
+      CharmNestNestPlan.keepResult(K, pool.results, idx, m.result, sh.metal, () => stockFor(sh.metal, sh), CharmNestSolver);
+      if (CharmNestNestPlan.keepAgain(K, idx, m.result, now, { stopAsked: pool.stopAsked, nesting: sh.status === "nesting" }) && sh.workers?.[idx]) {
+        const job = CharmNestNestPlan.keepNext(K, idx, now); pool.completed[idx] = false;
+        sh.workers[idx].postMessage({ type: "solve", jobId: sh.jobId + ":" + idx, job });   // (LONGFIRST: every other search lays the bars flat along the edges)
         return;
       }
       pool.done++;
@@ -6427,10 +6311,9 @@ function onWorkerMessage(sh, m, idx) {
     if (pool.done < pool.n) return;
     const results = pool.results.filter(Boolean);
     if (!results.length) { pool.finished = true; finishNest(sh, { error: (pool.errors || ["No search returned a layout"]).join("; ") }); return; }
-    let pick = results.reduce((a, b) => CharmNestSolver.betterLayout(b, a, stockFor(sh.metal, sh), { reachFirst: ["gold10k", "gold14k"].includes(sh.metal), tight: ["gold10k", "gold14k", "rose"].includes(sh.metal) }) ? b : a, null);   // (GOLDOPT: the least stock wins for solid gold)
-    // Completion is a candidate, not permission to replace the best layout
-    // already received. Preserve its worker's parameters and the ending reason.
-    pick = CharmNestSolver.bestResult(pool.results[sh.bestWorker] || pick, sh.best, stockFor(sh.metal, sh), { reachFirst: ["gold10k", "gold14k"].includes(sh.metal), tight: ["gold10k", "gold14k", "rose"].includes(sh.metal) });
+    // (GOLDOPT: the least stock wins for solid gold) Completion is a candidate, not permission to replace the best layout
+    // already received. Preserve its worker's parameters and the ending reason. (charm-nest-nest-plan.js finalPick)
+    let pick = CharmNestNestPlan.finalPick(results, pool.results[sh.bestWorker], sh.best, sh.metal, () => stockFor(sh.metal, sh), CharmNestSolver);
     if (sh.nestFlow === "learned") {
       const source = pick.params?.engine === "learned" ? "learned refinement" : "standard challenger";
       const learned = results.find(r => r.params?.engine === "learned");
@@ -6754,52 +6637,27 @@ function renderCheck(sh, aiBytes, specBase, st, layerSigs, areas) {
    The re-render's own pixels (what each charm covers, verifyRendered `areas`) are what the plan reads (charm-nest-overlap-fix.js): for each overlapping pair the charm to touch (never a
    locked one or a protected Rose Gold one; the newer and smaller first) gets the nearest whole-pixel nudge that clears every
    other charm and the margin; only when none within 3 pt does, the smallest shrink about its own centre, with its nearest nudge. A whole-pixel nudge renders exactly as the shifted pixels,
-   so the plan is the result; the file is written and BOTH checks run again, at most three rounds. Anything still flagged after that is flagged as before. */
-/* SHRINKBOTH (Paul, 12 Nov 2026): the check after a sheet is nested shrinks BOTH charms of an overlapping pair, each by up to 2.5 % about its own centre (charm-nest-overlap-fix.js), never more than
-   2.5 % in all for a charm; only when that cannot clear it is the nudge tried. Before: one charm of the pair, a nudge first, a shrink of up to 6 %. */
-const OVF_MIN_SCALE = 0.975;
-/* INPLACEHOLD (Paul, 17 Nov 2026: "never re-nest or rebuild sheets; do not make things denser or sparser"; designs-window-e2e.cjs scenarios B and F: after a piece was exchanged in place, two of its neighbours kept their places and were made 2.5 % smaller,
-   0.971 to 0.9467, by the exact overlap pass below). A sheet written AS IT STANDS after a piece was exchanged in place (writeAsPlaced: the result ended "kept", the new piece carries c.inPlace) is the old sheet with one new piece in it: the overlap passes
-   (fixOverlaps, exactFix) may shrink or move ONLY that new piece, never a neighbour. → the placement ids they may not touch (empty for every other write). A crossing the new piece cannot clear alone stays what it always was, a warning on the sheet
-   (sh.exactOverlap.ok false, "not cleared"): the guard is not weakened, nothing is saved silently, and no neighbour is touched. */
-function exchangeHeld(sh, byId, result) {
-  if (!result || result.endedBy !== "kept") return new Set();
-  const fresh = new Set((sh.placements || []).filter(p => { const c = byId.get(p.id); return c && c.inPlace && !c.inPlace.seen; }).map(p => p.id));   // (seen: its exchange was written already, by an earlier write: it is a neighbour like any other now)
-  return fresh.size ? new Set((sh.placements || []).filter(p => !fresh.has(p.id)).map(p => p.id)) : new Set();
-}
+   so the plan is the result; the file is written and BOTH checks run again, at most three rounds. Anything still flagged after that is flagged as before.
+   (FINISHCORE: each round's plan and its fixes are charm-nest-finish-core.js overlapRound and applyOverlapFixes, with SHRINKBOTH's 2.5 % and INPLACEHOLD's exchangeHeld; this page writes the
+   file and runs both checks between the rounds.) */
 async function fixOverlaps(sh, o) {
   const F = window.CharmNestOverlapFix; if (!F || typeof F.plan !== "function" || sh.roseCutAt) return null;
-  const { byId, st, result } = o, res = (o.render && o.render.res) || +S.settings.verifyRes || 6;
+  const FC = CharmNestFinishCore, { byId, st, result } = o, res = (o.render && o.render.res) || +S.settings.verifyRes || 6;
   // (never a protected Rose Gold placement: its stock is cut around it. A placement the search holds still (lockedPlacements: the saved layout, nestInitial) may take the nudge; its saved pose
   //  takes it too, so the geometry check and every later turn hold it where the fix put it)
   const job = buildJob(sh), locked = new Set((job.protectedRose?.placements || []).map(p => p.id)), saved = new Map((sh.nestInitial || []).map(p => [p.id, p]));
-  for (const id of exchangeHeld(sh, byId, result)) locked.add(id);   // (INPLACEHOLD: after a piece was exchanged in place only that piece may take the nudge or the shrink)
+  for (const id of FC.exchangeHeld(sh, byId, result)) locked.add(id);   // (INPLACEHOLD: after a piece was exchanged in place only that piece may take the nudge or the shrink)
   const kept = new Set((sh.nestInitial || []).map(p => p.id));   // (charms already on the sheet: touched only after the newer ones; INPLACE's "never moved to make room" is about room, not a sub-point nudge that clears an overlap)
-  const overlapOnly = (r, g) => !!r && !!g && !(r.ok && g.ok) && !r.error && !g.error && !r.outsidePx && !(r.emptyLayers || []).length && !g.outsidePx && !g.removedPx && !g.protectedMoved && (r.overlapPx > 0 || g.overlapPx > 0);
   let render = o.render, geom = o.geom, aiBytes = null, labelledBytes = null, round = 0;
   const done = new Map(), before = new Map(sh.placements.map(p => [p.id, { cxPt: p.cxPt, cyPt: p.cyPt, scale: p.scale || 1 }]));
-  for (; round < 3 && overlapOnly(render, geom) && render.areas && render.page; round++) {
+  for (; round < 3 && FC.overlapOnly(render, geom) && render.areas && render.page; round++) {
     // what each charm takes up for BOTH checks: the re-rendered ink (render.areas) united with the outline the geometry check reads (its masks), page pixels at res, y down
-    const gm = await geomCheck(sh, true), gmById = new Map((gm.masks || []).map(m => [m.id, m]));
-    const byLayer = new Map(sh.placements.map(p => [p.layerName, p])), areas = new Map(), centers = new Map(), movable = new Set(), prefer = new Map(), shrinkLeft = new Map();
-    for (const p of sh.placements) {
-      if (!p.layerName) continue;
-      const a = render.areas.get(p.layerName), g = gmById.get(p.id), u = unionArea(a, g); if (!u) continue;
-      areas.set(p.layerName, u);
-      centers.set(p.layerName, { x: p.cxPt * res, y: p.cyPt * res });
-      if (!locked.has(p.id) && !(window.CharmNestCustomPool && CharmNestCustomPool.isFrozen(byId.get(p.id)))) movable.add(p.layerName);   // (CUSTOMPOOL: a custom design sent at its exact size is never shrunk; the other charm of the pair moves)
-      prefer.set(p.layerName, kept.has(p.id) ? 1 : 0);
-      shrinkLeft.set(p.layerName, Math.max(0, 1 - OVF_MIN_SCALE / (p.fixScale || 1)));   // (SHRINKBOTH: 2.5 % in all, whatever the rounds)
-    }
-    let plan; try { plan = F.plan({ W: render.page.W, H: render.page.H, inset: render.page.inset, res, areas, centers, movable, prefer, maxShrink: 1 - OVF_MIN_SCALE, shrinkLeft }); } catch (e) { log(sh, "overlap fix could not plan: " + e.message); break; }
+    const gm = await geomCheck(sh, true);
+    const step = FC.overlapRound(sh, { F, render, gm, res, byId, locked, kept, isFrozen: c => window.CharmNestCustomPool && CharmNestCustomPool.isFrozen(c) });   // (CUSTOMPOOL: a custom design sent at its exact size is never shrunk; the other charm of the pair moves)
+    if (step.error) { log(sh, "overlap fix could not plan: " + step.error.message); break; }
+    const plan = step.plan;
     if (!plan || !plan.fixes || !plan.fixes.length) { log(sh, "overlap fix: no nudge or shrink within the limits clears it" + (plan && plan.why ? ` (${plan.why})` : "")); break; }
-    for (const f of plan.fixes) {
-      const p = byLayer.get(f.name); if (!p) continue;
-      if (f.scale && f.scale < 1) { p.scale = +((p.scale || 1) * f.scale).toFixed(5); p.fixScale = +((p.fixScale || 1) * f.scale).toFixed(5); }   // (fixScale: the fix's own shrink, which the geometry check reads too)
-      p.cxPt += (f.dx || 0) / res; p.cyPt += (f.dy || 0) / res;
-      const k = saved.get(p.id); if (k && k !== p) Object.assign(k, { cxPt: p.cxPt, cyPt: p.cyPt, scale: p.scale, ...(p.fixScale ? { fixScale: p.fixScale } : {}) });
-      done.set(p.id, p);
-    }
+    FC.applyOverlapFixes(plan, step.byLayer, saved, done, res);
     // the file again, and both checks again (only the charms that moved are rendered again: layerSig)
     sh.stage = `Fixing ${plan.fixes.length === 1 ? "a small overlap" : plan.fixes.length + " small overlaps"} · checking again…`; renderProgress(sh);
     const specBase = sheetSpec(sh, byId, st, result);
@@ -6811,166 +6669,30 @@ async function fixOverlaps(sh, o) {
     geom = await geomDone;
   }
   if (!done.size) return null;
-  const moved = [...done.values()].map(p => { const b = before.get(p.id) || {}, d = Math.hypot(p.cxPt - b.cxPt, p.cyPt - b.cyPt), k = (p.scale || 1) / (b.scale || 1); return { id: p.id, name: p.name || (byId.get(p.id) || {}).name || p.id, movedPt: +d.toFixed(2), shrinkPct: +((1 - k) * 100).toFixed(2) }; });
+  const moved = FC.overlapMoved(done, before, byId);
   sh.overlapFix = { at: Date.now(), rounds: round, ok: !!(render && render.ok && geom.ok), charms: moved };
   const words = moved.map(m => `${m.name} ${m.shrinkPct > 0 ? `${m.shrinkPct}% smaller and ` : ""}moved ${m.movedPt} pt`).join("; ");
   log(sh, `overlap fixed automatically: ${words}${sh.overlapFix.ok ? "" : " (the check still flags the sheet)"}`);
   agent({ metal: sh.metal }, sh.overlapFix.ok ? "ok" : "warn", sh.overlapFix.ok ? `Small overlap fixed automatically: ${words}` : `Small overlap: ${words}, but the check still flags the sheet`);
   return { aiBytes, labelledBytes, render, geom };
 }
-/* EXACTOVERLAP (Paul, 12 Nov 2026: "I know there's overlap, I've tested it [on the laser] ... you're not catching it"): the two checks above read pixels and, with the aggressive clearance
-   (a negative clearance: neighbours share a stroke), allow a sliver of overlap; the laser cuts the real lines, so GF Set-1 Sheet 1 had 6 overlapping pairs, RG 7 (one of 2.07 mm²), SS 9.
-   This check reads the written file itself: every charm's cut outline (charm-nest-export.js productionPaths, the same lines the .ai and the .dxf carry), and every pair of charms whose
-   outlines share ANY area (over EXACT_EPS_MM2) is an overlap, whatever the clearance. The fix (SHRINKBOTH): both charms shrink together about their own centres, 0.5 % at a time, never past
-   2.5 % in all (OVF_MIN_SCALE); when that cannot clear it, the smaller movable one is nudged straight away from the other (up to 1 mm), never into a third charm or past the inset. The file
-   is written again and read again, at most three rounds. (MORESHRINK, Paul 12 Nov 2026: "just shrink them a little more") when that cannot clear it, both shrink a little more, up to 6 % in all,
-   each moved up to 1 mm away from the other. What is still left is a warning on the sheet (sh.exactOverlap.ok false), never a hold: it still joins its set (OVNOHOLD). */
 /** (OVNOHOLD) the two checks flag nothing but overlap: no error, nothing outside the sheet or in a corner, no empty layer, nothing removed or protected moved. */
 const onlyOverlapLeft = (r, g) => !!r && !!g && !r.error && !g.error && !r.outsidePx && !r.cornerPx && !(r.emptyLayers || []).length && !g.outsidePx && !g.cornerPx && !g.removedPx && !g.protectedMoved;
-const EXACT_EPS_MM2 = 0.0005, EXACT_MM = 25.4 / 72, EXACT_MORE_SCALE = 0.94;
-async function exactOverlaps(aiBytes, st) {
-  const V = window.CharmNestVector, E = window.CharmNestExport, P = window.CharmNestPDF;
-  if (!V || !E || !P || !aiBytes) return null;
-  const parsed = await P.parseSource(aiBytes, "Production sheet"), paths = E.productionPaths(parsed);
-  const grey = c => !c || Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]) <= 0.15;
-  const loopsBy = new Map();
-  for (const p of paths) {
-    if (!p.charm) continue;
-    const cut = (p.cutSilhouette && p.fill && !p.stroke) || (p.stroke && grey(p.strokeRGB) && !p.fill);
-    if (!cut) continue;
-    const loops = (p.subpaths || []).map(s => V.flatten(s)).filter(f => f.points.length >= 3).map(f => f.points);
-    if (!loopsBy.has(p.charm)) loopsBy.set(p.charm, []);
-    loopsBy.get(p.charm).push(...loops);
-  }
-  const shapes = new Map();
-  for (const [name, loops] of loopsBy) {
-    const outer = V.boolean(loops, [], "union", "nonzero").filter(r => !r.hole).map(r => r.points);
-    if (!outer.length) continue;
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const l of outer) for (const q of l) { if (q[0] < x0) x0 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[0] > x1) x1 = q[0]; if (q[1] > y1) y1 = q[1]; }
-    shapes.set(name, { name, polys: outer, box: [x0, y0, x1, y1] });
-  }
-  const pairs = [], list = [...shapes.values()];
-  for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
-    const mm2 = exactShared(list[i], list[j]); if (mm2 > EXACT_EPS_MM2) pairs.push({ a: list[i].name, b: list[j].name, mm2: +mm2.toFixed(4) });
-  }
-  pairs.sort((p, q) => q.mm2 - p.mm2);
-  return { shapes, pairs };
-}
-const exactArea = ps => ps.reduce((n, p) => { let a = 0; for (let i = 0; i < p.length; i++) { const q = p[i], r = p[(i + 1) % p.length]; a += q[0] * r[1] - r[0] * q[1]; } return n + Math.abs(a) / 2; }, 0);
-/** The area two charms' outlines share, in mm² (0 when their boxes do not meet). */
-function exactShared(a, b) {
-  if (a.box[2] < b.box[0] || b.box[2] < a.box[0] || a.box[3] < b.box[1] || b.box[3] < a.box[1]) return 0;
-  const x = window.CharmNestVector.boolean(a.polys, b.polys, "intersection", "nonzero", "nonzero");
-  return exactArea(x.map(r => r.points)) * EXACT_MM * EXACT_MM;
-}
-/** A charm's outline scaled by s about (px, py) and moved by (dx, dy), all in the file's points. */
-function exactMoved(sh0, s, px, py, dx, dy) {
-  const polys = sh0.polys.map(l => l.map(q => [px + (q[0] - px) * s + dx, py + (q[1] - py) * s + dy]));
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const l of polys) for (const q of l) { if (q[0] < x0) x0 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[0] > x1) x1 = q[0]; if (q[1] > y1) y1 = q[1]; }
-  return { name: sh0.name, polys, box: [x0, y0, x1, y1] };
-}
+/* EXACTOVERLAP (Paul, 12 Nov 2026: "I know there's overlap, I've tested it [on the laser] ... you're not catching it"): the written file's own cut lines are read, and every pair of charms whose
+   outlines share any area is cleared (SHRINKBOTH, the nudge, MORESHRINK) and written again, at most three rounds; what is left is a warning on the sheet, never a hold (OVNOHOLD).
+   FINISHCORE: charm-nest-finish-core.js exactOverlaps and exactFix; the page hands them its file writer (CharmNestPDF), the vector and export code, its sheet spec and its words. */
 async function exactFix(sh, o) {
-  const { byId, st, result } = o; let { aiBytes, labelledBytes } = o, specBase = null, changed = false;
-  const job = buildJob(sh), locked = new Set((job.protectedRose?.placements || []).map(p => p.id)), saved = new Map((sh.nestInitial || []).map(p => [p.id, p]));
-  for (const id of exchangeHeld(sh, byId, result)) locked.add(id);   // (INPLACEHOLD: after a piece was exchanged in place only that piece may be shrunk or moved, never a neighbour)
-  const inset = typeof handPlacedSheet === "function" && handPlacedSheet(sh) ? 0 : +S.settings.insetPt || 0, H = st.hPt, W = st.wPt;
-  const fixes = [];
-  let ex = null;
-  for (let round = 0; round < 3; round++) {
-    ex = await exactOverlaps(aiBytes, st); if (!ex || !ex.pairs.length) break;
-    const byLayer = new Map(sh.placements.map(p => [p.layerName, p])), touched = new Set(), planned = [];
-    const cur = new Map(ex.shapes);   // (each charm as it will stand after this round's fixes)
-    for (const pr of ex.pairs) {
-      if (touched.has(pr.a) || touched.has(pr.b)) continue;
-      const A = byLayer.get(pr.a), B = byLayer.get(pr.b); if (!A || !B) continue;
-      if (locked.has(A.id) && locked.has(B.id)) continue;   // (INPLACEHOLD: two pieces neither of which may be touched: it stays in `pairs`, a warning as before)
-      const may = p => !locked.has(p.id) && !(window.CharmNestCustomPool && CharmNestCustomPool.isFrozen(byId.get(p.id)));
-      const left = p => may(p) ? Math.max(0, 1 - OVF_MIN_SCALE / (p.fixScale || 1)) : 0;
-      const piv = p => [p.cxPt, H - p.cyPt];
-      const others = n => [...cur.values()].filter(x => x.name !== pr.a && x.name !== pr.b && x.name !== n);
-      const clearOfOthers = (sx, skip) => others(skip).every(x => exactShared(sx, x) <= EXACT_EPS_MM2);
-      const inside = sx => sx.box[0] >= inset - 1e-6 && sx.box[1] >= inset - 1e-6 && sx.box[2] <= W - inset + 1e-6 && sx.box[3] <= H - inset + 1e-6;
-      const sa0 = cur.get(pr.a), sb0 = cur.get(pr.b); let got = null;
-      // 1 · both shrink together (each never past what it has left)
-      for (let k = 1; k <= 5 && !got; k++) {
-        const s = 1 - 0.005 * k, sa = Math.max(1 - left(A), s), sb = Math.max(1 - left(B), s); if (sa >= 1 && sb >= 1) break;
-        const ma = exactMoved(sa0, sa, ...piv(A), 0, 0), mb = exactMoved(sb0, sb, ...piv(B), 0, 0);
-        if (exactShared(ma, mb) <= EXACT_EPS_MM2) got = [{ p: A, s: sa, dx: 0, dy: 0, shape: ma }, { p: B, s: sb, dy: 0, dx: 0, shape: mb }];
-      }
-      // 2 · the smaller movable one nudged straight away from the other, with what shrink each has left
-      if (!got) {
-        const area = x => exactArea(x.polys), cands = [A, B].filter(p => !locked.has(p.id)).sort((p, q) => area(cur.get(p.layerName)) - area(cur.get(q.layerName)));
-        search: for (const M of cands) {
-          const N = M === A ? B : A, m0 = cur.get(M.layerName), n0 = cur.get(N.layerName);
-          const sm = 1 - left(M), sn = 1 - left(N), mN = exactMoved(n0, sn, ...piv(N), 0, 0);
-          const [mx, my] = piv(M), [nx, ny] = piv(N); let ux = mx - nx, uy = my - ny; const ul = Math.hypot(ux, uy) || 1; ux /= ul; uy /= ul;
-          // (straight away from the other first, then 24 directions round: the shortest move that clears it, in 0.05 mm steps up to 1 mm)
-          const dirs = [[ux, uy]]; for (let k = 0; k < 24; k++) { const a = k * Math.PI / 12; dirs.push([Math.cos(a), Math.sin(a)]); }
-          for (let d = 0.05 / EXACT_MM; d <= 1 / EXACT_MM + 1e-9; d += 0.05 / EXACT_MM) for (const [vx, vy] of dirs) {
-            const mM = exactMoved(m0, sm, mx, my, vx * d, vy * d);
-            if (exactShared(mM, mN) <= EXACT_EPS_MM2 && clearOfOthers(mM, N.layerName) && inside(mM)) { got = [{ p: M, s: sm, dx: vx * d, dy: vy * d, shape: mM }, { p: N, s: sn, dx: 0, dy: 0, shape: mN }]; break search; }
-          }
-        }
-      }
-      // 3 · (MORESHRINK) both shrink a little more, up to 6 % in all, each moved up to 1 mm apart along the line between them (±30°)
-      if (!got) {
-        const more = p => may(p) ? Math.max(0, 1 - EXACT_MORE_SCALE / (p.fixScale || 1)) : 0;
-        const [ax, ay] = piv(A), [bx, by] = piv(B), base = Math.atan2(ay - by, ax - bx), step = 0.1 / EXACT_MM;
-        more: for (let k = 1; k <= 12; k++) {
-          const s = 1 - 0.005 * k, sa = Math.max(1 - more(A), s), sb = Math.max(1 - more(B), s);
-          for (let t = 0; t <= 6; t++) {
-            const th = base + (t % 2 ? 1 : -1) * Math.ceil(t / 2) * Math.PI / 18, vx = Math.cos(th), vy = Math.sin(th);
-            for (let da = 0; da <= 10; da++) for (let db = 0; db <= 10; db++) {
-              const dA = locked.has(A.id) ? 0 : da * step, dB = locked.has(B.id) ? 0 : db * step;
-              const ma = exactMoved(sa0, sa, ax, ay, vx * dA, vy * dA), mb = exactMoved(sb0, sb, bx, by, -vx * dB, -vy * dB);
-              if (exactShared(ma, mb) <= EXACT_EPS_MM2 && inside(ma) && inside(mb) && clearOfOthers(ma, pr.b) && clearOfOthers(mb, pr.a)) { got = [{ p: A, s: sa, dx: vx * dA, dy: vy * dA, shape: ma }, { p: B, s: sb, dx: -vx * dB, dy: -vy * dB, shape: mb }]; break more; }
-            }
-          }
-          if (sa === 1 - more(A) && sb === 1 - more(B)) break;
-        }
-      }
-      if (!got) continue;
-      for (const g of got) { touched.add(g.p.layerName); cur.set(g.p.layerName, g.shape); if (g.s < 1 || g.dx || g.dy) planned.push(g); }
-    }
-    if (!planned.length) break;
-    for (const g of planned) {
-      const p = g.p;
-      if (g.s < 1) { p.scale = +((p.scale || 1) * g.s).toFixed(5); p.fixScale = +((p.fixScale || 1) * g.s).toFixed(5); }
-      p.cxPt += g.dx; p.cyPt -= g.dy;   // (the file's y runs up, the sheet's down)
-      const k = saved.get(p.id); if (k && k !== p) Object.assign(k, { cxPt: p.cxPt, cyPt: p.cyPt, scale: p.scale, ...(p.fixScale ? { fixScale: p.fixScale } : {}) });
-      fixes.push({ name: p.layerName, shrinkPct: +((1 - g.s) * 100).toFixed(2), movedMm: +(Math.hypot(g.dx, g.dy) * EXACT_MM).toFixed(3) });
-    }
-    sh.stage = `Clearing ${planned.length} overlapping charm${planned.length === 1 ? "" : "s"} · writing again…`; renderProgress(sh);
-    specBase = sheetSpec(sh, byId, st, result);
-    aiBytes = await CharmNestPDF.buildSheet(specBase);
-    sh.placements.forEach((p, i) => { p.layerName = specBase.placements[i].layerName; });
-    labelledBytes = await CharmNestPDF.buildSheet(Object.assign({}, specBase, { labelled: true, placements: specBase.placements.map(p => Object.assign({}, p)) }));
-    changed = true; ex = null;
-  }
-  if (!ex) ex = await exactOverlaps(aiBytes, st);
-  if (!ex) return null;
-  sh.exactOverlap = { at: Date.now(), ok: !ex.pairs.length, pairs: ex.pairs.slice(0, 20), fixes };
-  if (fixes.length) { const w = fixes.map(f => `${f.name} ${f.shrinkPct ? f.shrinkPct + "% smaller" : ""}${f.shrinkPct && f.movedMm ? ", " : ""}${f.movedMm ? "moved " + f.movedMm + " mm" : ""}`).join("; "); log(sh, `exact overlap check: cleared by ${w}`); agent({ metal: sh.metal }, ex.pairs.length ? "warn" : "ok", `Overlap (exact cut lines): ${w}${ex.pairs.length ? ` · still overlapping: ${ex.pairs.map(p => p.a + " ↔ " + p.b).join("; ")}` : ""}`); }
-  else if (ex.pairs.length) agent({ metal: sh.metal }, "warn", `Overlap (exact cut lines) not cleared within 6 % or 1 mm (it does not hold the sheet): ${ex.pairs.map(p => `${p.a} ↔ ${p.b} ${p.mm2} mm²`).join("; ")}`);
-  return { aiBytes, labelledBytes, specBase, changed };
+  return CharmNestFinishCore.exactFix(sh, o, {
+    buildJob: s => buildJob(s), insetFor: s => (typeof handPlacedSheet === "function" && handPlacedSheet(s) ? 0 : +S.settings.insetPt || 0),
+    isFrozen: c => window.CharmNestCustomPool && CharmNestCustomPool.isFrozen(c),
+    get Vector() { return window.CharmNestVector; }, get Export() { return window.CharmNestExport; }, get PDF() { return window.CharmNestPDF; },
+    sheetSpec: (s, byId, st, result) => sheetSpec(s, byId, st, result), buildSheet: spec => CharmNestPDF.buildSheet(spec),
+    progress: s => renderProgress(s), log: (s, msg) => log(s, msg), agent: (who, kind, text) => agent(who, kind, text), now: () => Date.now()
+  });
 }
-/** One footprint from the render's area ({X0, Y0, bw, bh, core}) and the geometry check's mask ({x0, y0, w, h, bits}), page pixels; either may be missing. */
-function unionArea(a, g) {
-  if (a && a.empty) a = null;
-  if (!a && !g) return null;
-  const X0 = Math.min(a ? a.X0 : Infinity, g ? g.x0 : Infinity), Y0 = Math.min(a ? a.Y0 : Infinity, g ? g.y0 : Infinity);
-  const X1 = Math.max(a ? a.X0 + a.bw : -Infinity, g ? g.x0 + g.w : -Infinity), Y1 = Math.max(a ? a.Y0 + a.bh : -Infinity, g ? g.y0 + g.h : -Infinity);
-  const bw = X1 - X0, bh = Y1 - Y0, core = new Uint8Array(bw * bh);
-  if (a) for (let y = 0; y < a.bh; y++) for (let x = 0; x < a.bw; x++) if (a.core[y * a.bw + x]) core[(a.Y0 - Y0 + y) * bw + (a.X0 - X0 + x)] = 1;
-  if (g) for (let y = 0; y < g.h; y++) for (let x = 0; x < g.w; x++) if (g.bits[y * g.w + x]) core[(g.y0 - Y0 + y) * bw + (g.x0 - X0 + x)] = 1;
-  return { X0, Y0, bw, bh, core };
-}
-/** The written sheet's spec from its placements (as finishNest writes it). */
+/** The written sheet's spec from its placements (as finishNest writes it; FINISHCORE: charm-nest-finish-core.js sheetSpec). */
 function sheetSpec(sh, byId, st, result) {
-  const sources = new Map(); for (const p of sh.placements) { const c = byId.get(p.id); if (c && !sources.has(c.sourceId)) sources.set(c.sourceId, sourceOf(c.sourceId).parsed); }
-  return { sheet: { wPt: st.wPt, hPt: st.hPt, strokeRGB: [1, 0, 0], strokePt: 0.5 }, placements: sh.placements.map(p => ({ charm: byId.get(p.id), angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, scale: p.scale || 1 })), sources, title: `${labelOf(sh.metal)} sheet ${sh.sheetId}`, meta: { sheetId: sh.sheetId, metal: sh.metal, seed: result.params.seed, clearancePt: result.params.clearancePt, charmScale: CHARM_SCALE } };
+  return CharmNestFinishCore.sheetSpec(sh, byId, st, result, { sourceOf: id => sourceOf(id), labelOf: m => labelOf(m), get charmScale() { return CHARM_SCALE; } });
 }
 /* Paul, 24 Sep: "nothing may accumulate". A sheet saved to the cloud keeps the links, and the bytes behind them leave this
    page and its checkpoint: the .ai and the labelled proof (a download reads the saved sheet, ProductionExports) and the
@@ -6992,19 +6714,9 @@ function pumpNestQueue() {
   if (next) { S.nestQueue.splice(S.nestQueue.indexOf(next), 1); next.status = "ready"; startNest(next); }
 }
 const endedText = e => ({ plateau: "paused — no additional pieces during the improvement window", "model-unavailable": "model unavailable — verified baseline retained", complete: "all pieces placed", budget: "time ceiling", stalled: "settled — nothing better for a minute", stopped: "operator stop", trials: "restart cap", cap: "fill ceiling reached", "no-room": "no room left for the rest", rounds: "planning-round cap", "claude-full": "Claude judged the sheet full", kept: "written as it stands (nothing moved, no search)" }[e] || e);
+/** The sheet's nest report (FINISHCORE: charm-nest-finish-core.js buildReport). */
 function buildReport(sh, result, items) {
-  const byId = new Map(items.map(c => [c.id, c])); const st = stockFor(sh.metal, sh);
-  return {
-    version: 1, bestRevision: sh.bestRevision || 0, bestHistory: sh.bestHistory || [], sheetId: sh.sheetId, metal: sh.metal, metalLabel: labelOf(sh.metal), createdAt: new Date().toISOString(),
-    stock: { wIn: st.wIn, hIn: st.hIn, wPt: st.wPt, hPt: st.hPt }, params: result.params, endedBy: result.endedBy, trials: result.trials, elapsedMs: Math.round(result.elapsedMs),
-    density: +result.density.toFixed(4), usablePt2: Math.round(result.usablePt2), freePt2: Math.round(result.freePt2), placedPt2: Math.round(result.placedPt2), pocket: result.pocket,
-    placements: sh.placements.map((p, i) => ({ n: i + 1, id: p.id, layer: p.layerName, name: byId.get(p.id)?.name, hash: byId.get(p.id)?.hash, source: byId.get(p.id)?.sourceName, index: byId.get(p.id)?.index, angle: p.angle, scale: p.scale || 1, cxPt: +p.cxPt.toFixed(3), cyPt: +p.cyPt.toFixed(3), wPt: +p.wPt.toFixed(2), hPt: +p.hPt.toFixed(2), areaPt2: +(byId.get(p.id)?.areaPt2 || 0).toFixed(1) })),
-    rejects: sh.rejects.map(id => ({ id, name: byId.get(id)?.name, source: byId.get(id)?.sourceName, index: byId.get(id)?.index, areaPt2: +(byId.get(id)?.areaPt2 || 0).toFixed(1), widthPt: +(byId.get(id)?.widthPt || 0).toFixed(1), heightPt: +(byId.get(id)?.heightPt || 0).toFixed(1) })),
-    excluded: sh.charms.filter(c => c.excluded).map(c => ({ id: c.id, name: c.name, reason: c.open ? "open path" : "excluded by operator" })),
-    verification: sh.verification, charms: items.map(c => ({ id: c.id, name: c.name, hash: c.hash, qty: c.qty, order: c.order || c.id, layer: c.layer || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), namedBy: c.namedBy, confidence: c.confidence })),
-    calibration: Object.assign({ density: +result.density.toFixed(4), placedAll: sh.rejects.length === 0 }, shapeSignature(items)),
-    log: sh.log.slice()
-  };
+  return CharmNestFinishCore.buildReport(sh, result, items, { stockFor: (metal, s) => stockFor(metal, s), labelOf: m => labelOf(m), shapeSignature: its => shapeSignature(its) });
 }
 /** "GF_Sep.16.26_Set-3_Sheet-1": metal tag, date, the SET number for that date across every material, the sheet index within
  *  the material in that set (design §8.1). One run = one set = one folder; a gold sheet and a silver sheet of the same
@@ -7102,17 +6814,15 @@ function saveOwedSheets() {
     }
   })().finally(() => { savingOwed = null; });
 }
-/** (NOPARTIALSET) The membership a save of this sheet may carry: its own, except that a partial GF or SS sheet of a modern run (not full, not cut: CharmNestSetRules.isPartial) is a draft outside every set. */
+/** (NOPARTIALSET) The membership a save of this sheet may carry: its own, except that a partial GF or SS sheet of a modern run (not full, not cut: CharmNestSetRules.isPartial) is a draft outside every set.
+ *  (SETSHUT, Paul 20 Nov 2026: a partial sheet the set ALREADY lists is kept in it; KEEPINSET: a sheet the owner put back in its set is not partial while it is in it.) FINISHCORE: charm-nest-finish-core.js
+ *  membershipOf, shared with node; the page hands it its set rules, the run's sets as this page holds them (Sets.ofRun) and whether the run is modern (Gate.modern). */
 function membershipOf(sh) {
-  const own = { draft: !!sh.draft, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null };
-  try {
-    const R = window.CharmNestSetRules;
-    // (SETSHUT, Paul 20 Nov 2026: "how the fuck did it get removed from a set?"): a partial sheet the set ALREADY holds (the set lists it) is kept in it. NOPARTIALSET keeps a partial sheet from
-    //  joining a set; it wrote SS_Nov.12.26_Set-1_Sheet-3, a member of the Nov 12 Set 1 since Nov 13, as a draft at its next save, half out of its set (the set and its pieces still named it)
-    const held = (() => { try { return !!(sh.setId && sh.sheetId && window.Sets && typeof Sets.ofRun === "function" && Sets.ofRun(sh.runId).some(s => s && s.setId === sh.setId && (s.sheetIds || []).includes(sh.sheetId))); } catch (_) { return false; } })();
-    if (!held && R && typeof R.isPartial === "function" && (sh.setId || !sh.draft) && R.isPartial(sh) && window.Gate && typeof Gate.modern === "function" && Gate.modern(sh.runId)) return { draft: true, setId: null, setSeq: null, sheetIndex: null };
-  } catch (_) { /* its own, as before */ }
-  return own;
+  return CharmNestFinishCore.membershipOf(sh, {
+    get SetRules() { return window.CharmNestSetRules; },
+    setsOfRun: runId => (window.Sets && typeof Sets.ofRun === "function" ? Sets.ofRun(runId) : null),
+    modern: runId => window.Gate && typeof Gate.modern === "function" && Gate.modern(runId)
+  });
 }
 async function persistSheet(sh, items, context) {
   const ops = window.CharmNestOperations;
@@ -7137,20 +6847,9 @@ async function persistSheet(sh, items, context) {
   // (NOPARTIALSET, Paul 18 Nov 2026: "why would that be engaged ... this draft sheet isn't complete"; the removal of a charm from a 25% full draft ended "GF Sheet 10: not saved to the cloud — GF Draft 15 cannot go into Set 5 ... a partial sheet never joins a set"): while the set look waits
   //  for the cloud on its in-memory join of a sheet (draft false, a set, the next sheet number), a save of the same sheet read that state and sent it. A partial GF or SS sheet (not full, not cut) is never written as a member of a set (your rule R3): it is written as the draft it is
   const member = membershipOf(sh);
-  const record = (outputs) => ({
-    id: sh.sheetId, cardStartedAt: sh.cardStartedAt || null, metal: sh.metal, metalLabel: sheetName(sh), day, folder: name, fileBase: name, seq: sh.seq || sh.page, runId: sh.runId || null, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, searchMetrics:sh.searchMetrics||null, gpu:sh.gpuProgress||null, elapsedMs: Math.round(sh.elapsedMs || 0), totalMs: Math.round(sh.totalMs || 0),
-    stock: sh.outputs.report.stock, params: sh.solveParams, density: sh.density, freePt2: Math.round(sh.liveInfo.freePt2), usablePt2: Math.round(sh.liveInfo.usablePt2), pocket: sh.liveInfo.pocket,
-    charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, ...(Number.isFinite(sh.draftOrder) ? { draftOrder: sh.draftOrder } : {}), verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx } },
-    outputs,
-    sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = sourceOf(id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes ? s.bytes.length : 0, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url, pool: !!s.pool, custom: !!s.custom, sku: s.sku || null } : null; }).filter(Boolean),
-    dirty:!!sh.dirty, draft: member.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal, sh) : sh.metal === "rose" && sh.solidPick === true ? true : null, releaseFull: !!sh.releaseFull,   /* (SETFIX: a Rose Gold sheet keeps its own tick across a reload, true or nothing) */ topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized, intakeOptimized:!!sh.intakeOptimized, intakeOptimizedCount:sh.intakeOptimizedCount||0, missRearranged:!!sh.missRearranged, setId: member.setId, setSeq: member.setSeq, sheetIndex: member.sheetIndex, runId: sh.runId || null,
-    orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
-    ...(listings => listings ? { listings } : {})(listingsOf(sh.placements.map(p => byId.get(p.id)))),
-    poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,
-    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, custom: !!c.custom, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open, ...(typeof pairDescriptor === "function" ? pairDescriptor(c) : {}), ...(c.manual ? { manual: c.manual } : {}), ...(c.frozen ? { frozen: c.frozen } : {}), ...(shapes.get(c.id) || {}) })),
-    placements: sh.outputs.report.placements, rejects: sh.outputs.report.rejects,
-    names: items.map(c => c.name).filter(Boolean).join(" ")
-  });
+  // (FINISHCORE: the record itself is charm-nest-finish-core.js record(), shared with node; the page hands it this save's facts and its own lookups)
+  const recordOf = { items, byId, day, name, member, shapes, sheetName: s => sheetName(s), sourceOf: id => sourceOf(id), solidSelected: (metal, s) => window.Gate?.solidSelected(metal, s), pairDescriptor: c => (typeof pairDescriptor === "function" ? pairDescriptor(c) : {}), listingsOf: charms => listingsOf(charms) };
+  const record = (outputs) => CharmNestFinishCore.record(sh, recordOf, outputs);
   const savedJob = sh.jobId, savedId = sh.sheetId, savedOutputs = sh.outputs;
   const snapshot = record(null);
   // Freeze membership before overflow moves rejected charms to another page.
@@ -9319,7 +9018,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=1120-pair2-1"></script>
+<script src="charm-nest-bridge.js?v=1120-pair2-pmake1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1-sy1-sy2"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1-ob1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>

@@ -99,6 +99,7 @@
   const dev = () => { let v = safe(() => root.localStorage.getItem("cn.dev"), ""); if (!/^d[0-9a-z]{4,14}$/.test(v || "")) { v = "d" + Math.random().toString(36).slice(2, 12); safe(() => root.localStorage.setItem("cn.dev", v)); } return v; };
   const who = () => String(safe(() => root.B && root.B.employee, "") || "").trim();
   let lastApply = 0, applyT = 0;
+  const CLOUD_ROW_FIELDS = ["holdSeen", "etsyClosed", "frontAt", "releasing", "skuOverride", "blockOverride", "releaseHold", "releaseAnyway", "changePending", "repoolChanged", "arrivedAt", "activityAt", "materialOverride", "sizeOverride", "engravingOverride", "groupSize", "material", "poolProblems", "designHold", "changedAt", "changedWhy"];
   /** (OTHERSLINES) The run save's answer named when another computer last touched the run's lines: a time newer than what this page has taken is read now (applyOthers keeps its own 15 s pace). */
   function othersSaid(at) { if (!holdsRun() || !(+at > 0)) return; if (st.appliedAt && +at <= +st.appliedAt) return; applyOthers("save").catch(() => {}); }
   async function applyOthers(why) {
@@ -114,6 +115,9 @@
         if (row._lp && +row._lp.at >= +lp.at) continue;
         const was = (row.poolIds || []).slice();
         for (const f of ["state", "poolIds", "reason", "hold", "wait", "heldAt"]) { const v = l[f] === undefined ? (f === "poolIds" ? [] : null) : l[f]; row[f] = Array.isArray(v) ? v.slice() : v; }
+        // (CLOUDDRIVE P3, cloud plan v2 §2.2; DORMANT: only the cloud stamps a line with dev "cloud", and it writes no line while the drive is off): a line the cloud changed last
+        //  brings every field of it the row keeps (the cloud's line fields, _charmNestWorld.js RUN_FIELDS); what the row reads from its spec is read again by interpretAll
+        if (lp.dev === "cloud") for (const f of CLOUD_ROW_FIELDS) if (l[f] !== undefined) row[f] = l[f] && typeof l[f] === "object" ? JSON.parse(JSON.stringify(l[f])) : l[f];
         if (l.engrave && row.engrave && typeof row.engrave === "object") for (const k of ["state", "approved", "approvedAt", "approvedBy", "decidedAt", "seals", "text"]) if (l.engrave[k] !== undefined) row.engrave[k] = l.engrave[k];
         const gone = was.filter(id => !(row.poolIds || []).includes(id));
         for (const id of gone) safe(() => B.pool.rows.delete(id));
