@@ -663,7 +663,7 @@ async function laserUnchanged(sheetIds, setIds, revs) {
    same way (ifRev of its own last pass, for the same cards), because a pass that finds nothing new reads and writes nothing. ── */
 const REV = "Charm_Nest_Rev", REV_DOC = "library";   // (beside the placement counter, Charm_Nest_Rev/placement; the sandbox's own two are in Sandbox_Order_Rev, see SB_REV_COLL)
 // (the sandbox-only ops are not here: they write Sandbox_ records only, whatever the request says, so not even a sandbox request without its flag moves the production counter)
-const REV_OPS = new Set(["backPut", "backInvalidate", "setAllocate", "setUpdate", "runPut", "runArchive", "laserDone", "putSheet", "deleteSheet", "restoreSheet", "archiveEmptySheet", "roseRecordCut", "roseTakeOff", "roseReopen", "roseClaim", "roseRelease", "partialClaim", "partialRelease", "flowApply", "customDecide", "customPut", "customReopen", "customDelete", "customSheetPut", "cancelPut", "cancelRestore", "noDesignPut", "noDesignDelete", "sheetPdf", "cancelSweep", "purgeHistory", "manualClaim"]);
+const REV_OPS = new Set(["sheetKeepInSet", "backPut", "backInvalidate", "setAllocate", "setUpdate", "runPut", "runArchive", "laserDone", "putSheet", "deleteSheet", "restoreSheet", "archiveEmptySheet", "roseRecordCut", "roseTakeOff", "roseReopen", "roseClaim", "roseRelease", "partialClaim", "partialRelease", "flowApply", "customDecide", "customPut", "customReopen", "customDelete", "customSheetPut", "cancelPut", "cancelRestore", "noDesignPut", "noDesignDelete", "sheetPdf", "cancelSweep", "purgeHistory", "manualClaim"]);
 /* COST (Oct 2026): WHAT moved, beside THAT something moved. The revision moved for every write in REV_OPS, and a nesting run writes runPut every few
    seconds: every Library on screen then probed every document of its answer (one read each, ~59 for a screen of cards) at each beat, for a write to some
    other run. The revision document now also keeps which documents the recent writes touched: changed {'s:<sheet>' | 't:<set>' | 'r:<run>' | 'c:<custom
@@ -1169,6 +1169,8 @@ async function op_putSheet(b) {
     if (["setId", "setSeq", "draft", "solidIncluded", "sheetIndex"].some(mine)) {
       const was = SetEdit.inSetOf(old), want = SetEdit.inSetOf({ setId: mine("setId") ? doc.setId : old.setId, draft: mine("draft") ? doc.draft : old.draft, solidIncluded: mine("solidIncluded") ? doc.solidIncluded : old.solidIncluded });
       const differs = was !== want || (!!was && ((mine("sheetIndex") && num(doc.sheetIndex) !== num(old.sheetIndex)) || (mine("setSeq") && num(doc.setSeq) !== num(old.setSeq))));
+      // (KEEPINSET, Paul 20 Nov 2026: "Back in the set"): a sheet the owner put back in its set stays there whatever a page's save says (a page on older code wrote it as a draft, half out of its set)
+      if (differs && old.keepInSet && old.keepInSet.setId && old.keepInSet.setId === was) for (const k of ["setId", "setSeq", "draft", "solidIncluded", "sheetIndex"]) delete doc[k];
       if (differs) {
         const ids = [...new Set([was, want].filter(Boolean))].filter(isId), sets = ids.length ? await txGetAll(tx, ids.map(id => col(SETS).doc(id))) : [];
         if (sets.some(d => d.exists && SetEdit.committedSet(d.data()))) for (const k of ["setId", "setSeq", "draft", "solidIncluded", "sheetIndex"]) delete doc[k];
@@ -5484,6 +5486,29 @@ async function op_etsyStopGet() { return { ok: true, ...(await EtsyStop.state(tr
 async function op_etsyResume(b) { const by = str(b.by, 80) || "someone"; const st = await EtsyStop.resume(by); console.warn(`[charmNestLibrary] Resume Etsy pressed by ${by}`); return { ok: true, ...st }; }
 // (Paul, 20 Nov 2026: "I want you to stop it now. Don't wait."): Stop Etsy, a person's press, turns the same switch on at once, as a 429 does
 async function op_etsyStopNow(b) { const by = str(b.by, 80) || "someone"; const st = await EtsyStop.stop({ fn: "Stop Etsy", path: "", detail: `Stopped by ${by} in Settings` }); console.warn(`[charmNestLibrary] Stop Etsy pressed by ${by}`); return { ok: true, ...st }; }
+/* KEEPINSET (Paul, 20 Nov 2026: "put the sheets back where it's set and reverse all the damage on all computers" … "Back in the set"): the owner's own exception to the partial-sheet
+   rule for ONE sheet that the set still lists: the sheet is a member again (draft false, its set, number and index), and keepInSet makes every rule and every later save keep it there.
+   { id, setId, by } → { ok, sheet }. Refused unless the set lists the sheet, the set is not committed, and the sheet is not archived or cut. */
+async function op_sheetKeepInSet(b) {
+  if (!isId(b.id) || !isId(b.setId)) return { error: "bad sheet or set id" };
+  const by = str(b.by, 80).trim(); if (!by) return { error: "Say who made this change", status: 400 };
+  revTouch(b, ["s:" + b.id]);
+  const out = await db.runTransaction(async tx => {
+    const ref = col(SHEETS).doc(b.id), sref = col(SETS).doc(b.setId), [sn, st] = await Promise.all([tx.get(ref), tx.get(sref)]);
+    if (!sn.exists) return { error: "There is no such sheet", status: 404 };
+    if (!st.exists) return { error: "There is no such set", status: 404 };
+    const sh = sn.data(), set = st.data();
+    if (sh.archived) return { error: "That sheet was archived", status: 409 };
+    if (num(sh.laserDoneAt) > 0) return { error: "That sheet was cut", status: 409 };
+    if (!(set.sheetIds || []).includes(b.id)) return { error: "The set does not list this sheet", status: 409 };
+    if (SetEdit.committedSet(set)) return { error: "That set was committed", status: 409 };
+    const at = Date.now(), patch = { draft: false, setId: b.setId, setSeq: num(set.seq) || sh.setSeq || null, keepInSet: { setId: b.setId, by, at }, updatedAt: FV.serverTimestamp() };
+    tx.set(ref, patch, { merge: true });
+    return { ok: true, sheet: { id: b.id, draft: false, setId: b.setId, setSeq: patch.setSeq, sheetIndex: sh.sheetIndex || null, keepInSet: patch.keepInSet } };
+  });
+  return out;
+}
+OPS.sheetKeepInSet = op_sheetKeepInSet;
 OPS.etsyStopGet = op_etsyStopGet; OPS.etsyResume = op_etsyResume; OPS.etsyStopNow = op_etsyStopNow; ["etsyStopGet", "etsyResume", "etsyStopNow"].forEach(op => NO_GEN_BUMP.add(op));
 /* ── CLOUDWORLD (Paul, 20 Nov 2026: "Everything that was production related was supposed to be in the cloud ... Only the cloud can decide"; CLOUD-MIGRATION-EXECUTION.md
    phases 1-2). The open order lines, read ONCE by the server (_charmNestWorld.js, built by charmNestWorld-background every 2 minutes and on worldBuild), and the
