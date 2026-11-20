@@ -139,7 +139,9 @@ function withoutPieces(guard, gone, ctx = {}) {
 }
 /* remnantSync (PS3, _charmNestRemnants.js `sync`): the partial sheet's record (Charm_Nest_Remnants/{stockId}-{revision}) follows the stock's owner INSIDE roseClaim's
    and roseRelease's own transactions: claimed -> 'inUse' (+ lastUsedAt), released -> 'available' again. The stock stays the one source of truth for who holds it. */
-module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel,recordRemnant,remnantSync}){
+module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel,recordRemnant,remnantSync,fence}){
+  // (CLOUDDRIVE P7, cloud plan v2 §1.3: the first read of roseClaim's, rosePlan's and roseRecordCut's transactions for the cloud's own call; null for every page's call)
+  const fenced=async tx=>{const f=fence&&fence(tx);if(f)await f;};
   const COMPLETED='This sheet is Completed (laser cut): its metal has been cut, so it cannot move to another partial sheet';
   const stocks=()=>col('Charm_Nest_Rose_Stock'),sheets=()=>col('Charm_Nest_Sheets');
   // Rose Gold, 10K and 14K solid gold share these operations (charm-nest-rose.js: cuts(metal)); a physical sheet belongs to one metal.
@@ -183,6 +185,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
     if(stockId&&!id(stockId))throw new Error('Invalid '+metalWord(metal)+' sheet');
     const ref=stockId?stocks().doc(stockId):stocks().doc('rgs-'+crypto.randomUUID());
     const stock=await db.runTransaction(async tx=>{
+      await fenced(tx);
       const d=await tx.get(ref),old=d.exists?d.data():null;
       if(b.exact&&!old)throw new Error('Partial sheet not found');
       if(old&&metalOf(old)!==metal)throw new Error('This physical sheet is '+metalWord(metalOf(old))+', not '+metalWord(metal));
@@ -276,6 +279,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
     // Older pages sent unsimplified outlines; store every contour in the same compact form.
     let shapes;try{shapes=parse(b.shapesJson).map(Rose.slimShape);}catch(_){throw new Error('Invalid cut geometry');}
     return db.runTransaction(async tx=>{
+      await fenced(tx);
       const ref=stocks().doc(b.stockId),sr=sheets().doc(b.sheetId),d=await tx.get(ref),sd=await tx.get(sr),stock=d.exists&&d.data(),sheet=sd.exists&&sd.data();
       if(!sheet||!Rose.cuts(sheet.metal)||!sheet.verification?.ok||sheet.saving||sheet.dirty||sheet.roseCutAt||!sheet.outputs?.ai)throw new Error('Save and verify this '+metalWord(sheet&&sheet.metal)+' layout first');
       if(!stock||stock.owner!==b.sheetId||stock.revision!==b.revision)throw new Error('The physical sheet changed. Nest it again');
@@ -332,6 +336,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
     if(!id(b.sheetId)||!id(b.stockId)||!b.planHash)throw new Error('Prepare the cut contour first');
     if(b.via==='auto'&&AUTO_REFUSED.has(b.metal))throw new Error(autoRefusal(b.metal));
     const out=await db.runTransaction(async tx=>{
+      await fenced(tx);
       const ref=stocks().doc(b.stockId),sr=sheets().doc(b.sheetId);
       const d=await tx.get(ref),sd=await tx.get(sr),stock=d.exists&&d.data(),sheet=sd.exists&&sd.data();
       if(b.via==='auto'&&sheet&&AUTO_REFUSED.has(sheet.metal))throw new Error(autoRefusal(sheet.metal));   // (the sheet's own metal decides, not the request's)

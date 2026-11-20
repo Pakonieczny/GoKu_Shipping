@@ -23,6 +23,8 @@ exports.handler = async (event) => {
     const Lib = require("./charmNestLibrary");
     result = await require("./_charmNestWorld").build({ db, admin, Lib, sweep: lease.sweep, log: t => console.log(t), budgetMs: 12 * 60000 });
     if (!result.skipped) { try { if (typeof Lib.worldBump === "function") await Lib.worldBump(); } catch (e) { console.warn("[world] feed not raised:", e && e.message); } }
+    // (CLOUDDRIVE §1.2, dormant: the cloud driver is told the world moved; it starts no build, and never while the drive is off)
+    if (!result.skipped) { try { if (typeof Lib.driveSoon === "function") await Lib.driveSoon("world"); } catch (e) { console.warn("[world] the drive was not told:", e && e.message); } }
     console.log("[world] built", JSON.stringify({ live: result.live, writes: result.writes, states: result.states, errors: result.errors }).slice(0, 800));
   } catch (e) { error = (e && e.message) || String(e); console.error("[world] build failed:", error); }
   const brief = result ? { at: +result.at || Date.now(), skipped: !!result.skipped, live: +result.live || 0, writes: +result.writes || 0, errors: (result.errors || []).length } : null;

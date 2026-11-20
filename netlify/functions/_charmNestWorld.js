@@ -53,6 +53,8 @@ const CACHE = { masterSig: null, masterEntries: null };
 async function feedToken(db) { const ds = await db.getAll(...['library', 'feed-p', 'feed-o', 'feed-x'].map(id => db.collection('Charm_Nest_Rev').doc(id))); return ds.map(d => (d.exists ? String((d.data() || {}).n || 0) : '-')).join('.'); }
 /* Etsy's daily limit, as the mail sync records it when Etsy refuses for the day (EtsyMail_Config/syncState): no Etsy call until it resets */
 async function etsyLocked(db) { try { const s = await db.collection('EtsyMail_Config').doc('syncState').get(), d = s.exists ? s.data() || {} : {}, t = d.etsyDailyLimitResetAt; const ms = t && t.toMillis ? t.toMillis() : +t || 0; return ms > Date.now() ? ms : 0; } catch (_) { return 0; } }
+/* (CLOUDDRIVE: whether the cloud drive is in standby or on: Charm_Nest_Open/drive; absent, "off" or unreadable is off) */
+async function driveOn(db) { try { const s = await db.collection("Charm_Nest_Open").doc("drive").get(), m = s.exists ? (s.data() || {}).mode : null; return m === "standby" || m === "on"; } catch (_) { return false; } }
 const CANCEL_STATUS = /cancel|fully refunded/i;
 
 const sha = s => require("crypto").createHash("sha256").update(String(s)).digest("hex").slice(0, 24);
@@ -94,7 +96,9 @@ function readLine(row, ctx) {
 
 /** The decisions and the run's facts a line carries, from the run's line record (Orders.lineRecord): kept on the cloud line as they are. */
 const RUN_FIELDS = ["state", "poolIds", "reason", "hold", "heldAt", "holdSeen", "wait", "engrave", "engraveCandidate", "noDesign", "groupSize", "sides", "handDone", "activityAt", "changePending", "repoolChanged", "arrivedAt",
-  "materialOverride", "sizeOverride", "engravingOverride", "skuOverride", "blockOverride", "releaseAnyway", "releaseHold", "frontAt", "releasing", "etsyClosed", "crh", "_lp", "material", "quantity", "pieceCount", "sku"];
+  "materialOverride", "sizeOverride", "engravingOverride", "skuOverride", "blockOverride", "releaseAnyway", "releaseHold", "frontAt", "releasing", "etsyClosed", "crh", "_lp", "material", "quantity", "pieceCount", "sku",
+  // (CLOUDDRIVE §1.9: the fields only the cloud writes on a run's line; no line has them while the drive is off, so nothing here changes until then)
+  "poolProblems", "changedAt", "changedWhy", "designHold"];
 function runFacts(rec) { const out = {}; if (!rec || typeof rec !== "object") return out; for (const k of RUN_FIELDS) if (rec[k] !== undefined) out[k] = rec[k]; return out; }
 
 /** The pure part of interpretAll after the reading (charm-nest-bridge.js ~1243-1270): the state a reading moves, a send to sheet, the overrides and Release Anyway. */
@@ -241,8 +245,15 @@ async function build(opts) {
   for (const id of want) { const raw = mirrored.get(id); if (raw) kept.set(id, Object.assign({}, kept.get(id), { rid: id, raw, stamp: stampOf(raw), via: "copy" })); }
   const stale = want.filter(id => { const k = kept.get(id); return !k || !k.raw || (open[id] != null && k.via !== "copy" && Number(k.stamp) !== Number(open[id])); });
   const locked = stale.length ? await etsyLocked(db) : 0;   // (Etsy refused the shop for the day: the mail sync recorded it; nothing is asked until it resets)
-  const doNow = locked ? [] : stale.slice(0, HYDRATE_MAX); let etsyCalls = 0, etsyRefused = 0;
+  let doNow = locked ? [] : stale.slice(0, HYDRATE_MAX); let etsyCalls = 0, etsyRefused = 0;
   if (locked) errors.push("Etsy's daily limit for the shop: no Etsy call until " + new Date(locked).toISOString());
+  /* (CLOUDDRIVE E2, cloud plan v2 step 1a; DORMANT): while the cloud drive is in standby or on, the shop's Etsy switch (_etsyStop.js) is read strictly before the day's calls are
+     counted: when it is on, or cannot be read, nothing is asked of Etsy and nothing is counted (each call would only be answered by the switch, and spend the day's 500).
+     The receipts stay to be read (toRead), so the first build after Resume Etsy reads them. With the drive absent or "off" this is today's build exactly. */
+  if (doNow.length && (await driveOn(db))) {
+    let stopped = true; try { const s = await db.doc(require("./_etsyStop").DOC).get(); stopped = !!(s.exists && (s.data() || {}).stopped === true); } catch (_) { stopped = true; }
+    if (stopped) { errors.push(`Etsy is stopped for the whole shop: ${stale.length} receipt(s) wait for Resume Etsy`); doNow = []; }
+  }
   if (stale.length) say(`[world] ${stale.length} receipt(s) the copy does not hold whole: ${doNow.length} asked of Etsy now (at most ${ETSY_DAY_CAP} calls a day)`);
   await pool(doNow, HYDRATE_PAR, async id => {
     if (Date.now() > budgetEnd || etsyRefused) return;

@@ -55,6 +55,7 @@ const PoolPieces = require("../../charm-nest-pool-pieces.js");   // the four fie
 // the one cloud rule for "is this piece on a sheet" (what is authoritative, the take-off in one commit, the repair on read, placementRev)
 const Placement = require("./_charmNestPlacement");
 const EtsyStop = require("./_etsyStop");   // (ETSYSTOP: the shop's one Etsy switch; read and resumed from Settings)
+const OpClass = require("./_charmNestOpClass");   // (CLOUDDRIVE, build step 1b: every op's class, and the cloud's one allowlist of ops)
 const Mutations = require("./_charmNestMutations");   // OUTBOX (Paul, 28 Oct 2026): a press sent twice from the page's outbox is written once (its mutation id), and the same field written by two people: the later wins, both are told
 const Push = require("./_charmNestPush");   // PUSH (Paul, 28 Oct 2026: "a change made on one computer to appear on the others at once"): after every bump of the feed the counter a computer listens to moves (Charm_Nest_Push/counter, Sandbox_ in the sandbox): see bumpRev
 const MID_READ = /^(get|list|ping|lookup|history|check)|(Get|List|Check|Status|Preview|Read|Url|Info)$/;   // (the reads, by the names the page's api() knows them: a mid on one of them is ignored)
@@ -74,6 +75,10 @@ const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(R
    picks the charm) is written to the SHARED store in the sandbox too, read back, and never reaches Reset or Purge. The sandbox and production
    read the same links. An answer the sandbox kept before that (its own copy) is still read, the later write of the two standing for a key. ── */
 let PREFIX = "";
+/* (CLOUDDRIVE, cloud plan v2 §1.3-1.4, build step 1b; DORMANT): MARKED says this request is the cloud's own in-process call (exports.call, a private Symbol on the event that
+   no HTTP request can carry); FENCE, set only by such a call, is the lease nonce every write of that call is fenced on (fenceTx). Both are reset at every request, as PREFIX. */
+let MARKED = false, FENCE = null;
+const CLOUD_DEV = "cloud", CLOUD_FRESH_MS = 180000;   // (the cloud's reserved carrier name; alive for the cron's minute plus the drive's 2-minute dispatch window)
 const SANDBOXED = new Set(["Charm_Nest_Engrave", "Charm_Nest_Rose_Stock", "Charm_Nest_Remnants", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Pool_Art", "Charm_Pool_Art_Draft", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
 const FV = admin.firestore.FieldValue;
@@ -1071,7 +1076,8 @@ const txGetAll = (tx, refs, fieldMask) => (typeof tx.getAll === "function" ? tx.
    names no computer (a page loaded before this) is taken as before. One small read of the carrier's own document. */
 async function carriedElsewhere(runId, dev) {
   if (!dev || !isId(runId)) return null;
-  try { const d = await col(CARRIER).doc(runId).get(), c = d.exists ? d.data().carrier : null; if (c && c.dev && c.dev !== dev && Date.now() - (num(c.at) || 0) < 90000) return { by: str(c.by, 80) || "another computer", at: num(c.at) || 0 }; } catch (_) { /* not known: the save is taken as before */ }
+  // (CLOUDDRIVE §1.3, dormant: the cloud's carrier, dev "cloud", which only the cloud driver writes, counts as alive for CLOUD_FRESH_MS; a computer's for 90 s, as before)
+  try { const d = await col(CARRIER).doc(runId).get(), c = d.exists ? d.data().carrier : null; if (c && c.dev && c.dev !== dev && Date.now() - (num(c.at) || 0) < (c.dev === CLOUD_DEV ? CLOUD_FRESH_MS : 90000)) return { by: str(c.by, 80) || "another computer", at: num(c.at) || 0 }; } catch (_) { /* not known: the save is taken as before */ }
   return null;
 }
 async function op_putSheet(b) {
@@ -1114,10 +1120,32 @@ async function op_putSheet(b) {
   // Physical stock and immutable cuts are only changed through transactional stock operations.
   for(const key of ['roseProtectedJson','roseStockId','roseRevision','rosePlanJson','rosePlanHash','roseFingerprint','roseCutAt','roseCutRevision'])delete doc[key];
   if (["gold10k","gold14k"].includes(s.metal) && s.solidIncluded === false) Object.assign(doc, {draft:true,setId:null,setSeq:null,sheetIndex:null,label:null});
+  // (CLOUDDRIVE §1.3 P2/P4, build steps 1c-1d; DORMANT while Charm_Nest_Open/drive is absent or "off"): the sheet's content revision is the server's alone; it moves (and the cloud's
+  //  SETSHUT is checked here) only for the cloud's own calls or while the drive is on. With the drive off nothing below is read or written: the save is today's.
+  delete doc.contentRev;
+  const driveNow = await cloudMode(), contentOn = driveNow !== "off", shutOn = MARKED || driveNow === "on";
   const ref = col(SHEETS).doc(s.id);
-  let overwrote = null, layoutRevOut = null;
+  let overwrote = null, layoutRevOut = null, filesOwedKept = false;
   const refused = await db.runTransaction(async tx => {
+    if (FENCE) await fenceTx(tx);
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : {};
+    // (CLOUDDRIVE P1/P2: the bases the cloud's sheet writer sends, each checked only when present; no page sends them)
+    if (typeof b.contentBase === "number" && Number.isFinite(b.contentBase) && b.contentBase !== (num(old.contentRev) || 0)) return { error: `${Placement.labelOf(old) || "Sheet " + s.id} was changed (by hand or its artwork) since this save was made: nothing was overwritten`, status: 409, conflict: true, contentRev: num(old.contentRev) || 0 };
+    if (Object.prototype.hasOwnProperty.call(b, "filesJobBase") && str(b.filesJobBase, 120) !== str(old.filesJob && old.filesJob.jobId, 120)) return { error: `${Placement.labelOf(old) || "Sheet " + s.id}: another job writes its files now: nothing was overwritten`, status: 409, conflict: true, filesJob: old.filesJob || null };
+    if (Object.prototype.hasOwnProperty.call(b, "filesOwedBase") && Object.prototype.hasOwnProperty.call(doc, "filesOwed") && doc.filesOwed == null && num(old.filesOwed) !== num(b.filesOwedBase)) { delete doc.filesOwed; filesOwedKept = true; }   // (compare-and-clear: a newer owed mark stays)
+    if (contentOn && (Object.prototype.hasOwnProperty.call(s, "placements") || Object.prototype.hasOwnProperty.call(s, "charms"))) doc.contentRev = (num(old.contentRev) || 0) + 1;
+    // (SETSHUT on the server, P4: a sheet in a set takes no new order; a piece of an order already on it may still join it. For the cloud's calls, and for every caller in mode "on")
+    //  The cloud never changes a sheet's membership while a set that is not committed lists it (NOPARTIALSET; KEEPINSET stays the owner's: sheetKeepInSet)
+    const membershipSent = MARKED && ["setId", "setSeq", "draft", "solidIncluded", "sheetIndex"].some(k => Object.prototype.hasOwnProperty.call(doc, k));
+    if (shutOn && (Array.isArray(s.poolIds) || membershipSent)) {
+      const had = new Set((old.poolIds || []).map(String)), added = Array.isArray(s.poolIds) ? [...new Set(s.poolIds.map(String))].filter(id => !had.has(id)) : [];
+      const listed = added.length || membershipSent ? (await tx.get(col(SETS).where("sheetIds", "array-contains", s.id))).docs : [];
+      if (added.length && ((old.setId && !old.draft) || listed.length)) {
+        const own = new Set([...had].map(orderOfKey).filter(Boolean).map(String)), shut = added.filter(id => !own.has(String(orderOfKey(id))));
+        if (shut.length) return { error: `${Placement.labelOf(old) || "Sheet " + s.id} is in a set: it takes no new order (${shut.slice(0, 3).join(", ")}${shut.length > 3 ? "…" : ""})`, status: 409, refused: "setShut", pieces: shut.slice(0, 20) };
+      }
+      if (membershipSent && listed.some(d => !SetEdit.committedSet(d.data()))) return { error: `${Placement.labelOf(old) || "Sheet " + s.id} is listed by a set: the cloud never changes its membership`, status: 409, refused: "setShut" };
+    }
     // (CLOUDALL S1, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer": any computer may change a sheet; a save made from an older copy of its layout must never overwrite a newer one): the layout's own revision, layoutRev, goes up by one with every save that carries the placements. A save that says which revision it started from (layoutBase)
     //  and finds another is refused (409, conflict) and nothing is written: that computer reads the sheet again and makes its change on what is there now. A save without layoutBase is taken as before.
     { const carries = Object.prototype.hasOwnProperty.call(s, "placements"), lr = num(old.layoutRev) || 0;
@@ -1226,6 +1254,7 @@ async function op_putSheet(b) {
   const ans = { ok: true, id: s.id };
   if (layoutRevOut !== null) ans.layoutRev = layoutRevOut;   // (CLOUDALL S1, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer": any computer may change a sheet; a save made from an older copy of its layout must never overwrite a newer one)
   if (overwrote && overwrote.length) ans.overwrote = overwrote;
+  if (filesOwedKept) ans.filesOwedKept = true;   // (CLOUDDRIVE P2: the files are owed again since the claim; nothing a page sends sets this)
   // (OUTBOX: an answer to the outbox carries the record's revision as written, so the page's next question by revision is answered "unchanged")
   if (typeof b.mid === "string") { try { const [p] = await db.getAll(ref, { fieldMask: ["updatedAt"] }); ans.rev = revOf(p); } catch (_) {} }
   return ans;
@@ -1326,6 +1355,7 @@ async function op_sheetLayoutPatch(b) {
   for (const id of ids) { const q = poses[id]; if (!q || !["cxPt", "cyPt", "angle"].every(k => Number.isFinite(+q[k]))) return { error: `bad pose for ${id}` }; }
   revTouch(b, ["s:" + b.id]);
   const ref = col(SHEETS).doc(b.id), pins = b.pins && typeof b.pins === "object" ? b.pins : {}, base = b.base && typeof b.base === "object" ? b.base : null;
+  const contentOn = (await cloudMode()) !== "off";   // (CLOUDDRIVE P2, dormant: a move by hand raises the sheet's contentRev, never its layoutRev, only while the drive is on)
   const out = await db.runTransaction(async tx => {
     const snap = await tx.get(ref); if (!snap.exists) return { error: "This sheet is no longer in the Library.", status: 409, refused: "gone" };
     const old = snap.data() || {}, name = Placement.labelOf(old) || `Sheet ${b.id}`;
@@ -1355,6 +1385,7 @@ async function op_sheetLayoutPatch(b) {
     if (b.mark && typeof b.mark === "object") doc.manual = { at: num(b.mark.at) || now, by: str(b.mark.by, 80) || by, n: num(b.mark.n) || ids.length };
     if (b.release === true && (!cur || cur.tab === tab)) doc.manualEdit = null;
     if (moved) doc.filesOwed = now;   // (as a move between sheets marks it: the page's file job clears it once the files are written, putSheet { filesOwed: null })
+    if (moved && contentOn) doc.contentRev = (num(old.contentRev) || 0) + 1;
     if (old.rosePlanJson && protection.fingerprint && protection.fingerprint({ placements, charms }) !== old.roseFingerprint) Object.assign(doc, { rosePlanJson: null, rosePlanHash: null, roseFingerprint: null });
     tx.set(ref, doc, { merge: true });
     return { ok: true, id: b.id, moved, overwrote, filesOwed: moved ? doc.filesOwed : (old.filesOwed || null) };
@@ -1590,14 +1621,17 @@ async function op_sheetPdf(b) {
     if (d.archived || !ai || !/^charmnest\/.+\.ai$/.test(ai)) continue;
     const path = ai.replace(/\.ai$/, ".pdf"), src = bucket.file(ai), dst = bucket.file(path);
     try {
+      if (FENCE) await fenceCheck();   // (CLOUDDRIVE C7: the cloud's call reads its fence again before a Storage write)
       const [[am], [pm]] = await Promise.all([src.getMetadata(), dst.getMetadata().catch(() => [null])]);
       const kept = pm && pm.metadata && String(pm.metadata.firebaseStorageDownloadTokens || "").split(",")[0], same = !!(kept && am.md5Hash && pm.md5Hash === am.md5Hash);
       if (!same) await src.copy(dst);
       const token = kept || crypto.randomUUID();
       if (!same) await dst.setMetadata({ contentType: "application/pdf", metadata: { firebaseStorageDownloadTokens: token } });
       urls[id] = "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket.name) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(token);
-      await ref.update({ "outputs.pdf": { path, url: urls[id] } });
-    } catch (e) { console.warn(`[charmNestLibrary] sheet ${id}: .pdf not made: ${e && e.message}`); }
+      // (CLOUDDRIVE P7: the cloud's call writes the record in one transaction fenced on its lease; a page's write is as before)
+      if (FENCE) await db.runTransaction(async tx => { await fenceTx(tx); tx.update(ref, { "outputs.pdf": { path, url: urls[id] } }); });
+      else await ref.update({ "outputs.pdf": { path, url: urls[id] } });
+    } catch (e) { if (e && e.fenced) throw e; console.warn(`[charmNestLibrary] sheet ${id}: .pdf not made: ${e && e.message}`); }
   }
   return { ok: true, urls };
 }
@@ -1612,7 +1646,9 @@ async function op_putCalibration(b) {
   // one row per sheet, the newest saving it: a sheet saved again as it fills replaces its row instead of adding one, so
   // the collection grows with the sheets made, not with every save (the station runs for days)
   const row = { sheetId: str(r.sheetId, 80), metal: str(r.metal, 12), count: num(r.count), cv: num(r.cv), largestFrac: num(r.largestFrac), density: num(r.density), placedAll: !!r.placedAll, clearancePt: num(r.clearancePt), createdAt: FV.serverTimestamp() };
-  if (/^[\w.\-]{1,80}$/.test(row.sheetId)) await db.collection(CAL).doc(row.sheetId).set(row);
+  // (CLOUDDRIVE P7: the cloud's call writes its row in one transaction fenced on its lease; a page's write is as before)
+  if (FENCE) { const cref = /^[\w.\-]{1,80}$/.test(row.sheetId) ? db.collection(CAL).doc(row.sheetId) : db.collection(CAL).doc(); await db.runTransaction(async tx => { await fenceTx(tx); tx.set(cref, row); }); }
+  else if (/^[\w.\-]{1,80}$/.test(row.sheetId)) await db.collection(CAL).doc(row.sheetId).set(row);
   else await db.collection(CAL).add(row);
   calKept = null;
   return { ok: true };
@@ -2004,6 +2040,7 @@ async function op_poolPut(b) {
      both read "no row yet" and both wrote, so each run owned every line and the pieces went onto two sheets. A row created or changed between this read and
      the commit makes Firestore run this again, and the second run then finds the first one's rows and is told `contended`. */
   return db.runTransaction(async tx => {
+  if (FENCE) await fenceTx(tx);   // (CLOUDDRIVE P7/C7: the cloud's call, fenced on its lease and the run's carrier; a page's call never reads it)
   const out = { written: 0, contended: [], placed: [] }, found = [];
   for (let i = 0; i < list.length; i += 100) found.push(...await txGetAll(tx, list.slice(i, i + 100).map(p => col(POOL).doc(p.poolId)), POOL_PUT_FIELDS));
   // (ARTPRE: a piece pooled for the first time takes the stamps of the artwork edits saved for it before it was pooled, so every page reads them)
@@ -2064,6 +2101,7 @@ async function poolTakeOff(ids, patch, told) {
   for (let i = 0; i < ids.length; i += 200) {
     const part = ids.slice(i, i + 200);
     const made = await db.runTransaction(async tx => {
+      if (FENCE) await fenceTx(tx);   // (CLOUDDRIVE P7/C7)
       const want = new Set(part), more = [];
       // (every read first: a transaction writes after it has read)
       let rows = told ? await txGetAll(tx, part.map(id => col(POOL).doc(id)), POOL_EVENT_FIELDS) : [];
@@ -2156,11 +2194,11 @@ async function op_poolUpdate(b) {
   let before = null;
   if (told && wrote.length) try { before = new Map(); for (let i = 0; i < wrote.length; i += 100) (await db.getAll(...wrote.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: POOL_EVENT_FIELDS })).forEach((s, j) => before.set(wrote[i + j], s.exists ? s.data() : null)); }
   catch (e) { before = null; console.warn("[charmNestLibrary] pool rows not read for the timeline:", e.message || e); }
-  let batch = db.batch(), n = 0;
+  let batch = FENCE ? fencedBatch() : db.batch(), n = 0;   // (CLOUDDRIVE P7: the cloud's call commits each part in a transaction fenced on its lease; a page's as before)
   for (const id of wrote) {
     const doc = Object.assign({}, p, { updatedAt: FV.serverTimestamp() });
     if (sent.length) { for (const k of sent) delete doc[k]; if (!wrongWay.has(id)) { Object.assign(doc, pieceFieldsOf(Object.assign({ poolId: id }, p))); Placement.cleanPiece(Object.assign(doc, { poolId: id })); } delete doc.poolId; }
-    batch.set(col(POOL).doc(id), doc, { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; }
+    batch.set(col(POOL).doc(id), doc, { merge: true }); if (++n >= 400) { await batch.commit(); batch = FENCE ? fencedBatch() : db.batch(); n = 0; }
   }
   if (n) await batch.commit();
   if (told && wrote.length) await stamp(() => poolEvents(wrote, p, before, b), "pool");
@@ -2803,8 +2841,8 @@ async function op_backPut(b) {
   }
   for (const [sheetId, list] of bySheet) for (let i = 0; i < list.length; i += BACKS_PER_TX) {
     const part = list.slice(i, i + BACKS_PER_TX); let out;
-    try { out = await db.runTransaction(tx => putBacks(tx, sheetId, part, b.expectedApprovedAt, artAts)); }
-    catch (e) { errors.push(...part.map(x => ({ row: x, error: e.message || String(e) }))); continue; }
+    try { out = await db.runTransaction(FENCE ? async tx => { await fenceTx(tx); return putBacks(tx, sheetId, part, b.expectedApprovedAt, artAts); } : tx => putBacks(tx, sheetId, part, b.expectedApprovedAt, artAts)); }   // (CLOUDDRIVE P7: fenced for the cloud's call only)
+    catch (e) { if (e && e.fenced) throw e; errors.push(...part.map(x => ({ row: x, error: e.message || String(e) }))); continue; }
     await archiveFiles(out.moved); moved.push(...out.moved); written += out.written; skipped += out.skipped; errors.push(...out.errors); staleArt.push(...out.staleArt); for (const r of out.staleRows || []) staleRows.add(r); labels.set(sheetId, out.sheet);
   }
   /* Each approved back on its order's timeline, one event a piece (its copy), once per approval: a copy recorded again
@@ -3004,6 +3042,7 @@ async function op_artPut(b) {
     }
   }
   feedOrders(b, [[poolId]]);
+  const contentOn = (await cloudMode()) !== "off";   // (CLOUDDRIVE P2, dormant: an artwork edit on a sheet raises the sheet's contentRev, never its layoutRev, only while the drive is on)
   return db.runTransaction(async tx => {
     const snap = await tx.get(ref), pool = await tx.get(poolRef);
     /* ARTPRE (Paul, 12 Nov 2026: "The charm editor won't let me save this change", nesting paused: no piece pooled yet). A piece not pooled yet keeps its edit too, under the pool id it WILL have
@@ -3028,7 +3067,7 @@ async function op_artPut(b) {
     //  ONE document lists the pre-pool edits by record key, read once by a page (artPrepoolList), in place of a stamp on a row that does not exist yet)
     if (!pool.exists) tx.set(col(ART).doc("_prepool"), { ids: { [key]: clear ? FV.delete() : now }, updatedAt: FV.serverTimestamp() }, { merge: true });
     if (pool.exists) tx.set(poolRef, { artEdit: Object.assign({}, row.artEdit && typeof row.artEdit === "object" ? row.artEdit : {}, { [face]: clear ? null : now }), updatedAt: FV.serverTimestamp() }, { merge: true });   // (ARTPRE: none yet: stamped when pooled)
-    if (onSheet) tx.set(sheetRef, Object.assign({ filesOwed: now, updatedAt: FV.serverTimestamp() }, cutChanged ? { cutCheck: Object.assign({}, sheet.cutCheck && typeof sheet.cutCheck === "object" ? sheet.cutCheck : {}, { [poolId]: { at: now, by } }) } : {}), { merge: true });
+    if (onSheet) tx.set(sheetRef, Object.assign({ filesOwed: now, updatedAt: FV.serverTimestamp() }, contentOn ? { contentRev: (num(sheet.contentRev) || 0) + 1 } : {}, cutChanged ? { cutCheck: Object.assign({}, sheet.cutCheck && typeof sheet.cutCheck === "object" ? sheet.cutCheck : {}, { [poolId]: { at: now, by } }) } : {}), { merge: true });
     if (onSheet) revTouch(b, ["s:" + sid]);
     return { ok: true, key, art: clear ? null : Object.assign({ poolId, face }, art, { cutKey, by, at: now }), sheetId: onSheet ? sid : null, filesOwed: onSheet ? now : null, cutChanged };
   });
@@ -3117,6 +3156,14 @@ function keepPlaced(curJson, nextJson) {
   });
   return kept ? JSON.stringify(n) : nextJson;
 }
+/** (CLOUDDRIVE §1.4, mode "on" only): every job keeps the stored place, whatever the page sends, unless the page marks the job as moved by a person (movedByPerson). */
+function keepPlacedAll(curJson, nextJson) {
+  let c, n; try { c = JSON.parse(curJson); n = JSON.parse(nextJson); } catch (_) { return nextJson; }
+  if (!c || !n || !Array.isArray(c.jobs) || !Array.isArray(n.jobs)) return nextJson;
+  let kept = 0;
+  n.jobs = n.jobs.map(nj => { const cj = nj && !nj.movedByPerson ? c.jobs.find(x => x && x.key === nj.key) : null; if (!cj || !cj.place || JSON.stringify(cj.place) === JSON.stringify(nj.place)) return nj; kept++; return Object.assign({}, nj, { place: cj.place }); });
+  return kept ? JSON.stringify(n) : nextJson;
+}
 async function op_engraveSyncPut(b) {
   const list = Array.isArray(b.lines) ? b.lines.slice(0, 40) : [], dev = MADE_DEV.test(String(b.dev || "")) ? String(b.dev) : null, by = str(b.by, 80).trim() || null;
   const out = [], stale = [], todo = [];
@@ -3130,13 +3177,16 @@ async function op_engraveSyncPut(b) {
      read or wrote (baseRev) is written only when the cloud still holds that revision; otherwise it is not written and is answered in `stale` with the cloud's rev (the page reads that line again). A line with no baseRev is taken as before. */
   if (todo.length) {
     for (let i = todo.length - 1; i >= 0; i--) if (todo.findIndex(t => t.key === todo[i].key) !== i) todo.splice(i, 1);   // (a line named twice: the first kept)
+    const placedAll = !MARKED && (await cloudMode()) === "on";   // (CLOUDDRIVE §1.4, dormant: while the cloud carries every run, a page keeps every stored place unless a person moved it)
     const res = await db.runTransaction(async tx => {
+      if (FENCE) await fenceTx(tx);   // (CLOUDDRIVE P7/C7)
       const snaps = await tx.getAll(...todo.map(t => col(ENGR).doc(t.key))), done = [], old = [];
       todo.forEach((t, i) => {
         const cur = snaps[i].exists ? snaps[i].data() : null, rev = cur && Number.isFinite(+cur.rev) ? +cur.rev : 0;
         if (t.base != null && cur && t.base !== rev) { old.push({ key: t.key, rev }); return; }
         const at = Date.now(), next = rev + 1;
         if (cur && cur.rec) t.json = keepPlaced(cur.rec, t.json);   // (KEEPPLACED)
+        if (cur && cur.rec && placedAll) t.json = keepPlacedAll(cur.rec, t.json);
         tx.set(col(ENGR).doc(t.key), { key: t.key, order: t.key.split("_")[0], rec: t.json, at, by, dev, sig: t.sig, rev: next, updatedAt: FV.serverTimestamp() });
         done.push({ key: t.key, at, rev: next });
       });
@@ -3259,6 +3309,7 @@ async function op_setAllocate(b) {
   if (runId) { const ex = await col(SETS).where("key", "==", key).limit(10).get(); const keep = after ? ex.docs.map(x => x.data()).find(d => !used(d)) : (ex.empty ? null : ex.docs[0].data()); if (keep) { const d = keep; return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; } if (after && !ex.empty) usedUp = true;
     if (!group && !after) { const ex2 = await col(SETS).where("runId", "==", runId).limit(1).get(); if (!ex2.empty) { const d = ex2.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; } } }
   const res = await db.runTransaction(async t => {
+    if (FENCE) await fenceTx(t);   // (CLOUDDRIVE P7/C7)
     const allocation = runId ? col(COUNTERS).doc("allocation-" + require("crypto").createHash("sha256").update(key).digest("hex").slice(0, 40)) : null;
     // (audit, 25 Oct 2026: the set already allocated for this key keeps ITS day: a second ask past midnight answered the new day with the old set's id, so the page named its folder and files for the wrong day.
     //  An allocation written before it stored the day reads it from the set id, set-YYYY-MM-DD-n)
@@ -3282,6 +3333,7 @@ async function op_setUpdate(b) {
   let wrote = true;
   await db.runTransaction(async tx=>{
     wrote = true;
+    if (FENCE) await fenceTx(tx);   // (CLOUDDRIVE P7/C7)
     const old=await tx.get(ref),patch=await withoutTakenOff(tx,old.exists?old.data():null,await keepListed(tx,id,old.exists?old.data():null,await withoutOwnerOut(tx,id,keepEditedSheets(old.exists?old.data():null,withoutCleared(old.exists?old.data():null,b.patch || {}))))),next={...(old.exists?old.data():{}),...patch};
     // the numbers a set has given out (`sheetNos`, the highest of each metal) only go up: a page holding an older copy cannot lower them (charm-nest-sheet-name.js)
     // (SETSTAYSCLOSED, Paul 16 Nov 2026: "why this sheet was allowed to be added to an existing set"): the time a set formed is kept for good: the earliest one wins, and no page takes it back
@@ -3494,6 +3546,7 @@ async function op_releasePut(b) {
 async function op_archiveEmptySheet(b) {
   if (!isId(b.id) || !isId(b.runId)) return { error: "bad sheet/run id" };
   const done = await db.runTransaction(async tx => {
+    if (FENCE) await fenceTx(tx);   // (CLOUDDRIVE P7/C7)
     const ref = col(SHEETS).doc(b.id), sheet = await tx.get(ref);
     if (!sheet.exists || sheet.data().runId !== b.runId) return { error: "sheet does not belong to this run" };
     const run = await tx.get(col(RUNS).doc(b.runId));
@@ -3595,6 +3648,7 @@ async function op_runPut(b) {
      so a run is still resumed, taken over, finished and given up on any computer. Read only when a new run is made. */
   let openRun = null, noMint = false;
   await db.runTransaction(async tx => {
+    if (FENCE) await fenceTx(tx);   // (CLOUDDRIVE P7/C7)
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : null, put = Object.assign({}, doc);
     if (old && old.retiredInto) { openRun = String(old.retiredInto); return; }   // (RUNRETIRE: a run retired into another is closed for good: a page that still holds it cannot bring it back)
     if (!old && process.env.CN_TEST_SEED_RUNS !== "1") { noMint = true; return; }   // (CN_TEST_SEED_RUNS: the offline tests that write a run record straight into their fake cloud; never set on the site)   // (RUNOPEN: a run is made by the cloud, runOpen; a page saves only a run that exists)
@@ -3618,6 +3672,9 @@ async function op_runPut(b) {
         if (!merged[k]) { if (lp.added && !taken[k]) { merged[k] = l; kept++; if (l.orderId != null && l.orderId !== "" && Array.isArray(put.orders) && !put.orders.map(String).includes(String(l.orderId))) put.orders = put.orders.concat([l.orderId]); } continue; }
         if (lp.added && !taken[k]) { taken[k] = +lp.at || 1; takenMoved = true; }
         const inLp = merged[k]._lp; if (!inLp || (+inLp.at || 0) < (+lp.at || 0)) { merged[k] = l; kept++; }
+        // (CLOUDDRIVE P3, dormant: only a line the CLOUD stamped last, which no page can stamp: the fields only the cloud writes stay when the page's copy lacks them.
+        //  The strictly-newer rule above is today's and is kept: an equal stamp never reverts the carrier's own change)
+        else if (lp.dev === CLOUD_DEV) { let filled = false; const into = Object.assign({}, merged[k]); for (const f of CLOUD_LINE_FIELDS) if (into[f] === undefined && l[f] !== undefined) { into[f] = l[f]; filled = true; } if (filled) { merged[k] = into; kept++; } }
       }
       if (takenMoved) put.addedTaken = taken;
       othersKept = kept;
@@ -3630,6 +3687,7 @@ async function op_runPut(b) {
       for (const x of had) if (!keep.has(x)) tx.delete(col(RUN_LIVE).doc(x));
       if (b.merge) put.lines = FV.delete();
     } else if (!b.merge && had.length) put.liveLines = old.liveLines;   // a whole record sent without its lines keeps those it had
+    delete put.control; if (!b.merge && old && old.control) put.control = old.control;   // (CLOUDDRIVE §1.5, dormant: a run's control presses are runControl's alone; a whole save keeps them. No run has them while the drive is off)
     delete put.carrier; if (!b.merge && old && old.carrier) put.carrier = old.carrier;   // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"): which computer carries the run is runCarrier's alone; a save of the run never changes it
     const after = b.merge ? Object.assign({}, old || {}, put) : Object.assign({}, put); if (parts) delete after.lines;   // (shallow: a merged map read as changed when it is not, never the other way)
     read = !old || runLibrarySig(old) !== runLibrarySig(after);
@@ -3662,10 +3720,15 @@ async function op_runOpen(b) {
     const open = others.docs.map(d => d.data()).find(x => x && isId(x.runId) && !runClosed(x.status) && !x.retiredInto);
     if (open) { tx.set(ref, { runId: open.runId, at: now }); return { ok: true, created: false, runId: open.runId, status: open.status || null }; }
     if (b.only === "get") return { ok: true, created: false, runId: null };
+    /* (CLOUDDRIVE §1.3, build step 1d; DORMANT): a run made while the drive is "on", or made by the cloud itself, is carried by the cloud from its first moment (the same commit):
+       a page that pressed Start follows it (created: false), as it follows any run open in the cloud. The drive switch is read only here, where a run is made, never in the sandbox. */
+    let cloudCarries = MARKED;
+    if (!cloudCarries && !PREFIX) { const dv = await tx.get(driveRef()); cloudCarries = driveModeOf(dv.exists ? dv.data() : null) === "on"; }
     const id = `run-${day}-${require("crypto").randomBytes(5).toString("hex")}`;
     const solid = b.solidIncluded && typeof b.solidIncluded === "object" && !Array.isArray(b.solidIncluded) ? b.solidIncluded : {};
     tx.set(col(RUNS).doc(id), { runId: id, day, setId: null, releasePolicy: 2, solidIncluded: solid, step: "pull", status: "running", mode, startedAt: now, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [], madeBy: "cloud", createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });
     tx.set(ref, { runId: id, at: now });
+    if (cloudCarries) { tx.set(col(CARRIER).doc(id), { runId: id, carrier: { dev: CLOUD_DEV, by: "Cloud", at: now, since: now }, expireAt: new Date(now + 30 * 86400000) }); return { ok: true, created: !!MARKED, runId: id, day, status: "running", cloudCarries: true }; }
     return { ok: true, created: true, runId: id, day, status: "running" };
   });
   if (out.created) revTouch(b, ["r:" + out.runId]);
@@ -3730,7 +3793,7 @@ async function op_runArchive(b) {
     const digest = require("crypto").createHash("sha256").update(json).digest("hex").slice(0, 40);
     docs.push([col(RUN_LINES).doc(`${id}~${digest}`), { runId: id, lines: keys.length, bytes, json, keys, orders, decisions, decisionsVersion: DECISIONS_VERSION, at, seq: i, createdAt: FV.serverTimestamp() }]);
   }
-  const batch = db.batch(); for (const [ref, doc] of docs) batch.set(ref, doc); await batch.commit();
+  const batch = FENCE ? fencedBatch() : db.batch(); for (const [ref, doc] of docs) batch.set(ref, doc); await batch.commit();   // (CLOUDDRIVE P7: fenced for the cloud's call only)
   return { ok: true, parts: docs.length, lines: docs.reduce((n, [, d]) => n + d.lines, 0) };
 }
 /* ── (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer": an order line changed on any computer (taken off, held, cancelled) is written to the cloud run by that computer) ──
@@ -3738,6 +3801,10 @@ async function op_runArchive(b) {
    the named lines get those fields (a line the run no longer holds is left alone) and a stamp _lp { at, dev, by }, and the record notes lineEditAt. A whole save of the run (runPut)
    made from a copy older than a line's stamp keeps that line as the stamp left it (see op_runPut), so one computer's change is never undone by another's older copy. */
 const LINE_PATCH_FIELDS = ["state", "poolIds", "reason", "hold", "heldAt", "holdSeen", "wait", "frontAt", "engrave"];
+/* (CLOUDDRIVE §1.9, build step 1c; DORMANT): the cloud is the only writer of a run's lines once it carries the run, and it writes these as well. Only the cloud's own calls (MARKED)
+   may write the wider list: a page's patch writes exactly the fields it wrote before. CLOUD_LINE_FIELDS: the fields only the cloud writes (runPut keeps them, see op_runPut). */
+const CLOUD_LINE_FIELDS = ["poolProblems", "designHold", "changedAt", "changedWhy"];
+const LINE_PATCH_CLOUD = LINE_PATCH_FIELDS.concat(["groupSize", "sides", "pieceCount", "material", "sku", "quantity", "noDesign", "poolProblems", "designHold", "releasing", "releaseAnyway", "releaseHold", "blockOverride", "skuOverride", "etsyClosed", "shippedAt", "changePending", "repoolChanged", "changedAt", "changedWhy", "arrivedAt", "activityAt"]);
 async function op_runLinesPatch(b) {
   const id = str(b.runId, 80); if (!isId(id)) return { error: "bad run id" };
   const set = b.lines && typeof b.lines === "object" && !Array.isArray(b.lines) ? b.lines : null;
@@ -3745,7 +3812,9 @@ async function op_runLinesPatch(b) {
   if (!keys.length) return { error: "no lines to change" };
   const at = Date.now(), dev = str(b.dev, 40) || "", by = str(b.by, 80) || "", ref = col(RUNS).doc(id);
   let applied = [];
+  const fields = MARKED ? LINE_PATCH_CLOUD : LINE_PATCH_FIELDS;   // (CLOUDDRIVE §1.9: the wider list for the cloud's own calls only)
   const refused = await db.runTransaction(async tx => {
+    if (FENCE) await fenceTx(tx);   // (CLOUDDRIVE P7/C7)
     const ex = await tx.get(ref); if (!ex.exists) return { error: "that run is not in the cloud", status: 404 };
     const old = ex.data(), had = old.liveLines && Array.isArray(old.liveLines.ids) ? old.liveLines.ids : [];
     let lines = {};
@@ -3755,7 +3824,7 @@ async function op_runLinesPatch(b) {
     for (const k of keys) {
       const cur = lines[k]; if (!cur || typeof cur !== "object") continue;
       const patch = set[k] && typeof set[k] === "object" ? set[k] : {}, next = Object.assign({}, cur);
-      for (const f of LINE_PATCH_FIELDS) if (Object.prototype.hasOwnProperty.call(patch, f)) next[f] = patch[f];
+      for (const f of fields) if (Object.prototype.hasOwnProperty.call(patch, f)) next[f] = patch[f];
       next._lp = { at, dev, by }; lines[k] = next; applied.push(k);
     }
     if (!applied.length) return null;
@@ -3782,6 +3851,7 @@ async function op_runLinesAdd(b) {
   const at = Date.now(), dev = str(b.dev, 40) || "", by = str(b.by, 80) || "", ref = col(RUNS).doc(id);
   let added = [];
   const refused = await db.runTransaction(async tx => {
+    if (FENCE) await fenceTx(tx);   // (CLOUDDRIVE P7/C7)
     const ex = await tx.get(ref); if (!ex.exists) return { error: "that run is not in the cloud", status: 404 };
     const old = ex.data(); if (["complete", "abandoned"].includes(old.status)) return { error: "that run is finished", status: 409 };
     const had = old.liveLines && Array.isArray(old.liveLines.ids) ? old.liveLines.ids : [];
@@ -5181,7 +5251,7 @@ async function op_customDecide(b) { return require("./_charmNestCustomRead").dec
 // partial sheets (PS3): the setting (config/charmNestPartials, the sandbox has its own) and the metal's regular piece (Charm_Nest_Rev/partialStats: running sums, read by both, written by production cuts only)
 const Remnants = require("./_charmNestRemnants")({db,col,FV,sheetLabel,setLabel,revDoc:()=>PREFIX?null:db.collection("Charm_Nest_Rev").doc("remnants"),
   configRef:()=>db.collection("config").doc(PREFIX?"charmNestPartialsSandbox":"charmNestPartials"),statsRef:()=>db.collection("Charm_Nest_Rev").doc("partialStats"),statsWrite:()=>!PREFIX});
-const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel,recordRemnant:Remnants.recordRemnant,remnantSync:Remnants.sync});
+const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel,recordRemnant:Remnants.recordRemnant,remnantSync:Remnants.sync,fence:tx=>(FENCE?fenceTx(tx):null)});   // (CLOUDDRIVE P7: roseClaim, rosePlan and roseRecordCut read the cloud call's fence first; nothing for a page's)
 Remnants.bind(RoseStock);   // (partialClaim / partialRelease go through the stock's own roseClaim / roseRelease: one source of truth for who holds a partial sheet)
 /* ── cancelled orders (Paul, 25 Sep 19:05): an order the operator cancels leaves every screen of the sorter, and one
    record of it is kept here as history. The sorter reads the ids to keep such an order out of every later pull.
@@ -5277,6 +5347,7 @@ async function op_sandboxCancel(b) {
    sorter's AutoCancel and its sheet window write it on the record (the Cancelled tab reads it); see _orderCancel.noteFates. */
 // (removals: [{ id, at, where, kind, outcome, by, text, lineKey, station }], see _orderCancel.noteRemovals; by: who)
 async function op_cancelFates(b) {
+  if (FENCE) await fenceCheck();   // (CLOUDDRIVE P7: its writes are _orderCancel's own, by fixed ids; the cloud's call reads its fence first)
   { const id = orderIdOf(b.orderId); if (id) revTouch(b, ["x:" + id]); }
   const out = await OrderCancel.noteFates(db, b.orderId, b.fates, { prefix: PREFIX, by: str(b.by, 80), removals: Array.isArray(b.removals) ? b.removals : [] });
   if (out && out.ok && !out.missing) await cancelSteps(b);
@@ -5306,7 +5377,7 @@ async function cancelSteps(b) {
 }
 /* ── the order timeline (_orderTimeline.js): the sorter's own events, and the whole timeline of one order ── */
 const Timeline = require("./_orderTimeline");
-async function op_timelineAdd(b) { feedOrders(b, [(Array.isArray(b.events) ? b.events : [b.events]).map(e => e && orderIdOf(e.orderId))], "o"); return Timeline.add(db, FV, b.events, { prefix: PREFIX, source: "sorter" }); }   // (FEED: o:<order>, the order windows' name)
+async function op_timelineAdd(b) { if (FENCE) await fenceCheck(); /* (CLOUDDRIVE P7: timeline ids are fixed; the cloud's call reads its fence first) */ feedOrders(b, [(Array.isArray(b.events) ? b.events : [b.events]).map(e => e && orderIdOf(e.orderId))], "o"); return Timeline.add(db, FV, b.events, { prefix: PREFIX, source: "sorter" }); }   // (FEED: o:<order>, the order windows' name)
 /** OURSHIPONLY: { orders: [ids] } -> { shipped: { <id>: { at, by, id } } }: the orders a shipping station marked shipped (never what Etsy says). Read only. */
 async function op_shippedByUs(b) { return { shipped: await Timeline.shippedByUs(db, Array.isArray(b.orders) ? b.orders : [], PREFIX) }; }
 if (typeof NO_GEN_BUMP !== "undefined" && NO_GEN_BUMP.add) NO_GEN_BUMP.add("shippedByUs");
@@ -5587,8 +5658,28 @@ async function op_runCarrier(b) {
   const ref = col(CARRIER).doc(runId), now = Date.now(), FRESH = 90000;
   const res = await db.runTransaction(async tx => {
     const d = await tx.get(ref);
-    const c = (d.exists && d.data().carrier) || null, alive = !!(c && c.dev && now - (num(c.at) || 0) < FRESH);
+    const c0 = (d.exists && d.data().carrier) || null, cloud = !!(c0 && c0.dev === CLOUD_DEV);
+    const c = c0, alive = !!(c && c.dev && now - (num(c.at) || 0) < (cloud ? CLOUD_FRESH_MS : FRESH));   // (CLOUDDRIVE: the cloud's carrier, which only the cloud writes, is alive for 180 s)
     if (b.check) return { ok: true, mine: !!(c && c.dev === dev), alive, carrier: c };
+    /* (CLOUDDRIVE §1.3, build step 1d; DORMANT: no run is carried by the cloud while the drive is off, and no page sends idle or restoreFromCloud yet)
+       · idle (P12): the computer that carries the run says it has nothing in hand (the drain to "on" waits for it): carrier.idleAt.
+       · a run the cloud carries is never taken by a beat, a boot or Auto, whatever its age (P8). In standby a person's Resume (restoreFromCloud) takes it back, only while the
+         cloud has nothing running (its pass or a task of the run with a fresh beat); until then the answer is handingBack, in words, and the cloud yields when that ends (yieldTo, C6).
+         In mode "on" no page takes it. With the drive off (the owner turned the cloud off) a run the cloud carried is taken as any other, when it goes quiet or by a take. */
+    if (b.idle === true && c && c.dev === dev && !cloud) { const n = Object.assign({}, c, { at: now, idleAt: now }); tx.set(ref, { runId, carrier: n, expireAt: new Date(now + 30 * 86400000) }); return { ok: true, mine: true, alive: true, idle: true, carrier: n }; }
+    if (cloud && !MARKED) {
+      const dv = await tx.get(driveRef()), mode = PREFIX ? "off" : driveModeOf(dv.exists ? dv.data() : null);
+      if (mode !== "off") {
+        if (mode === "standby" && b.restoreFromCloud === true) {
+          const busy = await cloudBusy(tx, runId, now);
+          if (busy) { tx.set(ref, { yieldTo: { dev, by, at: now } }, { merge: true }); return { ok: true, mine: false, alive: true, handingBack: true, why: busy, carrier: c }; }
+          const n = { dev, by, at: now, since: now, took: { dev: c.dev, by: c.by || "", at: num(c.at) || 0 } };
+          tx.set(ref, { runId, carrier: n, expireAt: new Date(now + 30 * 86400000) });
+          return { ok: true, mine: true, alive: true, took: true, restored: true, carrier: n };
+        }
+        return { ok: true, mine: false, alive, carrier: c, cloud: true };
+      }
+    }
     if (c && c.dev === dev) { const n = { dev, by: by || c.by || "", at: now, since: num(c.since) || now }; tx.set(ref, { runId, carrier: n, expireAt: new Date(now + 30 * 86400000) }); return { ok: true, mine: true, alive: true, carrier: n }; }
     if (alive && !b.take) return { ok: true, mine: false, alive: true, carrier: c };
     const n = { dev, by, at: now, since: now, ...(c && c.dev ? { took: { dev: c.dev, by: c.by || "", at: num(c.at) || 0 } } : {}) };
@@ -5648,6 +5739,7 @@ async function op_runCmdDone(b) {
   const runId = str(b.runId, 80), id = str(b.id, 40); if (!isId(runId) || !id) return { error: "bad run or command" };
   const ref = col(CMDS).doc(runId), now = Date.now();
   const got = await db.runTransaction(async tx => {
+    if (FENCE) await fenceTx(tx);   // (CLOUDDRIVE P7/C7)
     const d = await tx.get(ref), cmds = Object.assign({}, (d.exists && d.data().cmds) || {}), c = cmds[id]; if (!c) return false;
     cmds[id] = Object.assign({}, c, { state: b.ok ? "done" : "failed", text: str(b.text, 400) || "", doneAt: now, doneBy: str(b.dev, 60) || "" }, b.freed ? { freed: str(b.freed, 120) } : {});   // (MOVESHOW, Paul 15 Nov 2026: the physical sheet a move gave back, so the computer that asked can mark its card)
     tx.set(ref, { runId, cmds, expireAt: new Date(now + 30 * 86400000) }); return true;
@@ -5674,6 +5766,7 @@ async function op_runCmdStep(b) {
   const runId = str(b.runId, 80), id = str(b.id, 40); if (!isId(runId) || !id) return { error: "bad run or command" };
   const ref = col(CMDS).doc(runId), now = Date.now(), text = str(b.text, 160) || "", pct = b.pct != null && Number.isFinite(+b.pct) ? Math.max(0, Math.min(100, Math.round(+b.pct))) : null;
   const got = await db.runTransaction(async tx => {
+    if (FENCE) await fenceTx(tx);   // (CLOUDDRIVE P7/C7)
     const d = await tx.get(ref), cmds = Object.assign({}, (d.exists && d.data().cmds) || {}), c = cmds[id]; if (!c) return "missing";
     if (c.state !== "waiting" && c.state !== "running") return c.state;
     cmds[id] = Object.assign({}, c, { state: "running", step: text, stepAt: now, stepBy: str(b.dev, 60) || "" }, pct == null ? {} : { stepPct: pct });
@@ -6463,6 +6556,182 @@ function feedHeader(keys, counts) {
   // (and each shard's count after them, "lib=12,p=40": the tabs that heard them skip the same names when the feed brings them, a write at that count or before)
   return counts && Object.keys(counts).length ? named + ";" + Object.entries(counts).map(([k, n]) => k + "=" + n).join(",") : named;
 }
+/* ══ CLOUDDRIVE (cloud plan v2 §1.2-1.5, build steps 1b-1d and 2): the cloud carries the run. DORMANT: with Charm_Nest_Open/drive absent or in mode "off" nothing here
+   writes, dispatches or refuses anything, and every page and cron gets today's answers. What it adds:
+     · the drive switch, read at most every 30 s per instance (driveDoc), never in the sandbox;
+     · exports.call: the cloud's own in-process call of this handler, marked with a private Symbol no HTTP request can carry, serialised (PREFIX and the feed's
+       names are module state), with the reserved name dev "cloud", a mid made from the unit and the body (a replay is written once, a refusal is never kept), and
+       only the ops of _charmNestOpClass.js CLOUD_OPS (none calls Etsy; the world build and the agent are denied);
+     · the fence: a cloud call's every write reads its lease (nonce, running) and the run's carrier (dev "cloud") first, in the write's own transaction;
+     · driveSoon: a press the cloud acts on kicks the cloud driver (never while the drive is off), as worldSoon kicks the world build;
+     · ops driveGet and runControl (the run's Stop / Resume / Next / Commit / Abandon presses for the cloud, and the owner's "Cloud carries"). ══ */
+const DRIVE_COLL = "Charm_Nest_Open", DRIVE_ID = "drive", DRIVE_LEASE = ["Charm_Nest_Drive", "lease"], DRIVE_STATE = ["Charm_Nest_Drive", "state"];
+const driveRef = () => db.collection(DRIVE_COLL).doc(DRIVE_ID);   // (production only: the sandbox never reads or writes the switch)
+const driveModeOf = d => (d && (d.mode === "standby" || d.mode === "on") ? d.mode : "off");
+let DRIVE_SEEN = null;   // { at, d }: this instance's copy of the switch
+/** The drive switch as this instance last read it, read again when older than maxAgeMs (a read that fails keeps the last copy; never read: off). */
+async function driveDoc(maxAgeMs = 30000) {
+  if (DRIVE_SEEN && Date.now() - DRIVE_SEEN.at < maxAgeMs && Date.now() >= DRIVE_SEEN.at) return DRIVE_SEEN.d;
+  try { const s = await driveRef().get(); DRIVE_SEEN = { at: Date.now(), d: s.exists ? s.data() || {} : null }; }
+  catch (e) { console.warn("[charmNestLibrary] the drive switch was not read:", e && e.message); return DRIVE_SEEN ? DRIVE_SEEN.d : null; }
+  return DRIVE_SEEN.d;
+}
+/** "cloud" for the cloud's own call, else the drive's mode ("off" in the sandbox). */
+async function cloudMode() { if (MARKED) return "cloud"; if (PREFIX) return "off"; return driveModeOf(await driveDoc()); }
+const docAt = p => { const seg = String(p).split("/").filter(Boolean); let r = db.collection(seg[0]).doc(seg[1]); for (let i = 2; i + 1 < seg.length; i += 2) r = r.collection(seg[i]).doc(seg[i + 1]); return r; };
+class FencedError extends Error { constructor(why) { super(why); this.name = "FencedError"; this.fenced = true; this.status = 409; } }
+/** The fence (P7, C7): the first read of a cloud call's write transaction. Nothing on a page's call (FENCE is set only by exports.call). */
+async function fenceTx(tx) {
+  const F = FENCE; if (!F) return;
+  const lease = await tx.get(docAt(F.path)), L = lease.exists ? lease.data() || {} : {};
+  if (L.nonce !== F.nonce) throw new FencedError("fenced: another pass of the cloud holds the lease now; this write was not made");
+  if (L.state !== "running") throw new FencedError("fenced: this pass of the cloud has ended; this write was not made");
+  if (F.runId) {
+    const cs = await tx.get(db.collection("Charm_Nest_Run_Carrier").doc(F.runId)), c = cs.exists ? (cs.data() || {}).carrier : null;
+    if (!c || c.dev !== CLOUD_DEV) throw new FencedError(`fenced: ${(c && c.by) || "a computer"} carries this run now; the cloud's write was not made`);
+  }
+}
+/** The fence read on its own (before a Storage write, or an op whose writes are made by another module). */
+async function fenceCheck() { if (FENCE) await db.runTransaction(tx => fenceTx(tx)); }
+/** A batch for a cloud call: each commit is one transaction that reads the fence first (at most 400 writes, as the callers' batches). */
+function fencedBatch() {
+  const ops = [];
+  return { set(ref, d, o) { ops.push(tx => tx.set(ref, d, o || {})); }, update(ref, d) { ops.push(tx => tx.update(ref, d)); }, delete(ref) { ops.push(tx => tx.delete(ref)); },
+    async commit() { await db.runTransaction(async tx => { await fenceTx(tx); for (const f of ops) f(tx); }); } };
+}
+/** What the cloud is still doing on this run (its pass, a task of the run with a fresh beat), in words; "" when nothing. Read inside the caller's transaction. */
+async function cloudBusy(tx, runId, now) {
+  const BEAT = 5 * 60000, fresh = d => d && d.state === "running" && now - (num(d.beatAt) || num(d.startedAt) || 0) < BEAT;
+  const lease = await tx.get(db.collection(DRIVE_LEASE[0]).doc(DRIVE_LEASE[1])), L = lease.exists ? lease.data() : null;
+  const jobs = await tx.get(db.collection(JOBS).where("runId", "==", runId)), fin = await tx.get(db.collection("Charm_Nest_Finish").where("runId", "==", runId));
+  const task = [...jobs.docs, ...fin.docs].map(d => d.data()).find(fresh);
+  if (task) return `the cloud is finishing ${str(task.sheetName || task.fileBase || task.sheetId || "a sheet", 80)}`;
+  if (fresh(L)) return "the cloud is in the middle of a step: it hands the run back when the step ends";
+  return "";
+}
+/* driveSoon (§1.2): a copy of worldSoon for the cloud driver. Never while the drive is off or absent (P7), never for the cloud's own calls (they never kick it again),
+   never in the sandbox. Best-effort and bounded: at most 1.5 s of the press's time, never its failure. */
+const DRIVE_TRIGGERS = new Set(["runControl", "runCmdPut", "runCmdCancel", "releaseAsk", "engraveApprove", "takeOffAsk", "takeOffAck", "labelsAsk", "roseCutAsk", "nestStart", "finishSheet", "cancelPut", "cancelRestore", "sheetLayoutPatch", "artPut", "customDecide", "customSheetPut", "reviewMarkPut", "aliasPut", "optionMapPut", "noDesignPut", "runLinesPatch"]);
+async function driveSoon(by) {   // (the handler calls it only for a page's own press: never for the cloud's call, never in the sandbox)
+  try {
+    if (driveModeOf(await driveDoc()) === "off") return { skipped: true, off: true };
+    const Lease = require("./_charmNestLease"), got = await Lease.dispatch(db, db.collection(DRIVE_LEASE[0]).doc(DRIVE_LEASE[1]), "soon:" + str(by, 40), { heartbeat: true });
+    if (!got || !got.nonce) return { queued: true };
+    const fetch = require("node-fetch"), origin = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
+    await Promise.race([fetch(`${String(origin).replace(/\/+$/, "")}/.netlify/functions/charmNestDrive-background`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nonce: got.nonce }) }).catch(() => null), new Promise(r => setTimeout(r, 1500))]);
+    return { dispatched: true };
+  } catch (e) { console.warn("[drive] not kicked after a change:", e && e.message); return { error: true }; }
+}
+/* Mode "on" (C1, §1.4): the cloud carries every run, so a page's production op is its work and is refused in words (a 409 with words and no retry flag: the outbox takes it as
+   final). putSheet from a page is refused only when it carries what the cloud writes; flowApply only for its relabel and set-files steps; a production write from a page built
+   before the cloud carried every run (no cv) is refused with the reload words. In "off" and "standby" (and in the sandbox) nothing is refused here. */
+const PAGE_SHEET_REFUSED = ["placements", "charms", "poolIds", "outputs", "label", "verification", "saving", "filesOwed", "setId", "setSeq", "sheetIndex", "draft", "releaseFull"];
+const filesSteps = b => b.op === "flowApply" && (Array.isArray(b.steps) ? b.steps : []).some(x => x && (x.type === "setFiles" || x.type === "relabel" || x.relabel));
+async function modeOnRefusal(b) {
+  const op = b.op, cls = OpClass.classOf(op);
+  // (only a production op, or a set's files sent through flowApply, reads the switch at all: a person's press costs no read while the drive is off. The cv rule for every other
+  //  press ships with build step 14, when pages send cv)
+  if (cls !== "PRODUCTION" && !filesSteps(b)) return null;
+  if (driveModeOf(await driveDoc()) !== "on") return null;
+  const words = what => ({ error: `The cloud carries every run now: ${what} is the cloud's work, not this computer's. Nothing was changed`, status: 409, cloudCarries: true });
+  if (b.cv == null || b.cv === "") return { error: "This page is an old version: it reloads, then you can do this again. Nothing was changed", status: 409, cloudCarries: true, reload: true };
+  if (op === "putSheet") { const s = b.sheet && typeof b.sheet === "object" ? b.sheet : {}, hit = PAGE_SHEET_REFUSED.filter(k => Object.prototype.hasOwnProperty.call(s, k)); return hit.length ? Object.assign(words("a sheet's pieces, files, labels and set"), { fields: hit }) : null; }
+  if (op === "flowApply") return (Array.isArray(b.steps) ? b.steps : []).some(x => x && (x.type === "setFiles" || x.type === "relabel" || x.relabel)) ? words("a set's labels and files") : null;
+  return cls === "PRODUCTION" ? words(op) : null;
+}
+/** driveGet: the switch, the driver's state and its lease (no nonce), for Settings and the run banner. Read only. */
+async function op_driveGet() {
+  if (PREFIX) return { ok: true, sandbox: true, drive: null };
+  const [dv, st, ls] = await db.getAll(driveRef(), db.collection(DRIVE_STATE[0]).doc(DRIVE_STATE[1]), db.collection(DRIVE_LEASE[0]).doc(DRIVE_LEASE[1]));
+  const d = dv.exists ? dv.data() || {} : null, l = ls.exists ? ls.data() || {} : null;
+  return { ok: true, drive: d, mode: driveModeOf(d), state: st.exists ? st.data() : null, lease: l ? (({ state, at, by, startedAt, beatAt, endedAt, again, error }) => ({ state, at, by, startedAt, beatAt, endedAt, again, error }))(l) : null, now: Date.now() };
+}
+/* runControl { runId, action, by, dev } (§1.5): the run's presses for the cloud, kept on the run record's `control` { seq, <action>: { seq, at, by, dev }, ack } (only this op writes it).
+   action stop | resume | next | commit | abandon | start: a person's press; ack { seq } (the cloud's own call only): the cloud has done every press up to seq.
+   action cloud { to: "on" | "standby" } (P12): the owner's "Cloud carries" (or the way back): only drive.pending is written; the cloud flips the mode when the drain allows it.
+   Dormant: no page sends it yet, and the cloud acts on nothing while the drive is off. */
+const CONTROL_ACTIONS = new Set(["start", "stop", "resume", "next", "commit", "abandon"]);
+async function op_runControl(b) {
+  const action = str(b.action, 20), by = str(b.by, 80) || "", dev = str(b.dev, 60) || "", now = Date.now();
+  if (PREFIX) return { error: "the cloud driver is production only", status: 400 };
+  if (action === "cloud") {
+    const to = b.to === "standby" ? "standby" : "on";
+    const out = await db.runTransaction(async tx => {
+      const dv = await tx.get(driveRef()), d = dv.exists ? dv.data() || {} : null, mode = driveModeOf(d);
+      if (to === "on" && mode !== "standby") return { error: "The cloud carries every run only from standby", status: 409, mode };
+      if (to === "standby" && mode !== "on") return { error: "The cloud is not carrying every run", status: 409, mode };
+      const pending = { to, at: now, by };
+      tx.set(driveRef(), { pending, by, at: now }, { merge: true });
+      return { ok: true, pending };
+    });
+    DRIVE_SEEN = null;
+    return out;
+  }
+  const runId = str(b.runId, 80); if (!isId(runId)) return { error: "bad run id" };
+  if (action === "ack") {
+    if (!MARKED) return { error: "only the cloud acknowledges a press", status: 403 };
+    const seq = Math.max(0, Math.round(num(b.seq)));
+    await db.runTransaction(async tx => {
+      if (FENCE) await fenceTx(tx);
+      const rs = await tx.get(col(RUNS).doc(runId)); if (!rs.exists) return;
+      const ctl = Object.assign({ seq: 0 }, rs.data().control || {}); if (num(ctl.ack) >= seq) return;
+      ctl.ack = Math.min(seq, num(ctl.seq)); tx.set(col(RUNS).doc(runId), { control: ctl, updatedAt: FV.serverTimestamp() }, { merge: true });
+    });
+    return { ok: true, runId, ack: seq };
+  }
+  if (!CONTROL_ACTIONS.has(action)) return { error: "unknown control action", status: 400 };
+  const out = await db.runTransaction(async tx => {
+    const rs = await tx.get(col(RUNS).doc(runId)); if (!rs.exists) return { error: "that run is not in the cloud", status: 404 };
+    const ctl = Object.assign({ seq: 0 }, rs.data().control || {}), seq = num(ctl.seq) + 1;
+    ctl.seq = seq; ctl[action] = { seq, at: now, by, dev };
+    tx.set(col(RUNS).doc(runId), { control: ctl, updatedAt: FV.serverTimestamp() }, { merge: true });
+    return { ok: true, runId, action, seq };
+  });
+  if (out && out.ok) revTouch(b, ["r:" + runId]);
+  return out;
+}
+OPS.driveGet = op_driveGet; OPS.runControl = op_runControl; ["driveGet", "runControl"].forEach(op => NO_GEN_BUMP.add(op));
+/* The cloud's call (§1.4). body: { op, ...fields } of an op in CLOUD_OPS. o.unit: the unit's own key (any text: the mid is a hash of it and of the body, so it always fits the
+   ledger's form, and a body re-read with a new base is a new mid); o.fence: { path, nonce, runId } the lease every write of the call is fenced on. Answers the op's answer
+   with its HTTP status ({ status, ... }); a write the fence refused is { status: 409, fenced: true }; an op not on the list is { status: 403, error: "not a cloud op" }. */
+const MARK = Symbol("charmNestCloudCall");
+let CALLS = Promise.resolve();
+const stableText = v => (v === null || typeof v !== "object" ? JSON.stringify(v === undefined ? null : v) : Array.isArray(v) ? "[" + v.map(stableText).join(",") + "]" : "{" + Object.keys(v).filter(k => v[k] !== undefined).sort().map(k => JSON.stringify(k) + ":" + stableText(v[k])).join(",") + "}");
+function cloudMid(unit, body) { const b = Object.assign({}, body); delete b.mid; delete b.by; delete b.dev; return "cloud:" + require("crypto").createHash("sha256").update(String(unit) + "|" + stableText(b)).digest("hex").slice(0, 24); }
+const cloudReads = (op, b) => OpClass.READ.has(op) || MID_READ.test(op) || (op === "runOpen" && b.only === "get");
+function call(body, o = {}) {
+  const run = async () => {
+    const b = Object.assign({}, body && typeof body === "object" ? body : {}), op = b.op;
+    if (!OpClass.isCloudOp(op)) return { status: 403, error: "not a cloud op", op: typeof op === "string" ? op.slice(0, 60) : null };
+    if (OpClass.CLOUD_BODY[op]) OpClass.CLOUD_BODY[op](b);
+    delete b.sandbox; delete b.passcode; b.dev = CLOUD_DEV; b.by = "Cloud";
+    if (cloudReads(op, b)) delete b.mid;
+    else {
+      if (typeof o.unit !== "string" || !o.unit) throw new Error(`the cloud's ${op} names no unit: a write is never sent without its mid`);
+      b.mid = cloudMid(o.unit, b);
+      if (!Mutations.MID_FORM.test(b.mid)) throw new Error("the cloud's mid does not fit the ledger's form");
+    }
+    const event = { httpMethod: "POST", headers: { "x-edit-passcode": process.env.EDIT_PASSCODE || "" }, body: JSON.stringify(b) };
+    Object.defineProperty(event, MARK, { value: true, enumerable: false });
+    FENCE = o.fence && o.fence.path && o.fence.nonce ? { path: String(o.fence.path), nonce: String(o.fence.nonce), runId: o.fence.runId ? String(o.fence.runId) : null } : null;
+    try {
+      const res = await exports.handler(event); let out = {};
+      try { out = JSON.parse(res.body || "{}"); } catch (_) { out = {}; }
+      return Object.assign({}, out && typeof out === "object" && !Array.isArray(out) ? out : { value: out }, { status: res.statusCode });
+    } finally { FENCE = null; }
+  };
+  const p = CALLS.then(run, run); CALLS = p.catch(() => {}); return p;
+}
+/** The cloud's ops (E5): one function per op of CLOUD_OPS, each a call(); never Lib.ops. ctx: { fence, unit } given to every call (a call's own o wins). */
+function cloudOps(ctx = {}) {
+  const out = {};
+  for (const op of OpClass.CLOUD_OPS) out[op] = (body = {}, o = {}) => call(Object.assign({}, body, { op }), Object.assign({}, ctx, o));
+  return Object.freeze(out);
+}
+exports.call = call;
+exports.cloudOps = cloudOps;
+exports.driveSoon = by => driveSoon(by);   // (charmNestWorld-background after a build, a worker when its task ends: production; never while the drive is off)
+exports._driveForget = () => { DRIVE_SEEN = null; };   // (tests: the switch read again at once)
 exports.ops = OPS;   // the connections check runs the same queries the app runs
 exports.engApprovedByBack = engApprovedByBack;   // (ENGLABEL; tests: tests/charm-nest/eng-label.cjs)
 exports.feedStats = feedStats;   // (FEED: bumpRev's counts, for the contention test)
@@ -6474,9 +6743,16 @@ exports.handler = async (event) => {
   if ((event.queryStringParameters || {}).hook === "etsy-order") return require("./_etsyOrderWebhook").handle(event, { db, OrderDays, bump: async () => { PREFIX = ""; FEED_TOUCHED = new Set(); return feedBump(["d:orderdays"]); } });
   const body = event.httpMethod === "GET" ? Object.assign({}, event.queryStringParameters || {}) : parseBody(event);
   const denied = gate(event, body); if (denied) return denied;
+  // (CLOUDDRIVE §1.3-1.4, C1/E5): the cloud's own call carries a private mark no HTTP request can carry; the name "cloud" is the cloud's alone (no page sends it), and the cloud may send
+  //  only the ops of its list (none of them calls Etsy). Every other request goes on as before.
+  const marked = !!(event && event[MARK] === true);
+  if (!marked) FENCE = null;
+  if (!marked && body.dev === CLOUD_DEV) return json(403, { error: "\"cloud\" is the cloud's own name: a computer never sends it. Nothing was changed", reserved: true });
+  if (marked && !OpClass.isCloudOp(body.op)) return json(403, { error: "not a cloud op", op: typeof body.op === "string" ? body.op.slice(0, 60) : null });
   // (Paul, 9 Oct 2026: Anna and Ana_M are one person. Whoever the sorter says is on duty, a new record keeps the one login name, Ana_M: _activityKinds.js loginName; no read, nothing stored is changed)
   if (typeof body.by === "string") { try { body.by = require("./_activityKinds").loginName(body.by); } catch (_) {} }
   PREFIX = body.sandbox === true || body.sandbox === 1 || body.sandbox === "1" ? "Sandbox_" : "";
+  MARKED = marked;
   DONE_TOUCH = false; FEED_TOUCHED = new Set(); PLACE_QUIET = false;
   // the Charm Repo's password door (_charmNestRepoAuth.js; plans/repo-protect-1011): its own ops (unlock, the Alert, the download link), then the
   // token every upload / delete / modify of the repository needs. This is the HTTP door only: code that calls OPS in-process is not asked.
@@ -6485,9 +6761,14 @@ exports.handler = async (event) => {
   // (an op is an OWN name of OPS, a string: "constructor", "toString" or "__proto__" belong to the object, and used to answer 200 with the body or a 500)
   const fn = typeof body.op === "string" && Object.prototype.hasOwnProperty.call(OPS, body.op) ? OPS[body.op] : null;
   if (!fn) return json(400, { error: "unknown op", ops: Object.keys(OPS) });
+  if (!marked && OpClass.CLOUD_ONLY.has(body.op)) return json(403, { error: "only the cloud sends " + body.op, cloudOnly: true });   // (C1: in every mode)
   { const need = RepoAuth.requirement("charmNestLibrary", body.op, body); if (need) { const no = await RepoAuth.authorize(db, need, body, event); if (no) return json(no.status, no.body); } }
   // ZODGO (13 Oct 2026): an op that writes a listing's Etsy inventory (listingEtsySkuWrite) is refused for a listing whose ZODIAC SIGN drop-down was sent or may have landed: one Firestore read after the password door, nothing sent; see _charmNestEtsyZodiac.js "THE FENCE"
   { const fenced = await require("./_charmNestEtsyZodiac").fenceFor(body.op, body); if (fenced) return json(200, fenced); }
+  // (CLOUDDRIVE C1, build step 1d; DORMANT until the drive is "on"): while the cloud carries every run, a page's production op is refused in words before anything is kept or written
+  if (!marked && !PREFIX && (OpClass.PRODUCTION.has(body.op) || filesSteps(body))) { const no = await modeOnRefusal(body); if (no) return json(409, no); }
+  // (CLOUDDRIVE C7: a fenced cloud call reads its fence before anything, so a pass that lost its lease gets not even a replayed answer; its writes read it again in their own transaction)
+  if (marked && FENCE) { try { await fenceCheck(); } catch (e) { if (e && e.fenced) return json(409, { error: e.message, fenced: true }); throw e; } }
   // OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"): a press the page sent from its outbox carries its mutation id; sent again (the page closed
   // mid-request, the network dropped), it is written once and the first answer comes back (_charmNestMutations.js). A write without one goes as before.
   const ledger = typeof body.mid === "string" && !MID_READ.test(body.op) ? await Mutations.begin(db, PREFIX, body.mid, { op: body.op, by: body.by, Timestamp: admin.firestore.Timestamp }) : null;
@@ -6503,20 +6784,25 @@ exports.handler = async (event) => {
     const named = quiet ? [] : feedKeys(body, false);
     const counts = named.length ? await feedBump(named) : null;   // (FEED: best-effort and bounded, never the person's write)
     // (CLOUDWORLD stage D, Paul 20 Nov 2026: every computer shows the change at once): a write the cloud world is read from builds it again now (at most one build every 30 s; a build running builds again when it ends)
-    if (!PREFIX && WORLD_TRIGGERS.has(body.op) && !(out && out.error)) await worldSoon(body.op);
+    // (CLOUDDRIVE E1: the cloud's own writes never start a world build and never kick the driver again; the world is built by its own */2 cron. A page's press the cloud acts on
+    //  kicks the driver, never while the drive is off: driveSoon)
+    if (!PREFIX && !marked && WORLD_TRIGGERS.has(body.op) && !(out && out.error)) await worldSoon(body.op);
+    if (!PREFIX && !marked && DRIVE_TRIGGERS.has(body.op) && !(out && out.error)) await driveSoon(body.op);
     const status = out && out.error ? (out.status || 400) : 200;
     // (OUTBOX: an answer to a press from the outbox is kept with its names, so a resend's replayed answer tells the feed the same: X-CN-Feed below)
     if (ledger && out && typeof out === "object" && !Array.isArray(out)) { out.mid = body.mid; if (named.length) out.feed = feedHeader(named, counts); }
-    await Mutations.end(ledger, status, out);
+    // (CLOUDDRIVE P6: a refusal of the cloud's call is never kept: the unit reads again and sends a new body, or the same one later, and it runs again)
+    if (marked && status >= 400) await Mutations.drop(ledger); else await Mutations.end(ledger, status, out);
     const res = json(status, out);
     if (named.length) res.headers = Object.assign({}, res.headers, { "X-CN-Feed": feedHeader(named, counts), "Access-Control-Expose-Headers": "X-CN-Feed" });   // (FEED: what it named, for the other tabs of the computer that wrote)
     return res;
   } catch (e) {
     await bumpPlacementGen(body.op);   // (a failed op may have written some of what it meant to)
     if (DONE_TOUCH || DONE_BUMP_OPS.has(body.op)) await bumpDoneRev(body.op);
-    console.error("[charmNestLibrary]", body.op, e);
+    if (!(marked && e && e.fenced)) console.error("[charmNestLibrary]", body.op, e);
     await feedBump(feedKeys(body, true));
     await Mutations.drop(ledger);   // (OUTBOX: a press that threw keeps nothing: sent again, it runs again)
+    if (marked && e && e.fenced) return json(409, { error: e.message, fenced: true });   // (CLOUDDRIVE C7: another pass holds the lease, or a computer carries the run: this pass stops)
     return json(500, { error: e.message || String(e) });
   }
 };
