@@ -199,6 +199,7 @@ const assets = [
   "charm-nest-run-follow.js",
   "charm-nest-cloud-sheets.js",
   "charm-nest-drift.js",
+  "charm-nest-cloud-world.js",
   "charm-nest-cloud-activity.js",
   "charm-nest-cloud-tray.js",
   "charm-nest-cloud-share.js",
