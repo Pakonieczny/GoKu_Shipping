@@ -436,5 +436,12 @@ const post = async (h, body, headers = {}) => h.handler({ httpMethod: 'POST', he
   r = await post(lib, { op: 'etsyStopGet' }); assert.strictEqual(r.body.stopped, true, 'a 429 stops Etsy'); assert.strictEqual(r.body.fn, 'etsyOrderProxy'); assert(r.body.since > 0);
   r = await post(lib, { op: 'etsyResume', by: 'Paul' }); assert.strictEqual(r.body.stopped, false); assert.strictEqual(r.body.resumedBy, 'Paul'); assert(r.body.resumedAt >= r.body.since);
   EtsyStop._clearCache(); r = await post(lib, { op: 'etsyStopGet' }); assert.strictEqual(r.body.stopped, false, 'Resume Etsy is in the cloud'); assert.strictEqual(r.body.resumedBy, 'Paul');
+  // KEEPINSET: the owner puts a partial sheet back in the set that still lists it; a later save from a page on older code cannot pull it out again
+  await db.collection('Charm_Nest_Sets').doc('set-kis-1').set({ setId: 'set-kis-1', seq: 1, day: '2026-11-12', sheetIds: ['silver-kis1'], runId: 'run-A' });
+  await db.collection('Charm_Nest_Sheets').doc('silver-kis1').set({ id: 'silver-kis1', metal: 'silver', setId: 'set-kis-1', draft: true, releaseFull: false, sheetIndex: 3, poolIds: [] });
+  r = await post(lib, { op: 'sheetKeepInSet', id: 'silver-kis1', setId: 'set-kis-1', by: 'Paul' }); assert.strictEqual(r.body.ok, true, JSON.stringify(r.body)); assert.strictEqual(r.body.sheet.draft, false);
+  let kis = (await db.collection('Charm_Nest_Sheets').doc('silver-kis1').get()).data(); assert.strictEqual(kis.draft, false); assert.strictEqual(kis.setId, 'set-kis-1'); assert.strictEqual(kis.keepInSet.by, 'Paul');
+  r = await post(lib, { op: 'sheetKeepInSet', id: 'silver-kis1', setId: 'set-other', by: 'Paul' }); assert(r.body.error, 'a set that does not list it refuses');
+  const SRk = require(path.join(__dirname, '../../charm-nest-set-rules.js')); assert.strictEqual(SRk.isPartial({ metal: 'silver', releaseFull: false, setId: 'set-kis-1', keepInSet: { setId: 'set-kis-1' } }), false, 'a kept sheet is not partial to the rules'); assert.strictEqual(SRk.isPartial({ metal: 'silver', releaseFull: false, setId: 'set-kis-1' }), true);
   console.log('functions OK ·', store.size, 'docs ·', blobs.size, 'blobs · server job placed', solved.placements.length, 'in', solved.trials, 'trial(s)');
 })().catch(e => { console.error(e); process.exit(1); });
