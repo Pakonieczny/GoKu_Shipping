@@ -19,6 +19,22 @@ const rich = (rid, lines, extra = {}) => Object.assign({ receipt_id: rid, order_
 
 const pick = (s) => s ? { designSku: s.designSku || null, material: s.material || null, size: s.size || null, form: s.form || null, quantity: s.quantity || 1, noDesign: !!s.noDesign, special: s.special ? s.special.kind || true : null, problems: (s.problems || []).map(p => JSON.stringify(p)).sort() } : null;
 
+/** A browser context that is another computer (second-computer.cjs): the harness's routes and start-up script, and storage of its own. */
+async function otherComputer(H) {
+  const fs = require('fs'), st = H.st, ctx = await H.browser.newContext({ viewport: { width: 1500, height: 1000 }, timezoneId: process.env.SIM_TZ || 'America/Toronto' });
+  const fbStub = "const nope = () => { throw new Error('firebase stub'); }; export const initializeApp = nope, getApp = nope, getStorage = nope, ref = nope, uploadBytesResumable = nope, getDownloadURL = nope, getAuth = nope, signInAnonymously = nope;";
+  await ctx.route(/gstatic\.com\/firebasejs/, r => r.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }, body: /-compat\.js/.test(r.request().url()) ? '' : fbStub }));
+  await ctx.route(/qrcodejs/, r => r.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }, body: fs.readFileSync(path.join(repo, 'lib/qrcode.min.js')) }));
+  await ctx.route(/fonts\.googleapis|fonts\.gstatic/, r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+  await ctx.route(/^https:\/\/firebasestorage\.googleapis\.com\//, r => { const u = new URL(r.request().url()); const m = /\/o\/(.+)$/.exec(u.pathname); const key = m ? decodeURIComponent(m[1]) : ''; const b = st.blobs.get(key); if (!b) return r.fulfill({ status: 404, body: '' }); return r.fulfill({ status: 200, body: b.data || b, headers: { 'Access-Control-Allow-Origin': '*' } }); });
+  await ctx.addInitScript(({ sorter }) => { if (location.origin === sorter) localStorage.setItem('cn.employee', 'Second'); window.confirm = () => true; window.prompt = () => 'Second'; window.alert = () => {}; }, { sorter: H.sorterOrigin });
+  const page = await ctx.newPage(), errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto(`${H.sorterOrigin}/charm-nest-1.html`);
+  await page.waitForFunction(() => window.CN && window.CN.S && window.RunCtl && CN.S.cloud.ok !== null, null, { timeout: 90000 });
+  return { ctx, page, errors };
+}
+
 (async () => {
   const receipts = W.wave(3940000001, 3).concat([
     rich(3940100001, [{ sku: 'BR-TST-01', metal: GF }, { sku: 'BR-TST-02', metal: SS, qty: 2 }], { msg: 'Please wrap it &amp; thank you' }),
@@ -37,6 +53,8 @@ const pick = (s) => s ? { designSku: s.designSku || null, material: s.material |
     ok('the sorter ran the orders to rest', !v.timeout, JSON.stringify(v && v.run));
     await page.evaluate(() => Session.flush && Session.flush());
     const rows = await page.evaluate(() => Orders.rows().map(r => ({ key: r.key, state: r.state, spec: r.spec ? { designSku: r.spec.designSku, material: r.spec.material, size: r.spec.size, form: r.spec.form, quantity: r.spec.quantity, noDesign: r.spec.noDesign, special: r.spec.special, problems: r.problems || [] } : null, line: r.line, order: r.order && { receiptId: r.order.receiptId, buyerMessage: r.order.buyerMessage, isGift: r.order.isGift, giftMessage: r.order.giftMessage, shipBy: r.order.shipBy, updateTs: r.order.updateTs, createTs: r.order.createTs, buyer: r.order.buyer } })));
+    // (CW_SNAPSHOT=<file>: the fake cloud as the sorter left it and the sorter's rows, saved once, so the server checks run again in seconds with no browser: cloud-world-fast.cjs)
+    if (process.env.CW_SNAPSHOT) require('fs').writeFileSync(process.env.CW_SNAPSHOT, JSON.stringify({ docs: [...st.docs.entries()], receipts: st.receipts, rows }));
     log('sorter rows:', rows.length, JSON.stringify(rows.reduce((m, r) => (m[r.state] = (m[r.state] || 0) + 1, m), {})));
 
     // the server, over the same in-memory Firestore (the harness's fake firebase-admin is in place for every require below)
@@ -111,6 +129,51 @@ const pick = (s) => s ? { designSku: s.designSku || null, material: s.material |
       mirror(st.receipts.find(r => String(r.receipt_id) === '3940100005'));
       const b6 = await World.build({ db: st.db, admin: st.admin, Lib, etsy, force: true, log: () => {} });
       ok('5d · once the copy holds it, the receipt is read from the copy, still with no Etsy call', etsyCalls.length === n1 && !!World.lineOf(st.doc('Charm_World_Lines', '3940100005_39401000051')).spec && !(b6.errors || []).length, JSON.stringify({ calls: etsyCalls.slice(n1), errors: b6.errors })); }
+
+    /* 5e · a line's state is where its pieces are: a run record that still says "pooled" for a piece the cloud has on a written set reads "written" (order 4228567858, 20 Nov) */
+    { const pooledRow = live.find(r => r.state === 'pooled'); const doc0 = World.lineOf(st.doc('Charm_World_Lines', pooledRow.key)); const pid = (doc0.run.poolIds || [])[0];
+      const pr = st.doc('Charm_Pool', pid); st.put('Charm_Pool', pid, Object.assign({}, pr, { state: 'written', sheetId: pr.sheetId || 'gold-test-sheet' }), false);
+      await World.build({ db: st.db, admin: st.admin, Lib, etsy, force: true, log: () => {} });
+      const d5 = World.lineOf(st.doc('Charm_World_Lines', pooledRow.key));
+      ok('5e · a line whose piece is on a written set reads "written" though the run record still says "pooled"', d5.state === 'written' && d5.run.state === 'pooled', JSON.stringify({ state: d5.state, run: d5.run.state }));
+      st.put('Charm_Pool', pid, pr, false); }
+
+    /* 5f · Claude's stored record of a line is read by the server (Charm_Nest_CustomRead: the reading by the run's hash or the latest, and a person's decision, which always wins) */
+    { const unKey = (st.doc('Charm_World', 'summary').unmatched || [])[0], un = { key: unKey }; const h = 'hlatest01';
+      st.put('Charm_Nest_CustomRead', un.key, { reads: { [h]: { kind: 'addOnToOrder', summary: 'test add-on', confidence: 0.9, hash: h, key: un.key, at: Date.now() } }, latest: h, decided: { kind: 'addOnToOrder', by: 'Tester', at: Date.now() } }, false);
+      await World.build({ db: st.db, admin: st.admin, Lib, etsy, force: true, log: () => {} });
+      const d6 = World.lineOf(st.doc('Charm_World_Lines', un.key));
+      ok('5f · the stored record is used: the line reads as an add-on to an order', d6.spec && d6.spec.special && d6.spec.special.kind === 'addOn', JSON.stringify(d6.spec && d6.spec.special && d6.spec.special.kind));
+      st.docs.delete('Charm_Nest_CustomRead/' + un.key);
+      await World.build({ db: st.db, admin: st.admin, Lib, etsy, force: true, log: () => {} }); }
+
+    /* 6b · paged answers skip nothing: every line, page by page (whole, and only what changed since) */
+    { const got = []; let cursor = null, pages = 0; do { const g = await Lib.ops.worldGet(Object.assign({ lines: true, maxBytes: 2000 }, cursor ? { cursor } : {})); got.push(...g.lines.map(l => l.key)); cursor = g.next; pages++; } while (cursor && pages < 50);
+      ok('6b · the whole list in small pages: every line once, none skipped', pages > 2 && JSON.stringify([...new Set(got)].sort()) === JSON.stringify(live.map(r => r.key).sort()) && got.length === live.length, JSON.stringify({ pages, got: got.length, live: live.length }));
+      const got2 = []; cursor = null; pages = 0; do { const g = await Lib.ops.worldGet(Object.assign({ lines: true, sinceAt: 1, maxBytes: 2000 }, cursor ? { cursor } : {})); got2.push(...g.lines.filter(l => !l.gone).map(l => l.key)); cursor = g.next; pages++; } while (cursor && pages < 50);
+      ok('6c · what changed since, in small pages, lines written in the same build included: none skipped', pages > 2 && JSON.stringify([...new Set(got2)].sort()) === JSON.stringify(live.map(r => r.key).sort()), JSON.stringify({ pages, got: got2.length, live: live.length })); }
+
+    /* 7 · STAGE B: a second computer (carries no run) takes every order line from the cloud world, reads none itself, asks neither Etsy nor Claude, and shows the same Review */
+    await World.build({ db: st.db, admin: st.admin, Lib, etsy, force: true, log: () => {} });
+    const cloudNow = new Map(st.list('Charm_World_Lines').filter(d => !d.gone).map(d => { const l = World.lineOf(d); return [l.key, l]; }));
+    const n7 = st.calls.length;
+    const two = await otherComputer(H), p2 = two.page;
+    await p2.waitForFunction(() => window.CloudWorld && CloudWorld.state().applied && CloudWorld.state().applied.size > 0, null, { timeout: 90000, polling: 500 });
+    const seen2 = await p2.evaluate(() => ({ drives: CloudWorld.drives(), rows: Orders.rows().filter(r => r.state !== 'gone').map(r => ({ key: r.key, state: r.state, cloud: !!r.cloud, sku: r.spec && r.spec.designSku, problems: (r.problems || []).map(p => JSON.stringify(p)).sort() })),
+      rv: { openCount: Review.openCount(), reviewCount: Review.count(), openOrders: [...Review.openOrders().keys()].map(String).sort() } }));
+    const bad7 = []; for (const r of seen2.rows) { const c = cloudNow.get(r.key); if (!c) { bad7.push(r.key + ' not in the cloud'); continue; } if (r.state !== c.state || (r.sku || null) !== ((c.spec && c.spec.designSku) || null) || JSON.stringify(r.problems) !== JSON.stringify((c.problems || []).map(p => JSON.stringify(p)).sort())) bad7.push(r.key); }
+    ok('7a · the second computer is driven by the cloud and holds exactly the cloud\'s lines, each as the cloud read it', seen2.drives && seen2.rows.length === cloudNow.size && seen2.rows.every(r => r.cloud) && !bad7.length, JSON.stringify({ drives: seen2.drives, n: seen2.rows.length, cloud: cloudNow.size, bad: bad7.slice(0, 5) }));
+    const cloudRv2 = (await Lib.ops.worldGet({})).review, pageRv2 = await page.evaluate(() => ({ openCount: Review.openCount(), reviewCount: Review.count(), openOrders: [...Review.openOrders().keys()].map(String).sort() }));
+    ok('7b · its Review is the cloud\'s and the first computer\'s (Open count, decisions, the orders in Open)', JSON.stringify(seen2.rv) === JSON.stringify(pageRv2) && seen2.rv.openCount === cloudRv2.counts.openCount && seen2.rv.reviewCount === cloudRv2.counts.reviewCount, JSON.stringify({ second: seen2.rv, first: pageRv2, cloud: cloudRv2.counts && { openCount: cloudRv2.counts.openCount, reviewCount: cloudRv2.counts.reviewCount } }));
+    const asked = st.calls.slice(n7).filter(c => /^(listOpenOrders|etsyOrderProxy)$/.test(c.name) || (c.op === 'startAgent' && /customRead/.test(JSON.stringify(c.body || {}))));
+    ok('7c · it asked neither Etsy nor Claude for anything', !asked.length, JSON.stringify(asked.map(c => c.name + ':' + c.op)));
+    await p2.reload(); await p2.waitForFunction(() => window.CN && CN.S && CN.S.cloud.ok !== null && window.Orders, null, { timeout: 90000 });
+    const early = await p2.evaluate(() => Orders.rows().filter(r => r.state !== 'gone' && !r.cloud).length);
+    await p2.waitForFunction(() => window.CloudWorld && CloudWorld.state().applied && Orders.rows().some(r => r.cloud), null, { timeout: 90000, polling: 500 }).catch(() => {});
+    const after = await p2.evaluate(() => ({ n: Orders.rows().filter(r => r.state !== 'gone').length, own: Orders.rows().filter(r => r.state !== 'gone' && !r.cloud).length }));
+    ok('7d · after a reload it shows no order line of its own saved copy: only the cloud\'s, as soon as they are read', early === 0 && after.own === 0 && after.n === cloudNow.size, JSON.stringify({ early, after }));
+    ok('7e · no page error on the second computer', !two.errors.length, JSON.stringify(two.errors.slice(0, 3)));
+    await two.ctx.close();
 
     /* 6 · worldGet answers it */
     const g = await Lib.ops.worldGet({ lines: true });
