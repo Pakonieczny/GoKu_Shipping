@@ -121,19 +121,19 @@
   /* CLOUDWORLD (Paul, 20 Nov 2026: the Design & Engrave tab's decided pieces read 245 on Michelle's computer and 242 on Paul's): each engraving piece's state is the cloud's (Charm_Nest_Engrave as every computer saves it,
      read at each build into the cloud's Review, engraveJobs). A piece this page holds in another state than the cloud's, and that no person pressed here in the last half minute, has its line's record taken from the cloud
      again (charm-nest-engrave-sync.js pull, as at the start): the pieces still to settle and the decided ones are then the cloud's on every computer. At most once a minute; the lines that still differ are counted in the report. */
-  let engAt = 0; const engOff = { n: 0, keys: [] };
+  let engAt = 0; const engOff = { n: 0, keys: [], list: [] };
   function engraveCheck() {
     const E = root.Engrave, S = root.CharmNestEngraveSync, rv = W.review;
     if (!wanted() || !E || typeof E.tabItems !== "function" || !rv || !rv.engraveJobs) return engOff;
-    const off = new Set(), rids = new Set();
+    const off = new Set(), rids = new Set(), list = [];
     for (const j of safe(() => E.tabItems(), []) || []) {
       if (!j || j.mono || !j.row) continue;
       const line = j.row.parentRow || j.row, want = (rv.engraveJobs[line.key] || {})[j.key];
       if (want == null) continue;
       const have = String(j.state || "") + (j.editingBack ? "!" : "");
-      if (have !== want) { off.add(line.key); if (line.order && line.order.receiptId != null) rids.add(String(line.order.receiptId)); }
+      if (have !== want) { if (!off.has(line.key) && list.length < 8) list.push(`${line.key} ${j.key} here ${have || "-"} cloud ${want || "-"} · ${safe(() => S.why(line.key), "") || "not offered yet"}`); off.add(line.key); if (line.order && line.order.receiptId != null) rids.add(String(line.order.receiptId)); }
     }
-    engOff.n = off.size; engOff.keys = [...off].slice(0, 12);
+    engOff.n = off.size; engOff.keys = [...off].slice(0, 12); engOff.list = list;
     if (rids.size && S && typeof S.pull === "function" && Date.now() - engAt > 60000) { engAt = Date.now(); safe(() => S.pull([...rids].slice(0, 600), "stale")); }
     return engOff;
   }

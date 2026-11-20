@@ -161,13 +161,16 @@
   async function repairSend(key) {
     try { const line = linesNow().get(key), rec = line && lineRec(line); if (!rec) return; LOCAL_AT.set(key, Date.now()); await send([{ key, rec, sig: sigOf(line) }]); } catch (_) { /* the next read of the line tries again */ }
   }
+  // (SCREENPAINT, Paul 20 Nov 2026: a line whose pieces this computer holds in another state than the cloud's says here why it did not take the cloud's record the last time it was offered: the computer's report carries it)
+  const WHY = new Map(); const said = (k, w) => { WHY.set(k, w + " " + new Date().toTimeString().slice(0, 8)); if (WHY.size > 400) WHY.delete(WHY.keys().next().value); return false; };
   async function take(l, why) {
-    const all = linesNow(), line = all.get(l.key); if (!l.rec) return false;
-    if (!line) { WAITING.set(l.key, l); return false; }   // (NEWLINES, Paul 13 Nov 2026: "What about future orders?"): the line has not reached this computer yet: taken when it does (retryWaiting)
+    const all = linesNow(), line = all.get(l.key); if (!l.rec) return said(l.key, "no record");
+    if (!line) { WAITING.set(l.key, l); return said(l.key, "line not here"); }   // (NEWLINES, Paul 13 Nov 2026: "What about future orders?"): the line has not reached this computer yet: taken when it does (retryWaiting)
     const mine = l.dev && l.dev === dev(), localAt = LOCAL_AT.get(l.key) || 0;
-    if (Date.now() - localAt < OWN_HOLD) return false;   // (a press made here a moment ago: it is sent, and wins)
-    const sigNow = sigOf(line); if (l.sig && sigNow === l.sig) { SIGS.set(l.key, sigNow); return false; }
-    if (mine && why !== "start" && why !== "stale") return false;   // (this computer's own write coming back: already here)
+    if (Date.now() - localAt < OWN_HOLD) return said(l.key, "own press");   // (a press made here a moment ago: it is sent, and wins)
+    const sigNow = sigOf(line); if (l.sig && sigNow === l.sig) { SIGS.set(l.key, sigNow); return said(l.key, "same sig"); }
+    if (mine && why !== "start" && why !== "stale") return said(l.key, "mine");   // (this computer's own write coming back: already here)
+    said(l.key, "taken (" + why + ")");
     TAKING.add(l.key);
     try {
       const rec = l.rec;
@@ -352,6 +355,6 @@
     };
     go();
   }
-  root.CharmNestEngraveSync = { state: () => Object.assign({}, st, { lines: SIGS.size, cloud: CLOUD.size, raised: RAISED.size }), flush: sweep, pull, raisedPush, sigOf: l => sigOf(lineOf(l)), _take: take };
+  root.CharmNestEngraveSync = { why: k => WHY.get(String(k)) || "", state: () => Object.assign({}, st, { lines: SIGS.size, cloud: CLOUD.size, raised: RAISED.size }), flush: sweep, pull, raisedPush, sigOf: l => sigOf(lineOf(l)), _take: take };
   if (root.document) { if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", boot); else boot(); }
 })(typeof self !== "undefined" ? self : this);
