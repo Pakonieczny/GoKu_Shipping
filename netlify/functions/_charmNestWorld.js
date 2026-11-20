@@ -376,13 +376,15 @@ async function build(opts) {
 
   /* 9b · the orders with engraving still to settle (Charm_Nest_Engrave: each line's engraving jobs as every computer saves them, charm-nest-engrave-sync.js), for the Design & Engrave badge:
      a job words / review / fitting / ready / classify, not archived, of a live line (charm-nest-bridge.js Engrave.pendingJobs) */
-  let engraving = null, engraveKeys = null, engravePending = null;
+  let engraving = null, engraveKeys = null, engravePending = null, engraveJobs = null;
   try {
     const ENG_PENDING = new Set(["words", "review", "fitting", "ready", "classify"]), keys = live.filter(r => r.order && r.key).map(r => r.key), set = new Set(), all = [], pend = [];
     for (let i = 0; i < keys.length; i += 300) for (const d of await db.getAll(...keys.slice(i, i + 300).map(k => db.collection("Charm_Nest_Engrave").doc(k)))) {
       if (!d.exists) continue; let rec = null; try { rec = JSON.parse((d.data() || {}).rec || "null"); } catch (_) { rec = null; }
       if (!rec || !Array.isArray(rec.jobs) || !rec.jobs.some(j => j && !j.archived)) continue;
       all.push(d.id);   // (CLOUDWORLD: the lines whose engraving work the cloud holds: the Design & Engrave tab of every computer lists these, and no line one computer prepared alone)
+      // (each piece's state as the cloud holds it: a computer whose piece says otherwise takes the cloud's record of the line, charm-nest-cloud-world.js engraveCheck)
+      (engraveJobs || (engraveJobs = {}))[d.id] = Object.fromEntries(rec.jobs.filter(j => j && j.key && !j.archived).map(j => [String(j.key), String(j.state || "") + (j.editingBack ? "!" : "")]));
       if (rec.jobs.some(j => j && ENG_PENDING.has(String(j.state)) && !j.archived && !j.editingBack)) { set.add(String(d.id).split("_")[0]); pend.push(d.id); }
     }
     engraving = [...set]; engraveKeys = all.sort(); engravePending = pend.sort();
@@ -444,7 +446,7 @@ async function build(opts) {
         review.counts.reviewOrders = flow.counts.review || 0; review.counts.designOrders = flow.counts.design || 0;
       }
       if (engraveKeys) { review.counts.engraveLines = engravePending.length; review.counts.engraveOrders = (engraving || []).length; review.counts.engraveHeld = engraveKeys.length; }
-      await db.collection(WORLD).doc("review").set({ v: VERSION, at: now, counts: JSON.parse(J(review.counts || {})), data: J({ cards: (review.cards || []).slice(0, 1500), openOrders: review.openOrders || [], openKeys: review.openKeys || [], resolvedKeys: review.resolvedKeys || [], itemKeys: review.itemKeys || [], flowByRid: flow ? flow.byRid : null, engraveKeys: engraveKeys || null, engravePending: engravePending || null }) });
+      await db.collection(WORLD).doc("review").set({ v: VERSION, at: now, counts: JSON.parse(J(review.counts || {})), data: J({ cards: (review.cards || []).slice(0, 1500), openOrders: review.openOrders || [], openKeys: review.openKeys || [], resolvedKeys: review.resolvedKeys || [], itemKeys: review.itemKeys || [], flowByRid: flow ? flow.byRid : null, engraveKeys: engraveKeys || null, engravePending: engravePending || null, engraveJobs: engraveJobs || null }) });
     } catch (e) { errors.push("review: " + String(e.message || e).slice(0, 200)); }
   }
 
