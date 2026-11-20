@@ -97,7 +97,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     const pr = CN.S.sheets.gold; pr.pages.length = 1; const p0 = pr.pages[0]; Object.assign(p0, { charms: [], placements: [], sheetId: null, fileBase: null, status: 'idle', page: 1 }); for (const k of ['laserDoneAt', 'roseCutAt', 'recalled', 'setId', 'releaseFull']) delete p0[k];
     B.pool.rows.clear();
     for (const [pg, sh] of Object.entries(PAGES)) {
-      while (pr.pages.length < +pg) addPage('gold');
+      while (pr.pages.length < +pg) addPage('gold', { fresh: true });   // (ONEFILL: a draft still fills, so a plain addPage would hand it back: a NEW sheet is asked for)
       const page = pr.pages[+pg - 1]; page.charms = []; page.placements = [];
       LINES.filter(l => l[5] === +pg).forEach((l, i) => {
         const id = `${sh.id}-c${i}`, poolId = pid(l[0], l[1]);

@@ -161,7 +161,7 @@ function install() {
     ok('a comet back: the metal turned over, none of the front\'s hatching', comet.back && comet.back.blue === 0 && comet.back.a > 1500 && comet.front.blue > 0);
 
     /* ── D · the Engrave tab's detail: every change lands in the same tick ── */
-    page.on('request', r => { if (!/\/vendor\/fonts\//.test(r.url())) { let op = ''; try { const b = JSON.parse(r.postData() || '{}'); op = b.op || b.name || ''; } catch (_) { /* a GET */ } requests.push(r.url().replace(/^https?:\/\/[^/]+/, '') + (op ? ' ' + op : '')); } });
+    page.on('request', r => { if (!/\/vendor\/fonts\//.test(r.url())) { let op = ''; try { const b = JSON.parse(r.postData() || '{}'); op = b.op || b.name || ''; } catch (_) { /* a GET */ } if (/^(activityPut|activityGet|getChanges)$/.test(op)) return; requests.push(r.url().replace(/^https?:\/\/[^/]+/, '') + (op ? ' ' + op : '')); } });   // (the shared activity log's and the change feed's own timed requests are no request of the typing)
     const jkey = await R.openEngraveDetail(w, 'both', { face: 'back' }); await settleFonts();
     ok('the detail opened on the back job', !!jkey);
     const thumbs = () => page.evaluate(() => { const g = f => { const t = document.querySelector(`.engpCard .engFace[data-face="${f}"] .engThumb`); return t ? { text: (t.querySelector('.engpvText') || {}).textContent, fam: getComputedStyle(t.querySelector('.engpvText') || document.body).fontFamily, style: (t.querySelector('.engpvText') || { getAttribute() { return ''; } }).getAttribute('style'), canvas: !!t.querySelector('.engpvDraw canvas'), state: (t.querySelector('.engpv') || {}).dataset && t.querySelector('.engpv').dataset.state } : null; }; return { front: g('front'), back: g('back') }; });

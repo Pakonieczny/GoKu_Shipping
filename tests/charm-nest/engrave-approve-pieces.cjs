@@ -11,6 +11,7 @@
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-approve-pieces.cjs      (CHROMIUM=<chrome>  SHOTS=<dir>)
 // What a pass does NOT prove: a live order on the live page; only that the page's own code does this on the offline fake.
 'use strict';
+const AP = v => v === 'approved' || v === 'written';   // (SEALAFTERSAVE: an approved piece whose files are saved reads "written")
 const fs = require('fs'), path = require('path');
 const R = require('./_engraveRealWorld.cjs'), Base = require('./_orderFactsWorld.cjs');
 
@@ -76,11 +77,11 @@ const fails = [], note = (ok, what, more) => { console.log((ok ? '  PASS ' : '  
     note(sec.cards.length === 1 && sec.cards[0].piece === tails(kSS) && sec.cards[0].approve && sec.left === '', 'the silver piece picked: its card alone with its Approve; the piece is still to approve, so no pointer line', JSON.stringify(sec));
     writes = 0;
     await page.click('#owEng .engCard [data-e=approve]');
-    await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && j.state === 'approved'; }, kSS, { timeout: 30000 });
+    await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && ['approved', 'written'].includes(j.state); }, kSS, { timeout: 30000 });
     await R.settle(page, 2500);
     const writesPair = writes;
     s = await ST();
-    note(s.jobs[RID.two][tails(kSS)] === 'approved' && s.jobs[RID.two][tails(kGF)] === 'review', 'Approve on the silver card approved the silver piece ONLY: the gold piece is still waiting', JSON.stringify(s.jobs[RID.two]));
+    note(AP(s.jobs[RID.two][tails(kSS)]) && s.jobs[RID.two][tails(kGF)] === 'review', 'Approve on the silver card approved the silver piece ONLY: the gold piece is still waiting', JSON.stringify(s.jobs[RID.two]));
     note((s.pcs[RID.two] || []).join(' ') === `${tails(kSS)}:approved ${tails(kGF)}:to-approve`, 'state per piece: silver approved, gold to approve; the order is not done', (s.pcs[RID.two] || []).join(' '));
     sec = await section();
     note(sec.cards.length === 1 && /1 more piece of this order to approve/.test(sec.left), 'the picked piece is approved: ONE quiet line says one more piece of the order is to approve', sec.left);
@@ -98,15 +99,16 @@ const fails = [], note = (ok, what, more) => { console.log((ok ? '  PASS ' : '  
     note(sec.sel === tails(kGF) && sec.cards.length === 1 && sec.cards[0].piece === tails(kGF) && sec.cards[0].approve, 'one tap picks the gold piece: its card with its own Approve', JSON.stringify(sec));
     note(sec.left === '', 'the gold piece is still to approve: the pointer line is gone', sec.left);
     await page.click('#owEng .engCard [data-e=approve]');
-    await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && j.state === 'approved'; }, kGF, { timeout: 30000 });
+    await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && ['approved', 'written'].includes(j.state); }, kGF, { timeout: 30000 });
     await R.settle(page, 2500);
     s = await ST();
-    note(s.jobs[RID.two][tails(kGF)] === 'approved' && (s.pcs[RID.two] || []).every(x => /:approved$/.test(x)), 'the gold piece approved on its own press: now every piece of the order is approved (the order is done)', (s.pcs[RID.two] || []).join(' '));
+    note(AP(s.jobs[RID.two][tails(kGF)]) && (s.pcs[RID.two] || []).every(x => /:approved$/.test(x)), 'the gold piece approved on its own press: now every piece of the order is approved (the order is done)', (s.pcs[RID.two] || []).join(' '));
     sec = await section();
     note(sec.left === '', 'order done: no pointer line', sec.left);
     await page.evaluate(() => OrderWin.selectPiece(null)); await R.settle(page, 500);
+    await page.waitForFunction(() => document.querySelectorAll('#owEng > .engCard').length === 2, null, { timeout: 5000 }).catch(() => {});   // (the cards of every piece are drawn again a moment after the pick)
     sec = await section();
-    note(sec.left === '' && sec.cards.length === 2, 'Show all after both: two cards, no line', sec.left);
+    note(sec.left === '' && sec.cards.length === 2, 'Show all after both: two cards, no line', JSON.stringify(sec));
     await page.evaluate(() => OrderWin.close()); await R.settle(page, 400);
 
     // ═══ B · the Engrave detail: after Approve the next card is the SAME order's next piece ═══
@@ -120,7 +122,7 @@ const fails = [], note = (ok, what, more) => { console.log((ok ? '  PASS ' : '  
     const openDetail = async key => { await page.evaluate(k => { try { OrderWin.close(); } catch (_) {} CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: k }); Engrave.render(); }, key); await page.waitForSelector('#egQueue .rvItem[data-kind=placement]', { timeout: 15000 }); await R.settle(page, 900); };
     const approveInDetail = async key => {
       await page.click('#egQueue [data-a=approve]');
-      await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && j.state === 'approved'; }, key, { timeout: 30000 });
+      await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && ['approved', 'written'].includes(j.state); }, key, { timeout: 30000 });
       await R.settle(page, 3000);
     };
     await openDetail(k3a);
@@ -128,7 +130,7 @@ const fails = [], note = (ok, what, more) => { console.log((ok ? '  PASS ' : '  
     note(d && d.key === tails(k3a), 'the detail is on the first piece of the three-piece order', JSON.stringify(d));
     writes = 0; await approveInDetail(k3a); const writesSingleOfThree = writes;
     d = await DETAIL(); s = await ST();
-    note(s.jobs[RID.three][tails(k3a)] === 'approved' && s.jobs[RID.three][tails(k3b)] === 'review', 'Approve in the detail approved piece 1 only', JSON.stringify(s.jobs[RID.three]));
+    note(AP(s.jobs[RID.three][tails(k3a)]) && s.jobs[RID.three][tails(k3b)] === 'review', 'Approve in the detail approved piece 1 only', JSON.stringify(s.jobs[RID.three]));
     note(d && d.key === tails(k3b), 'after Approve the detail is on piece 2 of the SAME order (not on the other order that is first in the queue)', JSON.stringify(d));
     if (!d || d.key !== tails(k3b)) await openDetail(k3b);   // (a tree that jumped elsewhere: carry on from piece 2 so the rest is still measured)
     await approveInDetail(k3b);
@@ -164,7 +166,7 @@ const fails = [], note = (ok, what, more) => { console.log((ok ? '  PASS ' : '  
     await approveInDetail(dj[0]);
     s = await ST();
     const dst = await page.evaluate(ks => ks.map(k => Engrave.items().get(k).state), dj);
-    note(dst.join(',') === 'approved,review,review', 'Approve on disc 1 approved disc 1 only', dst.join(','));
+    note(dst.map(v => AP(v) ? 'approved' : v).join(',') === 'approved,review,review', 'Approve on disc 1 approved disc 1 only', dst.join(','));
     d = await DETAIL();
     note(d && /#D2$/.test(d.key), 'then the detail is on disc 2 of the same order', d && d.key);
     if (!d || !/#D2$/.test(d.key)) await openDetail(dj[1]);
@@ -179,7 +181,7 @@ const fails = [], note = (ok, what, more) => { console.log((ok ? '  PASS ' : '  
     note(ds.length === 3 && d && !/all discs|discs left|both ears/i.test(d.all) && !/approveBoth/.test(d.approveBtns), 'three discs with the SAME words: still no press that approves all of them, only the disc\'s own Approve', d && d.all);
     await approveInDetail(ds[0]);
     const dst2 = await page.evaluate(ks => ks.map(k => Engrave.items().get(k).state), ds);
-    note(dst2.join(',') === 'approved,review,review', 'its Approve approved that disc only', dst2.join(','));
+    note(dst2.map(v => AP(v) ? 'approved' : v).join(',') === 'approved,review,review', 'its Approve approved that disc only', dst2.join(','));
     const hasGuide = await page.evaluate(() => !!window.CharmNestEngraveGuide);
     note(hasGuide, 'the guide (charm-nest-engrave-guide.js) is on the page');
     // ═══ D · the guide's line: a press that would leave an order with a piece not approved ═══
@@ -273,7 +275,7 @@ const fails = [], note = (ok, what, more) => { console.log((ok ? '  PASS ' : '  
       else {
         note(ds.cards.length === 1 && /#D1:/.test(ds.cards[0]) && ds.left === '', 'Disc 1 picked: its card alone, still to approve, no pointer line', JSON.stringify(ds));
         await page.click('#owEng .engCard [data-e=approve]');
-        await page.waitForFunction(k => { const j = [...Engrave.items().values()].find(x => x.key === k + '#D1'); return j && j.state === 'approved'; }, dk, { timeout: 30000 });
+        await page.waitForFunction(k => { const j = [...Engrave.items().values()].find(x => x.key === k + '#D1'); return j && ['approved', 'written'].includes(j.state); }, dk, { timeout: 30000 });
         await R.settle(page, 2500);
         ds = await dsec();
         note(/2 more pieces of this order to approve/.test(ds.left) && /^Show /.test(ds.leftBtn), 'Disc 1 approved: ONE line says 2 more pieces of the order are to approve, with Show ...', JSON.stringify(ds));
@@ -281,7 +283,7 @@ const fails = [], note = (ok, what, more) => { console.log((ok ? '  PASS ' : '  
         ds = await dsec();
         note(ds.disc === 'D2' && ds.cards.length === 1 && /#D2:approve$/.test(ds.cards[0]) && ds.left === '', 'one tap picks Disc 2 (not the whole line): its card alone, still TO APPROVE (Disc 1\'s approval is not read as Disc 2\'s), the line is gone', JSON.stringify(ds));
         const st = await ST();
-        note(Object.entries(st.jobs[RID.discsWin]).filter(([k, v]) => v === 'approved').length === 1, 'only Disc 1 was approved by all this', JSON.stringify(st.jobs[RID.discsWin]));
+        note(Object.entries(st.jobs[RID.discsWin]).filter(([k, v]) => AP(v)).length === 1, 'only Disc 1 was approved by all this', JSON.stringify(st.jobs[RID.discsWin]));
       }
       await page.evaluate(() => OrderWin.close()); await R.settle(page, 400);
     }

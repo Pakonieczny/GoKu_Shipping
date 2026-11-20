@@ -43,7 +43,7 @@ const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok
   if (!w) { console.log('engrave-approved-tab: no playwright-core, nothing run'); finish(); return; }
   const page = w.page;
   let counting = false; const traffic = [];
-  page.on('request', rq => { if (counting && ['fetch', 'xhr', 'websocket', 'eventsource'].includes(rq.resourceType())) { let op = ''; try { op = String((JSON.parse(rq.postData() || '{}') || {}).op || ''); } catch (_) { /* not JSON */ } if (!/^(getOrderPieces|cancelList)$/.test(op)) traffic.push(rq.method() + ' ' + rq.url().split('/').pop() + (op ? ' op=' + op : '')); } });   // (the PlacementFeed's own tick, getOrderPieces + cancelList every few seconds while rows are on screen, runs with or without a press: not counted)
+  page.on('request', rq => { if (counting && ['fetch', 'xhr', 'websocket', 'eventsource'].includes(rq.resourceType())) { let op = ''; try { op = String((JSON.parse(rq.postData() || '{}') || {}).op || ''); } catch (_) { /* not JSON */ } if (!/^(getOrderPieces|cancelList|getChanges|activityPut|activityGet)$/.test(op)) traffic.push(rq.method() + ' ' + rq.url().split('/').pop() + (op ? ' op=' + op : '')); } });   // (the PlacementFeed's own tick, getOrderPieces + cancelList every few seconds, the change feed's own timed getChanges and the shared activity log's timed batch (activityPut / activityGet, charm-nest-cloud-activity.js), while rows are on screen, runs with or without a press: not counted)
   const settle = ms => R.settle(page, ms || 400);
   const shot = async name => { try { await page.evaluate(() => document.querySelectorAll('.cnNbX, .toast .x').forEach(b => { try { b.click(); } catch (_) {} })); await sleep(350); await page.screenshot({ path: path.join(SHOTS, name + '.png') }); } catch (e) { console.log('   (no screenshot ' + name + ')'); } };
   try {
@@ -110,6 +110,7 @@ const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok
 
     // ═══ 2 · approvals move pieces into Approved, live ═══
     const tBack = Date.now(); await openCard(K.back, 'place'); await approveJob(K.back); await settle(900);
+    await until(async () => (await chip('approved')).n === 1, 'the chips after the stamp', 5000);   // (MONOSEAL / SEALAFTERSAVE: the lists move once the seal's ink is down, about 1.8 s after the approval)
     let a = await chip('approved'), p = await chip('place');
     check(a.n === 1 && p.n === 6, 'the bar of "back" approved: Approved 1, Placements 6 (the chips follow the approval with no press): ' + a.n + ' / ' + p.n);
     const tMono = Date.now(); await page.evaluate(k => { Engrave.openMonogram(k); }, K.mono2); await page.waitForSelector('#egQueue .rvItem[data-mono] .mw', { timeout: 20000 });
@@ -180,7 +181,7 @@ const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok
     await pressChip('approved');
     await page.focus(`#egQueue .placementRow[data-open="${K.back}"]`); await page.keyboard.press('Enter'); await until(async () => (await cardKey() || {}).key === K.back, 'the approved bar opens (Enter on its focused row)'); await settle(900);
     let c = await cardKey(), v = await view();
-    check(c && c.key === K.back && c.state === 'approved' && v.tab === 'approved' && (await chip('approved')).on, 'Enter on a focused approved row opens its card, and the Approved chip stays on: ' + JSON.stringify(Object.assign({}, c, { tab: v.tab })));
+    check(c && c.key === K.back && ['approved', 'written'].includes(c.state) && v.tab === 'approved' && (await chip('approved')).on, 'Enter on a focused approved row opens its card, and the Approved chip stays on: ' + JSON.stringify(Object.assign({}, c, { tab: v.tab })));
     await page.click('#egQueue .rvItem [data-a=next]'); await until(async () => (await cardKey() || {}).key === K.mono2, 'Next reaches the other approved piece'); await settle(700);
     c = await cardKey(); v = await view();
     check(c && c.key === K.mono2 && c.mono && v.tab === 'approved', 'Next walks to the other approved piece (the monogram) and stays on the Approved tab');

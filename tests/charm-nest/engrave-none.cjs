@@ -7,7 +7,7 @@
 // sheet (the back's file and record on the sheet, its back index), the line's state "written" (its set's files written: NOT cut):
 //   N1  None is STAGED only: nothing saved, the card stays, None pressed, the thumbnail and the work area show the charm alone, a line by Approve says what Approve will do, a green Approve is there; no "No engraving" button (NONEPRESS)
 //   N2  Back pressed again restores exactly what was there (words, approval), nothing saved
-//   N3  None again (the S key, the None toggle: staged only), then Approve (the A key): the engraving is taken away (no job to engrave, the person's override), NO seal and no stamp, one timeline line "Engraving removed by ...", a toast, the tab moves on
+//   N3  None again (the S key, the None toggle: staged only), then Approve (the A key): the engraving is taken away (no job to engrave, the person's override), its CUT PLAIN seal (APPROVEALL, 12 Nov 2026), no new approval, one timeline line "Engraving removed by ...", a toast, the tab moves on
 //   N4  every picture is the charm alone (made-thumbs, list boxes), the rail has no Engraved step
 //   N5  the sheet drops it (here and in the cloud, the back record invalidated, the back index without it), the piece stays where it stood, the other order's back is kept
 //   N6  the order window (opened after, same page): no Engraving chip, the Vector design the charm alone, no Engraving block
@@ -101,7 +101,10 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     await R.settle(page, 400);
     const tl = await page.evaluate(() => window.__tl), toasts = await page.evaluate(() => window.__toasts);
     check('N3 Approve (the A key) with None staged takes the engraving away: no job to engrave, no approval, the person\'s override says none, with who', !!done && !done.approvedAt && done.ov && done.ov.mode === 'none' && done.ov.by === 'Test Operator', JSON.stringify(done));
-    check('N3 no stamp and no seal: no "cut plain" seal, the BACK ENGRAVING seal gone from the job and the line', !!done && done.seals.length === 0 && done.rowSeals === 0 && !tl.some(e => /skipped/.test(e.text || '')), JSON.stringify({ seals: done && done.seals, tl }));
+    // (APPROVEALL, Paul 12 Nov 2026: "when I press approve in the engraving modal ... There's no seal that comes. There's no stamp": None approved leaves the person's CUT PLAIN seal (engravePlain); the earlier
+    //  BACK ENGRAVING seal stays as the piece's history (engraving-stamps.cjs: waiving engraving preserves the earlier approval seal), and no new approval is made)
+    const done3 = await until(async () => { const j = await job(key); return j.seals.includes('engravePlain') ? j : null; }, 8000) || await job(key);
+    check('N3 the CUT PLAIN seal and no new approval: one engravePlain seal, the earlier BACK ENGRAVING seal kept only as history, no "skipped" line', !!done3 && done3.seals.filter(x => x === 'engravePlain').length === 1 && done3.seals.filter(x => x === 'engraveApproved').length === j3.seals.filter(x => x === 'engraveApproved').length && !done3.approvedAt && !tl.some(e => /skipped/.test(e.text || '')), JSON.stringify({ seals: done3 && done3.seals, before: j3.seals, tl }));
     check('N3 one plain timeline line with who did it: "Engraving removed by Test Operator"', tl.some(e => e.type === 'engraveChanged' && /ngraving removed by Test Operator/.test(e.text || '')), JSON.stringify(tl));
     check('N3 clear feedback: "Order 4290000101 · no engraving · now a regular order"', toasts.some(t => /Order 4290000101 · no engraving · now a regular order/.test(t)), JSON.stringify(toasts));
     const moved = await page.evaluate(([q, k]) => { const c = document.querySelector(q); return { card: c ? c.dataset.key : '', pending: Engrave.pendingCount(), listed: [...document.querySelectorAll('#egQueue [data-key]')].some(e => e.dataset.key === k) }; }, [Q, key]);
@@ -142,7 +145,7 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
       const rec = Orders.lineRecord ? Orders.lineRecord(row)[1] : null;
       return { a, b: Engrave.jobsOf(row).map(j => j.key + ':' + j.state + ':' + (j.fit ? 'fit' : '')), ov: (rec && rec.engravingOverride) || row.engravingOverride, seals: ((rec && rec.engrave) || {}).seals || [], pending: Engrave.pendingCount() };
     }, [rowKey, key]);
-    check('N7 a re-sync and an intake run never bring the engraving back (the override is in the line\'s record, no seal in it)', sync.a.every(s => /:none$/.test(s)) && sync.b.every(s => /:none:$/.test(s)) && sync.ov && sync.ov.mode === 'none' && sync.pending === 0 && !sync.seals.length, JSON.stringify(sync));
+    check('N7 a re-sync and an intake run never bring the engraving back (the override is in the line\'s record; its CUT PLAIN seal, no approval after it)', sync.a.every(s => /:none$/.test(s)) && sync.b.every(s => /:none:$/.test(s)) && sync.ov && sync.ov.mode === 'none' && sync.pending === 0 && sync.seals.some(x => x.how === 'engravePlain') && !sync.seals.some(x => x.how === 'engraveApproved' && +x.at >= +sync.ov.at), JSON.stringify(sync));
 
     // ── N7b · STAGEALL on the other order (approved, written): any change lights Approve, undoing it calms it, leaving the card discards it ──
     const key2 = made.back2.jobs[0].key, pid2 = made.back2.poolIds[0];
@@ -172,7 +175,8 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     const c8 = await cardNow(key2);
     await page.click(Q + ' [data-a="approve"]');
     const d8 = await until(async () => { const j = await job(key2); return j.state === 'none' ? j : null; }, 15000);
-    check('N8 the green Approve button with None staged does the same: no engraving, no seal, off the sheet, the charm alone', !!d8 && !d8.seals.length && !d8.onSheet && !d8.made && /none:true/.test(c8.segs) && c8.approve, JSON.stringify({ c8, d8 }));
+    const e8 = (d8 && await until(async () => { const j = await job(key2); return j.seals.includes('engravePlain') ? j : null; }, 8000)) || d8;
+    check('N8 the green Approve button with None staged does the same: no engraving, its CUT PLAIN seal and no new approval, off the sheet, the charm alone', !!e8 && e8.state === 'none' && !e8.approvedAt && e8.seals.filter(x => x === 'engravePlain').length === 1 && e8.seals.filter(x => x === 'engraveApproved').length <= 1 && !e8.onSheet && !e8.made && /none:true/.test(c8.segs) && c8.approve, JSON.stringify({ c8, e8 }));
     if (w.shots) await R.shot(w, 'none-after').catch(() => {});
     check('N9 no page errors', errors.length === 0, errors.join(' | ').slice(0, 400));
   } catch (e) { console.error(e); check('ran', false, String(e && e.stack || e)); }
