@@ -9,6 +9,7 @@
 //   /tmp/cn-run.sh 900 tests/charm-nest/pieces-flow.cjs        (SHOTS=<dir> keeps screenshots; ONLY=F1,F5 runs some scenarios)
 // What a pass does NOT prove: a live order on the live page (live data, live jobs, live Etsy), a live approval's server writes; only that the page's own code does this on the offline fake.
 'use strict';
+const AP = v => v === 'approved' || v === 'written';   // (SEALAFTERSAVE: an approved piece whose files are saved reads "written")
 const fs = require('fs'), path = require('path');
 const R = require('./_engraveRealWorld.cjs'), Base = require('./_orderFactsWorld.cjs'), A = require('./_monogramAlphabets.cjs'), N = require('./_piecesNames.cjs');
 const SHOTS = process.env.SHOTS || '';
@@ -53,6 +54,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     // stand-in alphabets for the monogram line (this test is about pieces, not the letters)
     A.seed(srv.st, await A.make());
     await page.evaluate(async () => { await Master.load(true); });
+    await page.addInitScript(() => { window.AP = v => v === 'approved' || v === 'written'; }); await page.evaluate(() => { window.AP = v => v === 'approved' || v === 'written'; });   // (the same rule inside the page, for the checks run there)
     await page.evaluate(() => { const eb = CharmNestMonogram.build; CharmNestMonogram.build = function (l) { const r = eb.apply(this, arguments); if (r && r.ok && r.report && r.report.metrics && Array.isArray(r.report.metrics.violations)) r.report.metrics = Object.assign({}, r.report.metrics, { violations: [], ok: true }); return r; }; });
     const ALL = ['cg2', 'cgDiff', 'cg3', 'plain2', 'mixed', 'old', 'ears2', 'discs2'], NEED = { F1: ['cg2'], F2: ['cgDiff'], F3: ['cg2'], F4: ['cg2'], F5: ['cg3', 'cgDiff'], F6: ['cg3'], F7: ['plain2'], F8: ['mixed'], F9: ['old'], F10: ['cg3'], F12: ['cg2'], F13: ['ears2'], F14: ['discs2'] };
     const NAMES = only.length ? ALL.filter(n => only.some(id => (NEED[id] || ALL).includes(n))) : ALL;
@@ -173,12 +175,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       if (s.cards.length >= 1) {
         await watchStart();
         await page.evaluate(() => document.querySelector('#owEng .engCard [data-e=approve]').click());
-        await until(() => [...Engrave.items().values()].some(j => String((j.row.order || {}).receiptId) === '4295059401' && j.state === 'approved'), 'first approval', 40000);
+        await until(() => [...Engrave.items().values()].some(j => String((j.row.order || {}).receiptId) === '4295059401' && AP(j.state)), 'first approval', 40000);
         await settle(900);
         const wj = await watchStop();
         note(wj.frames > 5 && wj.hSpan <= 2 && wj.tSpan <= 2, 'no layout jump while a piece is approved: the Engraving section keeps its height and the pieces list its place (within 2 px)', JSON.stringify(wj));
         const js = await jobsOf('cg2'); s = await win();
-        note(js.length === 2 && js.filter(j => j.state === 'approved').length === 1 && js.filter(j => j.state !== 'approved').length === 1, 'Approve on the first card approved ONE piece only', JSON.stringify(js.map(j => [tailOf(j.key), j.state])));
+        note(js.length === 2 && js.filter(j => AP(j.state)).length === 1 && js.filter(j => !AP(j.state)).length === 1, 'Approve on the first card approved ONE piece only', JSON.stringify(js.map(j => [tailOf(j.key), j.state])));
         note(s.cards.length === 2 && s.cards.filter(c => c.approve).length === 1 && s.cards.filter(c => c.state === 'approved').length === 1, 'the other card still has its Approve; the approved one shows its seal in the Approve\'s place', JSON.stringify(s.cards.map(c => [c.state, c.approve, c.seals])));
         const O = await page.evaluate(rid => { const o = CharmNestEngraveOrder.countOf(rid); return o; }, RID('cg2'));
         note(O.n === 2 && O.approved === 1 && O.left === 1, 'the order is NOT done: 2 pieces, 1 approved, 1 left (worst-first)', JSON.stringify(O));
@@ -186,10 +188,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         note(!!line && line.approved === false, 'the line\'s own record says not approved (Send to Sheet stays gated)', JSON.stringify(line));
         // the second
         await page.evaluate(() => { const b = [...document.querySelectorAll('#owEng .engCard [data-e=approve]')].find(x => !x.disabled); if (b) b.click(); });
-        await until(() => [...Engrave.items().values()].filter(j => String((j.row.order || {}).receiptId) === '4295059401' && j.state === 'approved').length === 2, 'second approval', 40000);
+        await until(() => [...Engrave.items().values()].filter(j => String((j.row.order || {}).receiptId) === '4295059401' && AP(j.state)).length === 2, 'second approval', 40000);
         await settle(900);
         const O2 = await page.evaluate(rid => CharmNestEngraveOrder.countOf(rid), RID('cg2')), js2 = await jobsOf('cg2');
-        note(O2.left === 0 && O2.approved === 2 && js2.every(j => j.state === 'approved' && j.seals >= 1), 'both approved on their own presses, each with its own seal; the order is done', JSON.stringify(O2) + ' ' + JSON.stringify(js2.map(j => j.seals)));
+        note(O2.left === 0 && O2.approved === 2 && js2.every(j => AP(j.state) && j.seals >= 1), 'both approved on their own presses, each with its own seal; the order is done', JSON.stringify(O2) + ' ' + JSON.stringify(js2.map(j => j.seals)));
         note(new Set(js2.map(j => j.copies.join())).size === 2, 'each piece\'s record is its own pool id');
       }
     }
@@ -279,11 +281,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       let s = await win();
       if (s.cards.length >= 1) {
         await page.evaluate(() => { const b = [...document.querySelectorAll('#owEng .engCard [data-e=approve]')][0]; if (b) b.click(); });
-        await until(() => [...Engrave.items().values()].some(j => String((j.row.order || {}).receiptId) === '4295059406' && j.state === 'approved'), 'the old order\'s approval', 40000);
+        await until(() => [...Engrave.items().values()].some(j => String((j.row.order || {}).receiptId) === '4295059406' && AP(j.state)), 'the old order\'s approval', 40000);
         await settle(800);
       }
       const legacy = await page.evaluate(k => {
-        const row = B.orders.byKey.get(k), jobs = Engrave.jobsOf(row), done = jobs.find(j => j.state === 'approved'); if (!done) return null;
+        const row = B.orders.byKey.get(k), jobs = Engrave.jobsOf(row), done = jobs.find(j => AP(j.state)); if (!done) return null;
         const seals = [].concat((done.engraveRec && done.engraveRec.seals) || [], done.engravingSeals || []);
         for (const j of jobs) Engrave.items().delete(j.key);
         const old = Object.assign({}, done, { key: k, row, copies: row.poolIds.slice() }); delete old.slot; delete old.rowKey; delete old.linked;
@@ -298,7 +300,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         await page.evaluate(k => { const row = B.orders.byKey.get(k); try { if (Engrave.ensureJobs) Engrave.ensureJobs(row); else if (Engrave.ensureJob) Engrave.ensureJob(row); } catch (e) { console.warn('ensure', e && e.message); } try { if (Engrave.relinkAll) Engrave.relinkAll(); } catch (_) {} try { Engrave.render(); } catch (_) {} }, K.old[0]);
         await openWin(K.old[0], 1200);
         s = await win(); const js = await jobsOf('old');
-        note(js.length === 2 && js.every(j => j.state === 'approved'), 'two jobs, BOTH approved: no approval was lost and none is asked again', JSON.stringify(js.map(j => [tailOf(j.key), j.state, j.seals])));
+        note(js.length === 2 && js.every(j => AP(j.state)), 'two jobs, BOTH approved: no approval was lost and none is asked again', JSON.stringify(js.map(j => [tailOf(j.key), j.state, j.seals])));
         note(js.length === 2 && js.every(j => j.text === 'Name Six') && js.every(j => j.seals >= legacy.seals), 'the same words and the seals already given are on each piece', JSON.stringify(js.map(j => [j.text, j.seals])));
         note(s.cards.length === 2 && s.cards.every(c => c.state === 'approved' && !c.approveBtn), 'both cards read approved and have no Approve button', JSON.stringify(s.cards.map(c => [c.state, c.approveBtn])));
         // an edit of ONE piece afterwards leaves the other's approval alone
@@ -355,9 +357,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       note(s.cards.length === 6 && new Set(s.cards.map(c => c.title)).size === 6 && s.cards.slice(3).every(c => /\b(set|pair)\s*2\b/i.test(c.title + ' ' + c.text)), 'six cards with six different titles; the second set\'s say "set 2"', s.cards.map(c => c.title).join(' | '));
       if (s.cards.length === 6) {
         await page.evaluate(() => { const bs = [...document.querySelectorAll('#owEng .engCard [data-e=approve]')]; if (bs[3]) bs[3].click(); });
-        await until(() => [...Engrave.items().values()].some(j => String((j.row.order || {}).receiptId) === '4295059408' && j.state === 'approved'), 'the fourth disc\'s approval', 40000); await settle(900);
+        await until(() => [...Engrave.items().values()].some(j => String((j.row.order || {}).receiptId) === '4295059408' && AP(j.state)), 'the fourth disc\'s approval', 40000); await settle(900);
         const after = await jobsOf('discs2');
-        note(after.filter(j => j.state === 'approved').length === 1 && after.findIndex(j => j.state === 'approved') === 3, 'Approve on card 4 approved piece 4 ONLY', JSON.stringify(after.map(j => [tailOf(j.key), j.state])));
+        note(after.filter(j => AP(j.state)).length === 1 && after.findIndex(j => AP(j.state)) === 3, 'Approve on card 4 approved piece 4 ONLY', JSON.stringify(after.map(j => [tailOf(j.key), j.state])));
       }
     }
 
@@ -370,21 +372,21 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       note(!tabs.tabs.some(x => /^decided\b/i.test(x)) && tabs.decidedRows === 0, 'the Engrave tab has no Decided tab', JSON.stringify(tabs.tabs));
       note(tabs.reopen === 0, 'no Reopen button anywhere in the Engrave tab', String(tabs.reopen));
       const before = await jobsOf('cg2'), b1 = before.find(j => j.key === k1), b2 = before.find(j => j.key === k2);
-      note(!!b1 && !!b2 && b1.state === 'approved' && b2.state === 'approved' && b1.seals >= 1, 'both pieces of the x2 line are approved (from F4) with a seal each', JSON.stringify(before.map(j => [tailOf(j.key), j.state, j.seals])));
+      note(!!b1 && !!b2 && AP(b1.state) && AP(b2.state) && b1.seals >= 1, 'both pieces of the x2 line are approved (from F4) with a seal each', JSON.stringify(before.map(j => [tailOf(j.key), j.state, j.seals])));
       if (r && r.key === k1 && b1 && b2) {
         const ts = await typeAndSave('Name Seven'); const edited = ts.typed && ts.save === 'pressed';
         note(edited, 'an approved piece\'s words can be changed in place (the words box, kept with no Save)', JSON.stringify(ts));
         await until(k => { const j = Engrave.items().get(k); return !!j && /Name Seven/.test((j.lines || []).join(' ') + ' ' + (j.text || '')) && !['classify', 'ready', 'fitting'].includes(j.state); }, 'the edited piece refitted', 40000, k1);
         await settle(600);
         let mid = await jobsOf('cg2'), m1 = mid.find(j => j.key === k1), m2 = mid.find(j => j.key === k2);
-        note(!!m1 && m1.state !== 'approved' && /Name Seven/.test(m1.text), 'the edited piece is back to approve with its new words (needs a new approval)', JSON.stringify([m1 && m1.state, m1 && m1.text]));
-        note(!!m2 && m2.state === 'approved' && m2.text === (b2 || {}).text && m2.seals === (b2 || {}).seals, 'the OTHER piece stays approved with its words and its seals', JSON.stringify([m2 && m2.state, m2 && m2.seals]));
+        note(!!m1 && !AP(m1.state) && /Name Seven/.test(m1.text), 'the edited piece is back to approve with its new words (needs a new approval)', JSON.stringify([m1 && m1.state, m1 && m1.text]));
+        note(!!m2 && AP(m2.state) && m2.text === (b2 || {}).text && m2.seals === (b2 || {}).seals, 'the OTHER piece stays approved with its words and its seals', JSON.stringify([m2 && m2.state, m2 && m2.seals]));
         r = await rd();
         if (r && r.approve) {
           await page.evaluate(() => { const b = document.querySelector('#egQueue [data-a=approve]'); if (b) b.click(); });
-          await until(k => { const j = Engrave.items().get(k); return !!j && j.state === 'approved'; }, 'the second approval', 40000, k1); await settle(900);
+          await until(k => { const j = Engrave.items().get(k); return !!j && AP(j.state); }, 'the second approval', 40000, k1); await settle(900);
           mid = await jobsOf('cg2'); m1 = mid.find(j => j.key === k1); m2 = mid.find(j => j.key === k2);
-          note(!!m1 && m1.state === 'approved' && m1.seals >= (b1.seals + 1), 'approved again: the piece carries a SECOND seal (' + b1.seals + ' -> ' + (m1 && m1.seals) + '), the first is kept', JSON.stringify(mid.map(j => [tailOf(j.key), j.state, j.seals])));
+          note(!!m1 && AP(m1.state) && m1.seals >= (b1.seals + 1), 'approved again: the piece carries a SECOND seal (' + b1.seals + ' -> ' + (m1 && m1.seals) + '), the first is kept', JSON.stringify(mid.map(j => [tailOf(j.key), j.state, j.seals])));
           note(!!m2 && m2.seals === b2.seals, 'the other piece has exactly the seals it had', JSON.stringify([m2 && m2.seals, b2.seals]));
         } else note(false, 'the edited piece offers its own Approve', JSON.stringify(r && { approve: r.approve, text: r.text && r.text.slice(0, 120) }));
       }

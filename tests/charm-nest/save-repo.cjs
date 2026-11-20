@@ -17,6 +17,9 @@ const eq = (a, b, m) => { assert.deepStrictEqual(a, b, m); n++; };
 async function server() {
   const Fk = require('./_sandboxFakes.cjs'); Fk.install();
   const { store, blobs, writes, fileWrites, canon } = Fk;
+  // (PUSH / FEED, 28 Oct 2026: a write also moves the change feed the computers listen to (Charm_Nest_Push/counter, Charm_Nest_Rev/feed-*): kept apart here, so the write log is the repository's)
+  const feedW = [], feedBook = w => /^(Sandbox_)?Charm_Nest_Push\//.test(String(w && w.path)) || /^(Sandbox_)?Charm_Nest_Rev\/feed-/.test(String(w && w.path)) || /^(Sandbox_)?Order_Rev\/_feed_/.test(String(w && w.path));
+  { const realPush = writes.push.bind(writes); writes.push = (...ws) => { for (const w of ws) (feedBook(w) ? feedW : null)?.push(w); return realPush(...ws.filter(w => !feedBook(w))); }; }
   const warn = console.warn, err = console.error; console.warn = () => {}; console.error = () => {};
   // the fake bucket carries a download token on every file (the real one gets it from the upload's finalize), so the links can be minted
   const origFile = Fk.bucket.file.bind(Fk.bucket);
@@ -34,7 +37,7 @@ async function server() {
     return [a, p];
   };
   const snap = () => new Map([...store.entries()].map(([k, v]) => [k, canon(v)]));
-  const changed = (a, b) => [...new Set([...a.keys(), ...b.keys()])].filter(k => !k.startsWith('CharmRepo_Tokens/') && a.get(k) !== b.get(k)).sort();   // (the test's own password tokens are not the repository)
+  const changed = (a, b) => [...new Set([...a.keys(), ...b.keys()])].filter(k => !k.startsWith('CharmRepo_Tokens/') && !feedBook({ path: k }) && a.get(k) !== b.get(k)).sort();   // (the test's own password tokens are not the repository; nor is the change feed's bookkeeping (PUSH / FEED, 28 Oct 2026: a file put moves the computers' counter))
   const RID = '4196630529', LISTING = '1799994821', OLD = "ACORN'S LEAF", SKU = 'ACORNS_LEAF_4821', HASH = crypto.createHash('sha256').update('test-charm-file').digest('hex');
   const ENTRY = { charmHash: 'a1b2c3d4e5f60718', widthPt: 31.2, heightPt: 38.5, areaPt2: 790.4, members: 4, holes: 1, engravable: true, upAngle: 90, upSource: 'long' };
   // (KEEP: a SKU is a DESIGN now: the commit finds the drawing by its charm hash, so each SKU of this test is its own drawing unless a case says otherwise)
@@ -92,6 +95,7 @@ async function server() {
   const wrote = writes.slice(net0).map(w => w.kind + ' ' + w.path).sort();
   eq(wrote, ['create Charm_Custom_Saves/' + RID, 'create Charm_Master_Index/' + SKU, 'set Charm_Master_Files/' + HASH, 'set Charm_Sku_Aliases/' + LISTING].sort(), 'the index entry and the save record were CREATED (create-only), nothing else');
   ok(!writes.slice(net0).some(w => /Charm_Nest_Rev/.test(w.path)), 'no placement counter was raised');
+  ok(feedW.some(w => /^Charm_Nest_Push\/counter$/.test(w.path)), 'and the computers are told (the change feed moved)');
   const idx = store.get('Charm_Master_Index/' + SKU), f = store.get('Charm_Master_Files/' + HASH), al = store.get('Charm_Sku_Aliases/' + LISTING), sv = store.get('Charm_Custom_Saves/' + RID);
   eq([idx.masterHash, idx.masterPath, idx.masterName, idx.charmHash, idx.aiPath, idx.thumbPath, idx.open, idx.labelSource, idx.engravable, idx.engravableBy, idx.upAngle, idx.upSource, idx.hashSource, idx.confidence],
     [HASH, `charmnest/master/custom/${SKU}.ai`, 'Test_Charm.ai', ENTRY.charmHash, `charmnest/master/custom/${SKU}.ai`, `charmnest/master/custom/${SKU}.png`, false, 'text', true, 'index', 90, 'long', 'custom-save', null], 'the index entry has the indexer\'s own fields');
@@ -271,7 +275,7 @@ async function engine() {
       } };
     const ctx = Object.assign({ rid: RID, listingId: LISTING, title: "Acorn&#39;s Leaf Charm", line: { sku: 'ACORN&#39;S LEAF', productId: '', variations: [{ name: 'Metal', value: 'GF 14/20', propertyId: 513, valueId: 1234 }], listingId: LISTING },
       listingKind: null, F: { name: 'Acorns_Leaf.ai', kind: 'ai', bytes: new Uint8Array(500), hash: 'ab'.repeat(32), pieces: 1, state: 'ready' }, charm: { hash: 'c1c2c3c4c5c6c7c8', open: false }, parsed: { ok: 1 }, by: 'Paul', sandbox: !!opt.sandbox,
-      S: { cloud: { ok: opt.cloud !== false } }, O, Sku: opt.ownSku ? Sku : NameSku, Master, aliases: opt.aliases || {}, tableFor: () => opt.table || null, api, lock, now: Date.now, designs: opt.designs }, opt.ctx || {});
+      S: { cloud: { ok: opt.cloud !== false } }, O, Sku: opt.ownSku ? Sku : NameSku, Master, aliases: opt.aliases || {}, tableFor: () => opt.table || null, api, lock, now: Date.now, designs: opt.designs, etsyWrite: true }, opt.ctx || {});   // (ETSYALIAS, Paul 18 Nov 2026: by default the listing's SKU is matched by its alias and Etsy is not written; these steps are the shop that writes Etsy too)
     w.lock = lock; w.entries = entries; w.timers = [];
     ctx.setTimeout = (fn, ms) => { const t = { fn, ms, off: false }; w.timers.push(t); return t; }; ctx.clearTimeout = t => { if (t) t.off = true; };
     w.k = Keep.make(ctx); w.k.on(ev => w.events.push(ev));

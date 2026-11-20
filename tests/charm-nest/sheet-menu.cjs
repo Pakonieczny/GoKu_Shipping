@@ -332,7 +332,7 @@ async function page() {
     await pg.evaluate(() => { const p = S.sheets.silver.pages[3]; p.status = 'complete'; p.placements = p.charms.map((c, i) => ({ id: c.id, cxPt: 20 + i * 10, cyPt: 20, angle: 0, wPt: 10, hPt: 10 })); tabMarks(activePage('silver')); });
     await tick(100); p = await panel(pg); assert.equal(p.rows[3].text, 'Draft 4 ✓ 6', 'the sheet that was nesting is done: its spinner became its mark'); assert.equal(p.rows[3].state, 'complete'); assert.equal(await pg.evaluate(() => document.querySelectorAll('.shmPanel .shmSpin').length), 0);
     // a sheet is added while open: it slides in at its place
-    await pg.evaluate(() => { const pgx = addPage('silver'); pgx.charms = S.sheets.silver.pages[4].charms.slice(0, 2).map((c, i) => Object.assign({}, c, { id: 'add' + i, poolId: 'add' + i + '_1_1' })); pgx.status = 'ready'; refreshAllCards(); });
+    await pg.evaluate(() => { const pgx = addPage('silver', { fresh: true }); pgx.charms = S.sheets.silver.pages[4].charms.slice(0, 2).map((c, i) => Object.assign({}, c, { id: 'add' + i, poolId: 'add' + i + '_1_1' })); pgx.status = 'ready'; refreshAllCards(); });
     await tick(300); p = await panel(pg); assert.equal(p.rows.length, 7, 'a new sheet joins the open menu'); assert.equal(p.rows[6].text, 'Draft 7 2'); assert.equal(await pg.evaluate(() => window.__panel === document.querySelector('.shmPanel')), true, 'the menu stayed open, in place');
     assert.equal((await look(pg, 'silver')).sheets, '7'); assert.equal(await isOpen(), true);
     // a sheet is removed while open (the focused one): it folds away, the focus moves to its neighbour, the rest stays
@@ -345,7 +345,7 @@ async function page() {
     // down to one sheet while open: the menu closes (nothing to choose) and the pill is a plain chip
     await pg.evaluate(() => { for (const x of S.sheets.silver.pages.slice(1).reverse()) removePage(x); refreshAllCards(); }); await tick(450);
     assert.equal(await isOpen(), false, 'with one sheet left the menu closes'); l = await look(pg, 'silver'); assert.equal(l.chip, true, 'and the pill is a chip'); assert.equal(l.btn, false);
-    await pg.evaluate(() => { const x = addPage('silver'); x.charms = []; x.status = 'idle'; refreshAllCards(); }); await tick(200); l = await look(pg, 'silver'); assert.equal(l.btn, true, 'a second sheet turns the chip into the pill again'); assert.equal(l.sheets, '2');
+    await pg.evaluate(() => { const x = addPage('silver', { fresh: true }); x.charms = []; x.status = 'idle'; refreshAllCards(); }); await tick(200); l = await look(pg, 'silver'); assert.equal(l.btn, true, 'a second sheet turns the chip into the pill again'); assert.equal(l.sheets, '2');
     // the card is drawn anew (buildCards): the menu does not outlive its pill
     await pg.click(pillSel('silver')); await settle(pg); assert.equal(await isOpen(), true);
     await pg.evaluate(() => { document.querySelector('.sheetCard[data-m="silver"] [data-r="tabs"]').remove(); }); await gone(pg); assert.equal(await pg.evaluate(() => document.querySelectorAll('.shmPanel').length), 0, 'a pill that leaves the page takes its menu with it');

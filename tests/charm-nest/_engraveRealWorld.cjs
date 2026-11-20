@@ -154,9 +154,10 @@ async function build(w, names) {
     Orders.interpretAll(); CN.setMode('orders'); Orders.render();
     // the REAL pool: each piece gets the real charm of its design (an earring pair: Left and the mirrored Right, a counted line: one piece per disc)
     await Pool.addAll({ runId: 'run-real', lines: {} });
-    // the pieces sit on a sheet that has a name (the fit needs one: Engrave.canFit); where does not matter here
+    // the pieces sit on a sheet that has a name (the fit needs one: Engrave.canFit) and, as every saved sheet does, a folder in the cloud (BACKFOLDER, 18 Nov 2026: an approved back
+    //  is saved into its sheet's folder before the seal; a sheet with no folder keeps every approval at "Not approved yet ... Reconnect to save the approved back files")
     let n = 0;
-    for (const sh of allSheets()) if (sh.charms && sh.charms.length) { n++; sh.sheetId = sh.sheetId || 'real-sheet-' + n; sh.fileBase = sh.fileBase || 'gold-real-' + n; sh.placements = sh.charms.map((c, i) => ({ id: c.id, cxPt: 40 + 70 * i, cyPt: 60, angle: 0 })); }
+    for (const sh of allSheets()) if (sh.charms && sh.charms.length) { n++; sh.sheetId = sh.sheetId || 'real-sheet-' + n; sh.fileBase = sh.fileBase || 'gold-real-' + n; if (!sh.folderPath) sh.folderPath = 'charmnest/sheets/' + sh.sheetId; sh.placements = sh.charms.map((c, i) => ({ id: c.id, cxPt: 40 + 70 * i, cyPt: 60, angle: 0 })); }
     // the real classifier path: faced lines take each face's words from the line's setup (no reading), a plain back is read by the fake site's stub (offline)
     for (const row of Orders.rows()) if (['pooled', 'written'].includes(row.state) && row.spec && (row.spec.engraveCandidate || row.spec.engraving)) { try { await Engrave.classify(row); } catch (e) { console.warn('classify', e && e.message); } }
   }, { fixtures: names.map(n => ORDERS[n]), orderSrc: Base.orderOf.toString() });
@@ -195,6 +196,9 @@ async function build(w, names) {
     for (const fx of fixtures) for (const row of Orders.rows().filter(r => r.order.receiptId === fx.rid)) { row.state = 'pulled'; row.hold = 'held by Test'; row.reason = null; }
     Orders.render();
   }, { fixtures: held.map(n => ORDERS[n]), orderSrc: Base.orderOf.toString() });
+  // and the cloud holds each such sheet's record (the backs approved on it are written into it)
+  { const sheets = await page.evaluate(() => allSheets().filter(sh => sh.charms && sh.charms.length && sh.sheetId).map(sh => ({ sheetId: sh.sheetId, poolIds: sh.charms.map(x => x.poolId) })));
+    for (const sh of sheets) if (!w.srv.st.doc('Charm_Nest_Sheets', sh.sheetId)) w.srv.st.put('Charm_Nest_Sheets', sh.sheetId, { sheetId: sh.sheetId, poolIds: sh.poolIds, backPool: [] }); }
   const out = await page.evaluate(names => {
     const res = {};
     for (const [n, rid] of names) {
