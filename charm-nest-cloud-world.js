@@ -17,7 +17,7 @@
   const api = body => root.CN && typeof root.CN.api === "function" ? root.CN.api("charmNestLibrary", body, { quiet: true, timeoutMs: 60000 }) : Promise.reject(new Error("no api"));
   const NET_MS = 60000;
   const W = { lines: new Map(), summary: null, review: null, lease: null, at: 0, loadedAt: 0, reads: 0, fails: 0, error: null, started: false, busy: null, again: false, fns: new Set() };
-  let readyRes; const readyP = new Promise(r => { readyRes = r; });
+  let readyRes, firstRes; const readyP = new Promise(r => { readyRes = r; }), firstP = new Promise(r => { firstRes = r; });   // (firstP: the first read has ended, read or not)
 
   function tell(why) { for (const fn of [...W.fns]) safe(() => fn({ why, summary: W.summary, review: W.review, size: W.lines.size })); safe(() => root.dispatchEvent(new root.CustomEvent("cn:world", { detail: { why } }))); }
   function take(lines) { for (const l of lines || []) { if (!l || !l.key) continue; if (l.gone) W.lines.delete(l.key); else W.lines.set(l.key, l); } }
@@ -45,26 +45,29 @@
     W.busy = (async () => {
       try { await read(why); tell(why); readyRes && readyRes(true); }
       catch (e) { W.fails++; W.error = String((e && e.message) || e).slice(0, 200); if (/unknown op|production only/i.test(W.error)) W.dead = true; }
-      finally { W.busy = null; if (W.again && !W.dead) { W.again = false; setTimeout(() => refresh("again"), 200); } }
+      finally { firstRes && firstRes(true); W.busy = null; if (W.again && !W.dead) { W.again = false; setTimeout(() => refresh("again"), 200); } }
     })();
     return W.busy;
   }
   function start() {
     if (W.started || sandbox()) return; W.started = true;
     refresh("whole");
+    setTimeout(() => { backupAndClear().catch(e => { W.backupError = String((e && e.message) || e).slice(0, 200); }); }, 20000 + Math.floor(Math.random() * 20000));   // (stage F, once per computer)
     try { if (root.CNSync && typeof root.CNSync.follow === "function") root.CNSync.follow({ name: "world", kinds: "w", wild: "w", active: () => !W.dead, read: () => refresh("feed") }); } catch (_) { /* the net below */ }
     setInterval(() => { if (!W.dead && !root.document.hidden) refresh("net"); }, NET_MS);
     root.document.addEventListener("visibilitychange", () => { if (!root.document.hidden && !W.dead) refresh("shown"); });
     root.addEventListener("online", () => { if (!W.dead) refresh("online"); });
   }
-  function boot() { let n = 0; const go = () => { if (root.CN && typeof root.CN.api === "function" && safe(() => root.CN.S.cloud.ok, null) === true) return start(); if (++n < 240) setTimeout(go, 1000); }; go(); }
+  let booted = false;
+  function boot() { if (booted) return; booted = true; let n = 0; const go = () => { if (root.CN && typeof root.CN.api === "function" && safe(() => root.CN.S.cloud.ok, null) === true) return start(); if (++n < 240) setTimeout(go, 1000); else firstRes && firstRes(false); }; go(); }
 
   /* ── STAGE B (Paul, 20 Nov 2026): a computer that does not carry a run takes its order lines from the cloud, whole, and reads none itself ──
      drives(): the switch is on (Settings, shared by every computer: settings.cloudWorld, "on" unless a person turned it off) and this page holds no run of its own.
      applyToRows(): every line of the cloud world becomes this page's row exactly as the cloud has it (the order, the Etsy line, the reading, the questions, the
      state, the pieces, every decision); a row the cloud does not hold is gone. Orders.interpretAll leaves a cloud row as it is (row.cloud), and nothing here
      asks Etsy or Claude. Called when the cloud world moves (cn:world) and when the run is followed (charm-nest-run-follow.js). */
-  const wanted = () => safe(() => String((root.CN && root.CN.S && root.CN.S.settings && root.CN.S.settings.cloudWorld) || "on") !== "off", true);
+  // (the cloud decides once there is a cloud world: one built by the server, read here. A site with none, a sandbox, a page not read yet: the page goes as it went before)
+  const wanted = () => !!W.summary && !W.dead && safe(() => String((root.CN && root.CN.S && root.CN.S.settings && root.CN.S.settings.cloudWorld) || "on") !== "off", true);
   const drives = () => !sandbox() && wanted() && !safe(() => root.B && root.B.run, null);
   const RUNF = ["hold", "heldAt", "holdSeen", "wait", "arrivedAt", "activityAt", "changePending", "repoolChanged", "frontAt", "releasing", "skuOverride", "blockOverride", "releaseAnyway", "releaseHold",
     "materialOverride", "sizeOverride", "engravingOverride", "etsyClosed", "crh", "_lp", "groupSize", "handDone"];
@@ -106,11 +109,43 @@
       return W.applied;
     } finally { applying = false; }
   }
-  root.addEventListener("cn:world", () => { try { applyToRows("world"); } catch (e) { console.warn("[cloud world] apply", e && e.message); } });
+  /** STAGE C: the cloud world's open orders as the Design Station's orders.snapshot answers them ({ orders, total, hydrated, openIds }), read fresh: the run computer takes its new orders from here, not from its own Etsy pull. */
+  async function snapshot(why) {
+    await refresh(why || "snapshot");
+    if (!W.loadedAt || !W.lines.size) throw new Error("the cloud world is not read yet: the orders come in at the next check");
+    const by = new Map();
+    for (const l of W.lines.values()) { if (!l || !l.order || !l.etsyOpen) continue; const rid = String(l.order.receiptId); if (!by.has(rid)) by.set(rid, Object.assign(JSON.parse(JSON.stringify(l.order)), { hydrated: true })); }
+    const orders = [...by.values()];
+    return { orders, total: orders.length, hydrated: orders.length, openIds: [...by.keys()], fromCloud: true, at: W.at };
+  }
+  root.addEventListener("cn:world", () => {
+    try { applyToRows("world"); } catch (e) { console.warn("[cloud world] apply", e && e.message); }
+    // (STAGE C: on the computer that carries the run, the lines read here a moment ago take the cloud's reading as soon as the cloud has it)
+    try { if (!drives() && wanted() && root.Orders && typeof root.Orders.interpretAll === "function" && root.Orders.rows().some(r => r && r.readBy === "here")) root.Orders.interpretAll(); } catch (e) { console.warn("[cloud world] reading", e && e.message); }
+  });
+
+  /* ── STAGE F (Paul, 20 Nov 2026: "Nothing ... only the cloud can allow the computer to put something in cache"): what older pages kept in this browser is backed up to the cloud
+     (browserBackupPut: every key of this site's localStorage, as it stands), and only once the cloud said it holds every part are the production copies removed: the leftovers no page
+     reads (cn.takeover.*, cn.baseline.*, cn.before.*, cn.restore.*, cn.sets.before.*, cn.tmp.*) and the copies the cloud now holds for every computer (Claude's readings, the listings'
+     SKU tables). Once per computer (BACKUP_V); a failure leaves everything where it is and is tried again at the next load. Display settings and sign-in stay. */
+  const BACKUP_V = "f1", CLEAR = /^(cn\.takeover\.|cn\.baseline\.|cn\.before\.|cn\.restore\.|cn\.sets\.before\.|cn\.tmp\.|cn\.customRead\.|cn\.listingSkus\.v1$)/;
+  async function backupAndClear() {
+    const LS = root.localStorage; if (!LS || sandbox()) return null;
+    if (safe(() => LS.getItem("cn.backup.v"), "") === BACKUP_V) return { done: true };
+    const dev = safe(() => root.CharmNestRunFollow.dev(), "") || safe(() => LS.getItem("cn.dev"), ""); if (!/^d[0-9a-z]{4,14}$/.test(dev || "")) return null;
+    const all = {}; for (let i = 0; i < LS.length; i++) { const k = LS.key(i); if (k) all[k] = LS.getItem(k); }
+    const text = JSON.stringify({ v: 1, at: Date.now(), origin: root.location && root.location.origin, keys: all }), size = 300000, of = Math.max(1, Math.ceil(text.length / size)), stamp = String(Date.now());
+    const by = safe(() => String(root.B && root.B.employee || ""), "");
+    for (let part = 0; part < of; part++) { const r = await api({ op: "browserBackupPut", dev, by, stamp, part, of, json: text.slice(part * size, (part + 1) * size) }); if (!r || !r.ok) throw new Error((r && r.error) || "backup part not kept"); }
+    const gone = []; for (const k of Object.keys(all)) if (CLEAR.test(k)) { safe(() => LS.removeItem(k)); gone.push(k); }
+    safe(() => LS.setItem("cn.backup.v", BACKUP_V));
+    W.backup = { at: Date.now(), parts: of, bytes: text.length, removed: gone };
+    return W.backup;
+  }
 
   root.CloudWorld = {
-    drives, wanted, applyToRows,
-    start, refresh, ready: () => readyP,
+    drives, wanted, applyToRows, snapshot, backupAndClear,
+    start, refresh, ready: () => readyP, firstRead: () => { if (!W.started) boot(); return firstP; },
     summary: () => W.summary, review: () => W.review, lease: () => W.lease, lines: () => W.lines, line: key => W.lines.get(String(key)) || null, at: () => W.at,
     on: fn => { W.fns.add(fn); return () => W.fns.delete(fn); },
     state: () => ({ size: W.lines.size, at: W.at, loadedAt: W.loadedAt, reads: W.reads, fails: W.fails, error: W.error, dead: !!W.dead, live: W.summary ? W.summary.live : null, drives: drives(), applied: W.applied || null })

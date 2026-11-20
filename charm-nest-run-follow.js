@@ -325,10 +325,12 @@
       for (let guard = 0; guard < 12; guard++) {
         const run = root.B && root.B.run; if (!run || !run.runId) break;
         const res = await api({ op: "runCmdList", runId: run.runId }), me = dev();
+        // (CLOUDWORLD stage E, Paul 20 Nov 2026: nothing waits or hangs unseen): a request a computer began and never finished (it closed or stopped answering: no step for 10 minutes) is answered as failed, with why, for every computer to see; never run twice
+        for (const c of ((res && res.cmds) || []).filter(c => c && c.id && c.state === "running" && !cmdSeen.has(c.id) && Date.now() - (+c.stepAt || +c.at || 0) > 600000)) { cmdSeen.add(c.id); safe(() => api({ op: "runCmdDone", runId: run.runId, id: c.id, ok: false, text: `Stopped before it finished: the computer doing it (${c.stepBy || "another computer"}) stopped answering at "${String(c.step || "").slice(0, 80)}". Ask again.`, dev: me })); }
         const next = ((res && res.cmds) || []).filter(c => c && c.id && c.state === "waiting" && c.dev !== me && !cmdSeen.has(c.id)).sort((x, y) => (+x.at || 0) - (+y.at || 0))[0];
         if (!next) break;
         cmdSeen.add(next.id); let out;
-        if (Date.now() - (+next.at || 0) > (LONG_CMDS.has(next.type) ? 6 * 3600000 : 600000)) out = { ok: false, text: "too old" };   // (ANYWHERE: a person's release or one-order charm waits for this computer for hours, as it is asked of the cloud, not of a computer)
+        if (Date.now() - (+next.at || 0) > (LONG_CMDS.has(next.type) ? 6 * 3600000 : 600000)) out = { ok: false, text: `Not done: asked ${Math.round((Date.now() - (+next.at || 0)) / 60000)} min ago by ${next.by || "another computer"}, while no computer carried the run. Ask again if it is still wanted.` };   // (stage E: said, never a bare "too old")   // (ANYWHERE: a person's release or one-order charm waits for this computer for hours, as it is asked of the cloud, not of a computer)
         else { try { out = await execCmd(next); } catch (e) { out = { ok: false, text: String((e && e.message) || e) }; } }
         for (let k = 0; k < 3; k++) { try { await api({ op: "runCmdDone", runId: run.runId, id: next.id, ok: !!out.ok, text: String(out.text || "").slice(0, 400), ...(out.freed ? { freed: out.freed } : {}), dev: me }); break; } catch (_) { await new Promise(r => setTimeout(r, 1500)); } }
       }

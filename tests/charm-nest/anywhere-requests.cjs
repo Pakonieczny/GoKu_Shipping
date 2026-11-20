@@ -97,7 +97,7 @@ const RUN = 'run-any-t', LID = '1697972740';
     return out;
   }, [RUN]);
   say('4a the carrying computer does "Just this order" in the asker\'s name, half an hour after it was asked', JSON.stringify(carrier.once) === JSON.stringify(['4237444149_5301', 'ANYWHERE_TEST_1', 'Michelle_R']) && carrier.done.cA && carrier.done.cA.ok === true, [carrier.once, carrier.done.cA]);
-  say('4b any other request that old is still "too old"', carrier.done.cB && carrier.done.cB.ok === false && /too old/.test(carrier.done.cB.text), carrier.done.cB);
+  say('4b any other request that old is still "too old"', carrier.done.cB && carrier.done.cB.ok === false && /Not done: asked \d+ min ago/.test(carrier.done.cB.text), carrier.done.cB);
 
   // 4c ── a line of the open run that was taken in from the record (a following computer added it) is the carrier's own line
   const offer = await page.evaluate(([RUN]) => {

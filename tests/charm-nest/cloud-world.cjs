@@ -73,6 +73,8 @@ async function otherComputer(H) {
     ok('0b · the call is counted against the day\'s 500 in the cloud', (st.doc('Charm_World', 'etsy') || {}).used === 1 && (st.doc('Charm_World', 'etsy') || {}).cap === 500, JSON.stringify(st.doc('Charm_World', 'etsy')));
     log('server world:', JSON.stringify({ live: out.live, states: out.states, writes: out.writes, errors: out.errors }));
     ok('the server built the world with no error', !(out.errors || []).length, JSON.stringify(out.errors));
+    // (what the sorter asked the cloud for while it read, a listing's SKU table, is stored by then: the cloud reads it at its next build, as it would in the shop)
+    await new Promise(r => setTimeout(r, 3000)); await World.build({ db: st.db, admin: st.admin, Lib, etsy, force: true, log: () => {} });
     const docs = new Map(st.list('Charm_World_Lines').filter(d => !d.gone).map(d => [d.key, World.lineOf(d)]));
 
     /* 1 · the same lines */
@@ -173,11 +175,48 @@ async function otherComputer(H) {
     const after = await p2.evaluate(() => ({ n: Orders.rows().filter(r => r.state !== 'gone').length, own: Orders.rows().filter(r => r.state !== 'gone' && !r.cloud).length }));
     ok('7d · after a reload it shows no order line of its own saved copy: only the cloud\'s, as soon as they are read', early === 0 && after.own === 0 && after.n === cloudNow.size, JSON.stringify({ early, after }));
     ok('7e · no page error on the second computer', !two.errors.length, JSON.stringify(two.errors.slice(0, 3)));
+    /* 7f · STAGE F: what an older page kept in this browser is backed up to the cloud first, then the production copies are removed; display settings and sign-in stay */
+    const f7 = await p2.evaluate(async () => {
+      localStorage.removeItem('cn.backup.v'); localStorage.setItem('cn.takeover.cloudsh', JSON.stringify({ big: 'x'.repeat(400000) })); localStorage.setItem('cn.baseline.20261113', '{"a":1}'); localStorage.setItem('cn.customRead.production', '{"k":{"kind":"custom"}}'); localStorage.setItem('cn.listingSkus.v1', '{"v":1}'); localStorage.setItem('ce.view', 'grid');
+      const r = await CloudWorld.backupAndClear();
+      return { r, left: ['cn.takeover.cloudsh', 'cn.baseline.20261113', 'cn.customRead.production', 'cn.listingSkus.v1', 'ce.view', 'cn.employee'].map(k => [k, localStorage.getItem(k) != null]) };
+    });
+    const allParts7 = st.list('Charm_Browser_Backup'), lastStamp7 = Math.max(...allParts7.map(x => +x.stamp || 0)), parts7 = allParts7.filter(x => +x.stamp === lastStamp7), joined = parts7.sort((x, y) => x.part - y.part).map(x => x.json).join(''); let back7 = null; try { back7 = JSON.parse(joined); } catch (_) {}
+    ok('7f · the browser\'s storage is in the cloud whole (every key, in parts), then the leftovers and the cloud-held copies are removed; display and sign-in stay', back7 && back7.keys && back7.keys['cn.takeover.cloudsh'] && back7.keys['ce.view'] === 'grid' && parts7.length >= 2 && JSON.stringify(f7.left) === JSON.stringify([['cn.takeover.cloudsh', false], ['cn.baseline.20261113', false], ['cn.customRead.production', false], ['cn.listingSkus.v1', false], ['ce.view', true], ['cn.employee', true]]), JSON.stringify({ parts: parts7.length, left: f7.left, r: f7.r && { parts: f7.r.parts, removed: f7.r.removed } }));
     await two.ctx.close();
+
+    /* 8 · STAGE C: the computer that carries the run takes each line's reading from the cloud, and its new orders from the cloud world, not from its own Etsy pull */
+    await page.evaluate(() => CloudWorld.refresh('test'));
+    await page.evaluate(() => Orders.interpretAll());
+    const c8 = await page.evaluate(() => { const live = Orders.rows().filter(r => r.state !== 'gone'); return { wanted: CloudWorld.wanted(), drives: CloudWorld.drives(), n: live.length, cloud: live.filter(r => r.readBy === 'cloud').length, here: live.filter(r => r.readBy === 'here').map(r => r.key) }; });
+    ok('8a · the run computer reads no line itself: every reading is the cloud\'s', c8.wanted && !c8.drives && c8.n > 0 && c8.cloud === c8.n, JSON.stringify(c8));
+    // a new order: on Etsy, copied by the mail system, read by the cloud, then taken in by the run computer's next check
+    const nr = rich(3940200001, [{ sku: 'BR-TST-08', metal: GF }]); st.receipts.push(nr); mirror(nr);
+    await World.build({ db: st.db, admin: st.admin, Lib, etsy, force: true, log: () => {} });
+    const n8 = st.calls.length;
+    await W.due(page);
+    await page.waitForFunction(() => Orders.rows().some(r => r.key === '3940200001_39402000011'), null, { timeout: 120000, polling: 500 }).catch(() => {});
+    const got8 = await page.evaluate(() => { const r = Orders.rows().find(x => x.key === '3940200001_39402000011'); return r ? { state: r.state, readBy: r.readBy, sku: r.spec && r.spec.designSku } : null; });
+    const etsy8 = st.calls.slice(n8).filter(c => /^(listOpenOrders|etsyOrderProxy)$/.test(c.name)).map(c => c.name);
+    ok('8b · a new order reaches the run computer from the cloud world, read by the cloud, with no Etsy call from the browser', got8 && got8.readBy === 'cloud' && got8.sku === 'BR-TST-08' && !etsy8.length, JSON.stringify({ got8, etsy8 }));
+    const v8 = await W.rest(page, { log: () => {}, timeoutMs: 240000 });
+    const placed8 = await page.evaluate(() => { const r = Orders.rows().find(x => x.key === '3940200001_39402000011'); return r && r.state; });
+    ok('8c · the run places it as it places any order', !v8.timeout && ['pooled', 'written', 'committed'].includes(placed8), JSON.stringify({ placed8, run: v8 && v8.run }));
+    // a person's decision on the run computer: read here at once (the cloud has not seen it yet), the cloud's reading again once the cloud has it
+    const one8 = (st.doc('Charm_World', 'summary').unmatched || [])[0];
+    if (one8) {
+      const at8 = await page.evaluate(k => { const row = Orders.rows().find(r => r.key === k); row.skuOverride = { sku: 'BR-TST-02', by: 'Tester', at: Date.now(), was: row.line.sku }; Orders.interpretAll(); RunCtl.save && RunCtl.save(); return { readBy: row.readBy, sku: row.spec.designSku }; }, one8);
+      await new Promise(r => setTimeout(r, 1500));
+      await World.build({ db: st.db, admin: st.admin, Lib, etsy, force: true, log: () => {} });
+      await page.evaluate(() => CloudWorld.refresh('test'));
+      await page.evaluate(() => new Promise(r => setTimeout(r, 300)));
+      const back8 = await page.evaluate(k => { Orders.interpretAll(); const row = Orders.rows().find(r => r.key === k); return { readBy: row.readBy, sku: row.spec.designSku }; }, one8);
+      ok('8d · a decision made a moment ago is read here at once, and the cloud\'s reading (with that decision) takes over as soon as the cloud has it', at8.readBy === 'here' && at8.sku === 'BR-TST-02' && back8.readBy === 'cloud' && back8.sku === 'BR-TST-02', JSON.stringify({ at8, back8 }));
+    }
 
     /* 6 · worldGet answers it */
     const g = await Lib.ops.worldGet({ lines: true });
-    ok('6 · worldGet answers the summary and every line', g.summary && g.lines && g.lines.length === live.length, JSON.stringify({ n: g.lines && g.lines.length }));
+    ok('6 · worldGet answers the summary and every line', g.summary && g.lines && g.lines.length === g.summary.live, JSON.stringify({ n: g.lines && g.lines.length }));
     ok('no page error', !H.errors.filter(e => !/HTTP 404|messagesFor=|status of 400/.test(e)).length, JSON.stringify(H.errors.slice(0, 3)));
   } catch (e) { console.log('FAIL threw: ' + (e && e.stack || e)); failed++; }
   finally { await H.close(); }

@@ -27,6 +27,7 @@ exports.handler = async (event) => {
   } catch (e) { error = (e && e.message) || String(e); console.error("[world] build failed:", error); }
   const brief = result ? { at: +result.at || Date.now(), skipped: !!result.skipped, live: +result.live || 0, writes: +result.writes || 0, errors: (result.errors || []).length } : null;
   const ended = await Lease.end(db, nonce, brief, error).catch(() => ({ again: false }));
-  if (ended.again) { const next = await Lease.dispatch(db, "again").catch(() => null); if (next && next.nonce) await kick(next.nonce); }
+  // (a change made while this build ran is built now; at most one build every 30 s: this one waits out what is left of the gap, inside its own 15 minutes)
+  if (ended.again) { const since = Date.now() - (lease.startedAt || Date.now()); if (since < Lease.MIN_GAP_MS) await new Promise(r => setTimeout(r, Lease.MIN_GAP_MS - since)); const next = await Lease.dispatch(db, "again").catch(() => null); if (next && next.nonce) await kick(next.nonce); }
   return { statusCode: 200, body: error ? "failed" : "built" };
 };

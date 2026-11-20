@@ -1721,7 +1721,7 @@ const Orders = window.Orders = (() => {
     if (seq > mapsApplied && (sig !== mapsSig || !mapsSame())) {
       // (LISTPICK: what the answers were, so the lines of a listing whose pick moved are made up again with it, on this computer and every other: Review.relinkMaps. The session's first read changes nothing)
       const had = mapsSig ? { optionMaps: B.maps.optionMaps, aliases: B.maps.aliases } : null;
-      mapsSig = sig; [B.maps.optionMaps, B.maps.aliases, B.maps.noDesign] = next; mapsRead = next;
+      mapsSig = sig; [B.maps.optionMaps, B.maps.aliases, B.maps.noDesign] = next; mapsRead = next; noteInputs();
       if (had) try { window.Review?.relinkMaps?.(had); } catch (e) { console.warn("[relink]", e && e.message); }
     }
     if (seq > mapsApplied) mapsApplied = seq;
@@ -1801,7 +1801,7 @@ const Orders = window.Orders = (() => {
     if (keyed && keyed.records && typeof keyed.records === "object") for (const k of keys.slice(0, keyed.keys == null ? keys.length : +keyed.keys)) if (!mine(k)) put(k, keyed.records[k] || null);
     for (const [k, t] of B.maps.customWrites) if (Date.now() - t > 30 * 60000) B.maps.customWrites.delete(k);
     // (a new object only when it reads differently: a new one is what makes interpretAll read every line again)
-    if (JSON.stringify(next) !== JSON.stringify(B.maps.customDone)) B.maps.customDone = next;
+    if (JSON.stringify(next) !== JSON.stringify(B.maps.customDone)) { B.maps.customDone = next; noteInputs(); }
     if (JSON.stringify(kept) !== JSON.stringify(B.maps.customKept)) B.maps.customKept = kept;
     if (JSON.stringify(marks) !== JSON.stringify(B.maps.reviewMarks)) B.maps.reviewMarks = marks;
   }
@@ -1844,6 +1844,20 @@ const Orders = window.Orders = (() => {
      again when its order (a new copy, update time or note), its line, a person's override, the option maps (a new object,
      see loadMaps) or what the library says of its SKUs changes; the rest of the pass (problems, overrides) runs as before. */
   const readAs = new WeakMap();
+  /* (CLOUDWORLD stage C, Paul 20 Nov 2026: "Only the cloud can decide"): a line's reading is the cloud's (netlify/functions/_charmNestWorld.js reads every line once, with the same reader and the
+     same cloud inputs). It is taken here whenever the cloud holds this line read from the same order (its update time) and the same person's choice of charm (skuOverride / blockOverride), and the
+     cloud's build began after the last change of what a line is read from on this page (inputsAt: the learned maps, the library, the custom records). Until then (a change made a moment ago,
+     an order the cloud has not read yet) the line is read here, by the same reader, and the cloud's reading replaces it as soon as the cloud has it (cn:world, charm-nest-cloud-world.js). */
+  let inputsAt = 0; const noteInputs = () => { inputsAt = Date.now(); };
+  function cloudSpecOf(row) {
+    const CW = window.CloudWorld; if (WORKSPACE_SANDBOX || !CW || typeof CW.wanted !== "function" || !CW.wanted() || typeof CW.line !== "function") return null;
+    const l = CW.line(row.key); if (!l || !l.spec || !l.order || !row.order) return null;
+    if (!(+CW.at() > inputsAt)) return null;
+    if (+(l.order.updateTs || 0) !== +(row.order.updateTs || 0)) return null;
+    const r = l.run || {}, same = (a, b) => JSON.stringify(a == null ? null : a) === JSON.stringify(b == null ? null : b);
+    if (!same(r.skuOverride, row.skuOverride) || !same(r.blockOverride, row.blockOverride)) return null;
+    try { return JSON.parse(JSON.stringify(l.spec)); } catch (_) { return null; }
+  }
   const typoOf = sku => (O.knownTypo ? O.knownTypo(sku) : "");   // (the one known typo, KNOWN_SKU_TYPOS in charm-nest-orders.js: the design it stands for is read from the library like any SKU's)
   const nameOf = sku => (O.knownName ? O.knownName(sku) : "");   // (a SKU Paul named as a design, KNOWN_SKU_NAMES in charm-nest-orders.js: read from the library the same way)
   const libFacts = sku => { const e = sku ? Master.entryFor(sku) : null; return e ? `${e.blocked ? "b:" + e.blocked : "ok"}|${e.sizes ? Object.entries(e.sizes).map(([k, v]) => (v ? "+" : "-") + k).join("\n") : ""}` : ""; };
@@ -1929,7 +1943,8 @@ const Orders = window.Orders = (() => {
       const was = readAs.get(row), prev = row.spec;
       // (26 Oct 2026, Paul 24 Sep "an update costs what changed": the inputs are kept as they stand AFTER the reading, since one of them is the library's word on the design the line was
       //  just read as; kept from before, a new line read as nothing there and was read a second time at the next update for no change)
-      if (!was || was.spec !== row.spec || inputs.some((v, i) => !Object.is(v, was.inputs[i]))) { row.spec = readLine(row); let now = inputs; try { now = inputsOf(row); } catch (_) { /* as read before */ } readAs.set(row, { spec: row.spec, inputs: now }); readEvent(row); }
+      const fromCloud = (!was || was.local) ? cloudSpecOf(row) : null;   // (CLOUDWORLD stage C: the cloud's reading; a line read here a moment ago takes it as soon as the cloud has it)
+      if (fromCloud || !was || was.spec !== row.spec || inputs.some((v, i) => !Object.is(v, was.inputs[i]))) { const cs = fromCloud || cloudSpecOf(row); row.spec = cs || readLine(row); row.readBy = cs ? "cloud" : "here"; let now = inputs; try { now = inputsOf(row); } catch (_) { /* as read before */ } readAs.set(row, { spec: row.spec, inputs: now, local: !cs }); readEvent(row); }
       window.Pool?.pinPooled?.(row);   // (a line pooled before the pair and count rule keeps its pieces: Orders and the readers below count what was made)
       row.problems = row.spec.problems.slice(); if (row.spec.noDesign) row.state = row.state === "pulled" ? "noDesign" : row.state;
       // a line held for a question it no longer raises (its option was read again, the library gained its design: DISCREAD) is a line to make up again; its pieces, if any, are never touched
@@ -1988,7 +2003,7 @@ const Orders = window.Orders = (() => {
   function tablesLoad() {
     if (tablesRead) return; tablesRead = true;
     try {
-      const raw = JSON.parse(localStorage.getItem(TABLES_LS) || "null"), now = Date.now(), kept = {};
+      const raw = JSON.parse((null && localStorage.getItem(TABLES_LS)) || "null"), now = Date.now(), kept = {};
       if (raw && raw.v === 1 && raw.tables) for (const [id, t] of Object.entries(raw.tables)) if (t && typeof t === "object" && now - (+t.at || 0) < TABLES_KEEP_MS) kept[id] = t;
       if (Object.keys(kept).length) B.maps.listingSkus = Object.assign({}, kept, B.maps.listingSkus);
     } catch (_) {}
@@ -1997,7 +2012,7 @@ const Orders = window.Orders = (() => {
     try {
       let tables = B.maps.listingSkus, text = JSON.stringify({ v: 1, tables });
       if (text.length > 800000) { tables = Object.fromEntries(Object.entries(tables).sort((a, b) => (+b[1].at || 0) - (+a[1].at || 0)).slice(0, 60)); text = JSON.stringify({ v: 1, tables }); }
-      localStorage.setItem(TABLES_LS, text);
+      void text;   // (CLOUDWORLD stage F: the listings' SKU tables come from the cloud (listingSkus) and stay in memory; nothing is written to this browser)
     } catch (_) {}
   }
   tablesLoad();   // (what the page was told in the last 14 days is known before the first line is read)
@@ -2117,13 +2132,15 @@ const Orders = window.Orders = (() => {
     }
   }
   async function pull(run, { silent = false, receiptIds = null } = {}) {
-    await DesignLink.ensure(); await Sandbox.ready(true);   // the sandbox order stream must exist before the station sweeps
-    if (!DesignLink.etsyBudgetOk("the pull")) throw new Error("Etsy call budget reached — the pull was not started");
+    // (CLOUDWORLD stage C: the run's orders are the cloud world's: no Etsy pull from this computer)
+    const cloudIn = !WORKSPACE_SANDBOX && window.CloudWorld && CloudWorld.wanted && CloudWorld.wanted() && typeof CloudWorld.snapshot === "function";
+    if (!cloudIn) { await DesignLink.ensure(); await Sandbox.ready(true);   // the sandbox order stream must exist before the station sweeps
+    if (!DesignLink.etsyBudgetOk("the pull")) throw new Error("Etsy call budget reached — the pull was not started"); }
     await Promise.all([loadMaps(), Master.load(), window.Cancelled && Cancelled.load()]);
     const pullBar = window.CNProgress ? CNProgress.start("Pulling orders from Etsy") : null;
     try {
-    const r = await DesignLink.call("orders.snapshot", { hydrate: true, refresh: true }, { timeoutMs: 20 * 60 * 1000, onProgress: p => { if (pullBar) { if (p.done != null && p.total) pullBar.set(p.done, p.total, p.text || ""); else if (p.text) pullBar.note(p.text); } if (p.text) agentLiveLine("Pulling orders", p.text, p.done, p.total); } });
-    DesignLink.meter(r, "the pull");
+    const r = cloudIn ? await CloudWorld.snapshot("pull") : await DesignLink.call("orders.snapshot", { hydrate: true, refresh: true }, { timeoutMs: 20 * 60 * 1000, onProgress: p => { if (pullBar) { if (p.done != null && p.total) pullBar.set(p.done, p.total, p.text || ""); else if (p.text) pullBar.note(p.text); } if (p.text) agentLiveLine("Pulling orders", p.text, p.done, p.total); } });
+    if (!cloudIn) DesignLink.meter(r, "the pull");
     B.orders.snapshot = { total: r.total, hydrated: r.hydrated, etsy: r.etsy, at: Date.now() }; B.orders.recalled = null;
     // An order Etsy will not return in full (no items, a refused read) waits for the next check, where it is read again, exactly as in Arrivals.check: the others come in now (ADV-ORDERREAD, Paul, 15 Oct 2026).
     // One such order used to stop every run start and every Resume for as long as it stayed unreadable. A run being restored still needs ITS OWN orders whole: one of them unread stops it, as before.
@@ -3364,7 +3381,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = "";
     render();
   }
-  return { view: () => OV, walkRows, shown, showPile, showStage, flowNow, flowMoved, tabCount, flowPeek: () => flowMemo, flowStale: () => { if (flowMemo) flowMemo.at = 0; }, openRow, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, listRows, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, askTable, releaseStampOf, releaseSealHtml, releaseAway, _kept: () => readSaid.size };
+  return { view: () => OV, walkRows, shown, showPile, showStage, flowNow, flowMoved, tabCount, flowPeek: () => flowMemo, flowStale: () => { if (flowMemo) flowMemo.at = 0; }, openRow, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, noteInputs, cloudSpecOf, rows: rowsOf, listRows, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, askTable, releaseStampOf, releaseSealHtml, releaseAway, _kept: () => readSaid.size };
 })();
 
 /* ═══ 18b · the page is the version that was deployed (MASTER4, Paul 15 Oct 2026) ══════════════════════════════
@@ -3587,7 +3604,7 @@ const Master = window.Master = (() => {
         if (ix) { B.master.entries = new Map((ix.entries || []).map(e => [e.sku, e])); B.master.index = ix.index || null; B.master.docs = ix.index && Array.isArray(ix.shells) ? (ix.entries || []).length + ix.shells.length : null; changed = true; }
         else if (delta) { const m = new Map(base === held ? held.entries.map(e => [e.sku, e]) : B.master.entries); for (const e of delta.entries) m.set(e.sku, e); B.master.entries = m; B.master.index = delta.index; B.master.docs = delta.index.count; changed = true; }   // (the cloud counted no removal: the copy and what was written since are the index)
         else if (held) { B.master.entries = new Map(held.entries.map(e => [e.sku, e])); B.master.index = held.index; B.master.docs = Number.isFinite(held.docs) ? held.docs : null; changed = true; }   // (the signatures agree: the copy is the index)
-        if (before && B.master.entries !== before) { try { if (window.Review && Review.redrawNoted) Review.redrawNoted(before, B.master.entries); } catch (e) { console.warn("[redraw] the library was not compared:", e && e.message); } }
+        if (before && B.master.entries !== before) { try { window.Orders?.noteInputs?.(); } catch (_) {} try { if (window.Review && Review.redrawNoted) Review.redrawNoted(before, B.master.entries); } catch (e) { console.warn("[redraw] the library was not compared:", e && e.message); } }
         if (fl.unchanged) fl.files = held ? held.files : B.master.files || [];
         if (!changed && sig(fl.files) !== sig(B.master.files)) changed = true;
         B.master.files = fl.files || []; B.master.filesSig = fl.filesSig || null; B.master.loadedAt = Date.now();
@@ -19073,7 +19090,7 @@ const CustomSheet = window.CustomSheet = (() => {
         await new Promise(r=>setTimeout(r,Date.now()-t0<60000?3000:6000));
         let list=null;try{list=await api("charmNestLibrary",{op:"runCmdList",runId},{quiet:true});}catch(_){continue;}
         const k=(list?.cmds || []).find(x=>x && x.id===put.id);if(!k)continue;
-        if(k.state==="cancelled" || (k.state==="failed" && /^too old$/i.test(String(k.text || ""))))throw new Error(`${name}'s computer did not get to it in time.`);
+        if(k.state==="cancelled" || (k.state==="failed" && /^too old$|^Not done: asked /i.test(String(k.text || ""))))throw new Error(`${name}'s computer did not get to it in time.`);
         if(k.state==="done" || k.state==="failed"){if(all()[e.ck]===e){delete e.carrierPending;ver++;Session.schedule();}return {ok:k.state==="done",text:String(k.text || (k.state==="done"?"its new piece is on the sheet":"It could not be placed.")),name};}
         if(k.state==="running" && k.step)say(`${name}'s computer: ${k.step}`);
         /* CARRIERGONE (Paul, 17 Nov 2026): a computer closed less than 90 s ago still counts as open (runCarrier FRESH), so a send pressed then waited 11 minutes. While the request has not started, the carrier is
@@ -20630,14 +20647,14 @@ const CustomRead = window.CustomRead = (() => {
   const LS = "cn.customRead." + (WORKSPACE_SANDBOX ? "sandbox" : "production"), VERSION = 1, PER_JOB = 40;
   if (!B.maps.customRead) B.maps.customRead = {};
   if (!B.maps.customDecided) B.maps.customDecided = {};
-  try { const kept = JSON.parse(localStorage.getItem(LS) || "null"); if (kept && typeof kept === "object") B.maps.customRead = kept; } catch (_) {}
+  // (CLOUDWORLD stage F, Paul 20 Nov 2026: "the computers are never allowed to store their own information"): Claude's readings live in the cloud (Charm_Nest_CustomRead) and in this page's memory only; the copy older pages kept in this browser is removed once backed up (charm-nest-cloud-world.js)
   const st = { running: false, again: false, timer: 0, pauseUntil: 0, error: "", reading: new Set(), looked: new Set(), failed: new Set(), force: new Set(), saveT: 0 };
   function keep() {
     clearTimeout(st.saveT);
     st.saveT = setTimeout(() => {
       const cut = Date.now() - 60 * 86400e3, out = {};
       for (const [k, v] of Object.entries(B.maps.customRead)) if (v && (v.at || 0) > cut) out[k] = v;
-      try { localStorage.setItem(LS, JSON.stringify(out)); } catch (_) {}
+      B.maps.customRead = out;   // (stage F: memory only, nothing written to this browser)
     }, 800);
   }
   // a line the sorter holds for a person because it has no design, or reads as special by the shop's own codes
@@ -23178,7 +23195,12 @@ const Review = window.Review = (() => {
     // (REVIEWHELD, Paul 20 Oct 2026: the Orders tab's On hold pile went because "it competes with the existing Review tab", and "Every order on Hold in the Review needs a 'Cancel Order' button": an order
     // on hold that no open card here speaks for is a card of Open of its own, its "Held order" (heldCards), with Release Hold and Cancel Order; it counts in Open and the tab, and SENDREVIEW's openOrders reads it, so its Orders card says In Review)
     const covered = new Set(); for (const it of all.concat(clWait)) { if (it.rid != null) covered.add(String(it.rid)); for (const r of rowsOf(it)) if (r && r.order) covered.add(String(r.order.receiptId)); }
-    return { all: all.concat(heldCards(covered)), cl, customWaits, clWait };
+    // (CLOUDWORLD, Paul 20 Nov 2026: "Two computers looking at the same screen at the same moment show the same numbers and the same items, always"): Open is the cloud's Open (charm-nest-review-core.js, built
+    //  once by the server from the cloud's lines): a card shows here only when the cloud's Review holds it, so every computer counts the same cards; one resolved here a moment ago leaves at once
+    let allOut = all.concat(heldCards(covered)), waitOut = clWait;
+    try { const CW = window.CloudWorld, rv = CW && CW.wanted && CW.wanted() && CW.review ? CW.review() : null, keys = rv && Array.isArray(rv.openKeys) ? new Set(rv.openKeys) : null;
+      if (keys) { allOut = allOut.filter(it => keys.has(it.key)); waitOut = clWait.filter(it => keys.has(it.key)); } } catch (_) { /* the page's own Open, as before */ }
+    return { all: allOut, cl, customWaits, clWait: waitOut };
   }
   /** (REVIEWHELD, Paul 20 Oct 2026) The "Held order" cards of Open: one for each order with a line on hold now (Orders.heldNow, the HELD of its Orders card) that no other open card covers (`covered`: that card carries
    *  the buttons), not cancelled. Drawn from the lines every time, so a release or a cancel takes the card out of Open at the next draw; the run's own "held:" notice, when there is one, only lends its words.
@@ -29443,6 +29465,7 @@ const Session = window.Session = (() => {
       // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"): the run this computer carried before it closed, carried meanwhile by another computer that is alive, is not taken back: this page follows it from the cloud
       try { if (B.run && B.run.runId && S.cloud && S.cloud.ok && window.RunCtl && RunCtl.carrier) { const c = await RunCtl.carrier(B.run.runId, { check: true }); if (c && c.ok && !c.mine && (c.alive || (c.carrier && c.carrier.dev))) { agent({ bridge: true }, "cloud", c.alive ? `${B.run.runId} is carried by ${(c.carrier && c.carrier.by) || "another computer"} on another computer: this computer follows it` : `${B.run.runId} was last carried on another computer: this computer's saved copy of it is older than the cloud's and is not used; the run is followed from the cloud (Resume takes it up here, from the cloud)`); B.run = null; } } } catch (_) { /* the heartbeat looks again in 20 s */ }   // (CACHEONLY, Paul 15 Nov 2026: "Computers are only fed the truth"): and a run another computer carried LAST, though that computer is gone now, is not carried on from this computer's older copy either (it was, and its next save put the older copy over the cloud's)
       // (CLOUDWORLD stage B, Paul 20 Nov 2026: "the computers are never allowed to store their own information"): a computer that carries no run shows no order line of its own copy: the cloud's come in as soon as it is read (charm-nest-cloud-world.js)
+      if (!B.run && !WORKSPACE_SANDBOX && window.CloudWorld && CloudWorld.firstRead) { try { await Promise.race([CloudWorld.firstRead(), new Promise(r => setTimeout(r, 8000))]); } catch (_) {} }   // (the cloud world's first read decides: at most 8 s)
       if (!B.run && window.CloudWorld && CloudWorld.wanted && CloudWorld.wanted() && !WORKSPACE_SANDBOX) { B.orders.rows = []; B.orders.byKey = new Map(); d.review = []; d.jobs = (d.jobs || []).filter(j => j.editingBack && j.editRow); }
       /* (CLOUDLINES, Paul 13 Nov 2026: "Why is the other computer only showing seven orders ... I had to go and delete all the data on the computer again for it to actually show me all the
          orders"): this computer's checkpoint is a copy, never the authority. The run's lines the cloud holds and this copy lacks (taken on another computer, or a copy saved while this one held
@@ -30055,8 +30078,10 @@ const Arrivals = window.Arrivals = (() => {
           state.error = null; state.lastCheck = Date.now(); kept = null;
           return;
         } }
-      await DesignLink.ensure();
-      if (!DesignLink.etsyBudgetOk("new orders")) throw new Error("Etsy hourly cap reached");
+      // (CLOUDWORLD stage C, Paul 20 Nov 2026: "Only the cloud can decide"): the orders come from the cloud world (every open order, read once by the server), not from this computer's own Etsy pull
+      const cloudIn = !WORKSPACE_SANDBOX && !streaming() && window.CloudWorld && CloudWorld.wanted && CloudWorld.wanted() && typeof CloudWorld.snapshot === "function";
+      if (!cloudIn) { await DesignLink.ensure();
+      if (!DesignLink.etsyBudgetOk("new orders")) throw new Error("Etsy hourly cap reached"); }
       // the stream's next simulated ten minutes of orders become listable, and the station sweeps for them (no reuse window)
       // (the maps load alongside: the snapshot below needs both, neither needs the other; the library is read again only
       // when its index changed, without a progress bar)
@@ -30066,8 +30091,8 @@ const Arrivals = window.Arrivals = (() => {
       const known=Object.fromEntries(Orders.rows().map(row=>[String(row.order.receiptId),+row.order.updateTs || 0]));
       // (the snapshot of a check that failed after it, on the cloud's side, is taken again for 2 minutes: the Etsy calls it
       // cost are not made a second time)
-      const res = !sim && kept && Date.now() - kept.at < 120000 ? kept.res : await DesignLink.call("orders.snapshot", Object.assign({ hydrate: true, refresh: true, intake:true, known }, sim ? { stream: true } : {}), { timeoutMs: 20 * 60000, quiet: true });
-      if (res !== kept?.res) { DesignLink.meter(res, "new orders"); kept = sim ? null : { res, at: Date.now() }; }
+      const res = cloudIn ? await CloudWorld.snapshot("intake") : !sim && kept && Date.now() - kept.at < 120000 ? kept.res : await DesignLink.call("orders.snapshot", Object.assign({ hydrate: true, refresh: true, intake:true, known }, sim ? { stream: true } : {}), { timeoutMs: 20 * 60000, quiet: true });
+      if (!cloudIn && res !== kept?.res) { DesignLink.meter(res, "new orders"); kept = sim ? null : { res, at: Date.now() }; }
       if (gen !== epoch) return;   // a sandbox reset while this check was out: its orders went with the records it deleted
       // An order Etsy will not return in full waits for the next check, where it is read again; the others come in now.
       // One unreadable receipt used to hold every other arrival back for as long as it stayed unreadable.

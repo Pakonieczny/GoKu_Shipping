@@ -5482,6 +5482,25 @@ async function op_worldBuild(b) {
   const r = await fetch(`${String(origin).replace(/\/+$/, "")}/.netlify/functions/charmNestWorld-background`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nonce: got.nonce }) }).catch(e => ({ status: 599, e }));
   return { ok: r.status < 400, started: true, status: r.status };
 }
+const WORLD_TRIGGERS = new Set(["runPut", "runLinesPatch", "runLinesAdd", "runArchive", "runCmdDone", "customPut", "customReopen", "customDecide", "reviewMarkPut", "customSheetPut", "aliasPut", "optionMapPut", "noDesignPut", "noDesignDelete", "cancelPut", "cancelRestore", "setUpdate", "poolTakeOff", "poolUpdate", "masterPatch", "masterPutIndex", "masterRemoveSkus", "listingKindPut", "editSkuEtsy"]);
+/** Starts a build of the cloud world now (or marks one to follow the build running): best-effort, at most 1.5 s of the write's time, never its failure. */
+async function worldSoon(by) {
+  try {
+    const Lease = require("./_charmNestWorldLease"), got = await Lease.dispatch(db, "change:" + by, { change: true });
+    if (!got || !got.nonce) return;
+    const fetch = require("node-fetch"), origin = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
+    await Promise.race([fetch(`${String(origin).replace(/\/+$/, "")}/.netlify/functions/charmNestWorld-background`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nonce: got.nonce }) }).catch(() => null), new Promise(r => setTimeout(r, 1500))]);
+  } catch (e) { console.warn("[world] not started after a change:", e && e.message); }
+}
+/* CLOUDWORLD stage F (Paul, 20 Nov 2026: "the computers are never allowed to store their own information"): before a computer removes what older pages kept in its browser, all of it
+   is copied here first. browserBackupPut { dev, by, stamp, part, of, json } → Charm_Browser_Backup/<dev>-<stamp>-<part> (one part ≤ 900 KB of text); answers { ok, part, of }. Never read by a page. */
+async function op_browserBackupPut(b) {
+  const dev = str(b.dev, 40), stamp = str(b.stamp, 20), part = Math.round(num(b.part)), of = Math.round(num(b.of)), json = typeof b.json === "string" ? b.json : "";
+  if (!/^d[0-9a-z]{4,14}$/.test(dev) || !/^\d{6,16}$/.test(stamp) || !(part >= 0 && part < of && of <= 60) || json.length > 900000) return { error: "bad backup part" };
+  await db.collection("Charm_Browser_Backup").doc(`${dev}-${stamp}-${part}`).set({ dev, by: str(b.by, 80), stamp: +stamp, part, of, json, bytes: json.length, at: Date.now() });
+  return { ok: true, part, of };
+}
+OPS.browserBackupPut = op_browserBackupPut; NO_GEN_BUMP.add("browserBackupPut");
 OPS.worldGet = op_worldGet; OPS.worldBuild = op_worldBuild; ["worldGet", "worldBuild"].forEach(op => NO_GEN_BUMP.add(op));
 /* (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"). The run is carried by ONE computer at a time, any computer: the run record's `carrier` { dev, by, at, since } says which, renewed by that computer every 20 s.
    runCarrier { runId, dev, by, take?, check? }: check only reads; the carrier itself renews it; another computer becomes the carrier when nobody carries it or the carrier has not been
@@ -5537,7 +5556,8 @@ async function op_runCmdPut(b) {
   const cmd = { id, type: c.type, args, by, dev, at: now, state: "waiting" };
   await db.runTransaction(async tx => {
     const d = await tx.get(ref), cmds = Object.assign({}, (d.exists && d.data().cmds) || {}); cmds[id] = cmd;
-    const keep = Object.values(cmds).sort((x, y) => (num(y.at) || 0) - (num(x.at) || 0)).slice(0, 30), out = {}; for (const k of keep) out[k.id] = k;
+    // (CLOUDWORLD stage E, Paul 20 Nov 2026: a request never disappears silently): every request still waiting or running is kept, whatever their number; only the finished ones are trimmed to the newest 30
+    const all = Object.values(cmds).sort((x, y) => (num(y.at) || 0) - (num(x.at) || 0)), open = all.filter(k => k.state === "waiting" || k.state === "running").slice(0, 400), done = all.filter(k => k.state !== "waiting" && k.state !== "running").slice(0, 30), out = {}; for (const k of open.concat(done)) out[k.id] = k;
     tx.set(ref, { runId, cmds: out, expireAt: new Date(now + 30 * 86400000) });
   });
   revTouch(b, ["r:" + runId]);
@@ -6402,6 +6422,8 @@ exports.handler = async (event) => {
     // (FEED, 28 Oct 2026: and what the changes feed names, one bumpRev per op with all of it: feedKeys)
     const named = quiet ? [] : feedKeys(body, false);
     const counts = named.length ? await feedBump(named) : null;   // (FEED: best-effort and bounded, never the person's write)
+    // (CLOUDWORLD stage D, Paul 20 Nov 2026: every computer shows the change at once): a write the cloud world is read from builds it again now (at most one build every 30 s; a build running builds again when it ends)
+    if (!PREFIX && WORLD_TRIGGERS.has(body.op) && !(out && out.error)) await worldSoon(body.op);
     const status = out && out.error ? (out.status || 400) : 200;
     // (OUTBOX: an answer to a press from the outbox is kept with its names, so a resend's replayed answer tells the feed the same: X-CN-Feed below)
     if (ledger && out && typeof out === "object" && !Array.isArray(out)) { out.mid = body.mid; if (named.length) out.feed = feedHeader(named, counts); }
