@@ -319,12 +319,24 @@ async function build(opts) {
   for (const k of Object.keys(prevSigs)) if (!(k in sigs)) { batch.set(db.collection(LINES).doc(k), { gone: true, goneAt: now, at: now, state: "gone" }, { merge: true }); inBatch++; writes++; if (inBatch >= 400) await flush(); }
   await flush();
 
+  /* 9b · the orders with engraving still to settle (Charm_Nest_Engrave: each line's engraving jobs as every computer saves them, charm-nest-engrave-sync.js), for the Design & Engrave badge:
+     a job words / review / fitting / ready / classify, not archived, of a live line (charm-nest-bridge.js Engrave.pendingJobs) */
+  let engraving = null;
+  try {
+    const ENG_PENDING = new Set(["words", "review", "fitting", "ready", "classify"]), keys = live.filter(r => r.order && r.key).map(r => r.key), set = new Set();
+    for (let i = 0; i < keys.length; i += 300) for (const d of await db.getAll(...keys.slice(i, i + 300).map(k => db.collection("Charm_Nest_Engrave").doc(k)))) {
+      if (!d.exists) continue; let rec = null; try { rec = JSON.parse((d.data() || {}).rec || "null"); } catch (_) { rec = null; }
+      if (rec && Array.isArray(rec.jobs) && rec.jobs.some(j => j && ENG_PENDING.has(String(j.state)) && !j.archived && !j.editingBack)) set.add(String(d.id).split("_")[0]);
+    }
+    engraving = [...set];
+  } catch (e) { errors.push("engraving: " + e.message); }
+
   /* 10 · Review, built once, here */
   let review = null;
   if (ReviewCore && typeof ReviewCore.build === "function") {
     try {
       const customSent = {}; for (const [k, v] of Object.entries(Object.assign({}, customKept, customDone))) if (v && v.sent && typeof v.sent === "object") customSent[k] = v.sent;
-      review = ReviewCore.build({ now, lines: rows.map(coreLine), customDone, customKept, reviewMarks, customSheet: coreSends(customSheet), customSent, cancelled: [...cancelled], settled: [] });
+      review = ReviewCore.build({ now, lines: rows.map(coreLine), customDone, customKept, reviewMarks, customSheet: coreSends(customSheet), customSent, cancelled: [...cancelled], settled: [], engraving });
       await db.collection(WORLD).doc("review").set({ v: VERSION, at: now, counts: JSON.parse(J(review.counts || {})), data: J({ cards: (review.cards || []).slice(0, 1500), openOrders: review.openOrders || [], openKeys: review.openKeys || [] }) });
     } catch (e) { errors.push("review: " + String(e.message || e).slice(0, 200)); }
   }
