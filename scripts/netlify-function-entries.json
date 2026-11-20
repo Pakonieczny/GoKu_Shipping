@@ -173,6 +173,7 @@
     "visionWarehouse.js"
   ],
   "modules": [
+    "_etsyStop.js",
     "_adsCheckGate.js",
     "_beadyCharmCap.js",
     "_beadyCharmCapFlat.js",
