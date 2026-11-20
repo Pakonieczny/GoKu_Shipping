@@ -3829,6 +3829,10 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <dialog id="dlgSettings"><form class="dlg" method="dialog">
   <div class="dlgHead"><h3>Settings</h3><div class="right"><button class="btn ghost xs" type="button" id="btnResetSettings">Reset defaults</button></div></div>
   <div class="dlgBody">
+    <div class="section">Etsy</div>
+    <div class="field" id="stEtsyField"><label>Etsy for the whole shop (every computer and station)</label>
+      <div class="fieldRow" style="align-items:center;gap:10px"><span class="pill neutral" id="stEtsyState" role="status">Checking…</span><button class="btn xs" type="button" id="btnEtsyResume" hidden>Resume Etsy</button></div>
+      <div class="help" id="stEtsyHelp">When Etsy answers 429 (its limit is reached), every computer and station stops calling Etsy at once and stays stopped until Resume Etsy is pressed here. The press reaches every computer through the cloud.</div></div>
     <div class="section">Display</div>
     <div class="field"><label>Rail density</label><div class="seg" id="railSeg"><button type="button" data-v="sm">Compact</button><button type="button" data-v="md">Normal</button><button type="button" data-v="lg">Large</button></div></div>
     <div class="section">Stock (per metal, millimetres)</div>
@@ -8953,7 +8957,53 @@ function askSettings() {
    and the password is to be my admin password for the account"): every opening asks for it (the Master Admin login the server checks, _charmNestRepoAuth.js),
    whoever is signed in and whatever was unlocked before; its unlock lasts while the menu is open and ends when it closes (the dialog's close, below). */
 function openSettings() { return askSettings(); }
+/* ETSYSTOP (Paul, 20 Nov 2026: "Once a 429 is reached the application must stop all work related to Etsy" … "a manual reset somewhere in the
+   settings that will allow a user to reset all of the applications running on all computers to resume pulling from Etsy. I should be able to select
+   this on my computer and then all the other computers should comply through the cloud."): the switch itself is in the cloud (_etsyStop.js) and every
+   Etsy call of every function obeys it; this shows it in Settings, and Resume Etsy turns it off for all. A run that a 429 stopped is resumed by the
+   computer that carries it once the switch was resumed after that stop (a press on any computer), so the intake starts again by itself. */
+const EtsyStopUI = window.EtsyStopUI = (() => {
+  const who = () => { try { const w = window.StationSession && window.StationSession.who && window.StationSession.who(), n = typeof w === "string" ? w : (w && (w.name || w.username || w.user)) || ""; return n || localStorage.getItem("cn.employee") || ""; } catch (_) { return ""; } };   // (the person the page keeps: cn.employee, as every seal it stamps)
+  const fmtAt = t => { try { return new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch (_) { return ""; } };
+  let last = null;
+  function render(st) {
+    const pill = document.getElementById("stEtsyState"), btn = document.getElementById("btnEtsyResume"), help = document.getElementById("stEtsyHelp");
+    if (!pill || !btn) return;
+    if (!st) { pill.className = "pill neutral"; pill.textContent = "Could not read the cloud"; btn.hidden = true; return; }
+    if (st.stopped) {
+      pill.className = "pill bad"; pill.textContent = `Stopped since ${fmtAt(st.since)}`; btn.hidden = false; btn.disabled = false; btn.textContent = "Resume Etsy";
+      if (help) help.textContent = `Etsy answered 429${st.fn ? ` to ${st.fn}` : ""}${st.detail ? `: ${String(st.detail).slice(0, 120)}` : ""}. No computer or station calls Etsy until Resume Etsy is pressed. Press it once Etsy's limit has reset; if Etsy still answers 429, everything stops again by itself.`;
+    } else {
+      pill.className = "pill ok"; pill.textContent = st.resumedAt ? `Running · resumed ${fmtAt(st.resumedAt)}${st.resumedBy ? " by " + st.resumedBy : ""}` : "Running"; btn.hidden = true;
+      if (help) help.textContent = "When Etsy answers 429 (its limit is reached), every computer and station stops calling Etsy at once and stays stopped until Resume Etsy is pressed here. The press reaches every computer through the cloud.";
+    }
+  }
+  async function read() { try { const st = await api("charmNestLibrary", { op: "etsyStopGet" }, { quiet: true }); last = st; return st; } catch (e) { console.warn("[etsyStop] read", e); return null; } }
+  async function refresh() { render(await read()); }
+  // the run this computer carries, stopped by Etsy's 429 (or by the switch): resumed once the switch was resumed after that stop
+  function etsyStopped(r) { return !!(r && r.status === "stopped" && /\b429\b|etsy_stopped|rate.?limit/i.test(String(r.stoppedBy || ""))); }
+  function stoppedAt(r) { const e = (r.errors || []).filter(x => x && x.why === r.stoppedBy).pop(); return e ? +e.t || 0 : 0; }
+  async function follow(st) {
+    const r = window.B && window.B.run; if (!etsyStopped(r) || !st || st.stopped || !(+st.resumedAt > stoppedAt(r))) return false;
+    const RC = window.RunCtl; if (!RC || typeof RC.resume !== "function") return false;
+    try { if (typeof agent === "function") agent({ run: r.runId }, "info", `Etsy was resumed${st.resumedBy ? " by " + st.resumedBy : ""}; the run starts again`); } catch (_) {}
+    try { await RC.resume(); return true; } catch (e) { console.warn("[etsyStop] resume run", e); return false; }
+  }
+  async function press() {
+    const btn = document.getElementById("btnEtsyResume"); if (btn) { btn.disabled = true; btn.textContent = "Resuming…"; }
+    try {
+      const st = await api("charmNestLibrary", { op: "etsyResume", by: who() }, { label: "Resuming Etsy" }); last = st; render(st);
+      toast("Etsy resumed for every computer and station", "ok", 5000);
+      await follow(st);
+    } catch (e) { toast("Etsy could not be resumed: " + (e && e.message || e), "bad", 7000); render(last); }
+  }
+  // a computer whose run Etsy stopped looks at the switch once a minute (one small read), only while that run stays stopped
+  setInterval(() => { const r = window.B && window.B.run; if (etsyStopped(r) && !document.hidden) read().then(follow).catch(() => {}); }, 60000);
+  document.addEventListener("click", e => { if (e.target && e.target.id === "btnEtsyResume") { e.preventDefault(); press(); } });
+  return { refresh, read, follow, press, render, etsyStopped };
+})();
 function openSettingsNow(home) {
+  try { EtsyStopUI.refresh(); } catch (_) { /* drawn at the next open */ }
   const L = window.CharmNestRepoLock;
   if (L && L.onChange && !settingsWatch) {
     settingsWatch = true;
