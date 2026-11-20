@@ -133,6 +133,24 @@ const RUN = 'run-any-t', LID = '1697972740';
   }, [RUN]);
   say('6 asked while the carrier answers, then it stops answering before it starts: after about 30 s it is "queued" (kept in the cloud), not a failure', stuck.r.queued === true && stuck.r.released !== true && !/was not released/.test(stuck.r.error || '') && /stopped answering/.test(stuck.r.error || '') && stuck.r.ms >= 29000 && stuck.r.ms < 60000, stuck.r);
 
+  // 7 ── a release that takes longer than this page used to wait (RELWAIT: order 4237522021, 158 s against a wait of 150 s)
+  const long = await page.evaluate(async ([RUN]) => {
+    const realApi = CN.api, realState = CharmNestRunFollow.state, realDev = CharmNestRunFollow.dev, realRows = Orders.rows, out = { steps: [] }; let n = 0;
+    B.run = null; CharmNestRunFollow.state = () => ({ runId: RUN }); CharmNestRunFollow.dev = () => 'dtestfoll02';
+    const row = { key: '4999000003_1', order: { receiptId: '4999000003' }, state: 'held', hold: 'x', problems: [] }; Orders.rows = () => [row];
+    OrderHold.relayPollMs = 200; OrderHold.relayNoticeMs = 1500; OrderHold.relayLimitMs = 20000;
+    CN.api = async (fn, body) => {
+      if (body.op === 'runCarrier') return { ok: true, alive: true, mine: false, carrier: { by: '', dev: 'dcarrier01' } };
+      if (body.op === 'runCmdPut') return { ok: true, id: 'cL1' };
+      if (body.op === 'runCmdList') { n++; const at = n * 200; return { cmds: [{ id: 'cL1', state: at < 800 ? 'waiting' : at < 3600 ? 'running' : 'done', step: at < 2000 ? 'Its place at the front is saved · 1 s' : 'Placing on GF Draft 2… · 4 s', text: 'Order 4999000003 released from hold and placed on GF Draft 2' }] }; }
+      return __origApi(fn, body);
+    };
+    try { const t0 = Date.now(); const r = await OrderHold.release('4999000003', { name: 'Michelle_R', onStep: s => out.steps.push(s.text || s.type) }); out.r = { ok: r.ok, released: r.released, queued: r.queued, error: r.error, ms: Date.now() - t0 }; }
+    finally { CN.api = realApi; CharmNestRunFollow.state = realState; CharmNestRunFollow.dev = realDev; Orders.rows = realRows; delete OrderHold.relayPollMs; delete OrderHold.relayNoticeMs; delete OrderHold.relayLimitMs; }
+    return out;
+  }, [RUN]);
+  say('7 a release that takes a long time is waited for to its end: released (not queued, not a failure), with what the run\'s computer is doing said on the way', long.r.ok === true && long.r.released === true && !long.r.queued && long.r.ms >= 3000 && long.steps.some(s => /Its place at the front is saved/.test(s)) && long.steps.some(s => /Placing on GF Draft 2/.test(s)) && long.steps.some(s => /busy/.test(s)), long);
+
   const errs = (H.errors || []).filter(e => !/firebase stub|favicon|HTTP 400|status of 400/.test(e));
   say('no page error', errs.length === 0, errs.slice(0, 3));
   await H.close?.();
