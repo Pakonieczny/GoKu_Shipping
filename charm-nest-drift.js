@@ -130,6 +130,19 @@
     return done;
   }
 
+  /* CLOUDWORLD: the cloud world's summary (worldGet, at most once a minute) and this computer's own lines, hashed the way the server hashes its open keys */
+  let worldSeen = null, worldAt = 0;
+  let worldNone = false;
+  async function worldSummary() { if (worldNone) return null; if (worldSeen && Date.now() - worldAt < 60000) return worldSeen; let r = null; try { r = await api({ op: "worldGet" }); } catch (e) { if (/unknown op|not a function/i.test(String(e && e.message || ""))) worldNone = true; throw e; } if (r && r.error && /unknown op|production only/i.test(String(r.error))) worldNone = true; worldSeen = r && r.summary ? r : null; worldAt = Date.now(); return worldSeen; }
+  async function sha24(text) { const subtle = safe(() => root.crypto.subtle, null); if (!subtle) return ""; const b = await subtle.digest("SHA-256", new TextEncoder().encode(text)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("").slice(0, 24); }
+  async function cloudCompare(rep) {
+    const O = root.Orders; if (!O || typeof O.rows !== "function") return;
+    const live = O.rows().filter(r => r && r.state !== "gone").map(r => String(r.key)).sort(), mine = await sha24(live.join(","));
+    rep.lines = live.length; rep.keysHash = mine;
+    const w = await worldSummary().catch(() => null), s = w && w.summary; if (!s) { rep.cmp = "cloud world not built yet"; return; }
+    const rc = (w.review && w.review.counts) || null, cw = rc ? ` · cloud Review open ${rc.openCount != null ? rc.openCount : rc.open}` : "";
+    rep.cmp = s.keysHash === mine ? `same ${live.length} lines as the cloud${cw}` : `differs: cloud ${s.live} lines · here ${live.length}${cw}`;
+  }
   let checking = false, lastDone = 0;
   async function check(why) {
     if (checking || st.unsupported || sandbox() || mode() === "off") return st.last;
@@ -167,6 +180,8 @@
           state = after;
         }
       }
+      // (CLOUDWORLD, Paul 20 Nov 2026: "Only the cloud can decide"): the order lines this computer holds, compared with the cloud world's (_charmNestWorld.js): the same lines, or how they differ
+      try { await cloudCompare(rep); } catch (_) { /* a report without it */ }
       st.checks++; st.last = rep; st.at = Date.now(); lastDone = st.at;
       mark(rep);
       try { const why = stuckWhy(); if (why.length) rep.still = (Array.isArray(rep.still) ? rep.still : []).concat(why).slice(0, 40); } catch (_) { /* a report without it */ }
@@ -208,21 +223,29 @@
     if (parts.length) { pill.textContent = parts.join(" · "); pill.title = (n ? (rep.role === "carrier" ? "This computer carries the run, so it does not rebuild itself: " : "Still behind the cloud after a rebuild: ") + (rep.still || []).slice(0, 6).join("; ") + ". " : "") + (w ? w + " approval(s) made here have waited " + rep.backWaitMin + " min to be saved to the cloud. " : "") + "Click for the list of computers."; }
   }
   const ago = s => s < 90 ? "just now" : s < 5400 ? Math.round(s / 60) + " min ago" : Math.round(s / 3600) + " h ago";
-  function table(list, me) {
+  /* CLOUDWORLD: the cloud's own line, first: what every computer must show */
+  function cloudRow(w) {
+    const s = w && w.summary; if (!s) return '<tr><td><b>Cloud</b></td><td colspan="9" class="old">the cloud world is not built yet</td></tr>';
+    const rc = (w.review && w.review.counts) || {}, age = Math.max(0, Math.round((Date.now() - (+s.at || 0)) / 1000));
+    const st = Object.entries(s.states || {}).map(([k, n]) => k + " " + n).join(" · ");
+    const rv = w.review ? `open ${rc.openCount != null ? rc.openCount : rc.open} · custom ${rc.customOrders != null ? rc.customOrders : "?"} · need resolution ${rc.needResolution != null ? rc.needResolution : "?"} · held ${rc.held != null ? rc.held : "?"}` : "not built yet";
+    return '<tr style="background:#eef6ff"><td><b>Cloud</b><div class="old">the one truth</div></td><td>reads every order</td><td>' + ago(age) + '</td><td colspan="5" class="old">' + esc(st) + (s.etsyCap ? ' · Etsy calls today ' + (s.etsyToday == null ? "?" : s.etsyToday) + ' / ' + s.etsyCap : '') + (s.errors && s.errors.length ? ' <span class="bad" title="' + esc(s.errors.join("; ")) + '">· ' + s.errors.length + ' problem(s)</span>' : '') + '</td><td>' + esc(rv) + '</td><td>' + s.live + ' lines</td></tr>';
+  }
+  function table(list, me, world) {
     if (!list || !list.length) return '<div class="help">No computer has reported yet.</div>';
     const rows = list.map(c => {
       const old = c.ageS > STALE_S, behind = (c.stillN || 0) > 0, sheets = old ? '<span class="old">not seen</span>' : behind ? '<span class="bad" title="' + esc((c.still || []).join("; ")) + '">' + c.stillN + " behind</span>" : '<span class="ok">current</span>' + (c.note && /^a set is opened/.test(c.note) ? ' <span class="old" title="' + esc(c.note) + '">· set opened</span>' : '')   // (the note also carries what an open engraving card holds, for reading in the cloud: not shown as a set opened)
       + '' + (c.unverifiedN ? ' <span class="old">(' + c.unverifiedN + " unchecked)</span>" : "") + (c.healed && c.healed.length ? ' <span class="old" title="' + esc(c.healed.join("; ")) + '">· rebuilt ' + c.healed.length + "</span>" : "");
       const bw = c.backWaitN && !old ? '<div class="' + (c.backWaitMin >= 10 ? "bad" : "old") + '">' + c.backWaitN + " approval" + (c.backWaitN === 1 ? "" : "s") + " waiting to save" + (c.backWaitMin ? " (oldest " + (c.backWaitMin >= 90 ? Math.round(c.backWaitMin / 60) + " h" : c.backWaitMin + " min") + ")" : "") + "</div>" : "";
       const fr = c.freezeMs >= 1000 ? '<span class="' + (c.freezeMs >= 3000 ? "bad" : "") + '">' + (c.freezeMs / 1000).toFixed(1) + " s</span>" : "—";
-      return "<tr><td>" + esc(c.by || "?") + (c.dev === me ? " <b>(this one)</b>" : "") + '<div class="old">' + esc(String(c.station || c.dev).slice(-8)) + "</div></td><td>" + (c.role === "carrier" ? "carries the run" : c.role === "follower" ? "follows" : "no run") + "</td><td" + (old ? ' class="old"' : "") + ">" + ago(c.ageS) + "</td><td>" + sheets + bw + "</td><td>" + fr + "</td><td>" + esc(c.feed || "—") + "</td><td>" + esc(c.mode === "on" ? "heals" : c.mode === "report" ? "report only" : "off") + '</td><td class="old">' + esc(String(c.build || "").slice(0, 22)) + "</td></tr>";
+      return "<tr><td>" + esc(c.by || "?") + (c.dev === me ? " <b>(this one)</b>" : "") + '<div class="old">' + esc(String(c.station || c.dev).slice(-8)) + "</div></td><td>" + (c.role === "carrier" ? "carries the run" : c.role === "follower" ? "follows" : "no run") + "</td><td" + (old ? ' class="old"' : "") + ">" + ago(c.ageS) + "</td><td>" + sheets + bw + "</td><td>" + fr + "</td><td>" + esc(c.feed || "—") + "</td><td>" + esc(c.mode === "on" ? "heals" : c.mode === "report" ? "report only" : "off") + '</td><td class="old">' + esc(String(c.build || "").slice(0, 22)) + "</td><td>" + esc(c.rv || "—") + '</td><td class="' + (/^same/.test(c.cmp || "") ? "ok" : c.cmp ? "bad" : "old") + '">' + esc(c.cmp || "—") + "</td></tr>";
     }).join("");
-    return '<table class="cnComp"><thead><tr><th>Computer</th><th>Role</th><th>Seen</th><th>Sheets</th><th>Longest freeze (10 min)</th><th>Updates</th><th>Rebuilds itself</th><th>Build</th></tr></thead><tbody>' + rows + "</tbody></table>";
+    return '<table class="cnComp"><thead><tr><th>Computer</th><th>Role</th><th>Seen</th><th>Sheets</th><th>Longest freeze (10 min)</th><th>Updates</th><th>Rebuilds itself</th><th>Build</th><th>Review here</th><th>Order lines vs the cloud</th></tr></thead><tbody>' + cloudRow(world) + rows + "</tbody></table>";
   }
   async function list() { const r = await api({ op: "computerList" }); return (r && r.computers) || []; }
   async function paintPop() {
     if (!pop) return; pop.innerHTML = '<b>Computers</b> <span class="old">— how each compares its sheets with the cloud, every four minutes</span><div data-body>reading…</div>';
-    try { pop.querySelector("[data-body]").innerHTML = table(await list(), devId()); } catch (e) { pop.querySelector("[data-body]").textContent = "Could not read the list: " + (e && e.message || e); }
+    try { pop.querySelector("[data-body]").innerHTML = table(await list(), devId(), await worldSummary().catch(() => null)); } catch (e) { pop.querySelector("[data-body]").textContent = "Could not read the list: " + (e && e.message || e); }
   }
   function settingsRow() {
     if (!doc) return;
@@ -232,7 +255,7 @@
         + '<div class="fieldRow3" style="align-items:center;gap:8px"><select data-m aria-label="This computer rebuilds itself when behind"><option value="on">This computer: measure, rebuild, report</option><option value="report">This computer: measure and report only</option><option value="off">This computer: off</option></select><button class="btn ghost sm" type="button" data-r>Check now</button></div><div data-body class="help">…</div>';
       const sel = host.querySelector("[data-m]"), body = host.querySelector("[data-body]"); sel.value = mode();
       sel.addEventListener("change", () => { mode(sel.value); });
-      const paint = async () => { try { body.innerHTML = table(await list(), devId()); } catch (e) { body.textContent = "Could not read the list: " + (e && e.message || e); } };
+      const paint = async () => { try { worldAt = 0; body.innerHTML = table(await list(), devId(), await worldSummary().catch(() => null)); } catch (e) { body.textContent = "Could not read the list: " + (e && e.message || e); } };
       host.querySelector("[data-r]").addEventListener("click", async () => { body.textContent = "checking…"; await run("manual"); paint(); });
       const dlg = doc.getElementById("dlgSettings");
       if (dlg && typeof root.MutationObserver === "function") new root.MutationObserver(() => { if (dlg.open) paint(); }).observe(dlg, { attributes: true, attributeFilter: ["open"] });
