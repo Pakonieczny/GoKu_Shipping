@@ -118,7 +118,27 @@
     const orders = [...by.values()];
     return { orders, total: orders.length, hydrated: orders.length, openIds: [...by.keys()], fromCloud: true, at: W.at };
   }
+  /* CLOUDWORLD (Paul, 20 Nov 2026: the Design & Engrave tab's decided pieces read 245 on Michelle's computer and 242 on Paul's): each engraving piece's state is the cloud's (Charm_Nest_Engrave as every computer saves it,
+     read at each build into the cloud's Review, engraveJobs). A piece this page holds in another state than the cloud's, and that no person pressed here in the last half minute, has its line's record taken from the cloud
+     again (charm-nest-engrave-sync.js pull, as at the start): the pieces still to settle and the decided ones are then the cloud's on every computer. At most once a minute; the lines that still differ are counted in the report. */
+  let engAt = 0; const engOff = { n: 0, keys: [] };
+  function engraveCheck() {
+    const E = root.Engrave, S = root.CharmNestEngraveSync, rv = W.review;
+    if (!wanted() || !E || typeof E.tabItems !== "function" || !rv || !rv.engraveJobs) return engOff;
+    const off = new Set(), rids = new Set();
+    for (const j of safe(() => E.tabItems(), []) || []) {
+      if (!j || j.mono || !j.row) continue;
+      const line = j.row.parentRow || j.row, want = (rv.engraveJobs[line.key] || {})[j.key];
+      if (want == null) continue;
+      const have = String(j.state || "") + (j.editingBack ? "!" : "");
+      if (have !== want) { off.add(line.key); if (line.order && line.order.receiptId != null) rids.add(String(line.order.receiptId)); }
+    }
+    engOff.n = off.size; engOff.keys = [...off].slice(0, 12);
+    if (rids.size && S && typeof S.pull === "function" && Date.now() - engAt > 60000) { engAt = Date.now(); safe(() => S.pull([...rids].slice(0, 600), "stale")); }
+    return engOff;
+  }
   root.addEventListener("cn:world", () => {
+    try { engraveCheck(); } catch (e) { console.warn("[cloud world] engraving", e && e.message); }
     try { applyToRows("world"); } catch (e) { console.warn("[cloud world] apply", e && e.message); }
     // (STAGE C: on the computer that carries the run, the lines read here a moment ago take the cloud's reading as soon as the cloud has it)
     try { if (!drives() && wanted() && root.Orders && typeof root.Orders.interpretAll === "function" && root.Orders.rows().some(r => r && r.readBy === "here")) root.Orders.interpretAll(); } catch (e) { console.warn("[cloud world] reading", e && e.message); }
@@ -150,7 +170,7 @@
   root.CloudWorld = {
     drives, wanted, applyToRows, snapshot, backupAndClear,
     start, refresh, ready: () => readyP, firstRead: () => { if (!W.started) boot(); return firstP; },
-    summary: () => W.summary, review: () => W.review, lease: () => W.lease, lines: () => W.lines, line: key => W.lines.get(String(key)) || null, at: () => W.at,
+    engraveOff: () => engraveCheck(), summary: () => W.summary, review: () => W.review, lease: () => W.lease, lines: () => W.lines, line: key => W.lines.get(String(key)) || null, at: () => W.at,
     on: fn => { W.fns.add(fn); return () => W.fns.delete(fn); },
     state: () => ({ size: W.lines.size, at: W.at, loadedAt: W.loadedAt, reads: W.reads, fails: W.fails, error: W.error, dead: !!W.dead, live: W.summary ? W.summary.live : null, drives: drives(), applied: W.applied || null })
   };
