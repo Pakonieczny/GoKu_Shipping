@@ -2441,7 +2441,19 @@ const Orders = window.Orders = (() => {
     return { revOpen, eng, sig: (revOpen ? [...revOpen.keys()].sort().join(",") : "-") + "|" + (eng ? [...eng].sort().join(",") : "-") };
   }
   /** CNT1: true when what Review or Design & Engrave hold has moved since the counts were made (the counts are then stale). */
-  function flowMoved() { if (!flowMemo) return false; const q = queues(); if (q.sig === flowMemo.sig) return false; flowMemo.at = 0; return true; }
+  /* CLOUDWORLD (Paul, 20 Nov 2026: "Look at the other tabs don't you see that the numbers don't match?"): the rail's steps, their chips, the top nav's Review and Design badges and the Orders list
+     under a step's filter are the cloud's flow (charm-nest-flow-stages.js worked out in the cloud over EVERY order's pieces and sheets, _charmNestWorld.js 9c), the same on every computer. A page
+     worked them out from the orders whose pieces IT had read: two computers, two answers. Without the cloud's flow (an older cloud, no world yet) the page works them out as before. */
+  let cloudFlowMemo = null;
+  function cloudFlow() {
+    try {
+      const CW = window.CloudWorld; if (!CW || !CW.wanted || !CW.wanted() || !CW.review) return null;
+      const rv = CW.review(); if (!rv || !rv.counts || !rv.counts.flow || !rv.flowByRid) return null;
+      if (cloudFlowMemo && cloudFlowMemo.src === rv) { cloudFlowMemo.at = Date.now(); return cloudFlowMemo; }
+      return (cloudFlowMemo = { src: rv, counts: Object.assign({}, rv.counts.flow), byRid: new Map(Object.entries(rv.flowByRid).map(([k, v]) => [String(k), v])), at: Date.now(), sig: "cloud:" + (rv.at || 0), cloud: true });
+    } catch (_) { return null; }
+  }
+  function flowMoved() { const cf = cloudFlow(); if (cf) { if (flowMemo === cf) return false; flowMemo = cf; return true; } if (!flowMemo) return false; const q = queues(); if (q.sig === flowMemo.sig) return false; flowMemo.at = 0; return true; }
   function flowCtx() {
     const byId = new Map(); for (const sh of allSheets()) if (sh && sh.sheetId) byId.set(sh.sheetId, sh);
     const rev = new Set();
@@ -2460,7 +2472,8 @@ const Orders = window.Orders = (() => {
   /** { counts: { stage id: orders }, byRid: Map(order → stage id), at }, or null without CNFlow. maxAge: how old an answer may be (ms). */
   function flowNow(maxAge) {
     const F = window.CNFlow; if (!F) return null;
-    if (flowMemo && Date.now() - flowMemo.at < (maxAge == null ? 1500 : maxAge)) return flowMemo;
+    { const cf = cloudFlow(); if (cf) return (flowMemo = cf); }
+    if (flowMemo && !flowMemo.cloud && Date.now() - flowMemo.at < (maxAge == null ? 1500 : maxAge)) return flowMemo;
     cmpWorld(); try { F.world(WORKSPACE_SANDBOX ? "sandbox" : "production"); } catch (_) {}
     let out, sig = ""; try { const c = flowCtx(); sig = c.sig; const PP = window.PiecePlacement, count = () => F.count(rowsOf().filter(openRow), c, window.CNCompleted ? CNCompleted.list() : []); out = PP && typeof PP.memoized === "function" ? PP.memoized(count) : count(); } catch (e) { console.warn("[flow]", e && e.message); return flowMemo; }
     out.at = Date.now(); out.sig = sig; return (flowMemo = out);
@@ -13621,6 +13634,10 @@ const Engrave = window.Engrave = (() => {
   /** What a piece's line in a row says it is: "Saved to sheet" for a written one, else the stage word of charm-nest-engrave-rows.js ("Approved", "No engraving", "Placement to check", ...). */
   const stageText = (j, busy) => (j.state === "written" ? "Saved to sheet" : j.backPending && j.state === "approved" ? `Approved · ${faceNoun(faceOfJob(j))} file waits for the cloud` : ROWS() ? ROWS().stageOf(j, busy) : "");
   /** What is still to settle, and what is decided, counted in ROWS: the numbers on the tabs and rails say what the lists show. (pendingCount and reviewedCount count jobs and stay as they are for the run's own checks.) */
+  /* CLOUDWORLD (Paul, 20 Nov 2026): the Design & Engrave tab lists the lines whose engraving work the cloud holds (Charm_Nest_Engrave, as every computer saves it: charm-nest-engrave-sync.js), the same on
+     every computer; a line one computer prepared alone in the background, and never sent, is not listed there. null: no cloud world (the page lists what it holds, as before). */
+  const cloudEngraveKeys = () => { try { const CW = window.CloudWorld, rv = CW && CW.wanted && CW.wanted() && CW.review ? CW.review() : null; return rv && Array.isArray(rv.engraveKeys) ? (rv._engSet && rv._engSet.src === rv.engraveKeys ? rv._engSet.set : (rv._engSet = { src: rv.engraveKeys, set: new Set(rv.engraveKeys.map(String)) }).set) : null; } catch (_) { return null; } };
+  const inCloudEngrave = j => { const keys = cloudEngraveKeys(); if (!keys) return true; const r = j && j.row; if (!r) return false; return keys.has(String(r.key)) || !!(r.parentRow && keys.has(String(r.parentRow.key))) || keys.has(String(j.rowKey || "")); };
   const pendingJobs = () => tabItems().filter(j => !j.editingBack && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row && j.row.state !== "gone");
   const pendingRows = () => { const p = pendingJobs(); return rowsIn(p, p).length; };
   /** CNT1 (Paul, 9 Nov 2026): the ORDERS with engraving still to settle (the same pieces pendingRows counts, by order number): the rail's Design & engrave step reads it (Orders.flowNow). */
@@ -13705,10 +13722,10 @@ const Engrave = window.Engrave = (() => {
     return out;
   }
   /** The Engrave tab's own lists: the engraving jobs and the monogram lines (every other reader of Engrave's jobs reads items() alone, as before). */
-  const tabItems = () => { const a = [...items().values()].filter(j => !j.archived), m = monoItemsNow();   // (PIECES: a piece the line no longer has is kept with its approvals but is in no list)
+  const tabItems = () => { const a = [...items().values()].filter(j => !j.archived && inCloudEngrave(j)), m = monoItemsNow();   // (CLOUDWORLD: the lines the cloud holds engraving work for)   // (PIECES: a piece the line no longer has is kept with its approvals but is in no list)
     return m.length ? a.concat(m) : a; };
   const tabItem = key => items().get(key) || (key != null && monoItemsNow().find(m => m.key === key)) || null;
-  const decidedAll = () => { const m = monoItemsNow().filter(x => x.state === "approved"); return m.length ? decidedJobs().concat(m) : decidedJobs(); };
+  const decidedAll = () => { const m = monoItemsNow().filter(x => x.state === "approved"), d = decidedJobs().filter(inCloudEngrave); return m.length ? d.concat(m) : d; };
   /** What the order model asks of a line: null (not a monogram line) | "to-approve" | "held" (its letters cannot be read yet, or it is being made) | "approved". */
   const monoStateOfItem = m => (m.st.approved ? "approved" : ["reading", "letters", "building", "error"].includes(m.st.state) ? "held" : "to-approve");
   const monoStateOf = row => {

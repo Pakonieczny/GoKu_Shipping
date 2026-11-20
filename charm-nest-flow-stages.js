@@ -169,4 +169,4 @@
   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud")
   function reload(rids) { store = null; load(); for (const rid of rids || []) for (const f of listeners) { try { f(String(rid), store.get(String(rid))); } catch (_) {} } }
   root.CNFlow = { reload, STAGES, AT, lineRank, orderRank, count, learnEvents, learned, learnedCount, onChange, world, hook };
-})(typeof self !== 'undefined' ? self : this);
+})(typeof self !== 'undefined' ? self : typeof module === 'object' && module.exports ? module.exports : this);   // (in the cloud (_charmNestWorld.js 9c) the same rules are module.exports.CNFlow, bundled or not)

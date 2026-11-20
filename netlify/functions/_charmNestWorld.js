@@ -132,6 +132,61 @@ function coreSends(customSheet) {
   return out;
 }
 
+/* ── THE FLOW: the page's rules (charm-nest-flow-stages.js count / orderRank / lineRank), with every line's placement made as the page makes it (charm-nest-order-pieces.js resolve over the
+   order's own read, op getOrderPieces; then the page's factsOf and charm-nest-piece-placement.js resolve), from ALL the records, never from what one computer happened to have loaded ── */
+let FlowStages = null, OPieces = null, PPlace = null, PairM = null;
+try { const m = require("../../charm-nest-flow-stages.js"); FlowStages = m && m.CNFlow ? m.CNFlow : null; } catch (_) { FlowStages = null; }
+try { OPieces = require("../../charm-nest-order-pieces.js"); } catch (_) { OPieces = null; }
+try { PPlace = require("../../charm-nest-piece-placement.js"); } catch (_) { PPlace = null; }
+try { PairM = require("../../charm-nest-pair.js"); } catch (_) { PairM = null; }
+const FLOW_GONE = new Set(["abandoned", "superseded"]);
+const cut$ = s => !!(s && (+s.laserDoneAt > 0 || +s.roseCutAt > 0));
+/** charm-nest-order-pieces.js lineOfRow: the order line as OrderPieces reads it. */
+function pieceLine(r) {
+  const sp = r.spec || {}, ln = r.line || {};
+  return { key: r.key, receiptId: r.order && r.order.receiptId, form: sp.form || "", transactionId: ln.transactionId, sku: sp.designSku || ln.sku || "", title: ln.title || "", material: r.material || sp.material || r.metal || null,
+    quantity: sp.quantity || ln.quantity || 1, state: r.state, poolIds: r.poolIds || [], hold: r.hold || null, changePending: !!r.changePending, problems: r.problems || [], spec: { noDesign: sp.noDesign, customDone: sp.customDone || null, pieceCount: sp.pieceCount, pair: sp.pair }, reason: r.reason || "", listingId: ln.listingId || "" };
+}
+/** The line's sheet facts (what the page's factsOf takes from the line's copies): what a cached reading keeps between builds. A line's own hold, hand and cancel are added fresh at each build. */
+function sheetFactsOf(rid, rows, answer, entryFor, setCut) {
+  if (!OPieces) return {};
+  const pairArg = l => ({ receiptId: l.receiptId, transactionId: l.transactionId, sku: l.sku, quantity: Math.max(1, Math.round(+(l.spec && l.spec.quantity || l.quantity) || 1)), form: l.form || "", key: l.key, spec: l.spec || {}, line: l });
+  const entryOf = l => { try { return l && l.sku && entryFor ? entryFor(l.sku) || null : null; } catch (_) { return null; } };
+  const earring = l => { try { return !!(PairM && l && (typeof PairM.isEarringPair === "function" ? PairM.isEarringPair(pairArg(l), entryOf(l)) : PairM.isMismatched(entryOf(l)))); } catch (_) { return false; } };
+  const pairOf = l => { if (!earring(l)) return null; try { const x = PairM.piecesFor(pairArg(l), entryOf(l)); return Array.isArray(x) && x.length > 1 && x.some(p => p.side) ? x : null; } catch (_) { return null; } };
+  const groupLine = l => { try { return !!(PairM && l && typeof PairM.isGroupLine === "function" && PairM.isGroupLine(pairArg(l), entryOf(l))); } catch (_) { return false; } };
+  const kindOf = l => { if (!earring(l) || typeof PairM.kindOf !== "function") return null; try { return PairM.kindOf(pairArg(l), entryOf(l)) || null; } catch (_) { return null; } };
+  const countOf = l => { try { const c = typeof O.countedPieces === "function" ? O.countedPieces(l) : null; return c ? c.total : 0; } catch (_) { return 0; } };
+  const pieces = OPieces.resolve({ orderId: rid, lines: rows.map(pieceLine), pools: (answer && answer.pools) || [], sheets: (answer && answer.sheets) || [], sheetsKnown: !!answer, failed: !answer, pairOf, kindOf, groupLine, countOf });
+  const out = {};
+  for (const r of rows) {
+    const mine = pieces.filter(c => c.lineKey === r.key), sheets = [], seen = new Set();
+    for (const c of mine) if (c && c.nested) { const k = c.sheetId || c.sheetLabel; if (!k || seen.has(k)) continue; seen.add(k); sheets.push({ id: c.sheetId || null, label: c.sheetLabel || "", setId: c.setId || null, cut: c.state === "cut" || !!(c.sheetId && setCut(c.sheetId, c.setId)) }); }
+    const ch = mine.find(c => c && c.hold);
+    out[r.key] = { q: mine.length, on: mine.filter(c => c && c.nested).length, sh: sheets, ch: ch ? { reason: String(ch.hold.reason || "").slice(0, 200), at: +ch.hold.at || 0, by: String(ch.hold.by || "").slice(0, 80) } : null, ld: mine.some(c => c && c.loading) ? 1 : 0, un: mine.some(c => c && c.unsure) ? 1 : 0 };
+  }
+  return out;
+}
+/** The page's factsOf + PiecePlacement.resolve for one line, from its sheet facts and the line itself. */
+function placeOfLine(r, f, cancelled) {
+  if (!PPlace) return null;
+  const waits = !r.hold && !!(r.spec && r.spec.special && r.spec.special.monogram);
+  const own = r.hold || (r.state === "held" && !waits) ? { reason: String(typeof r.hold === "string" ? r.hold : (r.hold && (r.hold.reason || r.hold.text)) || r.reason || "").slice(0, 200), at: +(r.hold && r.hold.at) || 0, by: String((r.hold && r.hold.by) || "").slice(0, 80) } : null;
+  const hold = own || (f && f.ch) || null;
+  const hc = !hold ? (() => { const l = pieceLine(r), c = !(l.poolIds && l.poolIds.length) && (r.handDone || (l.spec && l.spec.customDone)); return c && typeof c === "object" && c.state !== "open" && c.how !== "sheet" ? c : null; })() : null;
+  return PPlace.resolve({ key: r.key, qty: Math.max((f && f.q) || 0, 1), copies: Math.max((f && f.q) || 0, 1), copiesOn: (f && f.on) || 0, sheets: (f && f.sh) || [], hold, hand: hc, cancelled: cancelled || r.state === "gone", loading: !!(f && f.ld), unsure: !!(f && f.un) || !f });
+}
+function flowOf(rows, facts, x) {
+  if (!FlowStages || !PPlace) return null;
+  const memo = new Map(), place = r => { if (!memo.has(r.key)) { const p = placeOfLine(r, facts[r.key], x.cancelled.has(String(r.key).split("_")[0])); memo.set(r.key, p && p.state !== "loading" ? p : null); } return memo.get(r.key); };
+  const learned = rid => { const v = x.learnedMap[String(rid)]; return Array.isArray(v) ? +v[0] || 0 : 0; };
+  const ctx = { place, held: r => !!r.hold || (place(r) || {}).state === "hold", nested: () => false, review: r => x.reviewLines.has(r.key),
+    cut: (r, pl) => { const on = pl && pl.sheets ? pl.sheets : []; return on.length > 0 && on.every(s => s && s.cut); }, learned,
+    reviewOrder: rid => x.openOrders.has(String(rid)), engraving: rid => x.engraving.has(String(rid)) };
+  const out = FlowStages.count(rows, ctx, Object.entries(x.completedMap || {}).map(([rid, e]) => Object.assign({ rid }, e && typeof e === "object" ? e : {})));
+  return { counts: out.counts, byRid: Object.fromEntries(out.byRid) };
+}
+
 async function pool(items, n, fn) { const out = new Array(items.length); let i = 0; await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) { const k = i++; try { out[k] = await fn(items[k], k); } catch (e) { out[k] = { error: e }; } } })); return out; }
 
 /* ── the build ── */
@@ -321,15 +376,49 @@ async function build(opts) {
 
   /* 9b · the orders with engraving still to settle (Charm_Nest_Engrave: each line's engraving jobs as every computer saves them, charm-nest-engrave-sync.js), for the Design & Engrave badge:
      a job words / review / fitting / ready / classify, not archived, of a live line (charm-nest-bridge.js Engrave.pendingJobs) */
-  let engraving = null;
+  let engraving = null, engraveKeys = null, engravePending = null;
   try {
-    const ENG_PENDING = new Set(["words", "review", "fitting", "ready", "classify"]), keys = live.filter(r => r.order && r.key).map(r => r.key), set = new Set();
+    const ENG_PENDING = new Set(["words", "review", "fitting", "ready", "classify"]), keys = live.filter(r => r.order && r.key).map(r => r.key), set = new Set(), all = [], pend = [];
     for (let i = 0; i < keys.length; i += 300) for (const d of await db.getAll(...keys.slice(i, i + 300).map(k => db.collection("Charm_Nest_Engrave").doc(k)))) {
       if (!d.exists) continue; let rec = null; try { rec = JSON.parse((d.data() || {}).rec || "null"); } catch (_) { rec = null; }
-      if (rec && Array.isArray(rec.jobs) && rec.jobs.some(j => j && ENG_PENDING.has(String(j.state)) && !j.archived && !j.editingBack)) set.add(String(d.id).split("_")[0]);
+      if (!rec || !Array.isArray(rec.jobs) || !rec.jobs.some(j => j && !j.archived)) continue;
+      all.push(d.id);   // (CLOUDWORLD: the lines whose engraving work the cloud holds: the Design & Engrave tab of every computer lists these, and no line one computer prepared alone)
+      if (rec.jobs.some(j => j && ENG_PENDING.has(String(j.state)) && !j.archived && !j.editingBack)) { set.add(String(d.id).split("_")[0]); pend.push(d.id); }
     }
-    engraving = [...set];
+    engraving = [...set]; engraveKeys = all.sort(); engravePending = pend.sort();
   } catch (e) { errors.push("engraving: " + e.message); }
+
+  /* 9c · THE FLOW (the left rail and the Orders tab's stages): where each line's pieces are, read as an order's own window reads them (op getOrderPieces: its pool rows and every saved
+     sheet that lists them, one snapshot) for EVERY open order, then the page's rules. The reading is kept (Charm_World/place) while nothing a placement is made from moved (the cloud's
+     placement counter, Charm_Nest_Rev/placement) and for FULL_MS at most; a line not in it, or whose pieces changed, is read afresh. Plus the steps after the laser every computer learned
+     (Charm_Nest_Shared flowstages-production) and the Completed pile (completed-production). */
+  let flowIn = null;
+  if (!FlowStages || !OPieces || !PPlace) errors.push("flow: the page's rules did not load in the cloud (" + [!FlowStages && "flow-stages", !OPieces && "order-pieces", !PPlace && "piece-placement"].filter(Boolean).join(", ") + ")");
+  else try {
+    const sharedOf = async (base, shards) => { const out = {}; const docs = await db.getAll(...Array.from({ length: shards }, (_, i) => db.collection("Charm_Nest_Shared").doc(`${base}-${i}`))); for (const d of docs) { if (!d.exists) continue; const f = (d.data() || {}).f || {}; for (const [k, x] of Object.entries(f)) { if (!x || x.x) continue; let v = null; try { v = typeof x.j === "string" ? JSON.parse(x.j) : x.v; } catch (_) { v = null; } if (v != null) out[k] = v; } } return out; };
+    const [learnedMap, completedMap] = await Promise.all([sharedOf("flowstages-production", 4), sharedOf("completed-production", 16)]);
+    const genDoc = await db.collection("Charm_Nest_Rev").doc("placement").get(), gen = genDoc.exists ? Number((genDoc.data() || {}).n) || 0 : 0;
+    const placeRef = db.collection(WORLD).doc("place"), pd = await placeRef.get(), prevPlace = pd.exists ? pd.data() || {} : {};
+    let kept = {}; try { kept = prevPlace.data ? JSON.parse(prevPlace.data) : {}; } catch (_) { kept = {}; }
+    const fresh = !opts.force && prevPlace.gen === gen && now - (+prevPlace.at || 0) < FULL_MS;
+    const sigOf = r => [(r.poolIds || []).join(","), (r.spec && r.spec.quantity) || (r.line && r.line.quantity) || 1, r.state === "gone" ? 0 : 1].join("|");
+    const byRid = new Map(); for (const r of live) if (r.order && r.key) { const rid = String(r.key).split("_")[0]; if (!byRid.has(rid)) byRid.set(rid, []); byRid.get(rid).push(r); }
+    const need = [...byRid.keys()].filter(rid => !fresh || byRid.get(rid).some(r => !kept[r.key] || kept[r.key].g !== sigOf(r)));
+    const facts = {}; for (const [rid, rs] of byRid) if (!need.includes(rid)) for (const r of rs) facts[r.key] = kept[r.key];
+    const answers = new Map(), batches = []; for (let i = 0; i < need.length; i += 40) batches.push(need.slice(i, i + 40));
+    await pool(batches, 3, async ids => { const a = await ops.getOrderPieces({ orderIds: ids }); if (!a || a.error || !a.orders) throw new Error((a && a.error) || "no answer"); for (const id of ids) answers.set(id, a.orders[id] || { pools: [], sheets: [] }); });
+    // (a set marked laser done cuts every sheet it lists, as the page's replaceCutWhy reads the Library's sets)
+    const setIds = [...new Set([...answers.values()].flatMap(a => (a.sheets || []).map(s => s.setId)).filter(Boolean).map(String))], setCutOf = new Map();
+    for (let i = 0; i < setIds.length; i += 100) for (const d of await db.getAll(...setIds.slice(i, i + 100).map(id => db.collection("Charm_Nest_Sets").doc(id)), { fieldMask: ["laserDoneAt", "sheetIds"] })) if (d.exists) { const x = d.data() || {}; if (+x.laserDoneAt > 0) setCutOf.set(d.id, new Set((x.sheetIds || []).map(String))); }
+    const setCut = (sheetId, setId) => !!(setId && setCutOf.has(String(setId)) && setCutOf.get(String(setId)).has(String(sheetId)));
+    let read = 0;
+    for (const rid of need) { if (!answers.has(rid)) continue; read++; const f = sheetFactsOf(rid, byRid.get(rid), answers.get(rid), M.entryFor, setCut); for (const r of byRid.get(rid)) { if (f[r.key]) { f[r.key].g = sigOf(r); facts[r.key] = f[r.key]; } } }
+    if (need.length && read < need.length) errors.push(`flow: the pieces of ${need.length - read} order(s) were not read`);
+    say(`[world] flow: ${byRid.size} orders, pieces read for ${read}${fresh ? " (the rest kept: nothing placed moved)" : ""}`);
+    const keepData = J(facts);
+    if (Buffer.byteLength(keepData) < 900000) await placeRef.set({ v: VERSION, at: fresh ? +prevPlace.at || now : now, gen, data: keepData });
+    flowIn = { learnedMap, completedMap, facts };
+  } catch (e) { errors.push("flow: " + String(e.message || e).slice(0, 160)); }
 
   /* 10 · Review, built once, here */
   let review = null;
@@ -337,15 +426,38 @@ async function build(opts) {
     try {
       const customSent = {}; for (const [k, v] of Object.entries(Object.assign({}, customKept, customDone))) if (v && v.sent && typeof v.sent === "object") customSent[k] = v.sent;
       review = ReviewCore.build({ now, lines: rows.map(coreLine), customDone, customKept, reviewMarks, customSheet: coreSends(customSheet), customSent, cancelled: [...cancelled], settled: [], engraving });
-      await db.collection(WORLD).doc("review").set({ v: VERSION, at: now, counts: JSON.parse(J(review.counts || {})), data: J({ cards: (review.cards || []).slice(0, 1500), openOrders: review.openOrders || [], openKeys: review.openKeys || [], resolvedKeys: review.resolvedKeys || [], itemKeys: review.itemKeys || [] }) });
+      // (the flow, with Review's Open and the engraving still to settle as the page's flowCtx reads them)
+      let flow = null;
+      if (flowIn) {
+        try {
+          // (the page's flowNow: the open orders' lines, not shipped (the Completed pile), not cancelled; its Review set: every line of an Open card that is no engraving and no hold card)
+          const shipped = new Set(Object.keys(flowIn.completedMap || {}).map(String)), ridOf = r => String(r.key).split("_")[0];
+          const flowRows = live.filter(r => r.order && r.state !== "gone" && !shipped.has(ridOf(r)) && !cancelled.has(ridOf(r)));
+          const reviewLines = new Set((review.cards || []).filter(c => c && c.state === "Open" && !/^(eng|held):/.test(String(c.key || ""))).flatMap(c => c.lineKeys || []));
+          flow = flowOf(flowRows, flowIn.facts, { cancelled, learnedMap: flowIn.learnedMap, completedMap: flowIn.completedMap, openOrders: new Set((review.openOrders || []).map(String)), engraving: new Set((engraving || []).map(String)), reviewLines });
+        } catch (e) { errors.push("flow: " + String(e.message || e).slice(0, 160)); }
+      }
+      if (flow) {
+        review.counts.flow = flow.counts;
+        // (CNT1, Paul 9 Nov 2026: the top nav's Review and Design badges say the very count of the rail's row they sit on: the cloud's flow, the same on every computer)
+        review.counts.reviewOrdersCore = review.counts.reviewOrders; review.counts.designOrdersCore = review.counts.designOrders;
+        review.counts.reviewOrders = flow.counts.review || 0; review.counts.designOrders = flow.counts.design || 0;
+      }
+      if (engraveKeys) { review.counts.engraveLines = engravePending.length; review.counts.engraveOrders = (engraving || []).length; review.counts.engraveHeld = engraveKeys.length; }
+      await db.collection(WORLD).doc("review").set({ v: VERSION, at: now, counts: JSON.parse(J(review.counts || {})), data: J({ cards: (review.cards || []).slice(0, 1500), openOrders: review.openOrders || [], openKeys: review.openKeys || [], resolvedKeys: review.resolvedKeys || [], itemKeys: review.itemKeys || [], flowByRid: flow ? flow.byRid : null, engraveKeys: engraveKeys || null, engravePending: engravePending || null }) });
     } catch (e) { errors.push("review: " + String(e.message || e).slice(0, 200)); }
   }
+
+  /* 10b · the Library's totals (op ping's own count: saved sheets not archived, charms in the library), so the rail's "Library · N sheets · M charms" is the cloud's on every computer, kept current */
+  let library = null;
+  try { const [sc, cc] = await Promise.all([db.collection("Charm_Nest_Sheets").where("archived", "==", false).count().get(), db.collection("Charm_Nest_Library").count().get()]); library = { sheets: sc.data().count, charms: cc.data().count, at: now }; }
+  catch (e) { errors.push("library: " + String(e.message || e).slice(0, 120)); }
 
   const states = live.reduce((m, r) => (m[r.state] = (m[r.state] || 0) + 1, m), {});
   const openKeys = live.map(r => r.key).sort();
   const summary = { v: VERSION, at: now, runId: run ? run.runId : null, lines: rows.length, live: live.length, states, receipts: rids.length, openOnEtsy: Object.keys(open).length,
     keysHash: sha(openKeys.join(",")), held: live.filter(r => r.state === "held").map(r => r.key).sort(), unmatched: live.filter(r => r.state === "unmatched").map(r => r.key).sort(),
-    counts: review ? review.counts : null, writes, toRead: Math.max(0, stale.length - etsyCalls), etsyCalls, etsyToday: await etsyUsed(db), etsyCap: ETSY_DAY_CAP, mirrorAt, errors: errors.slice(0, 20), notes: notes.slice(-20), sigs };
+    counts: review ? review.counts : null, writes, toRead: Math.max(0, stale.length - etsyCalls), etsyCalls, etsyToday: await etsyUsed(db), etsyCap: ETSY_DAY_CAP, mirrorAt, library, errors: errors.slice(0, 20), notes: notes.slice(-20), sigs };
   await db.collection(WORLD).doc("summary").set(JSON.parse(J(summary)));
   await stateRef.set({ open, mirrorMark: watermark, sweptAt: st.sweptAt || null, lastBuildAt: now, checkedAt: now, token, toRead: Math.max(0, stale.length - etsyCalls) }, { merge: false });
   return Object.assign({}, summary, { sigs: undefined });
@@ -355,4 +467,4 @@ async function build(opts) {
 function lineOf(d) { if (!d) return null; if (d.gone) return { key: d.key, gone: true, at: d.at }; let x = {}; try { x = JSON.parse(d.data || "{}"); } catch (_) { x = {}; } return Object.assign(x, { key: d.key, sig: d.sig, at: d.at }); }
 function reviewOf(d) { if (!d) return null; let x = {}; try { x = JSON.parse(d.data || "{}"); } catch (_) { x = {}; } return Object.assign({ v: d.v, at: d.at, counts: d.counts || {} }, x); }
 
-module.exports = { build, lineOf, reviewOf, masterIndex, readLine, afterRead, runFacts, isOpenReceipt, LINES, WORLD, ETSY };
+module.exports = { flowOf, sheetFactsOf, placeOfLine, build, lineOf, reviewOf, masterIndex, readLine, afterRead, runFacts, isOpenReceipt, LINES, WORLD, ETSY };
