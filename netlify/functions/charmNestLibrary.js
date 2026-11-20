@@ -6122,7 +6122,7 @@ async function ruleBreaksFor(setIds) {
  *  charm-nest-set-repair.js joinCheck (the set after the move judged by CharmNestSetInvariants.check against the set before; only a FORMED, uncommitted set is judged), read from the records:
  *  the set, its sheets and every sheet an order chain runs through (sharedSheets). opts.rules: only those rules; opts.overlay: {sheetId: fields this very save writes}.
  *  -> { ok, setId, label, detail, rules, sheets, lines }. A read that fails answers ok and is logged: the page's own plan and the approval gate still stand. */
-const JOIN_RULES_AT_WRITE = ["surplus", "partial"];      // (at the write itself only the rules a saved record always answers: the run's own assembly is never refused for a record still on its way)
+const JOIN_RULES_AT_WRITE = ["partial"];   // (MINFLOOR, Paul 20 Nov 2026: a set bigger than the minimum is never refused)      // (at the write itself only the rules a saved record always answers: the run's own assembly is never refused for a record still on its way)
 const JOIN_OVERLAY = ["metal", "releaseFull", "poolIds", "orders", "placedCount", "density"];
 async function joinRulesFor(setId, joinIds, opts = {}) {
   const ok = { ok: true, setId };
