@@ -189,6 +189,7 @@
     const settled = (Array.isArray(snap.settled) ? snap.settled : []).filter(isObj).map(d => ({ key: str(d.key), kind: str(d.kind), why: str(d.why), by: str(d.by), t: num(d.t), orders: (Array.isArray(d.orders) ? d.orders : []).map(str), lines: num(d.lines), rowKey: str(d.rowKey), how: d.how }))
       .sort((a, b) => (b.t - a.t) || byStr(a.key, b.key)).slice(0, 200);   // (newest first, 200 at most: Review.remove)
     const W = { now: num(snap.now), lines, byKey, customDone, customKept, marks, customSent, sheetIx, cancelled, shipped, settled };
+    W.engraving = Array.isArray(snap.engraving) ? new Set(snap.engraving.map(str)) : null;   // (CLOUDWORLD: the orders with engraving still to settle, when the caller gives them: the Design & Engrave badge)
     // CustomSheet.decisionOf / sending (18612-18614)
     W.decisionOf = l => { const e = sheetIx.get(l.key); return (e && e.sent) || (isObj(customSent[l.key]) ? customSent[l.key] : null) || null; };
     W.sending = l => { const e = sheetIx.get(l.key); return !!(e && e.pending && !e.sent); };
@@ -347,6 +348,8 @@
         return "later";
       }).filter(x => x != null);
       if (ranks.length && (openRids.has(r) || ranks.includes("review"))) n++;
+      // (CLOUDWORLD: the Design & Engrave badge, by the same flow: an order no person must decide first whose engraving is still to settle, as flow-stages orderRank puts it on Design)
+      else if (ranks.length && W.engraving && W.engraving.has(r)) W.designN = (W.designN || 0) + 1;
     }
     return n;
   }
@@ -415,6 +418,7 @@
     counts.noChip = { orderChanged: byKind.get("orderChanged") || 0, reviewMark: byKind.get("reviewMark") || 0 };
     counts.resolvedChips = {}; for (const k of ORDER) counts.resolvedChips[k] = doneKind.get(k) || 0;
     counts.reviewOrders = reviewOrders(W, items, new Set(openOrders.keys()));
+    if (W.engraving) counts.designOrders = W.designN || 0;
 
     return {
       at: W.now, cards: openCards.concat(doneCards), counts,

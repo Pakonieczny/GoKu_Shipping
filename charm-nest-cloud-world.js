@@ -122,6 +122,8 @@
     try { applyToRows("world"); } catch (e) { console.warn("[cloud world] apply", e && e.message); }
     // (STAGE C: on the computer that carries the run, the lines read here a moment ago take the cloud's reading as soon as the cloud has it)
     try { if (!drives() && wanted() && root.Orders && typeof root.Orders.interpretAll === "function" && root.Orders.rows().some(r => r && r.readBy === "here")) root.Orders.interpretAll(); } catch (e) { console.warn("[cloud world] reading", e && e.message); }
+    // (the Review tab and the two badges draw the cloud's Review: redrawn when it moves)
+    try { if (wanted()) { if (root.Review && typeof root.Review.render === "function") root.Review.render(); if (root.Ladder && typeof root.Ladder.now === "function") root.Ladder.now(); } } catch (_) { /* drawn at the next redraw */ }
   });
 
   /* ── STAGE F (Paul, 20 Nov 2026: "Nothing ... only the cloud can allow the computer to put something in cache"): what older pages kept in this browser is backed up to the cloud

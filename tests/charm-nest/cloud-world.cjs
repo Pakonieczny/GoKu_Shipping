@@ -168,6 +168,15 @@ async function otherComputer(H) {
     const cloudRv2 = (await Lib.ops.worldGet({})).review, pageRv2 = await page.evaluate(() => ({ openCount: Review.openCount(), reviewCount: Review.count(), openOrders: [...Review.openOrders().keys()].map(String).sort() }));
     ok('7b · its Review is the cloud\'s and the first computer\'s (Open count, decisions, the orders in Open)', JSON.stringify(seen2.rv) === JSON.stringify(pageRv2) && seen2.rv.openCount === cloudRv2.counts.openCount && seen2.rv.reviewCount === cloudRv2.counts.reviewCount, JSON.stringify({ second: seen2.rv, first: pageRv2, cloud: cloudRv2.counts && { openCount: cloudRv2.counts.openCount, reviewCount: cloudRv2.counts.reviewCount } }));
     const asked = st.calls.slice(n7).filter(c => /^(listOpenOrders|etsyOrderProxy)$/.test(c.name) || (c.op === 'startAgent' && /customRead/.test(JSON.stringify(c.body || {}))));
+    /* 7g · what each SCREEN shows (the Review tab's Open / Resolved, every chip, the two tab badges) is the cloud's, on both computers */
+    const screenOf = pg => pg.evaluate(async () => { await CloudWorld.refresh('test'); CN.setMode('review'); Review.render({ still: true }); Ladder.now(); await new Promise(r => setTimeout(r, 600));
+      const bar = document.querySelector('#reviewView .ordBar'), n = sel => { const e = bar && bar.querySelector(sel); return e ? +(e.querySelector('b') || {}).textContent || 0 : 0; };
+      const chips = {}; for (const b of (bar ? bar.querySelectorAll('.egTab[data-k]') : [])) chips[b.dataset.k] = +((b.querySelector('b') || {}).textContent || 0);
+      return { open: n('[data-cseg=open]'), resolved: n('[data-cseg=done]'), chips, review: +(document.getElementById('tabReviewN') || {}).textContent || 0, design: +(document.getElementById('tabEngraveN') || {}).textContent || 0 }; });
+    const rvNow = (await Lib.ops.worldGet({})).review.counts, s1 = await screenOf(page), s2 = await screenOf(p2);
+    const want7 = { open: rvNow.openCount, resolved: rvNow.resolved, review: rvNow.reviewOrders, design: rvNow.designOrders || 0 };
+    const sameScreen = x => x.open === want7.open && x.resolved === want7.resolved && x.review === want7.review && x.design === want7.design && Object.entries(x.chips).every(([k, v]) => v === (k === 'customOrder' ? rvNow.customOrders : rvNow[k] || 0));
+    ok('7g · both screens show the cloud\'s numbers: Open, Resolved, every chip, the Review and Design & Engrave badges', sameScreen(s1) && sameScreen(s2) && JSON.stringify(s1) === JSON.stringify(s2), JSON.stringify({ cloud: want7, first: s1, second: s2 }));
     ok('7c · it asked neither Etsy nor Claude for anything', !asked.length, JSON.stringify(asked.map(c => c.name + ':' + c.op)));
     await p2.reload(); await p2.waitForFunction(() => window.CN && CN.S && CN.S.cloud.ok !== null && window.Orders, null, { timeout: 90000 });
     const early = await p2.evaluate(() => Orders.rows().filter(r => r.state !== 'gone' && !r.cloud).length);
