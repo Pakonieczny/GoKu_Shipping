@@ -24,6 +24,7 @@ exports.handler = async function () {
   }
 };
 
-exports.config = {
-  schedule: "*/10 * * * *"
-};
+// ETSY PAUSE 2026-11-20 (daily limit hit) — restore by uncommenting:
+// exports.config = {
+//   schedule: "*/10 * * * *"
+// };
