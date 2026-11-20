@@ -3,7 +3,7 @@
 // Uses Firestore if FIREBASE_SERVICE_ACCOUNT is provided; otherwise falls back to in-memory
 // (in-memory helps single instance, Firestore makes it safe across many instances).
 
-const fetch = require("node-fetch");
+const fetch = require("./_etsyStop").guard(require("node-fetch"), "etsyRateLimiter");
 
 // ---- Config
 const RATE_PER_SEC = 5;      // Etsy hard cap
@@ -194,13 +194,10 @@ async function etsyFetch(url, init = {}, opts = {}) {
     // response including 429s (those carry the most important reading).
     _meter(appId, res);
 
-    if (res.status !== 429) return res;
-
-    // 429 → respect Retry-After if present, else exponential backoff
-    const ra = parseRetryAfter(res.headers.get("retry-after"));
-    const waitMs = ra != null ? ra + jitter() : backoff(attempt);
-    if (attempt >= retries) return res; // propagate the 429 payload to caller
-    await sleep(waitMs);
+    // ETSYSTOP (Paul, 20 Nov 2026: "Once a 429 is reached the application must stop all work related to Etsy"): a 429 is never asked
+    // again. Etsy's own 429 has already turned the shop's switch on (fetch above is _etsyStop's guard), and every later call, here or in
+    // any other function, is answered by the switch until Resume Etsy is pressed. The 429 goes to the caller as it came.
+    return res;
   }
 }
 

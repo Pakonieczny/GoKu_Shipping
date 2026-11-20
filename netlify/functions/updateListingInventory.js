@@ -1,5 +1,5 @@
 // netlify/functions/updateListingInventory.js
-const fetch = require("node-fetch");
+const fetch = require("./_etsyStop").guard(require("node-fetch"), "updateListingInventory");
 
 exports.handler = async (event) => {
   // --- CORS (needed for browser PUT + preflight) ---

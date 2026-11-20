@@ -1,5 +1,5 @@
 // etsyOrderProxy.js  – DROP-IN REPLACEMENT
-const fetch = require("node-fetch");
+const fetch = require("./_etsyStop").guard(require("node-fetch"), "etsyOrderProxy");
 
 exports.handler = async function (event) {
   try {

@@ -71,7 +71,7 @@
 
 "use strict";
 
-const fetch = require("node-fetch");
+const fetch = require("./_etsyStop").guard(require("node-fetch"), "etsyMailSync-background");
 const admin = require("./firebaseAdmin");
 const meter = require("./_etsyApiMeter");
 

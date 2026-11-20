@@ -36,7 +36,7 @@
  *  See _etsyApiMeter.js for the full site-ID list.
  */
 
-const fetch = require("node-fetch");
+const fetch = require("./_etsyStop").guard(require("node-fetch"), "_etsyMailEtsy");
 const admin = require("./firebaseAdmin");
 const meter = require("./_etsyApiMeter");
 

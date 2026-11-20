@@ -34,7 +34,7 @@
  *    - order.imageFetch    → per-listing /listings/{id}/images fetch
  */
 
-const fetch = require("node-fetch");
+const fetch = require("./_etsyStop").guard(require("node-fetch"), "etsyMailOrder");
 const admin = require("./firebaseAdmin");
 const meter = require("./_etsyApiMeter");
 

@@ -1,4 +1,4 @@
- const fetch = require("node-fetch");
+ const fetch = require("./_etsyStop").guard(require("node-fetch"), "refreshEtsyToken");
  
  exports.handler = async (event) => {
    if (event.httpMethod === "OPTIONS") {

@@ -235,7 +235,7 @@ async function readNewest(deps, tally, now, want, plan, deadline, sweeping) {
 }
 
 const defaults = () => ({
-  fetch: (...a) => require("node-fetch")(...a),
+  fetch: (...a) => require("./_etsyStop").guard(require("node-fetch"), "_charmNestSandboxPull")(...a),
   token: () => require("./_etsyMailEtsy").getValidEtsyAccessToken(),
   meter: require("./_etsyApiMeter")
 });

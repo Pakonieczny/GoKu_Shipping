@@ -1,5 +1,5 @@
 // netlify/functions/duplicateListing.js
-const fetch = require("node-fetch");
+const fetch = require("./_etsyStop").guard(require("node-fetch"), "duplicateListing");
 const FormData = require("form-data");
 
 const API_BASE = "https://openapi.etsy.com/v3/application";

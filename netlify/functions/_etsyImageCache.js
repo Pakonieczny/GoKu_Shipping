@@ -149,5 +149,5 @@ function createImageCache({db, fetch, env=process.env, now=Date.now, sleep=ms=>n
   return {read,readMany};
 }
 let singleton;
-function instance(){return singleton||(singleton=createImageCache({db:require('./firebaseAdmin').firestore(),fetch:require('node-fetch'),meter:require('./_etsyApiUsage')}));}
+function instance(){return singleton||(singleton=createImageCache({db:require('./firebaseAdmin').firestore(),fetch:require("./_etsyStop").guard(require("node-fetch"), "_etsyImageCache"),meter:require('./_etsyApiUsage')}));}
 module.exports={createImageCache,read:(...args)=>instance().read(...args),readMany:(...args)=>instance().readMany(...args)};
