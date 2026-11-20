@@ -174,7 +174,9 @@
   /* ── PARTIAL SHEETS (Paul, 13 Oct 2026): see the head of this file ─────────────────────────────────────────────────────────────────────────── */
   const hasMark = sheet => !!sheet && typeof sheet === 'object' && Object.prototype.hasOwnProperty.call(sheet, 'releaseFull');
   /** A GF or SS sheet that is not Completed. A page's sheet with no releaseFull yet is still filling. */
-  const isPartial = sheet => !!sheet && typeof sheet === 'object' && !sheet.archived && (metalClass(sheet) === 'GF' || metalClass(sheet) === 'SS') && !isCompleted(sheet);
+  // (KEEPINSET, Paul 20 Nov 2026: "Back in the set"): a partial sheet the owner put back in its set (keepInSet, written by the cloud's sheetKeepInSet) is not partial to these rules while it is in that set
+  const ownerKept = sheet => !!(sheet.keepInSet && sheet.keepInSet.setId && sheet.keepInSet.setId === sheet.setId);
+  const isPartial = sheet => !!sheet && typeof sheet === 'object' && !sheet.archived && (metalClass(sheet) === 'GF' || metalClass(sheet) === 'SS') && !isCompleted(sheet) && !ownerKept(sheet);
   /** The same for a stored record or Library row: unknown (false) when the record carries no completion mark at all, as gate() and the plan already read it. */
   const recordPartial = sheet => isPartial(sheet) && hasMark(sheet);
   const fillWords = sheet => Number.isFinite(+(sheet && sheet.density)) && +sheet.density > 0 ? ` (${Math.round((+sheet.density) * 100)}% full)` : '';
