@@ -5458,7 +5458,8 @@ async function op_computerList() {
     for (const [kind, want] of [["openChips", cloud.openChips], ["doneChips", cloud.doneChips]]) { const have = sc[kind] || {}; for (const k of new Set(Object.keys(want).concat(Object.keys(have)))) if ((+have[k] || 0) !== (+want[k] || 0)) diff.push(`${kind === "openChips" ? "Open" : "Resolved"} ${k} ${+have[k] || 0} (cloud ${+want[k] || 0})`); }
     // (every tab: the rail's steps, the Design & Engrave tab's orders, the Library's totals)
     if (cloud.flow && sc.flow) for (const k of Object.keys(cloud.flow)) if ((+sc.flow[k] || 0) !== (+cloud.flow[k] || 0)) diff.push(`rail ${k} ${+sc.flow[k] || 0} (cloud ${+cloud.flow[k] || 0})`);
-    if (cloud.engraveOrders != null && sc.engrave && sc.engrave.orders != null && +sc.engrave.orders !== cloud.engraveOrders) diff.push(`Design & Engrave orders ${sc.engrave.orders} (cloud ${cloud.engraveOrders})`);
+    // (the cloud counts the orders whose engraving it holds; an order listed only for a monogram to approve is the custom card's design: the screen says how many, and they are left out here)
+    if (cloud.engraveOrders != null && sc.engrave && sc.engrave.orders != null) { const mono = +sc.engrave.monoOnly || 0, eo = +sc.engrave.orders - mono; if (eo !== cloud.engraveOrders) diff.push(`Design & Engrave orders with engraving ${eo} (cloud ${cloud.engraveOrders})${mono ? `, and ${mono} monogram order${mono === 1 ? "" : "s"}` : ""}`); }
     if (cloud.library && sc.library) for (const k of ["sheets", "charms"]) if (sc.library[k] != null && +sc.library[k] !== cloud.library[k]) diff.push(`Library ${k} ${sc.library[k]} (cloud ${cloud.library[k]})`);
     x.screenSame = !diff.length; x.screenDiff = diff.slice(0, 24);
   }
@@ -5467,7 +5468,9 @@ async function op_computerList() {
     const recent = computers.filter(x => x.ageS < 600 && x.screen).map(x => { let sc = null; try { sc = JSON.parse(x.screen); } catch (_) { sc = null; } return sc ? { x, sc } : null; }).filter(Boolean);
     const flat = (o, pre, out) => { for (const [k, v] of Object.entries(o || {})) { if (v && typeof v === "object" && !Array.isArray(v)) flat(v, pre + k + ".", out); else out[pre + k] = v; } return out; };
     const fl = recent.map(e => flat(e.sc, "", {})), keys = new Set(fl.flatMap(f => Object.keys(f))), apart = [];
-    for (const k of keys) { const vals = fl.map(f => (k in f ? JSON.stringify(f[k]) : "—")); if (new Set(vals).size > 1) apart.push(k + ": " + recent.map((e, i) => `${e.x.by || e.x.dev} ${vals[i]}`).join(" / ")); }
+    // (what a person happens to be looking at is no difference: the tab shown, how long ago a list was drawn, and the Library's painted list on a computer whose Library was never drawn)
+    const skipK = k => /(^|\.)agoS$/.test(k) || k === "painted.tab", drawn = (f, k) => !/^painted\.lib\./.test(k) || +f["painted.lib.n"] > 0;
+    for (const k of keys) { if (skipK(k)) continue; const idx = fl.map((f, i) => i).filter(i => drawn(fl[i], k)); if (idx.length < 2) continue; const vals = idx.map(i => (k in fl[i] ? JSON.stringify(fl[i][k]) : "—")); if (new Set(vals).size > 1) apart.push(k + ": " + idx.map((i, j) => `${recent[i].x.by || recent[i].x.dev} ${vals[j]}`).join(" / ")); }
     for (const e of recent) e.x.screensApart = apart.slice(0, 30);
   } catch (_) { /* the comparison with the cloud stands */ }
   return { computers, at: now, cloudScreen: cloud };
