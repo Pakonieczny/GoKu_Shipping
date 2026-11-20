@@ -122,7 +122,8 @@
   function rename(p, c) {
     if (c.fb) { p.fileBase = c.fb; if (p.folder != null) p.folder = c.fb; }
     p.setId = c.set || null; p.draft = !!c.d;
-    p.sheetIndex = c.si || null; p.setSeq = c.sq || null; if (c.pg) p.page = c.pg;
+    p.sheetIndex = c.si || null; p.setSeq = c.sq || null; p.seq = c.sq || null; if (c.pg) p.page = c.pg;
+    { const m = /^set-(\d{4}-\d{2}-\d{2})-/.exec(String(c.set || "")); if (m) p.setDay = m[1]; }   // (the card's head reads its set and day from these: "Set 3 · Nov 12")
     if (c.so === 0) p.solidIncluded = false; else if (p.solidIncluded === false && c.so === 1) p.solidIncluded = true;
   }
   const idle = async () => { try { await (root.CharmNestInteraction && typeof root.CharmNestInteraction.idle === "function" ? root.CharmNestInteraction.idle() : null); } catch (_) {} const q = 5000 - (Date.now() - lastInput); if (q > 0) await new Promise(r => setTimeout(r, q)); };
@@ -188,6 +189,7 @@
           rep.checked = first.held; rep.behindN = first.behind.length; rep.behind = first.behind.map(b => short(b.p) + " " + b.from + "→" + b.to); rep.unverifiedN = first.unverified.length; rep.missingN = first.missing.length; rep.extraN = first.extra.length; rep.inHandN = first.inHand.length;
           let after = first;
           // (SHEETNAMES: a following computer takes each sheet's name, set and draft mark from its record, then draws its cards again)
+          { const fs = safe(() => root.Recall.followState(), null); if (fs && fs.at) rep.note = (`follow ${Math.round((Date.now() - fs.at) / 1000)}s ago: ${fs.result}` + (fs.kept && fs.kept.length ? ` · kept ${fs.kept.join(", ")}` : "")).slice(0, 100); }
           rep.misnamedN = first.misnamed.length; rep.misnamed = first.misnamed.slice(0, 12).map(x => fbOf(x.p).slice(0, 40) + " → " + String(x.c.fb || "").slice(0, 40));
           if (m === "on" && !carrier && first.misnamed.length) {
             for (const x of first.misnamed) safe(() => rename(x.p, x.c));
@@ -218,7 +220,29 @@
         // (and the first cards each list shows, in its order: the same cards first on every computer, or not; the Orders tab's three piles as their chips say them)
         const top = sel => { const host = doc && doc.querySelector(sel); if (!host) return null; const ks = []; for (const x of host.querySelectorAll("[data-mkey]")) { const k = x.dataset.mkey; if (k && !/^(day|ordEmpty):/.test(k) && !ks.includes(k)) ks.push(k); if (ks.length >= 8) break; } return ks.length ? ks.join(" ") : null; };
         const piles = { open: safe(() => (root.Orders && root.Orders.tabCount ? root.Orders.tabCount() : null), null), completed: safe(() => root.CNCompleted.count(), null), cancelled: safe(() => root.Cancelled.count(), null), chips: bar("#ordChips") };
-        return { tab: safe(() => root.CN.S.mode, null), review: bar("#reviewView .ordBar"), orders: bar("#ordersView .ordBar"), engrave: bar("#engraveView .ordBar"), rail, piles,
+        // (SHEETSAME: every Nest card's list of sheets, as its menu lists them: name and count, in its order, the one on screen marked)
+        const nest = safe(() => {
+          if (typeof S === "undefined" || !S.sheets || typeof sheetMenuOrder !== "function" || typeof sheetMenuLabel !== "function") return null;
+          const N = root.CharmNestSheetName, out = {};
+          for (const [m, prim] of Object.entries(S.sheets)) {
+            if (!prim || !Array.isArray(prim.pages)) continue;
+            const sh = prim.pages[prim.active] || prim, pieces = typeof sheetPieces === "function" ? sheetPieces : p => (p.charms || []).length;
+            const pages = prim.pages;
+            if (!pages.length || (pages.length === 1 && !pieces(pages[0]) && !pages[0].sheetId)) continue;
+            out[m] = sheetMenuOrder(pages).map(pg => (pg === sh ? "*" : "") + sheetMenuLabel(pg, pages) + " " + (typeof tabFacts === "function" ? tabFacts(pg).mark || "" : pieces(pg))).join(" | ").slice(0, 600);
+          }
+          return out;
+        }, null);
+        // (Paul, 20 Nov 2026: "doublecheck that everything is correctly syncing ... on the library tab. Ensure that every sheet every part every date every order is exactly the same"): the Library's rows as this
+        //  computer holds them: each sheet's id, name, pieces, set, draft mark, cut mark and day, in id order, and when the list was read
+        const lib = safe(() => {
+          if (typeof S === "undefined" || !S.library || !Array.isArray(S.library.rows)) return null;
+          const N = root.CharmNestSheetName, rows = S.library.rows.filter(r => r && r.id).slice().sort((a, b) => String(a.id).localeCompare(String(b.id)));
+          const one = r => [String(r.id).slice(-8), (N ? N.qualified(r) : r.fileBase || ""), +r.charmCount || (r.poolIds || []).length || 0, r.draft ? "d" : "", +r.laserDoneAt > 0 || r.roseCutAt ? "cut" : "", r.archived ? "arch" : "", String(r.day || "")].join(":");
+          const all = rows.map(one), h = all.join("|"); let x = 2166136261; for (let i = 0; i < h.length; i++) { x ^= h.charCodeAt(i); x = Math.imul(x, 16777619); }
+          return { n: rows.length, metal: S.library.metal || "", tab: S.library.tab || safe(() => root.localStorage.getItem("cn.libTab"), "") || "", agoS: Math.round((Date.now() - (+S.library.loadedAt || 0)) / 1000), sig: (x >>> 0).toString(36), list: all.join(" | ").slice(0, 2300) };
+        }, null);
+        return { nest, lib, tab: safe(() => root.CN.S.mode, null), review: bar("#reviewView .ordBar"), orders: bar("#ordersView .ordBar"), engrave: bar("#engraveView .ordBar"), rail, piles,
           reviewTop: top("#reviewView #rvList"), ordersTop: top("#ordersView #ordBody"), engraveTop: top("#engraveView .egPlacementList") };
       }, null);
       safe(() => { const t = id => { const e = doc && doc.getElementById(id); return e ? +(String(e.textContent || "").replace(/\D/g, "")) || 0 : null; }, sc = root.Review && typeof root.Review.screen === "function" ? root.Review.screen() : null;
@@ -227,7 +251,7 @@
         const E = root.Engrave, eng = E && E.pendingRows ? safe(() => ({ rows: E.pendingRows(), orders: E.pendingOrderIds ? E.pendingOrderIds().size : null, decided: E.reviewedRows ? E.reviewedRows() : null, offCloud: safe(() => root.CloudWorld.engraveOff().n, null), offList: safe(() => root.CloudWorld.engraveOff().list, null) }), null) : null;
         const lt = safe(() => String((doc.getElementById("cloudText") || {}).textContent || ""), ""), lm = /Library · ([\d,]+) sheets?(?: · ([\d,]+) charms?)?/.exec(lt);
         const library = lm ? { sheets: +lm[1].replace(/,/g, ""), charms: lm[2] ? +lm[2].replace(/,/g, "") : 0 } : null;
-        rep.screen = JSON.stringify({ reviewBadge: t("tabReviewN"), designBadge: t("tabEngraveN"), ordersBadge: t("tabOrdersN"), open: sc ? sc.open : null, resolved: sc ? sc.resolved : null, openChips: sc ? sc.openChips : null, doneChips: sc ? sc.doneChips : null, flow: fl, flowFrom: safe(() => (root.Orders.flowPeek() || {}).cloud ? "cloud" : "here", null), engrave: eng, library, painted: painted() }).slice(0, 3800); });
+        rep.screen = JSON.stringify({ reviewBadge: t("tabReviewN"), designBadge: t("tabEngraveN"), ordersBadge: t("tabOrdersN"), open: sc ? sc.open : null, resolved: sc ? sc.resolved : null, openChips: sc ? sc.openChips : null, doneChips: sc ? sc.doneChips : null, flow: fl, flowFrom: safe(() => (root.Orders.flowPeek() || {}).cloud ? "cloud" : "here", null), engrave: eng, library, painted: painted() }).slice(0, 7800); });
       st.checks++; st.last = rep; st.at = Date.now(); lastDone = st.at;
       mark(rep);
       try { const why = stuckWhy(); if (why.length) rep.still = (Array.isArray(rep.still) ? rep.still : []).concat(why).slice(0, 40); } catch (_) { /* a report without it */ }
