@@ -4050,7 +4050,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-engrave-preview.js?v=20261012-pv1-r2th1-th2-bg1-sb2-cb1-rf2-mg1-up1-es1-bb1-fa2"></script>
 <script src="charm-nest-run-follow.js?v=1120-world2-rlh1-v14-it2-s1"></script>
 <script src="charm-nest-drive.js?v=1120-drive1-on1"></script><!-- charm-nest-drive.js: the cloud drive on this page (CLOUDDRIVE build steps 8 and 15): Settings → Cloud, the hand-over to the cloud, taking a run back from the cloud on Resume; dormant while the drive is off -->
-<script src="charm-nest-viewer.js?v=1120-v14-on1-fl1-va2-ds1-it1-it8-g2-s4-s3-s2-s5"></script>   <!-- CLOUDDRIVE build step 14: pages become viewers when the cloud carries every run (Charm_Nest_Open/drive mode "on"); dormant in every other mode -->
+<script src="charm-nest-cmd-now.js?v=1121-now"></script>   <!-- NOWCMD (Paul 21 Nov 2026): every press that asks the cloud is followed until the cloud answers: its step, its words, a failure in red with Try again -->
+<script src="charm-nest-viewer.js?v=1120-v14-on1-fl1-va2-ds1-it1-it8-g2-s4-s3-s2-s5-now"></script>   <!-- CLOUDDRIVE build step 14: pages become viewers when the cloud carries every run (Charm_Nest_Open/drive mode "on"); dormant in every other mode -->
 <script src="charm-nest-cloud-sheets.js?v=1117-dfdd13cc-s4"></script>
 <script src="charm-nest-drift.js?v=1120-world14-all1"></script><script src="charm-nest-cloud-world.js?v=1120-world8-v14-it2"></script><!-- charm-nest-cloud-world.js: the cloud world on this page, in memory only; a computer that carries no run takes its order lines from it (CLOUDWORLD stage B, Paul 20 Nov 2026) -->
 <script src="charm-nest-cloud-activity.js?v=20261113-ca1"></script>   <!-- CLOUDALL S4 (Paul 13 Nov 2026): every computer's activity log lines shared through the cloud -->   <!-- CLOUDALL (Paul 13 Nov 2026): every sheet is one cloud document, changed from any computer, followed by every computer -->   <!-- RUNFOLLOW (Paul 13 Nov 2026): a computer without the run follows the cloud run's lines (held, pooled, taken out) -->
@@ -9112,10 +9113,10 @@ boot();
 <!-- WRONGCHARM (Paul, 18 Oct 2026, order 4193072538): "Wrong charm?" on a matched order's piece: whether a line can be corrected, the open orders of its listing the pick reaches, the one confirming line (charm-nest-charm-fix.js; the bridge's Review.fixCharm saves the listing's link and LISTPICK re-makes the orders) -->
 <script src="charm-nest-charm-fix.js?v=20261018-wc1-rp1"></script>
 <!-- WRONGCHARM2 (Paul, 20 Oct 2026): the progress panel of every "relink everywhere" (a Wrong charm? pick, a listing pick, Save to the charm repository and link this listing): one line per place updated (charm-nest-relink-flow.js; the bridge's Review.relinkFlow does the work) -->
-<script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26"></script>
+<script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26-now"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=1120-pair2-pmake1-apc1-place1-v14-dr1-dr2-sd1-sl1-or1-fa1-br1-sbc1-photo1-rm1-va1-it9-k14-it8-vi7-i16-cs1-g6-g9-s1-g4-s4-s3-s2"></script>
+<script src="charm-nest-bridge.js?v=1120-pair2-pmake1-apc1-place1-v14-dr1-dr2-sd1-sl1-or1-fa1-br1-sbc1-photo1-rm1-va1-it9-k14-it8-vi7-i16-cs1-g6-g9-s1-g4-s4-s3-s2-cd-now"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1-sy1-sy2"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1-ob1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
@@ -9124,7 +9125,7 @@ boot();
 <script src="charm-nest-custom-pool.js?v=20261028-cp1-hc1-hc2-cpx1-bm1-pf1-ce1"></script>
 <script src="charm-nest-custom-orders.js?v=20261028-co1-cpx1-ol1"></script>
 <!-- SEND TO SHEET (Design & Engrave, Paul 28 Oct 2026: "some sort of a sophisticated pop-up modal that presents the user with all of these options"): a design from the Charm Designer put on the next sheet of a metal the person picks, marked handmade custom, for an order or for none; a custom order opened in the Charm Designer (charm-nest-custom-piece.js) -->
-<script src="charm-nest-custom-piece.js?v=20261028-sndsh1-ce1-ed1-nc1-ns1-et1-oh1-ces1-ces2-ces3-bm1-on1-sk2-gn1-apv1-ce1"></script>
+<script src="charm-nest-custom-piece.js?v=20261028-sndsh1-ce1-ed1-nc1-ns1-et1-oh1-ces1-ces2-ces3-bm1-on1-sk2-gn1-apv1-ce1-now"></script>
 <!-- CPX1 (Paul, 9 Nov 2026, order 4225890898): the Custom portion of an order completed in the Charm Editor: the card after a piece's Save offers it at its top, it is taken off its sheet and released from Review, with an Undo -->
 <script src="charm-nest-custom-done.js?v=20261121-item10-g78"></script>
 <script>
@@ -9195,9 +9196,9 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=1117-c7a0840c-v14-all1-rm1-fl1-it1-qr6-i5-it4-g1-s5"></script>
+<script src="charm-nest-sheetwin.js?v=1117-c7a0840c-v14-all1-rm1-fl1-it1-qr6-i5-it4-g1-s5-now"></script>
 <!-- 10K / 14K: a charm dragged onto the next or previous sheet of its metal, in the sheet window's Manual Control (SheetHop; Paul, 18 Oct 2026) -->
-<script src="charm-nest-sheet-hop.js?v=20261018-hop1-hp2-mv1-mc9-mi9b-gk1-fr1-ged1-hm1-b3-i13-g2"></script>
+<script src="charm-nest-sheet-hop.js?v=20261018-hop1-hp2-mv1-mc9-mi9b-gk1-fr1-ged1-hm1-b3-i13-g2-now"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
 <script src="charm-nest-order-hold.js?v=20261005-oh5-pf2-gc1-pr1-al1-cg1-dr2-id1-hp1-sp1"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
@@ -9222,11 +9223,11 @@ try {
 <script src="charm-nest-library-dnd.js?v=20261005-so2-mm1-ls1-ls2-gc2-gf1-lf1"></script>
 <script src="charm-nest-library-cutline.js?v=20261007-gc2-sn1"></script>
 <!-- the Partial sheets card of the Options window: the list of partial sheets, the policy, the chain strip and the re-seat animation (PartialSheetsUI; its data is PartialSheets, its work PartialEngine) -->
-<script src="charm-nest-partial-ui.js?v=20261007-ps1-os1-mn2-pso1-psc1-pp1-sn1-i11"></script>
+<script src="charm-nest-partial-ui.js?v=20261007-ps1-os1-mn2-pso1-psc1-pp1-sn1-i11-now"></script>
 <!-- the Options window (Paul, 7 Oct): one large window for a sheet card's Options: This sheet, Partial sheets, Sheet history, All partial sheets (OptionsStudio) -->
 <script src="charm-nest-options-history.js?v=20261007-oh1-cards"></script>
 <script src="charm-nest-options-modal.js?v=onegrid-1115b"></script>
-<script src="charm-nest-options-sheets.js?v=moveshow-1115l-v14-g9"></script>
+<script src="charm-nest-options-sheets.js?v=moveshow-1115l-v14-g9-now"></script>
 <script src="charm-nest-library-engraving.js?v=20261005-egl1-eu3"></script>
 <script src="charm-nest-piece-dots.js?v=20261005-pd1-pow2-sl1"></script>
 <!-- a sheet an order in the Review tab holds back: the one line that says which order and piece, where the app tells what holds a sheet (Library Approve line and rails, sheet window, Nest card; LibraryReviewHold) -->

@@ -749,12 +749,20 @@
     setOpen(false); endHold(); paintPlateFx(); refresh(true);
     const anchor = () => (H.docks[dk.side] && H.docks[dk.side].el) || K.W.el.plateBox;
     K.note(anchor(), { text: `Order ${u.rid}: asked — the cloud moves ${one ? "the charm" : u.pieces.length + " pieces"} to ${tName}, where ${one ? "it was" : "they were"} put.`, tone: "ok" });
-    const end = (ok, text) => {
+    const end = (ok, text, shown) => {
       CLOUD_ASKED.delete(src.sheetId); CLOUD_ASKED.delete(target.sheetId); H.landing.delete(target.sheetId); refresh(true);
       tryDo(() => F.now("hop"));
+      if (!ok && shown) return;   // (NOWCMD: the follower said it, in red, with Try again)
       tryDo(() => toast(ok ? text : `Order ${u.rid} was not moved to ${tName}: ${String(text || "the cloud refused it").replace(/\.$/, "")}. ${stay}`, ok ? (free ? "warn" : "ok") : "bad", 9000));
     };
     (async () => {
+      /* NOWCMD (Paul 21 Nov 2026): followed by the page's one follower until the cloud answers (it takes the move up within seconds): a failure in red with Try again (the same move asked
+         again), and 5 minutes with no answer said plainly in red, still followed in the background */
+      const N = window.CNCmdNow, napi = b => api("charmNestLibrary", b, { quiet: true });
+      if (N && typeof N.follow === "function") {
+        const f = await N.follow(runId, r.id, { api: napi, label: `Order ${u.rid} to ${tName}`, resend: () => N.put(cmd, { api: napi, runId, dev, by: who }) });
+        return end(!!f.ok, f.ok ? String(f.text || "") : `${f.text}`, !f.ok);
+      }
       for (const t0 = Date.now(); Date.now() - t0 < 600000;) {
         await wait(Date.now() - t0 < 60000 ? 2500 : 6000);
         let list = null; try { list = await api("charmNestLibrary", { op: "runCmdList", runId }, { quiet: true }); } catch (_) { continue; }

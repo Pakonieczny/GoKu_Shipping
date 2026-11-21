@@ -119,8 +119,8 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
       const d = e.target.closest && e.target.closest('[data-sh-del]'); if (d) return del(M, d.closest('.osSh').dataset.id);
       const m = e.target.closest && e.target.closest('[data-sh-empty]'); if (m) emptyAsk(M, m.closest('.osSh').dataset.id);
     });
-    head.addEventListener('click', e => { if (e.target.closest && e.target.closest('[data-sh-cancel]')) cancelRel(M); });
-    planEl.addEventListener('click', e => planClick(M, e)); bannerEl.addEventListener('click', e => { if (e.target.closest && e.target.closest('[data-sh-dismiss]')) { M.sheetsUI.banner = null; renderBanner(M); } });
+    head.addEventListener('click', e => { if (e.target.closest && e.target.closest('[data-sh-cancel]')) cancelRel(M); if (e.target.closest && e.target.closest('[data-sh-retry]') && M.sheetsUI.rel && M.sheetsUI.rel.retry) retryRel(M, M.sheetsUI.rel.retry); });
+    planEl.addEventListener('click', e => planClick(M, e)); bannerEl.addEventListener('click', e => { if (e.target.closest && e.target.closest('[data-sh-dismiss]')) { M.sheetsUI.banner = null; renderBanner(M); } if (e.target.closest && e.target.closest('[data-sh-retry]') && M.sheetsUI.banner && M.sheetsUI.banner.retry) retryRel(M, M.sheetsUI.banner.retry); });
     planEl.addEventListener('keydown', e => { if (e.key === 'Escape' && M.sheetsUI.plan) { e.stopPropagation(); planCancel(M); } });
     return null;
   }
@@ -166,10 +166,15 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     const its = (ST().items || []).filter(x => (x.stockId || x.id) === r.stockId).sort((a, b) => (+b.revision || 0) - (+a.revision || 0)), c = its[0];
     return c ? cap(cardLabel(c)) : `a ${r.size} sheet`;
   };
+  const LATE_WORDS = 'The cloud has not done it yet — it is still queued; check again or press Try again', LATE_MS = 300000;   // (NOWCMD)
+  /** NOWCMD: a failure or a late answer of the cloud is also said in a toast, with Try again (the same request sent again from this grid) */
+  const shout = (M, rel, res) => { try { if (root.CNCmdNow && root.CNCmdNow.shout) root.CNCmdNow.shout(Object.assign({ runId: rel.runId, id: rel.id }, res), { label: rel.label || 'Sheets', onRetry: () => retryRel(M, rel) }); } catch (_) {} };
   const ago = at => { const m = Math.floor((Date.now() - at) / 60000); return m < 1 ? 'just now' : m === 1 ? '1 min ago' : m + ' min ago'; };
   const relWords = r => {
     if (!r.sent) return r.text;
-    if (r.cloud) return `${r.label || 'A request'} — sent to the cloud ${ago(r.at)}, waiting for the cloud` + (r.warn ? '. ' + r.warn : '') + (Date.now() - r.at > 60000 ? '. The cloud has not finished it yet: it carries on by itself (every minute or so). Nothing more is needed here' : '');   // (G9: in mode "on" the cloud does the request: no computer is named)
+    /* NOWCMD (Paul 21 Nov 2026: "if the cloud does not properly update this and there's a mistake the user will never know"): the cloud takes a person's request up within seconds; the line
+       says what it is doing until it answers, never "nothing more is needed"; after 5 minutes with no answer it says so plainly, in red, with Try again */
+    if (r.cloud) return r.late ? `${r.label || 'A request'} — ${LATE_WORDS}` + (r.warn ? '. ' + r.warn : '') : `${r.label || 'A request'} — ${r.step ? 'the cloud is doing it… ' + r.step : Date.now() - r.at > 60000 ? `the cloud has it queued — it has not started yet (asked ${ago(r.at)})…` : 'the cloud has it — it starts within seconds…'}` + (r.warn ? '. ' + r.warn : '');   // (G9: in mode "on" the cloud does the request: no computer is named)
     return `${r.label || 'A request'} — sent to ${r.name} ${ago(r.at)}, waiting for that computer` + (r.warn ? '. ' + r.warn : '') + (Date.now() - r.at > 60000 ? '. That computer has not answered: check Brites Manager is open on it (reload it once if it was open since before today\'s update)' : '');
   };
 
@@ -206,7 +211,7 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     pictures(S, rows);
     const sd = S.el.querySelector('[data-sh="said"]'), cur = S.rel || S.say, text = cur ? (S.rel ? relWords(S.rel) : S.say.text) : showSaid;
     sd.hidden = !text; sd.classList.toggle('bad', !!(cur && cur.bad));
-    sd.innerHTML = (cur && cur.spin ? '<span class="osShSpin" aria-hidden="true"></span>' : '') + esc(text) + (S.rel && S.rel.sent && S.rel.spin ? ' <button type="button" class="btn ghost xs" data-sh-cancel>Cancel this request</button>' : '');
+    sd.innerHTML = (cur && cur.spin ? '<span class="osShSpin" aria-hidden="true"></span>' : '') + esc(text) + (S.rel && S.rel.retry ? ' <button type="button" class="btn xs" data-sh-retry>Try again</button>' : '') + (S.rel && S.rel.sent && S.rel.spin ? ' <button type="button" class="btn ghost xs" data-sh-cancel>Cancel this request</button>' : '');   // (NOWCMD: Try again on a cloud failure or a late answer)
     if (keepFocus && keepFocus.id) { const n = [...S.wrap.querySelectorAll('.osSh')].find(x => x.dataset.id === keepFocus.id); if (n) { try { n.focus({ preventScroll: true }); } catch (_) {} } }
     decorate(M);
     if (S.pulse) { const n = [...S.wrap.querySelectorAll('.osSh')].find(x => x.dataset.id === S.pulse); if (n) { n.classList.add('osShPulse'); setTimeout(() => n.classList.remove('osShPulse'), 1400); } S.pulse = ''; }
@@ -216,7 +221,15 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
 
   /* ── the computer that only follows the run: the gesture is sent to the one that carries it ── */
   function stopRel(S) { if (S.poll) { clearInterval(S.poll); S.poll = 0; } if (S.sub) { try { S.sub.stop(); } catch (_) {} S.sub = null; } }
-  const endRel = (M, rel) => { const S = M.sheetsUI; stopRel(S); S.rel = rel; paint(M, true); setTimeout(() => { if (S.rel === rel) { S.rel = null; paint(M, true); } }, 90000); };
+  const endRel = (M, rel) => { const S = M.sheetsUI; stopRel(S); S.rel = rel; paint(M, true); if (rel && rel.keep) return; setTimeout(() => { if (S.rel === rel) { S.rel = null; paint(M, true); } }, 90000); };   // (NOWCMD: a cloud failure stays, red, with its Try again)
+  /** NOWCMD · Try again: the same request sent again (one still waiting is cancelled first, so it is never done twice). */
+  async function retryRel(M, rel) {
+    const S = M.sheetsUI; if (!S || !rel || !rel.cmd) return false;
+    if (rel.id && rel.spin) { try { await api({ op: 'runCmdCancel', runId: rel.runId, id: rel.id, dev: devId() }); } catch (_) {} }
+    if (S.rel === rel || (S.rel && !S.rel.spin) || (S.rel && S.rel.retry === rel)) { stopRel(S); S.rel = null; }
+    if (S.banner && S.banner.retry) { S.banner = null; renderBanner(M); }
+    return send(M, rel.cmd, rel.label);
+  }
   async function readRel(M) {
     const S = M.sheetsUI; if (!S || !S.rel || !S.rel.id || !S.rel.spin) return;
     const rel = S.rel; let res = null; try { res = await api({ op: 'runCmdList', runId: rel.runId }); } catch (_) { return; }
@@ -225,12 +238,19 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     const mv = S.move && S.move.rid === rel.id ? S.move : null;   // (MOVESHOW: the move this request belongs to)
     if (c && (c.state === 'done' || c.state === 'failed')) {
       const bad = c.state === 'failed', text = c.text || (bad ? (rel.cloud ? 'The cloud could not do that.' : 'The computer that carries the run could not do that.') : 'Done');
-      if (mv) { stopRel(S); S.rel = null; return void finishMove(M, mv, { text, bad, freed: !bad && /back in the repository as Available/.test(text) ? (c.freed || true) : false }); }
-      endRel(M, { text, bad, spin: false });
+      if (bad && rel.cloud) shout(M, rel, { failed: true, text });   // (NOWCMD: a toast too, with Try again)
+      if (mv) { stopRel(S); S.rel = null; return void finishMove(M, mv, { text, bad, freed: !bad && /back in the repository as Available/.test(text) ? (c.freed || true) : false, retry: bad && rel.cloud ? rel : null }); }
+      endRel(M, bad && rel.cloud ? { text: `${rel.label || 'The request'}: not done — ${String(text).replace(/\.$/, '')}`, bad, spin: false, keep: true, retry: rel } : { text, bad, spin: false });
       if (rel.kind === 'seat' && !bad) { try { root.OptionsStudio && OptionsStudio.reload && OptionsStudio.reload(); } catch (_) {} }
     } else if (c && c.state === 'cancelled') { if (mv) endMove(M, mv); endRel(M, { text: `Cancelled: ${rel.label || 'the request'}. Nothing was done.`, bad: false, spin: false }); }
-    else if (Date.now() - rel.at > 11 * 60000) { if (mv) endMove(M, mv); endRel(M, { text: rel.cloud ? 'The cloud did not answer. Look at the sheets again, then try once more.' : 'The computer that carries the run did not answer. Look at the sheets again, then try once more.', bad: true, spin: false }); }
+    else if (rel.cloud && Date.now() - rel.at > LATE_MS && Date.now() - rel.at < 6 * 3600000) {   // (NOWCMD: no answer after 5 minutes: said in red, with Try again; still followed, and its answer shown when it comes)
+      if (c && c.step) rel.step = c.step;
+      if (!rel.late) { rel.late = true; rel.bad = true; rel.retry = !c || c.state === 'waiting' ? rel : null; shout(M, rel, { late: true, queued: !c || c.state === 'waiting', text: LATE_WORDS }); }
+      paint(M, true);
+    }
+    else if (Date.now() - rel.at > (rel.cloud ? 6 * 3600000 : 11 * 60000)) { if (mv) endMove(M, mv); endRel(M, { text: rel.cloud ? 'The cloud did not answer. Look at the sheets again, then try once more.' : 'The computer that carries the run did not answer. Look at the sheets again, then try once more.', bad: true, spin: false }); }
     else {
+      if (rel.cloud && c && c.step) rel.step = c.step;   // (NOWCMD: the cloud's own step on the line)
       if (mv && c && c.state === 'running') { rel.running = true; if (c.step) { mv.step = { text: `${rel.cloud ? 'The cloud' : rel.name + "'s computer"}: ${c.step}`, pct: Number.isFinite(+c.stepPct) ? +c.stepPct : null }; updateOv(M); if (!mv.relayPic || mv.relayPic !== c.step) { mv.relayPic = c.step; livePic(M, mv); } } }
       paint(M, !!mv);
     }
@@ -257,7 +277,7 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
       const cloud = onMode || !!(c && c.carrier && c.carrier.dev === 'cloud'), name = cloud ? 'the cloud' : (c && c.carrier && c.carrier.by) || 'the computer that carries the run';   // (G9: the cloud is named as the cloud, never "Cloud's computer")
       const put = await api({ op: 'runCmdPut', runId, cmd: Object.assign({ metal: M.m, label }, cmd), by: who(), dev });
       if (!put || put.error || !put.id) throw new Error((put && put.error) || 'not sent');
-      S.rel = { id: put.id, runId, name, cloud, at: Date.now(), spin: true, sent: true, label, kind: cmd.type }; if (mv) { mv.rid = put.id; mv.step = { text: cloud ? 'Waiting for the cloud…' : `Waiting for ${name}'s computer…` }; updateOv(M); } paint(M, true);
+      S.rel = { id: put.id, runId, name, cloud, at: Date.now(), spin: true, sent: true, label, kind: cmd.type, cmd: Object.assign({}, cmd) }; if (mv) { mv.rid = put.id; mv.step = { text: cloud ? 'Waiting for the cloud…' : `Waiting for ${name}'s computer…` }; updateOv(M); } paint(M, true);
       if (root.CNSync && typeof root.CNSync.follow === 'function' && !S.sub) { try { S.sub = root.CNSync.follow({ name: 'run-cmds', kinds: 'r', wants: k => k === 'r:' + runId, read: () => readRel(M) }); } catch (_) { S.sub = null; } }
       if (!S.poll) S.poll = setInterval(() => readRel(M), mv ? 4000 : 8000);   // (MOVESHOW: a move is looked at every 4 s as well as when the feed names the run)
       readRel(M); return true;
@@ -439,13 +459,13 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     const S = M.sheetsUI; if (!S) return;
     if (S.move === mv) { S.move = null; stopTick(S); }
     { const fid = (res.freed && res.freed.stockId) || (typeof res.freed === 'string' && res.freed) || mv.stockId; if (res.freed && fid) FREED.add(fid); }
-    S.banner = { text: res.text || (res.bad ? 'It was not done.' : 'Done'), bad: !!res.bad, title: res.bad ? mv.title : '' };
+    S.banner = { text: res.text || (res.bad ? 'It was not done.' : 'Done'), bad: !!res.bad, title: res.bad ? mv.title : '', retry: res.retry || null };   // (NOWCMD: a cloud failure keeps its Try again)
     decorate(M); renderBanner(M); paint(M, true);
     if (!res.bad) { const after = () => { if (M.sheetsUI === S) { S.pulse = mv.pulse || mv.id; paint(M, true); decorate(M); } }; try { Promise.resolve(root.OptionsStudio && OptionsStudio.reload && OptionsStudio.reload()).then(after, after); } catch (_) { after(); } }
   }
   function renderBanner(M) {
     const S = M.sheetsUI, B = S.banner, el = S.bannerEl; if (!B) { el.hidden = true; el.innerHTML = ''; return; }
-    el.hidden = false; el.innerHTML = `<div class="osBanner${B.bad ? ' bad' : ''}" role="status" data-banner><div>${B.title ? `<b>${esc(B.bad ? 'Not done: ' + B.title : B.title)}</b>` : ''}${esc(B.text)}</div><button type="button" class="btn ghost xs" data-sh-dismiss>Dismiss</button></div>`;
+    el.hidden = false; el.innerHTML = `<div class="osBanner${B.bad ? ' bad' : ''}" role="status" data-banner><div>${B.title ? `<b>${esc(B.bad ? 'Not done: ' + B.title : B.title)}</b>` : ''}${esc(B.text)}</div>${B.retry ? '<button type="button" class="btn xs" data-sh-retry>Try again</button>' : ''}<button type="button" class="btn ghost xs" data-sh-dismiss>Dismiss</button></div>`;
     try { el.firstElementChild.scrollIntoView({ block: 'nearest' }); } catch (_) {}
   }
   const whyCard = (M, me, c) => {

@@ -342,7 +342,16 @@
     const ids = poolIds.concat(o.replaces ? ['off:' + String(o.replaces)] : []);
     let put = null; try { put = await CNx.api('charmNestLibrary', { op: 'runCmdPut', runId, dev, by, cmd: { type: 'placewaiting', ids, label: `Place the custom piece ${poolIds[0] || ''}`.slice(0, 150) } }, { quiet: true, timeoutMs: 15000 }); } catch (e) { put = { error: (e && e.message) || String(e) }; }
     if (!put || put.error || !put.id) throw new Error(`the piece is recorded (${poolIds[0]}) but the cloud was not asked to place it: ${(put && put.error) || 'no answer'}`);
-    step('Asked: the cloud places it…');
+    step('The cloud has it — it starts within seconds…');
+    /* NOWCMD (Paul 21 Nov 2026): followed until the cloud answers; a failure (thrown: the pop-up stays open and says it) is said in a toast too, with Try again (the same request); 5 minutes with
+       no answer are said plainly in red, and the request is still followed in the background */
+    const N = root.CNCmdNow;
+    if (N && typeof N.follow === 'function') {
+      const napi = b => CNx.api('charmNestLibrary', b, { quiet: true, timeoutMs: 15000 }), cmd = { type: 'placewaiting', ids, label: `Place the custom piece ${poolIds[0] || ''}`.slice(0, 150) };
+      const f = await N.follow(runId, put.id, { api: napi, label: `Custom piece ${poolIds[0] || ''}`.trim(), onStep: t => step(t), gapMs: o.followMs, resend: () => N.put(cmd, { api: napi, runId, dev, by }) });
+      if (f.ok) { try { F.now && F.now('cesend'); } catch (_) {} return String(f.text || 'Placed by the cloud'); }
+      throw new Error(f.late ? f.text : `the cloud did not place it: ${String(f.text || 'not done').replace(/\.$/, '')}`);
+    }
     const nap = ms => new Promise(r => setTimeout(r, ms)), t0 = Date.now(), gap = o.followMs || 2500;
     while (Date.now() - t0 < CLOUD_FOLLOW_MS) {
       await nap(gap);

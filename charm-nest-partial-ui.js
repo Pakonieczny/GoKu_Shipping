@@ -368,7 +368,23 @@
     a.phase = 'seating'; say('Sending the request to the cloud…');
     let put = null; try { put = await cmdApi({ op: 'runCmdPut', runId, cmd: { metal: m, label, type: 'seat', sheetId: sh.sheetId, partialId: ids[0], partialIds: ids }, by, dev }); } catch (e) { return fail('Not sent: ' + ((e && e.message) || e)); }
     if (!put || put.error || !put.id) return fail('Not sent: ' + ((put && put.error) || 'no answer'));
-    say('Sent to the cloud: waiting for it to start…');
+    say('The cloud has it — it starts within seconds…');
+    /* NOWCMD (Paul 21 Nov 2026): the request is followed until the cloud answers; a failure stays in the panel in red and is said in a toast with Try again (the same seat asked again); 5 minutes
+       with no answer are said plainly in red, and the request is still followed in the background */
+    const N = root.CNCmdNow;
+    if (N && typeof N.follow === 'function') {
+      const cmd = { metal: m, label, type: 'seat', sheetId: sh.sheetId, partialId: ids[0], partialIds: ids };
+      const f = await N.follow(runId, put.id, { api: cmdApi, label: 'Partial sheet', onStep: t => say(t), toast: true, resend: () => N.put(cmd, { api: cmdApi, runId, dev, by }) });
+      if (f.ok) {
+        try { PS() && PS().changed && PS().changed(); } catch (_) {}
+        if (s.ask === a) { s.ask = null; s.chain = []; }
+        setOpen(m, false); Promise.resolve(closeOptions(m)).catch(() => {});
+        root.CN && root.CN.toast && root.CN.toast(f.text || `${plural(answer.pieces, 'piece')} seated on the partial sheet`, 'ok');
+        return;
+      }
+      if (s.ask === a) { s.ask = { phase: 'bad', seq: s.seq, text: f.late ? f.text : `Not done: ${f.text}` }; paintView(m); }   // (the toast with Try again is the follower's)
+      return;
+    }
     for (const t0 = Date.now(); ;) {
       await sleep(4000);
       let c = null; try { const res = await cmdApi({ op: 'runCmdList', runId }); c = ((res && res.cmds) || []).find(x => x && x.id === put.id) || null; } catch (_) { /* looked at again in 4 s */ }

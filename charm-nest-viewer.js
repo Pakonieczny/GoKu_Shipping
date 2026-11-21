@@ -543,7 +543,17 @@
   const devOr = () => dev() || "dviewer";
   /** A person's request in the run's queue, followed until the cloud answers it. → { ok, text } | { ok: false, pending: true, text } (not answered in o.maxMs) */
   async function cmdFollow(runId, id, o) {
-    o = o || {}; const t0 = Date.now(), gap = +o.gapMs > 0 ? +o.gapMs : 2500, max = +o.maxMs > 0 ? +o.maxMs : HAND_FOLLOW_MS;
+    o = o || {};
+    /* NOWCMD (Paul 21 Nov 2026): followed by the page's one follower (charm-nest-cmd-now.js) until the cloud answers: its live step, its words; a failure in red with a toast (and Try again
+       when the caller can send it again: o.resend), and 5 minutes with no answer said plainly in red, still followed in the background (pending: true, later: its answer when it comes) */
+    const N = root.CNCmdNow;
+    if (N && typeof N.follow === "function") {
+      const f = await N.follow(runId, id, { api, onStep: t => safe(() => o.onStep && o.onStep(t)), gapMs: o.gapMs, maxMs: Math.min(+o.maxMs > 0 ? +o.maxMs : N.LATE_MS, N.LATE_MS), label: o.label, el: o.el, resend: o.resend, toast: o.toast });
+      if (f.ok) return { ok: true, text: String(f.text || "Placed by the cloud") };
+      if (f.late) return { ok: false, pending: true, text: f.text, later: f.later, retry: f.retry };
+      return { ok: false, text: `the cloud did not place it: ${String(f.text || "not done").replace(/\.$/, "")}`, retry: f.retry, shown: true };
+    }
+    const t0 = Date.now(), gap = +o.gapMs > 0 ? +o.gapMs : 2500, max = +o.maxMs > 0 ? +o.maxMs : HAND_FOLLOW_MS;
     while (Date.now() - t0 < max) {
       await nap(gap);
       let list = null; try { list = await api({ op: "runCmdList", runId }); } catch (_) { continue; }
@@ -588,7 +598,8 @@
       let put = null; try { put = await api({ op: "runCmdPut", runId, dev: devOr(), by, cmd: { type: "placewaiting", ids, label: `Place the artwork added by hand: ${names[0]}${names.length > 1 ? ` and ${names.length - 1} more` : ""}`.slice(0, 150) } }); } catch (e) { put = { error: errOf(e) }; }
       if (!put || !put.ok || !put.id) { errs.push(`${ids.length} piece(s) are recorded in the cloud (${ids[0]}…) but the cloud was not asked to place them: ${String((put && put.error) || "no answer").replace(/\.$/, "")}`); continue; }
       say("Asked: the cloud places the artwork…");
-      const f = await cmdFollow(runId, put.id, { onStep: o.onStep, gapMs: o.followMs, maxMs: o.maxMs });
+      const putAgain = async () => { let p2 = null; try { p2 = await api({ op: "runCmdPut", runId, dev: devOr(), by, cmd: { type: "placewaiting", ids, label: `Place the artwork added by hand: ${names[0]}`.slice(0, 150) } }); } catch (e) { p2 = { error: errOf(e) }; } return p2 && p2.id ? { runId, id: p2.id } : { error: (p2 && p2.error) || "no answer" }; };   // (NOWCMD: Try again sends the same request)
+      const f = await cmdFollow(runId, put.id, { onStep: o.onStep, gapMs: o.followMs, maxMs: o.maxMs, label: "Artwork added by hand", resend: putAgain });
       if (f.ok) texts.push(f.text); else if (f.pending) { pending = true; texts.push(f.text); } else errs.push(f.text);
     }
     return { ok: !!texts.length && !errs.length && !pending, pending, text: texts.join(" · "), error: errs.join(" · "), poolIds, runId };
@@ -608,7 +619,7 @@
     if (!change.metal) { toast(change.excluded ? `${name}: excluded — saved in the cloud; the cloud nests ${shName} again without it` : `${name}: included — saved in the cloud; the cloud places it on ${shName} when it nests it`, "ok", 7000); return { ok: true, r }; }
     if (r.cmdError || !r.cmdId) { toast(`${name}: taken off ${shName}, but the cloud was not asked to place it on ${to}: ${String(r.cmdError || "no answer").replace(/\.$/, "")}. Move it again from Orders, or ask for help`, "bad", 12000); return { ok: false, r, error: r.cmdError || "no request" }; }
     toast(`${name}: taken off ${shName} — the cloud places it on ${to}…`, "ok", 5000);
-    const f = cmdFollow(r.runId || followedRun(), r.cmdId, { gapMs: o.followMs, maxMs: o.maxMs }).then(x => { toast(x.ok ? `${name}: ${x.text}` : `${name}: ${x.text}`, x.ok ? "ok" : "bad", x.ok ? 7000 : 12000); return x; });
+    const f = cmdFollow(r.runId || followedRun(), r.cmdId, { gapMs: o.followMs, maxMs: o.maxMs, label: name }).then(x => { if (x.ok) toast(`${name}: ${x.text}`, "ok", 7000); else if (!root.CNCmdNow) toast(`${name}: ${x.text}`, "bad", 12000); return x; });   // (NOWCMD: a failure or a late answer is said by the follower, in red)
     if (o.wait) return Object.assign({ ok: true, r }, { follow: await f });
     return { ok: true, r, follow: f };
   }

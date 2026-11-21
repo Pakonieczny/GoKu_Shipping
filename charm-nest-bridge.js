@@ -6872,6 +6872,8 @@ const Gate = window.Gate = (() => {
     seat(sh, node, "head");
     node.className = "shGate";
     if (!solid(m) && m !== "rose") {
+      if (fastMergeHere(sh)) return renderFastMerge(sh, node);   // (COMBINEDRAFTS: a viewer's Merge drafts for Gold Filled / Sterling Silver, done by the cloud)
+      if (node._fastOwner) { node._fastOwner = null; node._optBox = null; node._sheetOptionsOwner = null; }
       node.textContent = sh.setId && !sh.draft ? `In Set ${sh.seq} · ${policy(sh, sh.seq).reason}` : policy(sh, seq).reason;
       if (!sh.charms.length) node.textContent = "Full sheets only · partials carry forward";
       if(sh.el) sh.el.querySelector(".shHead").title = node.textContent;
@@ -6894,10 +6896,7 @@ const Gate = window.Gate = (() => {
         <div class="osInclude"><label class="osSwitch"><input type="checkbox" role="switch" data-solid="include" aria-label="Include ${esc(labelOf(m))} sheet ${sh.page} in current set"><span class="osSwitchText">In current set</span></label><span class="osBusy" data-solid="busy" role="status" hidden><span class="osSpin" aria-hidden="true"></span><span data-solid="busy-text"></span></span><span class="osSay" data-solid="say" role="alert" hidden></span><span class="osSr" role="status" data-solid="status"></span><button type="button" class="btn ghost xs" data-solid="retry" hidden>Retry</button></div>
         <section class="osCard osSheet" data-card="sheet" aria-labelledby="osSheet-${esc(m)}"><header class="osCardHead"><div><h3 class="osCardTitle" id="osSheet-${esc(m)}">Sheet</h3><p class="osLead">Where this sheet's metal comes from: a partial sheet or a brand new one.</p></div></header></section>
         <section class="osSettings osNone" data-card="settings" aria-label="Settings"><h3 class="osGroupLabel">Settings</h3><div class="osSheetGrid">
-        ${solid(m) ? `<section class="sheetOptionSection" data-solid="merge" hidden><h4>Merge sheets</h4><p class="help sheetMergeHelp" data-solid="merge-help"></p>
-          <div class="sheetMergeActions" data-solid="merge-actions"><button type="button" class="btn ghost xs" data-solid="merge-move">Move all onto Sheet 1</button><button type="button" class="btn ghost xs" data-solid="merge-renest">Re-nest both sheets</button></div>
-          <div class="sheetMergeAsk" data-solid="merge-ask" role="group" aria-label="Confirm merge" hidden><span class="help" data-solid="merge-ask-text"></span><span class="sheetMergeAskBtns"><button type="button" class="btn ghost xs" data-solid="merge-cancel">Cancel</button><button type="button" class="btn sage xs" data-solid="merge-go">Merge</button></span></div>
-          <div class="sheetMergeBusy" data-solid="merge-busy" role="status" hidden><span class="spin" aria-hidden="true"></span><span data-solid="merge-busy-text"></span></div></section>` : ""}
+        ${solid(m) ? mergeSectionHtml("Merge sheets", false) : ""}
         </div></section>
       </div></div>`;
       node._optBox=node.querySelector('.solidOptions');
@@ -6980,15 +6979,20 @@ const Gate = window.Gate = (() => {
   const s4Run = () => { try { return !B.run && window.CNViewer && typeof CNViewer.on === "function" && CNViewer.on() ? (window.CharmNestRunFollow?.state?.().runId || null) : null; } catch (_) { return null; } };
   const s4Sheet = p => !!p.sheetId && !!p.runId && p.runId === s4Run();
   const busyPage = p => ["nesting", "finishing", "queued"].includes(p.status) || !!p._operationStarting || !!p._learnedStarting || !!(p.persisted && !p.persistedDone) || !!(window.CNViewer && typeof CNViewer.nestOf === "function" && CNViewer.nestOf(p));   // (S4: a sheet the cloud is nesting)
-  const mergeable = p => solid(p.metal) && p.charms.length > 0 && (modern(p.runId) || s4Sheet(p)) && membershipEditable(p) && !p.roseCutAt && !p.laserDoneAt && !holding(p) && !(p.rosePlan || p.roseProtected);   // (a sheet behind a green line keeps its charms where they are)
+  /* COMBINEDRAFTS (Paul, 21 Nov 2026: "one sheet at a time": underfilled Gold Filled / Sterling Silver drafts are combined): on a viewer (mode "on") the drafts of the followed run are
+     offered too, on the GF / SS card's own Merge drafts panel (renderFastMerge: those cards have no Options window), and sent to the cloud (consolidate / empty / renest), which judges
+     each move by the rules (_charmNestCombine.js: all the pieces fit, orders whole, pairs kept, no person's pin) and answers in words. Never on a computer that carries a run. */
+  const fastM = m => m === "gold" || m === "silver";
+  const fastDraft = p => fastM(p.metal) && s4Sheet(p) && p.charms.length > 0 && !inSetNow(p) && !p.releaseFull && !p.processReady && !(+p.roseCutAt > 0) && !(+p.laserDoneAt > 0) && !p.recalled;
+  const mergeable = p => solid(p.metal) && p.charms.length > 0 && (modern(p.runId) || s4Sheet(p)) && membershipEditable(p) && !p.roseCutAt && !p.laserDoneAt && !holding(p) && !(p.rosePlan || p.roseProtected) || fastDraft(p);   // (a sheet behind a green line keeps its charms where they are)
   const charmsWord = n => `${n} charm${n === 1 ? "" : "s"}`;
   const pw = p => window.CharmNestSheetName ? CharmNestSheetName.short(p) : `Sheet ${p.page}`;   // "Sheet 2" in a set, "Draft 2" outside every set (charm-nest-sheet-name.js)
   const sheetsWord = list => list.length === 1 ? pw(list[0]) : `${list.slice(0, -1).map(pw).join(", ")} and ${pw(list.at(-1))}`;
   const byDate = (a, b) => O.rankDate(a) - O.rankDate(b);   // (a piece of an order released from hold stays ahead: frontAt)
   /** The metal's sheets a merge takes: the first that can still change, and the later ones of its run. null: nothing to merge. */
   function mergePlan(m) {
-    if (!solid(m)) return null;
-    const open = pagesOf(m).filter(mergeable); if (open.length < 2) return null;
+    if (!solid(m) && !(fastM(m) && s4Run())) return null;
+    const open = pagesOf(m).filter(mergeable).sort((a, b) => fastM(m) ? (+a.page || 0) - (+b.page || 0) : 0); if (open.length < 2) return null;
     const target = open[0], sources = open.slice(1).filter(p => (p.runId || null) === (target.runId || null));
     if (!sources.length) return null;
     const pages = [target, ...sources], count = list => list.reduce((n, p) => n + p.charms.length, 0);
@@ -7057,7 +7061,9 @@ const Gate = window.Gate = (() => {
      fit goes on); "renest": one renest per sheet (the cloud nests each sheet again from scratch). Each request is put in the cloud (CNRelayAsk, always: whatever the cloud's beat) and
      followed to its answer; the card's status line shows the cloud's steps, and what the cloud answered is said once, never "done" before it answered. → true when every request was taken. */
   function s4Words(plan, kind) {
-    const t = plan.target;
+    const t = plan.target, drafts = plan.sources.every(p => p.metal === "gold" || p.metal === "silver");
+    if (drafts && kind === "move") return `The cloud moves each of ${sheetsWord(plan.sources)} onto ${pw(t)} when ALL its charms fit there (every order kept whole, the pairing rule kept, no pinned charm moved), archives the draft left empty and nests ${pw(t)} again from scratch. A draft that does not fit stays as it is, and the cloud says why.`;
+    if (drafts && kind === "empty") return `The cloud empties ${sheetsWord(plan.sources)}: each draft's charms go whole onto the oldest other draft that takes them all, the empty draft is archived and the one that took them is nested again from scratch. A draft no other draft can take stays as it is, and the cloud says why.`;
     if (kind === "move") return `The cloud moves ${charmsWord(plan.moving)} from ${sheetsWord(plan.sources)} into ${pw(t)}'s free room and nests ${pw(t)}: its charms stay where they are, and whatever does not fit goes on to the next sheet.`;
     return `The cloud nests ${sheetsWord(plan.pages)} again from scratch, one after another, each sheet with the charms it holds now (${charmsWord(plan.total)} in all).`;
   }
@@ -7067,7 +7073,8 @@ const Gate = window.Gate = (() => {
     st.busy = { kind, at, text: "Asking the cloud…", pages: new Set(plan.pages), target: t, s4: true };
     try { closeOptions(m); } catch (_) { /* the panel may be shut already */ }
     repaintMerge(m);
-    const cmds = kind === "move" ? plan.sources.map(p => ({ type: "consolidate", metal: m, sourceId: p.sheetId, targetId: t.sheetId, label: `Merge sheets: ${pw(p)} onto ${pw(t)}`.slice(0, 150) }))
+    const cmds = kind === "empty" ? plan.sources.slice().reverse().map(p => ({ type: "empty", metal: m, sheetId: p.sheetId, label: `Empty ${pw(p)}`.slice(0, 150) }))
+      : kind === "move" ? plan.sources.map(p => ({ type: "consolidate", metal: m, sourceId: p.sheetId, targetId: t.sheetId, label: `Merge sheets: ${pw(p)} onto ${pw(t)}`.slice(0, 150) }))
       : plan.pages.map(p => ({ type: "renest", metal: m, sheetId: p.sheetId, label: `Re-nest ${pw(p)}`.slice(0, 150) }));
     const said = []; let bad = false, waiting = false;
     for (let i = 0; i < cmds.length; i++) {
@@ -7076,11 +7083,12 @@ const Gate = window.Gate = (() => {
       step(`Asking the cloud: ${cmd.label}…`);
       const r = typeof window.CNRelayAsk === "function" ? await window.CNRelayAsk(cmd, t2 => step(t2), 600000, { always: true }) : { ok: false, text: "This page cannot reach the cloud. Reload it, then press it again." };
       if (r && r.ok) said.push(r.text || `${cmd.label}: done`);
+      else if (r && r.late) { bad = true; said.push(`${cmd.label}: ${r.text}${i + 1 < cmds.length ? " The rest was not asked." : ""}`); break; }   // (NOWCMD: not done after 5 minutes: said in red, never "sent" as if done)
       else if (r && r.queued) { waiting = true; said.push(`${cmd.label}: sent; ${r.text || "the cloud does it at its next pass."}`); }
       else { bad = true; said.push(`${cmd.label}: not done. ${(r && r.text) || "No answer."}${i + 1 < cmds.length ? " The rest was not asked." : ""}`); break; }
     }
     st.busy = null;
-    st.done = { text: (bad ? "Merge sheets: " : waiting ? "Merge sheets sent to the cloud: " : "Merge sheets done by the cloud: ") + said.join(" · "), bad, at: Date.now() };
+    st.done = { text: (bad ? "Merge sheets: " : waiting ? "Merge sheets sent to the cloud: " : "Merge sheets done by the cloud: ") + said.join(" · "), bad, at: Date.now(), on: t.sheetId || null };
     repaintMerge(m); mergeNote(m, st.done); setTimeout(() => repaintMerge(m), 12500);
     return !bad;
   }
@@ -7091,7 +7099,7 @@ const Gate = window.Gate = (() => {
     // (SHEETSLIST, Paul 15 Nov 2026: "consolidating sheets by dragging and dropping one sheet onto another ... if consolidating two sheets onto one sheet doesn't fit, then automatically spilling over the remainder onto the next sheet in order that the user can also choose"): spec = { target, sources: [one page], order } moves that one sheet's pieces onto the target, the rest spills onto the next sheets of the user's order, and what fits nowhere stays on the source
     if (spec) kind = "move";
     const plan = spec ? specPlan(m, spec) : mergePlan(m), st = MERGE[m] || (MERGE[m] = {});
-    if (!plan || st.busy || !["move", "renest"].includes(kind)) return Promise.resolve(false);
+    if (!plan || st.busy || !["move", "renest", "empty"].includes(kind) || (kind === "empty" && !(fastM(m) && s4Run()))) return Promise.resolve(false);
     if (!spec && s4Run()) return s4Merge(m, kind, plan, st);   // (S4: a viewer sends the merge to the cloud)
     const run = B.run, t = plan.target, ops = window.CharmNestOperations;
     st.ask = null; st.done = null;
@@ -7395,6 +7403,26 @@ const Gate = window.Gate = (() => {
     return { ok: true, text };
   }
   /** The panel's Merge sheets section: shown while the metal has two sheets or more that can change, or a merge runs. */
+  /** The Merge sheets section (the solid Options box; with Empty, the GF / SS viewer panel). */
+  function mergeSectionHtml(title, withEmpty) {
+    return `<section class="sheetOptionSection" data-solid="merge" hidden><h4>${title}</h4><p class="help sheetMergeHelp" data-solid="merge-help"></p>
+          <div class="sheetMergeActions" data-solid="merge-actions"><button type="button" class="btn ghost xs" data-solid="merge-move">Move all onto Sheet 1</button>${withEmpty ? `<button type="button" class="btn ghost xs" data-solid="merge-empty">Empty the later drafts</button>` : ""}<button type="button" class="btn ghost xs" data-solid="merge-renest">Re-nest both sheets</button></div>
+          <div class="sheetMergeAsk" data-solid="merge-ask" role="group" aria-label="Confirm merge" hidden><span class="help" data-solid="merge-ask-text"></span><span class="sheetMergeAskBtns"><button type="button" class="btn ghost xs" data-solid="merge-cancel">Cancel</button><button type="button" class="btn sage xs" data-solid="merge-go">Merge</button></span></div>
+          <div class="sheetMergeBusy" data-solid="merge-busy" role="status" hidden><span class="spin" aria-hidden="true"></span><span data-solid="merge-busy-text"></span></div></section>`;
+  }
+  /** COMBINEDRAFTS: the GF / SS card that shows the Merge drafts panel on a viewer: the plan's first draft (or the one a merge works on, or just answered on). */
+  function fastMergeHere(sh) {
+    if (!fastM(sh.metal) || !s4Run()) return false;
+    const st = MERGE[sh.metal] || {}, plan = st.busy ? null : mergePlan(sh.metal);
+    if (st.busy) return st.busy.target === sh;
+    if (st.done && Date.now() - st.done.at < 12000 && st.done.on) return st.done.on === sh.sheetId;
+    return !!plan && plan.target === sh;
+  }
+  function renderFastMerge(sh, node) {
+    seat(sh, node, "row"); node.className = "shGate fastMerge";
+    if (node._fastOwner !== sh) { node._fastOwner = sh; node._sheetOptionsOwner = null; node.innerHTML = `<div class="solidOptions fastMergeBox" role="group" aria-label="Merge ${esc(labelOf(sh.metal))} drafts">${mergeSectionHtml(`Merge ${esc(labelOf(sh.metal))} drafts`, true)}</div>`; node._optBox = node.firstChild; }
+    paintMerge(sh, node);
+  }
   function paintMerge(sh, node) {
     const m = sh.metal, sec = (node._optBox || node).querySelector('[data-solid="merge"]'); if (!sec) return;
     const st = MERGE[m] || (MERGE[m] = {}), q = k => sec.querySelector(`[data-solid="merge-${k}"]`);
@@ -7404,8 +7432,9 @@ const Gate = window.Gate = (() => {
     if (sec.hidden) { st.ask = null; return; }
     const blocked = !!plan && pagesOf(m).some(busyPage), asking = !!(plan && st.ask && !blocked);
     if (!asking) st.ask = null;
-    const move = q("move"), renest = q("renest"), help = q("help");
-    if (plan) { move.textContent = `Move all onto ${pw(plan.target)}`; renest.textContent = plan.pages.length === 2 ? "Re-nest both sheets" : `Re-nest all ${plan.pages.length} sheets`; }
+    const move = q("move"), renest = q("renest"), help = q("help"), emptyB = q("empty");
+    if (plan) { move.textContent = `Move all onto ${pw(plan.target)}`; renest.textContent = plan.pages.length === 2 ? "Re-nest both sheets" : `Re-nest all ${plan.pages.length} sheets`; if (emptyB) emptyB.textContent = plan.sources.length === 1 ? `Empty ${pw(plan.sources[0])}` : "Empty the later drafts"; }
+    if (emptyB) { emptyB.disabled = !!st.busy || !plan || blocked; emptyB.onclick = () => { st.ask = "empty"; st.done = null; paintMerge(sh, node); q("go").focus(); }; }
     q("actions").hidden = asking || (!plan && !st.busy);
     move.disabled = renest.disabled = !!st.busy || !plan || blocked;
     q("ask").hidden = !asking; q("busy").hidden = !st.busy;
@@ -7413,7 +7442,7 @@ const Gate = window.Gate = (() => {
     help.hidden = !!st.busy || asking;
     help.classList.toggle("bad", !!done?.bad);
     help.textContent = done ? done.text : blocked ? "Wait until the sheets finish nesting and saving." : plan ? `Use Move all when ${pw(plan.target)} has free room and its charms should stay where they are; use Re-nest to pack every charm again for the tightest fit.` : "";
-    if (asking) { q("ask-text").textContent = s4Run() ? s4Words(plan, st.ask) : mergeWords(plan, st.ask); q("go").textContent = st.ask === "move" ? "Merge" : "Re-nest"; }   // (S4: on a viewer the cloud does it, in its own words: s4Words)
+    if (asking) { q("ask-text").textContent = s4Run() ? s4Words(plan, st.ask) : mergeWords(plan, st.ask); q("go").textContent = st.ask === "move" ? "Merge" : st.ask === "empty" ? "Empty" : "Re-nest"; }   // (S4: on a viewer the cloud does it, in its own words: s4Words)
     const ask = kind => { st.ask = kind; st.done = null; paintMerge(sh, node); q("go").focus(); };
     move.onclick = () => ask("move"); renest.onclick = () => ask("renest");
     q("cancel").onclick = () => { st.ask = null; paintMerge(sh, node); move.focus(); };
@@ -18244,9 +18273,17 @@ const CustomSheet = window.CustomSheet = (() => {
       /* CARRIERRETRY (Paul, 17 Nov 2026): asked again, a send is asked ONCE: this computer's own request for this card that still waits, is being done, or was done (this send's) is the one waited for, not another put beside it
          (the carrier's exchange is also a no-op on pieces that already are these designs). */
       let put=null;try{const L0=await api("charmNestLibrary",{op:"runCmdList",runId},{quiet:true}),now0=Date.now(),since=(+e.carrierPending?.at || 0)-30000;put=(L0?.cmds || []).find(x=>x && x.type==="customsend" && x.args?.ck===e.ck && x.dev===dev && ((x.state==="waiting" && now0-(+x.at || 0)<600000) || (x.state==="running" && now0-(+x.stepAt || +x.at || 0)<180000) || (x.state==="done" && (+x.at || 0)>=since))) || null;}catch(_){put=null;}
-      if(!put)put=await api("charmNestLibrary",{op:"runCmdPut",runId,dev,by:employeeName() || "",cmd:{type:"customsend",ck:e.ck,ids:Object.keys(decisionLines(e)),label:`Place the designs sent for order ${e.rid}`.slice(0,150)}},{quiet:true});
+      const sendBody={op:"runCmdPut",runId,dev,by:employeeName() || "",cmd:{type:"customsend",ck:e.ck,ids:Object.keys(decisionLines(e)),label:`Place the designs sent for order ${e.rid}`.slice(0,150)}};
+      if(!put)put=await api("charmNestLibrary",sendBody,{quiet:true});
       if(!put?.id)throw new Error(put?.error || "The request was not sent.");
       say(`Waiting for ${cloud?"the cloud":whose}…`);
+      /* NOWCMD: in mode "on" the send is followed until the cloud answers (it takes it up within seconds): its live step on the card, its words; a failure in red with a toast and Try again
+         (the same send asked again), and 5 minutes without an answer said plainly in red (the card keeps carrierPending: pressed again, the same request is the one waited for) */
+      if(s4On && window.CNCmdNow && typeof CNCmdNow.follow==="function"){
+        const f=await CNCmdNow.follow(runId,put.id,{api:b=>api("charmNestLibrary",b,{quiet:true}),onStep:t=>say(t),label:`Send to Sheet, order ${e.rid}`,resend:async()=>{const p=await api("charmNestLibrary",sendBody,{quiet:true});return p?.id?{runId,id:p.id}:{error:p?.error || "The request was not sent."};}});
+        if(f.ok || (f.failed && !f.cancelled)){if(all()[e.ck]===e){delete e.carrierPending;ver++;Session.schedule();}return {ok:!!f.ok,text:String(f.text || (f.ok?"its new piece is on the sheet":"It could not be placed.")),name};}
+        throw new Error(f.text || "The cloud has not done it yet.");
+      }
       for(const t0=Date.now();Date.now()-t0<11*60000;){
         await new Promise(r=>setTimeout(r,Date.now()-t0<60000?3000:6000));
         let list=null;try{list=await api("charmNestLibrary",{op:"runCmdList",runId},{quiet:true});}catch(_){continue;}
@@ -20954,8 +20991,12 @@ const Review = window.Review = (() => {
         Orders.interpretAll(); syncOrderItems(); Orders.render();
         if (!keys.length) { try { flow.line("carrier", `No open piece of listing ${off.lid} needs making again: the cloud reads ${sku} at its next reading of the orders`, "done"); } catch (_) { /* a word only */ } later(flow, null, true); return { ok: true, sku, via: "alias", follower: true, cloud: true, orders: [], done }; }
         try { flow.line("carrier", `Asking the cloud to make ${keys.length === 1 ? "the piece" : `${keys.length} pieces`} again as ${sku}…`, "work"); } catch (_) { /* a word only */ }
-        const asked = window.CNRelayAsk({ type: "remakeline", ids: keys.slice(0, 80), label: `Change SKU: ${off.from || "no SKU"} → ${sku}`.slice(0, 150) }, t => { try { flow.line("carrier", `The cloud: ${t}`.slice(0, 260), "work"); } catch (_) { /* a word only */ } }, 300000, { always: true })
-          .then(ans => { try { flow.line("carrier", ans && ans.ok ? `The cloud: ${ans.text || "made again"}`.slice(0, 260) : ans && ans.queued ? `Asked of the cloud: ${ans.text}`.slice(0, 260) : `The cloud did not make it again: ${(ans && ans.text) || "no answer"}`.slice(0, 260), ans && ans.ok ? "done" : ans && ans.queued ? "warn" : "failed"); } catch (_) { /* a word only */ } return ans; });
+        const asked = window.CNRelayAsk({ type: "remakeline", ids: keys.slice(0, 80), label: `Change SKU: ${off.from || "no SKU"} → ${sku}`.slice(0, 150) }, t => { try { flow.line("carrier", String(t || "").slice(0, 260), "work"); } catch (_) { /* a word only */ } }, 300000, { always: true })
+          .then(ans => shown(ans));
+        /* NOWCMD: followed until the cloud answers: its live step on the panel's line, its words when done; failed or not done after 5 minutes, the line is red with the reason and a
+           Try again on the panel (the same request again), a toast says it too, and a late answer that comes afterwards replaces the line (ans.later) */
+        const shown = ans => { try { flow.line("carrier", ans && ans.ok ? `The cloud: ${ans.text || "made again"}`.slice(0, 260) : ans && ans.late ? `${ans.text}`.slice(0, 260) : `The cloud did not make it again: ${(ans && ans.text) || "no answer"}`.slice(0, 260), ans && ans.ok ? "done" : "failed");
+          if (ans && !ans.ok && typeof ans.retry === "function" && flow.panel && typeof flow.panel.act === "function") flow.panel.act("carrier", "Try again", () => Promise.resolve(ans.retry()).then(shown)); if (ans && ans.late && ans.later) Promise.resolve(ans.later).then(x => { if (x) shown(x); }); } catch (_) { /* a word only */ } return ans; };
         later(flow, asked, true);
         return { ok: true, sku, via: "alias", follower: true, cloud: true, orders: [...new Set(rows.map(r => String(r.order.receiptId)))], done };
       }
@@ -20996,6 +21037,8 @@ const Review = window.Review = (() => {
       if (typeof window.CNRelayAsk !== "function") return no(cloudOn ? "The cloud cannot be asked from this page: reload it and try again" : "The run's computer cannot be asked from this page: reload it and try again");
       const ans = await window.CNRelayAsk({ type: "skuonce", ids: [row.key], sku, label: `Just this order: ${sku}` }, t => { try { if (opts && typeof opts.onStep === "function") opts.onStep(t); } catch (_) { /* a word only */ } }, 240000, { always: true });
       if (ans && ans.ok) return { ok: true, sku, via: "once", rid: rid0, follower: true, text: ans.text };
+      if (ans && ans.late) return { ok: false, late: true, why: ans.text, retry: ans.retry, later: ans.later };   // (NOWCMD: never "asked" as if done; the window says it in red, the toast carries Try again)
+      if (ans && ans.cloud && !ans.ok) return { ok: false, failed: true, why: `The cloud did not change it: ${String(ans.text || "no answer").replace(/\.$/, "")}`, retry: ans.retry };
       if (ans && ans.queued) return { ok: true, queued: true, sku, via: "once", rid: rid0, follower: true, text: ans.text };
       return no((ans && ans.text) || (cloudOn ? "The cloud did not change it" : "The computer that carries the run did not change it"));
     }
@@ -21331,6 +21374,10 @@ const Review = window.Review = (() => {
             line("carrier", `Other open orders of ${skus.join(", ")}: asking ${cloudOn ? "the cloud" : "the computer that carries the run"}…`, "work");
             const ans = await window.CNRelayAsk({ type: "keepsync", ids: skus, label: `Make the open orders of ${skus.join(", ")} again from the new design`.slice(0, 150) }, t => line("carrier", `Other open orders: ${t}`, "work"), 420000);
             if (ans && ans.ok) { line("carrier", `Other open orders: ${ans.text}`.slice(0, 260), "done"); tally.orders.add("carrier"); }
+            else if (ans && ans.cloud) {   // (NOWCMD: the cloud failed it or has not done it after 5 minutes: red, with the reason and a Try again on the panel; a later answer replaces the line)
+              const shown = a => { try { if (a && a.ok) { line("carrier", `Other open orders: ${a.text}`.slice(0, 260), "done"); return a; } tally.failed.add("carrier"); line("carrier", a && a.late ? `Other open orders: ${a.text}`.slice(0, 260) : "Other open orders: the cloud did not make them again", "failed", a && a.late ? "" : String((a && a.text) || "no answer")); if (a && typeof a.retry === "function" && fl && typeof fl.act === "function") fl.act("carrier", "Try again", () => Promise.resolve(a.retry()).then(shown)); if (a && a.late && a.later) Promise.resolve(a.later).then(x => { if (x) shown(x); }); } catch (_) { /* a word only */ } return a; };
+              shown(ans);
+            }
             else line("carrier", `Other open orders of this charm are updated by ${(ans && ans.cloud) || cloudOn ? "the cloud" : (ans && ans.name ? ans.name + "'s computer" : "the computer that carries the run")} as soon as it is free`, "warn", (ans && ans.text) || "");
             for (const e of [...relinkWait.values()]) if (e.row && mine(e.row)) relinkWait.delete(e.key);   // (they are the carrying computer's to make: not waited for, not warned about, here)
           }
@@ -22363,6 +22410,7 @@ const Review = window.Review = (() => {
     toast(`${lead ? lead + " " : ""}The cloud makes ${keys.length === 1 ? "the piece" : keys.length + " pieces"} again…`, "ok", 6000);
     const ans = await window.CNRelayAsk({ type: "remakeline", ids: keys, label: String(label || "Made again from Review").slice(0, 150) }, null, 600000, { always: true });
     if (ans && ans.ok) toast(`The cloud: ${ans.text || "made again"}`.slice(0, 300), "ok", 8000);
+    else if (ans && ans.cloud && (ans.late || ans.failed || ans.id)) { /* NOWCMD: CNRelayAsk said it already, in red, with Try again */ }
     else if (ans && ans.queued) toast(`Asked of the cloud: ${ans.text}`.slice(0, 300), "ok", 9000);
     else toast(`The cloud did not make it again: ${(ans && ans.text) || "no answer"}`.slice(0, 300), "bad", 10000);
     return ans || { ok: false };
@@ -24997,7 +25045,7 @@ const OrderWin = window.OrderWin = (() => {
       if (!employeeName()) { needSignIn(one ? "use this charm for this order" : "change this SKU", () => { if (d.open && d.dataset.busy !== "1" && !save.disabled && employeeName()) save.click(); }, { near: save, say: t => say("bad", esc(t)), note: "Not changed: nobody is signed in. Sign in to change this SKU." }); return; }
       if (one) {   // (ONESKU: this order only; the window closes when it is done, nothing else to follow)
         d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Changing…"; input.disabled = true; once.disabled = true;
-        let res = null; try { res = await Review.editSkuOnce(rowOf(W.key) || r, k); } catch (e) { res = { ok: false, why: (e && e.message) || String(e) }; }
+        let res = null; try { res = await Review.editSkuOnce(rowOf(W.key) || r, k, { onStep: t => say("", esc(String(t || ""))) }); } catch (e) { res = { ok: false, why: (e && e.message) || String(e) }; }   // (NOWCMD: the cloud's live step in the window while it works; its failure stays here in red)
         d.dataset.busy = "";
         if (!res || !res.ok) { back(); if (res && res.why) say("bad", esc(res.why)); return; }
         try { d.close(); } catch (_) { d.removeAttribute("open"); }
@@ -30386,6 +30434,26 @@ window.CNRelayAsk = async function (cmd, onStep, maxMs, o) {   // (o.always, ANY
     const put = await api("charmNestLibrary", { op: "runCmdPut", runId, dev, by: (typeof employeeName === "function" && employeeName()) || "", cmd }, { quiet: true });
     if (!put || !put.id) return { ok: false, text: (put && put.error) || "The request was not sent.", name };
     if (typeof onStep === "function") onStep(`Waiting for ${nm}…`, name);
+    /* NOWCMD (Paul 21 Nov 2026: "if the cloud does not properly update this and there's a mistake the user will never know"): in cloud mode the request is followed until the cloud ANSWERS
+       (it takes a person's request up within seconds, even mid-pass): a live line while it waits or works, the cloud's words when done, a failure in red with a toast and a Try again (the
+       same request put again: ans.retry()), and after 5 minutes without an answer a plain red "has not done it yet" (ans.late), never "nothing more is needed"; a late request is still
+       followed in the background (ans.later: its answer when it comes). o.el: a panel or card for the persistent notice; o.noToast: the caller shows it by itself. */
+    if (cloudOn) {
+      const resend = async () => { const p = await api("charmNestLibrary", { op: "runCmdPut", runId, dev, by: (typeof employeeName === "function" && employeeName()) || "", cmd }, { quiet: true }); return p && p.id ? { runId, id: p.id } : { error: (p && p.error) || "The request was not sent." }; };
+      const N = window.CNCmdNow, longMs = Math.max(+maxMs || 0, 300000);
+      if (N && typeof N.follow === "function") {
+        const f = await N.follow(runId, put.id, { api: b => api("charmNestLibrary", b, { quiet: true }), onStep: t => { if (typeof onStep === "function") onStep(t, name); }, maxMs: longMs, label: cmd && cmd.label, el: o && o.el, toast: !(o && o.noToast), resend });
+        return Object.assign({ name, cloud: true }, f);
+      }
+      for (const t0 = Date.now(); Date.now() - t0 < longMs;) {   // (a page without the follower: the same rule, in words only)
+        await new Promise(r => setTimeout(r, Date.now() - t0 < 60000 ? 2000 : 4000));
+        let list = null; try { list = await api("charmNestLibrary", { op: "runCmdList", runId }, { quiet: true }); } catch (_) { continue; }
+        const k = ((list && list.cmds) || []).find(x => x && x.id === put.id); if (!k) continue;
+        if (k.state === "done" || k.state === "failed" || k.state === "cancelled") return { ok: k.state === "done", failed: k.state !== "done", text: String(k.text || ""), name, cloud: true, id: put.id, runId };
+        if (typeof onStep === "function") onStep(k.state === "running" ? `the cloud is doing it…${k.step ? " " + k.step : ""}` : "Waiting for the cloud: it starts within seconds…", name);
+      }
+      return { ok: false, late: true, cloud: true, text: "The cloud has not done it yet — it is still queued; check again or press Try again", name, id: put.id, runId };
+    }
     for (const t0 = Date.now(); Date.now() - t0 < (maxMs || 600000);) {
       await new Promise(r => setTimeout(r, Date.now() - t0 < 60000 ? 3000 : 6000));
       let list = null; try { list = await api("charmNestLibrary", { op: "runCmdList", runId }, { quiet: true }); } catch (_) { continue; }
@@ -30395,14 +30463,12 @@ window.CNRelayAsk = async function (cmd, onStep, maxMs, o) {   // (o.always, ANY
       /* CARRIERGONE (Paul, 17 Nov 2026: "This process has caused me a lot of grief"): a computer counts as carrying the run for 90 s after its last beat (runCarrier FRESH), so a page closed a minute ago still read as open and
          the panel waited for it for the whole 7 minutes. While the request has not been started, the carrier is looked at again at each look: once it is not open, or after 25 s without the request starting,
          the answer is plain. The request stays queued: the carrier does it as soon as it is open (and free) again. */
-      else if (k.state === "waiting" && cloudOn) { if (Date.now() - t0 >= 25000) return { ok: false, queued: true, cloud: true, text: "The cloud has not started it yet: it does it at its next pass (every minute or so). Nothing more is needed here.", name }; }
       else if (k.state === "waiting") {
         let gone = false; try { const c2 = await api("charmNestLibrary", { op: "runCarrier", runId, dev, check: true }, { quiet: true }); gone = !!c2 && (!c2.alive || !!c2.mine); } catch (_) { /* not told: not gone */ }
         if (gone) return { ok: false, queued: true, text: `${nm} is not open right now. Nothing more is needed here: the request stays queued and is done as soon as that computer is open again.`, name };
         if (Date.now() - t0 >= 25000) return { ok: false, queued: true, text: `${nm} has not started it yet. Nothing more is needed here: the request stays queued and is done as soon as that computer is free.`, name };
       }
     }
-    if (cloudOn) return { ok: false, queued: true, cloud: true, text: "The cloud is still working on it: it carries on by itself. Nothing more is needed here.", name };
     return { ok: false, text: `${nm} did not answer.`, name };
   } catch (e) { return { ok: false, text: String((e && e.message) || e) }; }
 };
@@ -30414,7 +30480,10 @@ window.CNAskPlace = async function (why) {
     const F = window.CharmNestRunFollow, runId = F && F.state && F.state().runId, dev = F && typeof F.dev === "function" ? F.dev() : (F && F.dev) || "";
     if (!runId || !dev || Date.now() - askPlaceAt < 15000) return false;
     askPlaceAt = Date.now();
-    await api("charmNestLibrary", { op: "runCmdPut", runId, dev, by: (typeof employeeName === "function" && employeeName()) || "", cmd: { type: "placewaiting", label: String(why || "Place the pieces that stand on no sheet").slice(0, 150) } }, { quiet: true });
+    const cmd = { type: "placewaiting", label: String(why || "Place the pieces that stand on no sheet").slice(0, 150) };
+    const put = await api("charmNestLibrary", { op: "runCmdPut", runId, dev, by: (typeof employeeName === "function" && employeeName()) || "", cmd }, { quiet: true });
+    // (NOWCMD: nobody waits on this request, but its failure is never silent: followed in the background, a refusal shown in red with Try again; a success says nothing)
+    try { if (put && put.id && window.CNViewer && CNViewer.on && CNViewer.on() && window.CNCmdNow) CNCmdNow.watch(runId, put.id, { api: b => api("charmNestLibrary", b, { quiet: true }), label: cmd.label, quietOk: true, watchGapMs: 5000, watchMs: 3600000, resend: () => CNCmdNow.put(cmd, { api: b => api("charmNestLibrary", b, { quiet: true }), runId, dev }) }); } catch (_) { /* a word only */ }
     return true;
   } catch (e) { console.warn("[stranded] ask", e && e.message); return false; }
 };

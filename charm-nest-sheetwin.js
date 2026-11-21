@@ -4971,7 +4971,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         tryDo(() => toast(`Order${c.rids.length > 1 ? "s" : ""} ${c.rids.join(", ")} not sent to the cloud: ${why}. ${c.rids.length > 1 ? "They stay" : "It stays"} where ${c.rids.length > 1 ? "they are" : "it is"}.`, "bad", 9000));
         continue;
       }
-      sent.push({ id: r.id, rids: c.rids, spots: c.spots });
+      sent.push({ id: r.id, rids: c.rids, spots: c.spots, cmd });
     }
     for (const id of touched) FILL_ASKED.add(id);
     ask.state = "ok"; ask.detail = sent.length > 1 ? `${sent.length} requests` : "asked"; cloud.state = "now"; cloud.detail = "every other charm stays where it is; nothing is nested again";
@@ -4999,7 +4999,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     };
     (async () => {
       const left = new Map(sent.map(x => [x.id, x])), answers = [];
-      for (const t0 = Date.now(); left.size && Date.now() - t0 < 600000;) {
+      for (const t0 = Date.now(); left.size && Date.now() - t0 < 300000;) {   // (NOWCMD: 5 minutes, then said plainly)
         await pause(Date.now() - t0 < 60000 ? 2500 : 6000);
         let list = null; try { list = await api("charmNestLibrary", { op: "runCmdList", runId }, { quiet: true }); } catch (_) { continue; }
         for (const c of (list && list.cmds) || []) {
@@ -5007,8 +5007,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
           left.delete(c.id); answers.push({ x, ok: c.state === "done", text: String(c.text || "") });
         }
       }
-      for (const x of left.values()) answers.push({ x, ok: false, late: true, text: "the cloud has not answered in 10 minutes; the request stays queued and is done when the cloud gets to it" });
+      for (const x of left.values()) answers.push({ x, ok: false, late: true, text: "the cloud has not done it yet — it is still queued; check again or press Try again" });
       finish(answers);
+      // (NOWCMD: a refusal or a late answer is also said by the page's one follower, in red, with Try again (the same request asked again); a late one is still followed in the background)
+      const N = window.CNCmdNow, napi = b => api("charmNestLibrary", b, { quiet: true });
+      if (N) for (const a of answers.filter(a => !a.ok)) {
+        const label = `Fill the freed room on ${tName}: order${a.x.rids.length > 1 ? "s" : ""} ${a.x.rids.join(", ")}`, o = { api: napi, label, resend: () => N.put(a.x.cmd, { api: napi, runId, dev, by: who }) };
+        if (a.late) { tryDo(() => N.watch(runId, a.x.id, o)); } else tryDo(() => N.shout({ runId, id: a.x.id, failed: true, text: a.text }, o));
+      }
     })().catch(e => { console.warn("sheet window: fill (cloud) answer", e); for (const id of touched) FILL_ASKED.delete(id); });
     return true;
   }

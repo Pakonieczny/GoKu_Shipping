@@ -8,6 +8,7 @@
      const f = CNRelinkFlow.open({ title, sub, sandbox })
      f.line(id, text, state, why?)    state: "work" | "done" | "warn" | "failed" | "skip" | "would"; the same id updates its line
      f.finish(summary, tone?)         tone: "ok" | "warn" | "bad"; the bar fills
+     f.act(id, label, fn)             (NOWCMD) a button on that line, e.g. Try again
      f.close() · f.el · f.lines() → [{ id, text, state, why }] · f.finished()
    o.host (EDITSKU, Paul 26 Oct 2026: "a robust progress bar so that the user is aware of what is being changed and when the process is actually completed"): the panel is drawn INSIDE that element
    (the Edit SKU window) instead of floating; under the bar, "n of m steps done · p%" while it works and "Completed at hh:mm · 100%" once it is finished.
@@ -91,6 +92,13 @@
         if (x.why) { const w = doc.createElement("span"); w.className = "rlWhy"; w.textContent = x.why; t.appendChild(w); }
         x.li.scrollIntoView && list.scrollHeight > list.clientHeight && x.li.scrollIntoView({ block: "nearest" });
         paintBar(); return h;
+      },
+      /* NOWCMD: a button on a line (Try again: the cloud is asked the same again); it goes with the next word on that line, and the panel is not finished while a line waits on it */
+      act(lid, label, fn) {
+        const x = lines.get(String(lid)); if (!x) return h;
+        const t = x.li.querySelector(".rlT"), b = doc.createElement("button"); b.type = "button"; b.className = "btn xs"; b.textContent = String(label || "Try again"); b.setAttribute("data-rl-act", b.textContent); b.style.marginLeft = "8px";
+        b.onclick = () => { b.disabled = true; h.line(lid, "Asking again…", "work"); Promise.resolve().then(fn).catch(() => {}); };
+        t.appendChild(b); return h;
       },
       finish(summary, tone) { done = true; sum.textContent = String(summary || "Done"); el.dataset.tone = tone || ([...lines.values()].some(x => x.state === "failed") ? "bad" : [...lines.values()].some(x => x.state === "warn") ? "warn" : "ok"); el.dataset.done = "1"; paintBar(); return h; },
       close, finished: () => done,
