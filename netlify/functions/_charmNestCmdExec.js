@@ -562,14 +562,18 @@ async function consolidate(x) {
        Gold Filled / Sterling Silver drafts never waits on a nest, a hold the run left after old nest failures, or the room: both sheets' nests are stopped (a person's stop), every
        piece goes onto the target, the target is nested whole, and the pieces that do not fit go on to the next draft (the sheet writer's overflow). The hard rules stay: cut, a cut
        line, approved, in a set, released full, Manual Control, a person's pin, an order on a third sheet. */
-    const SOFT = /is being nested or written|waits for its next nest|is held by the run|is nesting|has no room|turned pieces away|already had no room/;
+    const SOFT = /is being nested or written|is having its files written|is nesting or saving|is being saved|waits for its next nest|is held by the run|is nesting|has no room|turned pieces away|already had no room/;
     if (!j.ok && !SOFT.test(String(j.why || ""))) return no(`Not combined: ${j.why}`);
     const live = r => !!(r && r.nestJob && ["queued", "running", "starting"].includes(String(r.nestJob.status || "")));
-    if (live(src) || live(t)) {
+    /* (MERGEWAIT, 21 Nov 2026: a sheet whose files are being written, or a nest started after the first stop (another request's), is waited for too, never refused: every live
+       nest is stopped at each pass (once per job), and the move goes once both sheets are still) */
+    const still = r => !live(r) && !busyRec(r, Date.now());
+    if (!still(src) || !still(t)) {
       const now = Date.now(), first = num(x.work.mergeStopAt) || now;
-      if (!x.work.mergeStopAt) for (const r of [src, t]) { const id = r.nestJob && (r.nestJob.id || r.nestJob.jobId); if (id && live(r)) await put(x, { op: "stopJob", id: String(id), for: "person", by: x.cmd.by || "", why: "Move all onto: the sheets are merged, then nested whole" }, `mergestop|${id}`); }
-      if (now - first > 6 * 60000) return no(`Not combined: ${live(src) ? nameOf(src) : nameOf(t)} is still nesting after 6 minutes; press Move all onto again in a moment`);
-      return wait("Stopping the nests on both sheets, then moving every piece…", Object.assign({}, x.work, { mergeStopAt: first }));
+      for (const r of [src, t]) { const id = r.nestJob && (r.nestJob.id || r.nestJob.jobId); if (id && live(r)) await put(x, { op: "stopJob", id: String(id), for: "person", by: x.cmd.by || "", why: "Move all onto: the sheets are merged, then nested whole" }, `mergestop|${id}`); }
+      const who = !still(src) ? src : t;
+      if (now - first > 15 * 60000) return no(`Not combined: ${nameOf(who)} ${busyRec(who, now) || "is still nesting"} after 15 minutes; press Move all onto again in a moment`);
+      return wait(`Waiting for ${nameOf(who)} to stop (${busyRec(who, now) || "nesting"}), then moving every piece…`, Object.assign({}, x.work, { mergeStopAt: first }));
     }
     return moveAndNest(x, src, t, j.ok ? "Combine drafts" : "Move all onto (what does not fit goes on to the next draft)", { draft: true });
   }

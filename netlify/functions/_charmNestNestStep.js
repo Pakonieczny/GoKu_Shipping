@@ -67,13 +67,18 @@ async function nestCore(ctx) {
   let jobs = await Nest.jobsOfRun(db, runId);
   // (a hold is written onto the run record only when one changes: run.sheetHolds, which the driver saves with the record; a lifted hold is null, the save merges)
   const holds = run.sheetHolds && typeof run.sheetHolds === "object" ? run.sheetHolds : {}, waits = [], held = [];
-  const hold = (id, why) => { holds[id] = why; run.sheetHolds = holds; if (why) held.push(why); };
+  /* HOLDTAKES (Paul, 21 Nov 2026): a hold names the revisions it was made at (run.sheetHoldRevs); a sheet that changed since (pieces placed on it, moved onto it, taken off) is
+     nested again with its hold lifted, as a person's Nest press would: its nest is a new ask at new revisions, with its own attempts */
+  const revs = run.sheetHoldRevs && typeof run.sheetHoldRevs === "object" ? run.sheetHoldRevs : {}, revOf = rec => num(rec.layoutRev) + "/" + num(rec.contentRev);
+  const byId = new Map(sheets.map(r => [r.id, r]));
+  const hold = (id, why) => { holds[id] = why; run.sheetHolds = holds; revs[id] = why && byId.get(id) ? revOf(byId.get(id)) : null; run.sheetHoldRevs = revs; if (why) held.push(why); };
   let asked = 0;
   for (const rec of sheets) {
     if (Date.now() > ctx.budgetEnd) return { more: true, cursor: { jobIds: jobs.filter(j => LIVE.has(j.status)).map(j => j.id).slice(0, 60) } };
     const mine = jobs.filter(j => j.sheetId === rec.id);
     // (a held sheet that a person nested again: its hold is lifted, as the page's startNestReady lifts runHold)
     if (holds[rec.id] && mine.some(j => LIVE.has(j.status) && !j.auto)) hold(rec.id, null);   // (null, not a deleted key: the driver's record save merges)
+    if (holds[rec.id] && revs[rec.id] && revs[rec.id] !== revOf(rec)) hold(rec.id, null);   // (HOLDTAKES: it changed since it was held)
     // (build step 7b, C4 (d): the sheet writer found that the oldest order cannot fit on an empty sheet (problemStop): the run stops with those words once, as the page's overflowToNextSheet
     //  stopped it; after a person's Resume the sheet is held (the run goes on with the others) until a person nests it again)
     if (rec.problemStop && rec.problemStop.why && !(rec.placements || []).length && !mine.some(j => LIVE.has(j.status))) {

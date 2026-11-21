@@ -95,7 +95,7 @@ async function freshnessGate(db, o = {}) {
 }
 
 /* ── the run's record (RunCtl recordOf / sizeCheck / archiveFinished / updatePending, from the documents, never from a page's memory) ── */
-const RECORD_FIELDS = ["status", "step", "errors", "stoppedBy", "stopKind", "fix", "note", "setIds", "setId", "processingSignature", "processingComplete", "finishedAt", "pendingWork", "nothingToCut", "commitRequested", "awaitCommit", "claimedAt", "abandonedAt", "sheetHolds"];
+const RECORD_FIELDS = ["status", "step", "errors", "stoppedBy", "stopKind", "fix", "note", "setIds", "setId", "processingSignature", "processingComplete", "finishedAt", "pendingWork", "nothingToCut", "commitRequested", "awaitCommit", "claimedAt", "abandonedAt", "sheetHolds", "sheetHoldRevs"];
 /** What the driver saves of a run: its scalar fields only (never its lines: they change only through runLinesAdd / runLinesPatch), the last fifty errors, the signature as a hash. */
 function recordOf(r) {
   const rec = { runId: r.runId };

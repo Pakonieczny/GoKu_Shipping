@@ -48,7 +48,7 @@ function notDraft(rec, sets, run, now) {
   if (rec.topup && !rec.topup.closedAt) return "is filling its last gaps";
   if (rec.intakeFinalized) return "takes no new pieces (its intake was finalized)";
   if (rec.problem || rec.problemStop) return "needs a look";
-  if (rec.runHold || (run && run.sheetHolds && run.sheetHolds[rec.id])) return "is held by the run";
+  // (HOLDTAKES: a held sheet takes pieces; the move lifts its hold, _charmNestNestStep.js)
   if (rec.label && rec.label.own) return "has a label of its own";
   if (rec.keepInSet || rec.ownerSet) return "was put in its set by a person";
   if (rec.manualEdit && now - num(rec.manualEdit.at) < MANUAL_MS) return "is open in Manual Control";

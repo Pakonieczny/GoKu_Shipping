@@ -123,8 +123,9 @@ module.exports = function make(d) {
       charms: charms.filter(c => !(c && c.poolId && ids.has(String(c.poolId)))),
       placements: placements.filter(p => !(p && cids.has(p.id))),
       poolIds: (rec.poolIds || []).filter(x => !ids.has(String(x))),
-      rejects: Array.isArray(rec.rejects) ? rec.rejects.filter(x => !cids.has(x)) : rec.rejects,
-      feedWait: Array.isArray(rec.feedWait) ? rec.feedWait.filter(x => !cids.has(x)) : rec.feedWait,
+      // (NOUNDEF, 21 Nov 2026: a sheet with no rejects / feedWait gave undefined, which Firestore refuses: "Move all onto" failed on GF Draft 18 → 19)
+      rejects: Array.isArray(rec.rejects) ? rec.rejects.filter(x => !cids.has(x)) : (rec.rejects == null ? null : rec.rejects),
+      feedWait: Array.isArray(rec.feedWait) ? rec.feedWait.filter(x => !cids.has(x)) : (rec.feedWait == null ? null : rec.feedWait),
       backsGoing: (rec.backPool || []).filter(x => x && ids.has(String(x.poolId))),
       backPool: (rec.backPool || []).filter(x => !(x && ids.has(String(x.poolId))))
     };
