@@ -41,6 +41,7 @@ const Sets={onSheetSaved:async(sh,_c,_u,o)=>{const set=o&&o.setOverride;if(!set.
   save:async(set)=>{},
   ensure:async(runId,group,o)=>{ allocations++;const s={runId,group,seq:seq++,day:today(),setId:'set-'+allocations,name:'Set-'+(seq-1),sheetIds:[],labelFiles:[],materials:[],orders:{},sheetNos:{}};B.sets.set(s.setId,s);return s}};
 `, c);
+  require("./_gateCore.cjs")(c);   // (GATECORE: the page loads charm-nest-place.js and charm-nest-assembly-core.js before charm-nest-bridge.js)
   vm.runInContext(GATE, c);
   const json = expr => JSON.parse(vm.runInContext(`JSON.stringify(${expr})`, c));
   const w = {

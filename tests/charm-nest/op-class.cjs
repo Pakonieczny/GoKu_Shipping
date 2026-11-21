@@ -13,7 +13,7 @@ ok(`every one of the library's ${ops.length} ops is classified (a new op must be
 ok('no op is in two classes', !twice.length, twice);
 const ghosts = Object.entries(classes).flatMap(([k, s]) => [...s].filter(op => k !== 'CLOUD_ONLY' && !ops.includes(op) && op !== 'runLinesRetire'));
 ok('every classified op exists (a class names no op that is gone; CLOUD_ONLY and runLinesRetire name ops their later build steps add)', !ghosts.length, ghosts);
-ok('the CLOUD_ONLY ops are not built yet: none of them is an op today', [...C.CLOUD_ONLY].every(op => !ops.includes(op)));
+ok('a CLOUD_ONLY op that is built is in no other class (the handler refuses it to a page in every mode); the rest are added by their later build steps', [...C.CLOUD_ONLY].filter(op => ops.includes(op)).every(op => C.classOf(op) === 'CLOUD_ONLY' && C.CLOUD_OPS.has(op)));
 const missing = [...C.CLOUD_OPS].filter(op => !ops.includes(op));
 ok('every op on the cloud\'s list exists', !missing.length, missing);
 ok('the cloud\'s list holds none of the denied ops', [...C.DENIED].every(op => !C.CLOUD_OPS.has(op)));

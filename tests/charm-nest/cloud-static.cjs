@@ -5,7 +5,13 @@
 'use strict';
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '../..'), fn = f => path.join('netlify/functions', f);
-const CLOUD_FILES = [fn('_charmNestDrive.js'), fn('_charmNestLease.js'), fn('_charmNestOpClass.js'), fn('charmNestDrive-background.js'), fn('charmNestDriveCron.js')];
+const CLOUD_FILES = [fn('_charmNestDrive.js'), fn('_charmNestLease.js'), fn('_charmNestOpClass.js'), fn('charmNestDrive-background.js'), fn('charmNestDriveCron.js'),
+  fn('_charmNestIntake.js'), fn('_charmNestPieceHost.js'), 'charm-nest-pool-make.js',   // (build steps 3 and 4: the intake unit, the piece maker's host and the piece maker it runs)
+  fn('_charmNestPlaceUnit.js'), fn('_charmNestPlaceOp.js'), 'charm-nest-place.js',   // (build step 5: the placement unit, placeOnSheet, the shared sheet choice)
+  fn('_charmNestTakeOff.js'), fn('_charmNestTakeOffOps.js')];   // (build step 9: the take-off unit and its ops)
+CLOUD_FILES.push(fn('_charmNestSteps.js'), fn('_charmEngraveFiles.js'), fn('_charmEngraveFonts.js'), fn('_charmEngravePiece.js'), fn('_charmEngraveOps.js'), 'charm-nest-back-file.js');   // (build step 11: engraving in the cloud)
+CLOUD_FILES.push(fn('_charmNestCommit.js'), fn('_charmNestCommitOps.js'), fn('_charmNestArchiveRecord.js'));   // (build step 12: sending finished sets to the Design Station)
+CLOUD_FILES.push(fn('_charmNestCmdOps.js'), fn('_charmNestCmdExec.js'), fn('_charmNestCmdUnit.js'), fn('_charmNestSweeps.js'));   // (build step 13: a person's requests and the repair sweeps; _charmNestSteps.js is listed above)
 const RULES = [
   [/\bLib\.ops\b|\.ops\[|\bops\s*=\s*Lib\b/, 'reads the library\'s ops table (the cloud gets Lib.call and Lib.cloudOps only)'],
   [/\b(wantTables|askTables|askTable|tablesLoad|getListingInventory)\b/, 'asks Etsy for a listing\'s SKU table'],

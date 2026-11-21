@@ -6,7 +6,8 @@
 //   gold    · the order goes back on the partial sheet with room, ahead of three incoming orders that wait on it; the steps come in
 //             order; nothing already on the sheet moves; the hold, the line's marks and the timeline say so; no QR yet (still filling)
 //   (set: never had a scenario of its own past step 1; the sheet in its set is the closed scenario's committed one)
-//   closed  · a cut sheet, a recalled one and one in a committed set are never filled: a new sheet is started (and the plan says so)
+//   closed  · a cut sheet, a recalled one and one in a committed set are never filled: a new sheet is started (and the plan says so, by the name the sheet then has:
+//             NAMES / SHEETSAME, Paul 12 and 20 Nov 2026, charm-nest-sheet-name.js: a draft is numbered among the drafts of its metal in its run, never by its page; a cut sheet keeps its number)
 //   (rose, removed 26 Oct 2026: SETFIX, Paul 17 Oct 2026, a Rose Gold sheet joins a set only by its own Cut Sheet press, which draws its green line; the uncut RG sheet in a set this
 //    scenario released onto no longer exists. A cut sheet is never filled: the closed scenario proves that, its cut Rose Gold sheet included)
 //   restart · the page reloaded in the middle of a release: the next load finishes it once (one placement, one timeline step)
@@ -174,36 +175,40 @@ async function run(kind, browser) {
         ask('after'); return out;
       }, H);
       check(plans.open.target.label === 'GF Draft 1' && !plans.open.needsNewSheet && plans.after.target.label === 'GF Draft 1' && !plans.after.needsNewSheet, `3 · an open sheet with room is the target, before and after (${plans.open.target.label}, ${plans.after.target.label})`);
-      for (const name of ['cut', 'recalled', 'full', 'roseCut', 'committed']) check(plans[name].needsNewSheet && plans[name].target.newSheet && plans[name].target.label === 'GF Draft 2' && plans[name].effects.some(t => /No GF 14\/20 sheet has room, so 1 piece starts a new sheet, GF Draft 2\./.test(t)), `3 · ${name}: the sheet is never filled; the plan says a new sheet is started (${plans[name].target.label}: ${plans[name].effects[1]})`);
+      // (NAMES, Paul 12 Nov 2026 (charm-nest-sheet-name.js; charm-nest-1.html draftNumberOf, SHEETSAME 20 Nov): a draft is numbered among the drafts of its metal in its run, never by its page, and a
+      //  sheet already CUT keeps the number its file and label carry. So after a cut (or Rose-cut) GF Sheet 1 the new sheet is the first draft, "GF Draft 1"; after a sheet that is still a draft
+      //  (recalled, released full, or only listed by a committed set: this record names no set) it is the second, "GF Draft 2". The plan names it as it will be named.)
+      const NEXT = { cut: 'GF Draft 1', recalled: 'GF Draft 2', full: 'GF Draft 2', roseCut: 'GF Draft 1', committed: 'GF Draft 2' };
+      for (const name of ['cut', 'recalled', 'full', 'roseCut', 'committed']) check(plans[name].needsNewSheet && plans[name].target.newSheet && plans[name].target.label === NEXT[name] && plans[name].effects.some(t => t === `No GF 14/20 sheet has room, so 1 piece starts a new sheet, ${NEXT[name]}.`), `3 · ${name}: the sheet is never filled; the plan says a new sheet is started, ${NEXT[name]} (${plans[name].target.label}: ${plans[name].effects[1]})`);
       check(JSON.stringify([(await info()).charms, (await info()).placed, (await info()).at]) === gf1, `3 · reading the plans changed nothing`);
 
-      // 1st release: the only sheet is cut
+      // 1st release: the only sheet is cut (NAMES: it is "GF Sheet 1" now, so the new sheet is "GF Draft 1", in the plan, the steps, the answer and the timeline alike)
       await page.evaluate(() => { CN.S.sheets.gold.pages[0].laserDoneAt = Date.now(); });
       const r1 = await release(H);
       stepsOk(r1, '4', WANT);
       const tg1 = r1.steps.find(x => x.type === 'target'), pl1 = r1.steps.find(x => x.type === 'placed'), qr1 = r1.steps.find(x => x.type === 'qr');
       const g2 = await rest(2);
-      check(r1.r.ok && r1.r.placed && tg1.newSheet === true && tg1.label === 'GF Draft 2' && tg1.sheetId === null && pl1.sheetId === g2.sheetId && g2.sheetId !== sheetId && r1.r.sheets[0].newSheet === true && r1.r.sheets[0].label === 'GF Draft 2', `4 · a new sheet, GF Draft 2, takes the order (${JSON.stringify([tg1.label, tg1.newSheet, pl1.sheetId, g2.sheetId])})`);
+      check(r1.r.ok && r1.r.placed && tg1.newSheet === true && tg1.label === 'GF Draft 1' && tg1.sheetId === null && pl1.sheetId === g2.sheetId && pl1.label === 'GF Draft 1' && g2.sheetId !== sheetId && r1.r.sheets[0].newSheet === true && r1.r.sheets[0].label === 'GF Draft 1', `4 · a new sheet, GF Draft 1, takes the order, named alike in the plan and once made (${JSON.stringify([tg1.label, tg1.newSheet, pl1.sheetId, pl1.label, g2.sheetId, r1.r.sheets[0] && r1.r.sheets[0].label])})`);
       check(g2.pages === 2 && g2.charms.join() === poolOf(H) && g2.placed.join() === poolOf(H) && g2.saved && g2.verified, `4 · the new sheet holds the order alone, placed, saved and verified (${JSON.stringify([g2.charms, g2.placed])})`);
       const a1 = await info(1);
       check(JSON.stringify([a1.charms, a1.placed, a1.at]) === gf1 && JSON.stringify(record(sheetId).poolIds) === rec1 && !a1.charms.includes(poolOf(H)), `4 · the cut sheet is exactly as it was, here and in the Library`);
       check(qr1.sheetId === g2.sheetId && qr1.made === false && /still filling/.test(qr1.why || ''), `4 · the new sheet is still filling: no QR yet (${JSON.stringify(qr1.why)})`);
       let ev = await until(() => timeline(H, 'released')[0] && timeline(H, 'released'), 20000, 'the released event (first)');
-      check(ev.length === 1 && ev[0].sheetId === g2.sheetId && /^Released from hold by Paul · placed on GF Draft 2$/.test(ev[0].text) && ev[0].data && ev[0].data.newSheet === true, `4 · the timeline names the new sheet (${JSON.stringify(ev.map(e => [e.text, e.sheetId, e.data && e.data.newSheet]))})`);
+      check(ev.length === 1 && ev[0].sheetId === g2.sheetId && /^Released from hold by Paul · placed on GF Draft 1$/.test(ev[0].text) && ev[0].data && ev[0].data.newSheet === true, `4 · the timeline names the new sheet (${JSON.stringify(ev.map(e => [e.text, e.sheetId, e.data && e.data.newSheet]))})`);
 
-      // 2nd release: the new sheet is recalled too, so the next one is started
+      // 2nd release: the new sheet is recalled too, so the next one is started (NAMES: GF Sheet 1 is cut, GF Draft 1 is recalled and still a draft, so the new one is "GF Draft 2")
       const gf2 = JSON.stringify([g2.charms, g2.placed, g2.at]);
       await page.evaluate(() => { CN.S.sheets.gold.pages[1].recalled = true; });
       const r2 = await release(H2);
       stepsOk(r2, '5', WANT);
       const g3 = await rest(3);
       const tg2 = r2.steps.find(x => x.type === 'target');
-      check(r2.r.ok && r2.r.placed && tg2.newSheet === true && tg2.label === 'GF Draft 3' && g3.pages === 3 && g3.charms.join() === poolOf(H2) && g3.placed.join() === poolOf(H2) && g3.sheetId !== g2.sheetId && g3.sheetId !== sheetId, `5 · a recalled sheet is skipped too: GF Draft 3 takes the next order (${JSON.stringify([tg2.label, g3.charms])})`);
+      check(r2.r.ok && r2.r.placed && tg2.newSheet === true && tg2.label === 'GF Draft 2' && r2.r.sheets[0] && r2.r.sheets[0].label === 'GF Draft 2' && g3.pages === 3 && g3.charms.join() === poolOf(H2) && g3.placed.join() === poolOf(H2) && g3.sheetId !== g2.sheetId && g3.sheetId !== sheetId, `5 · a recalled sheet is skipped too: GF Draft 2 takes the next order (${JSON.stringify([tg2.label, r2.r.sheets[0] && r2.r.sheets[0].label, g3.charms])})`);
       const b2 = await info(2);
       check(JSON.stringify([b2.charms, b2.placed, b2.at]) === gf2 && JSON.stringify([(await info(1)).charms, (await info(1)).placed, (await info(1)).at]) === gf1, `5 · neither earlier sheet changed`);
       check((await count(poolOf(H))) === 1 && (await count(poolOf(H2))) === 1 && (await count(poolOf(S1))) === 1, `5 · every order is on exactly one sheet`);
       ev = await until(() => timeline(H2, 'released')[0] && timeline(H2, 'released'), 20000, 'the released event (second)');
-      check(ev.length === 1 && ev[0].sheetId === g3.sheetId && /placed on GF Draft 3$/.test(ev[0].text), `5 · the timeline names GF Draft 3`);
+      check(ev.length === 1 && ev[0].sheetId === g3.sheetId && /placed on GF Draft 2$/.test(ev[0].text), `5 · the timeline names GF Draft 2 (${JSON.stringify(ev.map(e => [e.text, e.sheetId]))})`);
       const rows = [await rowOf(H), await rowOf(H2)];
       check(rows.every(r => r.state === 'pooled' && !r.hold && !r.releasing && r.frontAt > 0) && rows[1].frontAt > rows[0].frontAt, `5 · both lines are free of their holds; the one released later has the later place in the queue (${JSON.stringify(rows.map(r => r.frontAt))})`);
       await quiet('5');

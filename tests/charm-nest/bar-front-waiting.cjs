@@ -66,6 +66,7 @@ function harness(rows, o = {}) {
     setNone(job, why) { job.state = 'none'; job.reason = why; job.row.engrave = Object.assign({}, job.row.engrave, { needed: false, state: 'none', reason: why, approved: true }); return job; },
     agentCall: async () => { throw new Error('a paid reading was asked for'); },
   };
+  ctx.CharmNestEngraveClassify = require(path.join(root, 'charm-nest-engrave-classify.js'));   // (build step 11: the page's reading is charm-nest-engrave-classify.js, a global the page loads before the bridge)
   vm.createContext(ctx); vm.runInContext(SLICE1, ctx); vm.runInContext(SLICE2, ctx); vm.runInContext(SLICE3, ctx); vm.runInContext('this.wantsFront = wantsFront;', ctx);
   // the Engrave object as the page exports it (the names charm-nest-engrave-bar-front.js reads), over the sliced code; a fit is free and offline: here it only records that it was asked
   const Engrave = vm.runInContext('({ items, jobsOf, isFront, faceOf, ensureJobs, neverEngraves, classify, setupOf, render })', ctx);

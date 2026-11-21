@@ -34,6 +34,11 @@ function makeStation() {
     const rowFor = id => open.has(id) ? { id } : null;
     ${cutFrom(html, '  const readJson = (k, d) =>', '  function rememberSorterSelection()')}
     function rememberSorterSelection() {}
+    // (CLOUDDRIVE build step 12, P12: the station also asks the cloud's commit memory, charmNestLibrary commitGet, when its own has nothing for a run: priorCommitAny / takenAny.
+    //  The stand-in cloud answers as the server does, with the run's journals; the cloud sent none of these sets to the station, so it holds none)
+    const FN = '/.netlify/functions', SANDBOX = false, sessionStorage = { getItem: () => null }, cloudJournals = [], cloudReads = [];
+    const fetch = async (url, o) => { const b = JSON.parse(o.body); if (url !== FN + '/charmNestLibrary' || b.op !== 'commitGet') throw new Error('unexpected cloud call ' + url + ' ' + b.op); cloudReads.push(b.runId); return { ok: true, json: async () => ({ ok: true, runId: b.runId, journals: cloudJournals.filter(j => j.runId === b.runId) }) }; };
+    ${cutFrom(html, '  /* (CLOUDDRIVE build step 12, P12; dormant) the cloud\'s commit memory', '  /* ── the remote cursor')}
     const cmds = {
       // (the page's ui.select and complete.preview need its DOM: only their refusals and bookkeeping are stood in; complete.commit and complete.undo are the page's own)
       async 'ui.select'(a) { const selected = [], refused = []; for (const id of (a.receiptIds || []).map(String)) { const row = rowFor(id); if (!row) { refused.push({ id, reason: 'order is not in the list' }); continue; } if (isLockedElsewhere(id)) { refused.push({ id, reason: 'order is locked at another station' }); continue; } if (completedOrders.has(id)) { refused.push({ id, reason: 'order is already design-complete' }); continue; } selectedOrders.add(id); S.sorterSelected.add(id); selected.push(id); } return { selected, refused }; },
@@ -119,6 +124,7 @@ const commitCalls = station => plain(station.ev('commitCalls'));
     cloud.failSet = 1;
     await assert.rejects(commitStep(sorter), /Failed to fetch/, 'the dropped save stops the step, as the loop sees it');
     assert.equal(commitCalls(station).length, 1, 'the station marked the orders design-complete once');
+    assert.deepEqual(plain(station.ev('cloudReads')), ['run-1'], 'its own memory had nothing for the run: the cloud\'s was asked once (it held nothing either)');
     const first = setOf(sorter).committedAt;
     assert(first, 'the page knows the station took the orders');
     assert.equal(cloud.saves.length, 0, 'nothing reached the cloud');

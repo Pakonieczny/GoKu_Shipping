@@ -215,6 +215,7 @@ function harness(rows) {
     faceWord: j => (j && j.face === 'front' ? 'front' : 'back'), employeeName: () => 'Paul', needEmployee: async () => 'Paul', charmFor: () => null, loadFonts: async () => {}, revokeBacks() {}, recoverApprovals() {}, saveBacks: async () => {},
     agentCall: async (mode, ask) => { asked.push(ask); throw new Error('a paid reading was asked for'); },
   };
+  c.CharmNestEngraveClassify = require(path.join(root, 'charm-nest-engrave-classify.js'));   // (build step 11: the page's reading is charm-nest-engrave-classify.js, a global the page loads before the bridge)
   vm.createContext(c); for (const s of [SLICE_A, SLICE_B, SLICE_C, SLICE_D, SLICE_E, SLICE_F]) vm.runInContext(s, c);
   vm.runInContext('this.neverEngraves = neverEngraves; this.putAwayNever = putAwayNever; this.classifyOnce = classifyOnce; this.applyEngraving = applyEngraving; this.toWords = toWords; this.setReady = setReady; this.sendBack = sendBack; this.reopenJob = reopenJob; this.approveOnce = approveOnce; this.raiseCandidate = raiseCandidate; this.ensureJobs = ensureJobs; this.jobsOf = jobsOf;', c);
   return { ctx: c, jobs, asked, reviewAdds, reviewRemoves, events, api, byKey };

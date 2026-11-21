@@ -175,7 +175,8 @@ const realLine = (rid, metalKey, personalization) => {
 
 // ── 6 · the bridge uses all of it ────────────────────────────────────────────────────────────────────────────────────────────────────────
 { const b = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
-  const split = b.indexOf('const discSplit = discWordsOf(row, jobs);'), paid = b.indexOf('agentCall("engraveIntent"');
+  const cls = fs.readFileSync(path.join(root, 'charm-nest-engrave-classify.js'), 'utf8');   // (build step 11: the reading moved, word for word, into the module the page and the cloud both run)
+  const split = cls.indexOf('const discSplit = discWordsOf(row, jobs);'), paid = cls.indexOf('agentCall("engraveIntent"');
   ok(split > 0 && paid > split, 'a counted line whose note is plain is read BEFORE the paid reader (no paid call for it)');
   ok(/if \(O\.questionGone && O\.questionGone\(row, prev\)\) \{ row\.state = "pulled"; row\.reason = null; delete row\.poolTry; \}/.test(b), 'interpretAll releases a line held for a question that is gone');
   ok(/O\.staleQuestionHold && O\.staleQuestionHold\(row\)/.test(b), "the order window's record row does too");

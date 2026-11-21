@@ -168,6 +168,7 @@ const Sets={onSheetSaved:async(sh,_c,_u,o)=>{const set=o&&o.setOverride;if(!set.
   ensure:async(runId,group,o)=>{ if(o&&o.follow){ const f=o.follow; if(!f.sheetIds.length) throw new Error('the set this one follows holds no sheet yet: the server refuses to number a set after it'); } allocations++;const s={runId,group,seq:seq++,day:today(),setId:'set-'+allocations,name:'Set-'+(seq-1),sheetIds:[],labelFiles:[],materials:[],orders:{},sheetNos:{}};B.sets.set(s.setId,s);return s}};
 const saved=[];
 `, c);
+  require("./_gateCore.cjs")(c);   // (GATECORE: the page loads charm-nest-place.js and charm-nest-assembly-core.js before charm-nest-bridge.js)
   vm.runInContext(GATE, c);
   const w = {
     c, pages: [], add(...list) { c.__p = list; vm.runInContext('pages.push(...__p)', c); w.pages.push(...list); },

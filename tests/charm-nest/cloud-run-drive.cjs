@@ -9,6 +9,7 @@ const F = require('./_cloudFakes.cjs')({ now: T0 });
 let failed = 0;
 const ok = (name, cond, detail) => { console.log((cond ? 'OK   ' : 'FAIL ') + name + (cond || detail === undefined ? '' : ' :: ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)).slice(0, 900))); if (!cond) failed++; };
 const lib = F.load('charmNestLibrary.js'), spy = F.spy(lib), Drive = F.load('_charmNestDrive.js'), cron = F.load('charmNestDriveCron.js'), WorldLease = F.load('_charmNestWorldLease.js'), worldBg = F.load('charmNestWorld-background.js');
+const repoStamp = require('./_repoToken.cjs');   // (the Settings unlock for the owner's "Cloud carries" press, issued on the same in-memory cloud: no password, nothing real)
 const P = async body => { const r = await lib.handler({ httpMethod: 'POST', headers: { 'x-edit-passcode': 'test-pass' }, body: JSON.stringify(body) }); let o = {}; try { o = JSON.parse(r.body || '{}'); } catch (_) {} return Object.assign({}, o, { http: r.statusCode }); };
 const STEPS = Drive.RUN_STEPS, LEASE = 'Charm_Nest_Drive/lease';
 const run = id => F.doc('Charm_Nest_Runs/' + id) || {};
@@ -204,10 +205,14 @@ const unitsOf = (log, n = {}) => { const out = {}; for (const s of STEPS) out[s]
       const before = spy.ops.length; await F.drain(); passes.push(spy.ops.slice(before).filter(o => o.marked).map(o => o.op));
     }
     const marked = spy.ops.slice(opsBefore).filter(o => o.marked), OpClass = require(require('path').join(F.fnDir, '_charmNestOpClass.js'));
-    const writes = marked.filter(o => !OpClass.READ.has(o.op) && !(o.op === 'runOpen'));
+    const writes = marked.filter(o => !OpClass.READ.has(o.op) && !(o.op === 'runOpen')), perPass = passes.map(p => p.filter(op => !OpClass.READ.has(op) && op !== 'runOpen'));
     ok('F2 · the 20 builds ran and each moved the feed (feed-x)', feeds.every((n, i) => i === 0 || n > feeds[i - 1]) && feeds[19] > feeds[0], feeds);
     ok('F2 · after each build the driver was told and one pass ran (it read the run)', passes.length === 20 && passes.every(p => p.includes('runGet')), passes.slice(0, 3));
-    ok('F2 · 0 Lib.call writes (the resting run was left as it is)', writes.length === 0 && run(R).status === 'processed', writes.slice(0, 5));
+    // (build step 8, commit e1032d4: the cloud reconciles a run it takes ONCE per take, keyed on carrier.since, and says so on the run (its note). This run was handed to the cloud
+    //  just before the builds, so the first pass makes that one write; no world build makes the driver write anything (E1))
+    const st = F.doc('Charm_Nest_Drive/state') || {};
+    ok('F2 · the take\'s own words, once (step 8: reconciled once per take), in the first pass', JSON.stringify(perPass[0]) === '["runPut"]' && /^The cloud carries this run since/.test(String(run(R).note || '')) && !!(st.reconciled && st.reconciled.runId === R && st.reconciled.done), { first: perPass[0], note: run(R).note, reconciled: st.reconciled });
+    ok('F2 · 0 Lib.call writes after it, across the other 19 builds (the resting run was left as it is)', writes.length === 1 && perPass.slice(1).every(p => !p.length) && run(R).status === 'processed', { writes: writes.slice(0, 5), perPass });
     ok('F2 · 0 Charm_World/lease dispatches by a change or by the drive (the driver never builds the world)', bys.every(b => !/^change:|^drive/.test(String(b || ''))), bys);
     ok('F2 · and the pair cannot loop: no kick was left waiting', F.net.kicks.length === 0, F.net.kicks.map(k => k.name));
   }
@@ -253,20 +258,26 @@ const unitsOf = (log, n = {}) => { const out = {}; for (const s of STEPS) out[s]
     ok('I · from then on the cloud leaves the run to that computer', (!after.pass || after.pass.yield === true) && !log.length, after);
   }
 
-  /* ═══ P12 · "Cloud carries" writes only drive.pending; "on" is refused in words until the drain exists (step 14); the way back to standby parks the run ═══ */
+  /* ═══ P12 · "Cloud carries" writes only drive.pending; "on" is refused in words while the cloud cannot carry every run (step 15's readiness); the way back to standby parks the run ═══ */
   {
     F.reset(); F.clock.set(T0); setDrive('standby');
     const R = 'run-2026-11-20-ppppp'; seedRun(R); cloudCarrier(R);
+    // (build steps 8 and 15, commit e1032d4: runControl {action:"cloud"} needs the Settings unlock, as driveSet does (_charmNestRepoAuth.js); the owner's press carries it)
+    const PS = async body => P(await repoStamp('charmNestLibrary', body, F.db));
     let r = await P({ op: 'runControl', action: 'cloud', to: 'on', by: 'Paul' });
+    ok('P12 · "Cloud carries" without the Settings unlock is refused and writes nothing (e1032d4)', r.http === 401 && r.error === 'repo-locked' && !F.doc('Charm_Nest_Open/drive').pending && !kickedNonce(), { r, d: F.doc('Charm_Nest_Open/drive') });
+    r = await PS({ op: 'runControl', action: 'cloud', to: 'on', by: 'Paul' });
     ok('P12 · "Cloud carries" only writes drive.pending (the mode stays standby)', r.ok === true && F.doc('Charm_Nest_Open/drive').pending.to === 'on' && F.doc('Charm_Nest_Open/drive').mode === 'standby', { r, d: F.doc('Charm_Nest_Open/drive') });
     const steps = {}; for (const s of STEPS) steps[s] = [async () => {}];
     let n = kickedNonce();
     ok('P12 · the press kicked the driver (driveSoon)', !!n);
     await Drive.pass({ db: F.db, Lib: lib, nonce: n, steps, sleep: noSleep, renewMs: 0 });
     const d = F.doc('Charm_Nest_Open/drive');
-    ok('P12 · the driver refuses "on" in words and changes nothing (the drain and the page gates are not built yet)', d.mode === 'standby' && !d.pending && d.pendingRefused && /step 14/.test(d.pendingRefused.why), d);
+    // (step 15, e1032d4, plan §4 phase 3: "Cloud carries" needs every step and lane built and every computer seen in a day on the viewer build, else it is refused in words naming
+    //  what is missing; here the files lane's page gate, build step 7b, is not built yet)
+    ok('P12 · the driver refuses "on" in words naming what the cloud cannot do yet, and changes nothing (step 15\'s readiness)', d.mode === 'standby' && !d.pending && d.pendingRefused && /cannot carry every run yet: .+\. Nothing was changed/.test(d.pendingRefused.why) && F.doc('Charm_Nest_Run_Carrier/' + R).carrier.dev === 'cloud', d);
     setDrive('on'); seedRun(R, { status: 'running', step: 'nest' });
-    r = await P({ op: 'runControl', action: 'cloud', to: 'standby', by: 'Paul', cv: 'test' });
+    r = await PS({ op: 'runControl', action: 'cloud', to: 'standby', by: 'Paul', cv: 'test' });
     n = kickedNonce(); await Drive.pass({ db: F.db, Lib: lib, nonce: n, steps, sleep: noSleep, renewMs: 0 });
     ok('P12 · the way back (on → standby) flips the mode and parks the running run with words (handback)', F.doc('Charm_Nest_Open/drive').mode === 'standby' && run(R).status === 'stopped' && run(R).stopKind === 'handback', { r, d: F.doc('Charm_Nest_Open/drive'), run: { status: run(R).status, kind: run(R).stopKind } });
   }
@@ -330,7 +341,11 @@ const unitsOf = (log, n = {}) => { const out = {}; for (const s of STEPS) out[s]
   ok('Etsy: the stub was never called, no Etsy address or proxy was asked, the Etsy switch was never written', F.etsy.calls === 0 && !F.net.tripwire.length && !F.stopWrites.length, { etsy: F.etsy.calls, trip: F.net.tripwire });
   ok('no address outside the named functions was asked', !F.net.other.length, F.net.other);
   ok('the driver never sent a denied op', !spy.ops.some(o => o.marked && require(require('path').join(F.fnDir, '_charmNestOpClass.js')).DENIED.has(o.op)));
-  ok('no browser global exists', !F.browserGlobals().length, F.browserGlobals());
+  // (the cloud's own node canvas, _charmNestCanvas.js NodeCanvas, is put in place as OffscreenCanvas when the cloud draws a piece (build step 3, _charmNestPdf.js withCanvas(); here the
+  //  engraving fit unit of step 11 asks for it): it is not a browser's. The same exception as cloud-owner-rule.cjs (7dd4e12); any other OffscreenCanvas still fails)
+  const nodeCanvas = require.cache[require('path').join(F.fnDir, '_charmNestCanvas.js')] ? require(require('path').join(F.fnDir, '_charmNestCanvas.js')).NodeCanvas : null;
+  const globals = F.browserGlobals().filter(k => !(k === 'OffscreenCanvas' && nodeCanvas && globalThis.OffscreenCanvas === nodeCanvas));
+  ok('no browser global exists (the cloud\'s own node canvas is not one)', !globals.length, F.browserGlobals());
   console.log(failed ? `FAIL cloud-run-drive · ${failed} check(s)` : 'PASS cloud-run-drive');
   process.exit(failed ? 1 : 0);
 })().catch(e => { console.error('ERROR', e && e.stack || e); process.exit(2); });

@@ -255,7 +255,7 @@ function bridgeWorld(hook) {
   const E = require(path.join(root, 'charm-nest-engraving-seals.js')), Sides = require(path.join(root, 'charm-nest-engrave-sides.js'));
   const reader = R; reader.slotInfo = hook || null;   // (the module's own hook: bridgeWorld calls run one after the other)
   const calls = { agent: 0, ready: [], words: [], none: [] }, map = new Map();
-  const ctx = { O: require(path.join(root, 'charm-nest-orders.js')), CharmNestEngraveRead: reader, FACES: () => null, neverEngraves: () => null, NEVER_OPEN: () => true, NEVER_WHY: 'never', CNEngravingSeals: E, render() {}, S: { settings: { engraveConfidence: 0.65 } },
+  const ctx = { O: require(path.join(root, 'charm-nest-orders.js')), CharmNestEngraveRead: reader, CharmNestEngraveClassify: require(path.join(root, 'charm-nest-engrave-classify.js')), FACES: () => null, neverEngraves: () => null, NEVER_OPEN: () => true, NEVER_WHY: 'never', CNEngravingSeals: E, render() {}, S: { settings: { engraveConfidence: 0.65 } },
     Master: { entryFor: () => ({ engravable: true }) }, items: () => map, faceOf: () => 'back', SIDES: () => Sides, agent() {}, console,
     ensureJobs: row => { if (!row.jobs) { row.jobs = (row.slots || [null]).map(sl => ({ key: row.key + (sl ? '#' + sl : ''), row, slot: sl, state: 'classify', text: null, lines: [], copies: [] })); for (const j of row.jobs) map.set(j.key, j); } return row.jobs; },
     ensureJob: row => ctx.ensureJobs(row)[0],

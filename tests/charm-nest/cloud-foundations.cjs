@@ -248,8 +248,13 @@ const storeText = (skip = []) => JSON.stringify([...F.store.entries()].filter(([
   ok('1d · mode on: a page\'s putSheet of a field the cloud does not write goes through', r.status === 200, r);
   r = await P({ op: 'runArchive', runId: onRun, parts: [{ json: '{"a":{"orderId":"1"}}' }] });
   ok('1d · mode on: a production write from a page built before (no cv) gets the reload words', r.status === 409 && r.reload === true, r);
+  // (build step 14, commit 3a04e0c, plan §1.4 "a non-READ op whose body carries no cv is refused with the reload words" and §2.2 Old tabs: a person's press from a page built before
+  //  the viewers is refused in words that tell the person to reload and that nothing was changed, never dropped silently; the same press from a current page is answered as today)
+  const linesBefore = JSON.stringify((F.doc('Charm_Nest_Runs/' + onRun) || {}).lines || {});
   r = await P({ op: 'runLinesPatch', runId: onRun, dev: 'd1aaaa', by: 'Ann', lines: { x: {} } });
-  ok('1d · mode on: a person\'s press (a hold) reads no switch and is answered as today (its cv rule ships with build step 14)', r.status !== 409 || !r.cloudCarries, r);
+  ok('1d · mode on: a person\'s press (a hold) from a page older than build step 14 (no cv) is refused with the reload words, nothing changed (step 14\'s cv rule, 3a04e0c)', r.status === 409 && r.reload === true && r.cloudCarries === true && /old version: it reloads/.test(r.error) && /Nothing was changed/.test(r.error) && JSON.stringify((F.doc('Charm_Nest_Runs/' + onRun) || {}).lines || {}) === linesBefore, r);
+  r = await P({ op: 'runLinesPatch', runId: onRun, dev: 'd1aaaa', by: 'Ann', cv: 'test', lines: { x: {} } });
+  ok('1d · mode on: the same press from a current page (cv) is answered as today (no cloudCarries refusal)', r.status !== 409 || !r.cloudCarries, r);
   r = await P({ op: 'getSheet', id: 'sheetD1' });
   ok('1d · mode on: a read is never refused', r.status === 200, r.status);
   r = await P({ op: 'runPut', dev: 'd1aaaa', run: { runId: onRun, status: 'running' }, sandbox: true });

@@ -159,14 +159,15 @@ module.exports = function install(opts = {}) {
 
   /* ── Storage ── */
   const blobs = new Map(), signed = [];
+  const missing = p => Object.assign(new Error('No such object: ' + p), { code: 404 });   // (as @google-cloud/storage's ApiError for an object that is not there)
   const bucket = { name: 'test-bucket', file(p) { return {
     name: p,
     async save(buf, o = {}) { const b = Buffer.isBuffer(buf) ? buf : Buffer.from(String(buf)); blobs.set(p, { buf: b, meta: { contentType: o.contentType || null, size: b.length, md5Hash: require('crypto').createHash('md5').update(b).digest('base64'), metadata: Object.assign({}, o.metadata && o.metadata.metadata) } }); },
     async exists() { return [blobs.has(p)]; },
-    async download() { if (!blobs.has(p)) throw new Error('No such object: ' + p); return [blobs.get(p).buf]; },
+    async download() { if (!blobs.has(p)) throw missing(p); return [blobs.get(p).buf]; },
     async delete() { blobs.delete(p); },
-    async getMetadata() { const b = blobs.get(p); if (!b) throw new Error('No such object: ' + p); return [Object.assign({ name: p }, b.meta)]; },
-    async setMetadata(m = {}) { const b = blobs.get(p); if (!b) throw new Error('No such object: ' + p); if (m.contentType) b.meta.contentType = m.contentType; Object.assign(b.meta.metadata, m.metadata || {}); return [b.meta]; },
+    async getMetadata() { const b = blobs.get(p); if (!b) throw missing(p); return [Object.assign({ name: p }, b.meta)]; },
+    async setMetadata(m = {}) { const b = blobs.get(p); if (!b) throw missing(p); if (m.contentType) b.meta.contentType = m.contentType; Object.assign(b.meta.metadata, m.metadata || {}); return [b.meta]; },
     async copy(dst) { const b = blobs.get(p); const to = typeof dst === 'string' ? dst : dst.name; blobs.set(to, { buf: Buffer.from(b.buf), meta: JSON.parse(JSON.stringify(b.meta)) }); },
     async getSignedUrl(o = {}) { signed.push({ path: p, action: o.action, expires: o.expires }); return ['https://storage.test.invalid/' + encodeURIComponent(p) + '?action=' + o.action]; }
   }; }, async getFiles() { return [[...blobs.keys()].map(k => bucket.file(k))]; } };

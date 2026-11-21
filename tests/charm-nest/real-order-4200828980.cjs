@@ -167,6 +167,7 @@ function harness(rows, o = {}) {
     setNone(job, why) { job.state = 'none'; job.reason = why; job.row.engrave = Object.assign({}, job.row.engrave, { needed: false, state: 'none', reason: why, approved: true }); return job; },
     skip: async () => { throw new Error('nothing is skipped'); }, agentCall: async (mode, ask) => { asked.push(ask); throw new Error('a paid reading was asked for'); },
   };
+  c.CharmNestEngraveClassify = require(path.join(root, 'charm-nest-engrave-classify.js'));   // (build step 11: the page's reading is charm-nest-engrave-classify.js, a global the page loads before the bridge)
   vm.createContext(c); for (const s of [SLICE1, SLICE2, SLICE3, SLICE4]) vm.runInContext(s, c);
   return { ctx: c, jobs, asked, events, apiCalls, byKey };
 }

@@ -5,6 +5,8 @@
 // job._approvalTask and approvalPreparing for good: that press never ended, the card kept no word of why, and every later press was dropped without a word by cardAction / approve().
 // The rule this test holds, on a BACK and on a FRONT: a press on Approve either approves or says plainly IN THE CARD why not, within the time limit of the wait that hangs; the next press
 // works; the moves made before it are kept (and are what gets approved). Staged words dim Approve with the reason written in the card, never only a tooltip.
+// APPROVECLOUD (Paul, 20 Nov 2026, commit a13213e, after "Not approved: it took too long" on an approval still working): while a press works the card says "Approving…" and the step it is
+// at, in words, under Approve; it fails only on a real error (a wait past its own limit, in minutes) or after 4 minutes with nothing moving, says why, and Approve is pressable again.
 //
 // Offline only: the REAL page over the repo's fake site with real drawings (_engraveRealWorld.cjs). Made-up names only; no Etsy, no paid call, no live write.
 //   /tmp/.../int/slot.sh timeout 600 node tests/charm-nest/engrave-approve-never-silent.cjs      Exit code 1 while any check is red.
@@ -49,8 +51,16 @@ const SCALE = 0.02;   // (CN_SPIN_SCALE while the wait hangs: the 30 s limit of 
     const f0 = await adjust(key, tag);
     await page.evaluate(s => { window.__flush = Session.flushNow; Session.flushNow = () => new Promise(() => {}); window.CN_SPIN_SCALE = s; }, SCALE);
     const t0 = Date.now(), p1 = await press();
-    const f1 = await until(async () => { const f = await facts(key); return f.why ? f : null; }, 8000), ms = Date.now() - t0;
-    check(`${tag}1 the press while the workspace save hangs is not silent: the card says why it was not approved`, p1 === 'pressed' && !!f1 && /^Not approved/.test(f1.why), JSON.stringify({ p1, ms, f1 }));
+    // (APPROVECLOUD: never silent. At once, and at every look while it works, "Approving…" (off) with the step it is at in the card's line, never "Not approved" while the hung wait is within its
+    //  own limit (the workspace save's 2 minutes, APPROVE_MS.save in charm-nest-bridge.js; CN_SPIN_SCALE makes it 2.4 s here); once past it, "Not approved:" with why (the workspace save named),
+    //  never the old "it took too long")
+    const looks = [], SAVE_LIMIT_MS = 2 * 60000 * SCALE;
+    const f1 = await until(async () => { const f = await facts(key); looks.push(f); return /^Not approved/.test(f.why) ? f : null; }, 8000), ms = Date.now() - t0;
+    const working = f1 ? looks.slice(0, -1) : looks;
+    check(`${tag}1 the press while the workspace save hangs is never silent: "Approving…" with its step in the card at once and while it works, then why it was not approved once the save's limit passed`,
+      p1 === 'pressed' && working.length > 0 && working.every(f => f.approve && f.approve.text === 'Approving…' && !f.approve.live && !!f.why && !/^Not approved/.test(f.why))
+      && !!f1 && /^Not approved/.test(f1.why) && /workspace save/.test(f1.why) && !/took too long/.test(f1.why) && ms >= SAVE_LIMIT_MS,
+      JSON.stringify({ p1, ms, looks: looks.length, steps: [...new Set(working.map(f => f.why))], first: working[0] || null, f1 }));
     const f2 = await until(async () => { const f = await facts(key); return !f.busy && f.approve && f.approve.live ? f : null; }, 4000) || await facts(key);
     check(`${tag}2 it does not stay stuck: the approval let go (no task, nothing preparing), Approve is live and reads "Approve" again`, !f2.busy && f2.state === 'review' && f2.approve && f2.approve.live && f2.approve.text === 'Approve', JSON.stringify(f2));
     check(`${tag}3 the adjustments are kept: the words stay where they were moved`, JSON.stringify(f2.centre) === JSON.stringify(f0.centre) && f2.nudged, JSON.stringify({ moved: f0.centre, now: f2.centre }));

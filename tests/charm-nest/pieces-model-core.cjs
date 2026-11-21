@@ -187,6 +187,7 @@ const slotsOfPlan = (row, ctx = CTX) => Sides.plan(ctx, row, []).slots;
       setNone(job, why) { job.state = 'none'; job.reason = why; job.row.engrave = Object.assign({}, job.row.engrave, { needed: false, state: 'none', reason: why, approved: true }); return job; },
       agentCall: async (mode, ask) => { asked.push(ask); if (o.reading === undefined) throw new Error('a paid reading was asked for'); return typeof o.reading === 'function' ? o.reading(ask) : o.reading; },
     };
+    ctx.CharmNestEngraveClassify = require(path.join(root, 'charm-nest-engrave-classify.js'));   // (build step 11: the page's reading is charm-nest-engrave-classify.js, a global the page loads before the bridge)
     vm.createContext(ctx); vm.runInContext(SLICE, ctx);
     vm.runInContext('this.jobsOf = jobsOf; this.ensureJobs = ensureJobs; this.classify = classify;', ctx);
     return { ctx, jobs, asked, events, reviews, byKey, keys: () => [...jobs.keys()] };

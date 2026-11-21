@@ -37,8 +37,9 @@ const code=fs.readFileSync(require('node:path').join(__dirname,'../../charm-nest
 const part=(name,end)=>code.slice(code.indexOf(`const ${name} = window.${name} =`),code.indexOf(end,code.indexOf(`const ${name} = window.${name} =`)));
 // (the Carry slice also holds SheetEvents, which names its store by the side of the sandbox)
 const c=vm.createContext({assert,O,SR:require('../../charm-nest-set-rules.js'),SO:require('../../charm-nest-shared-orders.js'),console,WORKSPACE_SANDBOX:false});
+require('./_place.cjs')(c);   // (SHEETCHOICE, f7d5bef, cloud plan v2 step 5: the set assembly's SPLITWAIT reads window.CharmNestPlace, which the page loads before the bridge)
 vm.runInContext(`
-const window={CharmNestOrders:O,CharmNestSetRules:SR,SharedOrders:SO}, S={cloud:{ok:true},settings:{}}, METALS=['gold','silver','rose','gold10k','gold14k'].map(key=>({key}));
+const window={CharmNestOrders:O,CharmNestSetRules:SR,SharedOrders:SO,CharmNestPlace}, S={cloud:{ok:true},settings:{}}, METALS=['gold','silver','rose','gold10k','gold14k'].map(key=>({key}));
 const B={run:{runId:'run-test',releasePolicy:2,solidIncluded:{}},sets:new Map(),engrave:{items:new Map()},pool:{rows:new Map()},orders:{rows:[],byKey:new Map()}};
 const pages=[], writes=[]; let seq=1, allocations=0;
 const allSheets=()=>pages, labelOf=m=>m, today=()=> '2026-09-19', refreshAllCards=()=>{};
@@ -46,7 +47,7 @@ const api=async(n,b)=>{writes.push(b);return {}};
 const Orders={rows:()=>B.orders.rows}, Engrave={items:()=>B.engrave.items,writeBacks:async()=>{},relinkAll(){}};
 const claimRun=()=>true, holdsRun=async()=>true;   // (the second-tab run lock, ADV-AUTORUN: this tab holds it)
 const Pool={update:async(ids,p)=>writes.push({ids,p})};
-const RunCtl={onSheetDone(){}};
+const RunCtl={onSheetDone(){}}, Session={schedule(){}};   // (Gate.leaveSet asks the session to be saved)
 const CN={sheetFileBase:sh=>'Set-'+sh.seq+'-'+sh.metal+'-'+sh.sheetIndex,persistSheet:async(sh)=>{writes.push(sh.fileBase);const s=[...B.sets.values()][0];s.sheetIds.push(sh.sheetId);s.materials.push(sh.metal)}};
 const Sets={onSheetSaved:async(sh)=>{writes.push(sh.fileBase);const set=[...B.sets.values()][0];if(!set.sheetIds.includes(sh.sheetId))set.sheetIds.push(sh.sheetId);if(!set.materials.includes(sh.metal))set.materials.push(sh.metal);},labelsReady:()=>true,ofRun:()=>[...B.sets.values()],save:async()=>{},ensure:async(runId,group,o)=>{if(o.roseOnly&&seq%2) return null;allocations++;const s={runId,group,seq:seq++,day:today(),setId:'set-'+allocations,sheetIds:[],labelFiles:[],materials:[],orders:{}};B.sets.set(s.setId,s);return s}};
 const page=(metal,full=false)=>({metal,runId:B.run.runId,sheetId:metal+'-id',draft:true,outputs:{},persistedDone:true,placements:[{}],verification:{ok:true},releaseFull:full,charms:[],status:'complete'});
@@ -76,7 +77,16 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
  assert.equal(page.charms.length,1,'a working run restores even before a set number exists');
  assert.equal(page.setId,null);assert.equal(page.seq,null);assert.equal(page.draft,true);
  assert.equal(rows[0].state,'pooled','saved draft placement is never treated as released');
- assert.equal(page.status,'ready','cloud-only draft gets rebuilt and verified before release');
+ // (TAKEOVERSAFE, a9d78f4, Paul 14 Nov 2026: "A real run takeover between computers ... test them"): a draft whose every placement came back from its record keeps
+ //  its layout, its pins and its check (it was nested again from scratch at every takeover), and stays a draft in no set; only a sheet missing placements is rebuilt
+ assert.equal(page.status,'complete','a cloud-only draft put back whole keeps its layout');
+ assert.equal(page.placements.length,1);assert.equal(page.charms[0].pinned.cxPt,1);assert.equal(page.charms[0].pinned.cyPt,2);assert.equal(page.verification.ok,true);
+ // the page opened again on a record with a placement that does not come back (its order is no longer in the run): that draft is rebuilt and verified before release
+ for (const k of Object.keys(page)) if (k!=='pages') delete page[k]; Object.assign(page,{charms:[],placements:[],metal:'gold'}); rows[0].state='written'; B.pool.rows.clear();
+ record.placements.push({id:'c2',cxPt:3,cyPt:4});record.charms.push({id:'c2',poolId:'p2',name:'two'});record.poolIds.push('p2');
+ await restoreRunSheets({runId:'working',setIds:[]});
+ assert.equal(page.charms.length,1);assert.equal(page.draft,true);assert.equal(page.setId,null);assert.equal(rows[0].state,'pooled');
+ assert.equal(page.status,'ready','cloud-only draft missing a placement gets rebuilt and verified before release');
  assert.equal(page.charms[0].pinned,null);
  })()`,recovery);
  const classifier=code.slice(code.indexOf('  let classifyPass = null'),code.indexOf('  /* ── 7.2',code.indexOf('  let classifyPass = null')));
@@ -92,6 +102,8 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
  const rec={runId:'r1',step:'engrave',orders:['o'],lines:{'o/a':{updateTs:10,state:'pooled',poolIds:['p1']}}};
  const B={},O={stepIndex:s=>['pull','pool','nest','checkpoint','engrave'].indexOf(s)};
  const row={key:'o/a',order:{updateTs:10},poolIds:[],state:'pulled'};let restores=0;
+ B.orders={rows:[row],byKey:new Map([[row.key,row]])};   // (TAKEOVERSAFE, a9d78f4: a saved line no pull brought back is put back from the run's record; this one was pulled)
+ const window={},carrier=async()=>({ok:true,mine:true});   // (a page with no cloud viewer, CLOUD step 14 3a04e0c: Resume runs here; RUNCARRIER e30f6c4: this computer carries the run)
  const api=async()=>({run:rec}),agent=()=>{},toast=()=>{},renderBanner=()=>{},save=async()=>{},loop=async()=>{};
  const Orders={rows:()=>[row],interpretAll(){},pull:async(run,opts)=>{assert.equal(run,null);assert.deepEqual(opts.receiptIds,['o']);}};
  const restoreRunSheets=async()=>restores++,Pool={addAll:async()=>{}},allSheets=()=>[],reviewStop=()=>false,preservePendingSheets=()=>{};
@@ -107,7 +119,10 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
  assert.equal(allocations,1);assert.equal(pages[0].setId,'set-1');assert.equal(pages[1].setId,'set-1');assert.equal(pages[2].setId,undefined,'an uncut Rose Gold sheet is not in it');
  B.run.solidIncluded.gold10k=true;await Gate.assemble(B.run);assert.equal(pages[3].setId,'set-1');assert.equal(pages[4].setId,undefined);
  const n=writes.length;await Gate.assemble(B.run);assert.equal(writes.length,n,'repeat checkpoint cannot duplicate outputs');
- B.run.solidIncluded.gold10k=false;await Gate.assemble(B.run);assert.equal(pages[3].setId,null);assert.equal(pages[3].draft,true);assert(![...B.sets.values()][0].sheetIds.includes('gold10k-id'));
+ // (NOSETPULL, 63c6a7d, Paul 13 Nov 2026: "nothing is allowed to pull a set apart"): the system never takes a sheet out of its set, so the run's 10K tick going off leaves it where it is;
+ //  (PERSONOUT, de36e34, Paul 16 Nov 2026): a person's own take-out (Gate.leaveSet: the sheet marked to leave this set) takes it out
+ B.run.solidIncluded.gold10k=false;await Gate.assemble(B.run);assert.equal(pages[3].setId,'set-1','the system does not take the 10K sheet out');
+ await Gate.leaveSet('gold10k-id');assert.equal(pages[3].setId,null);assert.equal(pages[3].draft,true);assert(![...B.sets.values()][0].sheetIds.includes('gold10k-id'));
  // a Rose Gold sheet alone starts no set, and the number of a set takes it nowhere (SETFIX: it used to join every even-numbered set)
  B.sets.clear();pages.splice(0,pages.length,page('rose'));{const made=allocations;await Gate.assemble(B.run);assert.equal(pages[0].setId,undefined);assert.equal(allocations,made,'a Rose Gold sheet never starts a set');}
  B.sets.clear();pages.splice(0,pages.length,page('silver',true),page('gold',true));
@@ -120,11 +135,12 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
  B.sets.clear();const mk=(id,pool,full=true)=>({...page('gold',full),sheetId:id,charms:pool.map(p=>({id:id+p,poolId:p,order:p.split('_')[0]})),placements:pool.map(p=>({id:id+p}))});
  const g1=mk('g1',['7001_1_1']),g2=mk('g2',['7001_1_2','7002_1_1']),g3=mk('g3',['7002_1_2']),s1={...page('silver',true),sheetId:'s1'};
  pages.splice(0,pages.length,g1,g2,s1);await Gate.assemble(B.run);assert.deepEqual([g1.sheetIndex,g2.sheetIndex],[1,2]);
- g1.verification={ok:false};await Gate.assemble(B.run);   /* (its layout is not verified any more: it goes back out, as a sheet that no longer qualifies does; a PARTIAL sheet that shares an order with the set stays, as before) */
+ g1.verification={ok:false};await Gate.assemble(B.run);assert(g1.setId&&g1.setId===g2.setId,'NOSETPULL: a sheet that no longer qualifies is not taken out of its set by the system');
+ await Gate.leaveSet('g1');   /* (PERSONOUT: a person takes it out) */
  assert.equal(g1.setId,null,'the first sheet left the set');
  pages.push(g3);await Gate.assemble(B.run);assert.equal(g3.sheetIndex,3,'the next sheet takes a new number, not the one sheet 2 still carries: '+g3.sheetIndex);
  })()`,c);
- vm.runInContext(`const Session={copy:x=>structuredClone(x)};`,c); c.structuredClone=structuredClone;
+ vm.runInContext(`Session.copy=x=>structuredClone(x);`,c); c.structuredClone=structuredClone;
  vm.runInContext(part('Carry','/* ═══ 20b'),c);
  await vm.runInContext(`(async()=>{
  const written={key:'o/a',state:'written',poolIds:['p1'],order:{updateTs:10},line:{sku:'A'}};

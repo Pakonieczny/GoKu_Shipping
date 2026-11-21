@@ -12,6 +12,7 @@ w.eval(`var C=window.CN,S=C.S,CN=C,B=window.B={run:{runId:'run-test',releasePoli
  var Sets={ofRun:()=>[]},RunCtl={},Session=window.Session={schedule(){}},toast=()=>{},refreshAllCards=()=>{},api=C.api;
  var sheetDirty=()=>{},saveSettings=()=>{},startNest=()=>{};
 `);
+w.eval(fs.readFileSync('charm-nest-place.js','utf8'));w.eval(fs.readFileSync('charm-nest-assembly-core.js','utf8'));   // (GATECORE: loaded before the bridge, as the page does)
 const code=fs.readFileSync('charm-nest-bridge.js','utf8');w.eval(code.slice(code.indexOf('const Gate ='),code.indexOf('/* ═══ 21',code.indexOf('const Gate ='))));w.Gate.renderCard(sh);
 w.eval(fs.readFileSync('charm-nest-rose-ui.js','utf8'));w.eval(fs.readFileSync('charm-nest-options-modal.js','utf8'));
 (async()=>{

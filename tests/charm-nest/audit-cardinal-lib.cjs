@@ -37,6 +37,7 @@ ${SETS}
   const onSheetSaved=async(sh,_c,_u,o)=>{const set=o&&o.setOverride; if(!set.sheetIds.includes(sh.sheetId))set.sheetIds.push(sh.sheetId); if(!set.materials.includes(sh.metal))set.materials.push(sh.metal);};
   return {ensure,ofRun,keyOf,byRun,save,onSheetSaved,labelsReady:()=>true};
 })();`, c);
+  require("./_gateCore.cjs")(c);   // (GATECORE: the page loads charm-nest-place.js and charm-nest-assembly-core.js before charm-nest-bridge.js)
   vm.runInContext(GATE, c);
   const count = {};
   const w = {

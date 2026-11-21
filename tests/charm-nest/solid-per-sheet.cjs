@@ -9,7 +9,7 @@ const sheet=(n,metal='gold14k')=>({metal,page:n,runId:'r',sheetId:metal+'-'+n,dr
 const pages=[sheet(1),sheet(2)];
 const base=[Object.assign(sheet(8,'gold'),{releaseFull:true}),Object.assign(sheet(9,'silver'),{releaseFull:true})];
 const ctx={window:{CharmNestOrders:O,CharmNestOperations:ops,CharmNestSetRules:SR},B:{run,sets:new Map()},S:{mode:'nest',settings:{},cloud:{ok:true},library:{rows:[]}},O,allSheets:()=>pages.concat(base),pagesOf:m=>pages.concat(base).filter(p=>p.metal===m),refreshAllCards:()=>{},Session:{schedule(){}},document:{getElementById:()=>null},toast:()=>{},Pool:{update:async()=>{}},Orders:{rows:()=>[]},Engrave:{items:()=>new Map(),saveSheetBacks:async()=>{}},RunCtl:{save:async()=>{},poke(){},onSheetDone(){},membershipUpdated(){}},CN:{sheetFileBase:sh=>'Set-1-Sheet-'+sh.page,persistSheet:()=>{throw Error('must not re-upload artwork');},renderLibrary(){}},Sets:{ofRun:()=>sets,ensure:async()=>{const set={setId:'set',runId:'r',seq:1,day:'2026-09-28',group:'dispatch',sheetIds:[],labelFiles:[],materials:[],orders:{}};sets.push(set);return set;},save:async()=>{},labelsReady:()=>true,onSheetSaved:async sh=>{const set=sets[0];if(!set.sheetIds.includes(sh.sheetId))set.sheetIds.push(sh.sheetId);}},api:async(name,body)=>{if(body.sheet)saved.set(body.sheet.id,body.sheet);return {};},stockFor:()=>({wIn:1,hIn:1}),labelOf:x=>x,esc:x=>x};
-vm.createContext(ctx);vm.runInContext(source.slice(start,end),ctx);const Gate=ctx.window.Gate;
+vm.createContext(ctx);require("./_gateCore.cjs")(ctx);vm.runInContext(source.slice(start,end),ctx);const Gate=ctx.window.Gate;
 const inSet=()=>pages.filter(p=>!p.draft&&p.setId==='set').map(p=>p.page);
 (async()=>{
   // a run from before: the metal's tick has both sheets in the set

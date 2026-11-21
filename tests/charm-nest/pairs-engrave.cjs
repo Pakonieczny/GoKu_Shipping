@@ -189,6 +189,7 @@ const mitten = () => { const out = path_([[10, 0], [50, 0], [50, 60], [10, 60], 
       S: { settings: { engraveConfidence: .65 } }, render() {}, agent() {}, Date, Promise, Map, Set, WeakMap, Array, Object, String, Number, JSON, Math, Review: { add() {}, remove() {} }, RunCtl: { poke() {} }, Session: { schedule() {} }, TL: { line() {}, hash: s => String(s).length },
       lineOf: undefined, needEvent() {}, setReady(job) { job.state = 'ready'; job.row.engrave = Object.assign({}, job.row.engrave, { needed: true, state: 'ready', approved: false }); return job; }, toWords(job, why) { job.state = 'words'; job.reason = why; job.row.engrave = Object.assign({}, job.row.engrave, { needed: true, state: 'words', approved: false }); return job; },
       agentCall: async (mode, ask) => { asked.push(ask); return reading; } };
+    ctx.CharmNestEngraveClassify = require(path.join(root, 'charm-nest-engrave-classify.js'));   // (build step 11: the page's reading is charm-nest-engrave-classify.js, a global the page loads before the bridge)
     vm.createContext(ctx); vm.runInContext(sliceBridge(), ctx);
     return { ctx, jobs, asked, run: () => ctx.classify(row) };
   }

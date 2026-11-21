@@ -4,11 +4,14 @@
 //   draws on netlify/functions/_charmNestCanvas.js (_charmNestPdf.js withCanvas()). The golden beside this file was recorded ONCE from the page's own canvas
 //   (Chrome, OffscreenCanvas): `node tests/charm-nest/cloud-silhouette-parity.cjs --record` (PW_DIR, CHROMIUM). Without --record nothing but node runs.
 //   1  every charm of the fixture masters (all of tests/charm-nest/fixtures/*.ai: 225 charms) traced in node: the same canvas size, every pixel that differs
-//      lies on the edge of the page's silhouette (one pixel from a pixel of the other value), the same hash (charm-nest-pdf.js buildSilhouettes), the area within 1 %
+//      lies within ONE pixel of the page's edge (Paul, 20 Nov 2026: the cloud's outlines may differ from Chrome's by up to 0.06 mm, never more; one pixel at 6 px a point is
+//      0.0588 mm: charm-nest-pool-make.js silhouetteWithin), the area within 1 %. The hash (charm-nest-pdf.js buildSilhouettes) is only reported: it flips on single
+//      edge pixels, and the cloud never knows a design or a body by it (BODYID)
 //   2  lines made up into pieces in node by charm-nest-pool-make.js (makePool: a plain charm, two copies, earring pairs with the Right turned over, a master
 //      that split in two folded back): the pool rows byte for byte the page's, every piece's silhouette as in 1
 //   3  a node host (cloud: true): each row says which body it is cut from (bodyIndex, oneBody) and is otherwise the page's row; a 429 or an Etsy stop never
-//      passes by itself there, while the page's rule is unchanged; the pace is asked between the pieces of a line
+//      passes by itself there, while the page's rule is unchanged; the pace is asked between the pieces of a line; BODYID: in the cloud a piece's body is what its
+//      record (or its pool row) says, never its hash, a record that says nothing is refused there, and the page's own rule is unchanged; poolPut keeps the two fields
 //   4  Etsy: the piece maker and the canvas carry no SKU-table or inventory code and require no Etsy module; while node made every piece above, no Etsy module
 //      was loaded, fetch was never called (a tripwire), and the host's api saw no call at all (so no listing SKU table without cacheOnly, no inventory call)
 //   Each drawing way of the canvas that is here is checked: "js" always, "resvg" when @resvg/resvg-js is installed (it says so when it is not).
@@ -109,20 +112,16 @@ async function record() {
 /* ── node: the same flow on the node canvas, held to the golden ── */
 let fails = 0;
 const say = (ok, name, detail) => { if (!ok) fails++; console.log(`${ok ? '  ok  ' : '  FAIL'} ${name}${detail ? ' :: ' + detail : ''}`); };
+const PMOD = require(path.join(root, 'charm-nest-pool-make.js'));
+/* the 0.06 mm rule (charm-nest-pool-make.js silhouetteWithin): every pixel node draws differently lies within one pixel (0.0588 mm at 6 px a point) of the page's own edge, on the same
+   canvas, the area within 1 %; the hash is reported, never required */
 function compareCharm(gold, mine) {
   if (!mine) return { ok: false, why: 'missing' };
   if (gold.w !== mine.w || gold.h !== mine.h) return { ok: false, why: `canvas ${mine.w}x${mine.h}, the page's ${gold.w}x${gold.h}` };
-  const n = gold.w * gold.h, gb = unpack(inflate(gold.bits), n), mb = unpack(Buffer.from(mine.bits, 'base64'), n), W = gold.w, H = gold.h;
-  let diff = 0, off = 0;
-  for (let i = 0; i < n; i++) {
-    if (gb[i] === mb[i]) continue; diff++;
-    const x = i % W, y = (i - x) / W; let edge = false;
-    for (let dy = -1; dy <= 1 && !edge; dy++) for (let dx = -1; dx <= 1 && !edge; dx++) { const xx = x + dx, yy = y + dy; if ((dx || dy) && xx >= 0 && yy >= 0 && xx < W && yy < H && gb[yy * W + xx] !== gb[i]) edge = true; }
-    if (!edge) off++;
-  }
-  const dA = Math.abs(mine.areaPt2 - gold.areaPt2) / Math.max(1e-9, gold.areaPt2);
-  const why = [gold.rings !== mine.rings ? `hoops ${mine.rings}, the page's ${gold.rings}` : '', off ? `${off} differing pixel(s) off the edge` : '', dA > 0.01 ? `area ${mine.areaPt2.toFixed(2)}, the page's ${gold.areaPt2.toFixed(2)}` : '', mine.id !== gold.id ? `id ${mine.id}, the page's ${gold.id}` : ''].filter(Boolean).join('; ');
-  return { ok: !why, why, diff, dA, n, sameHash: mine.hash === gold.hash };
+  const n = gold.w * gold.h, gb = unpack(inflate(gold.bits), n), mb = unpack(Buffer.from(mine.bits, 'base64'), n);
+  const t = PMOD.silhouetteWithin({ w: gold.w, h: gold.h, bits: gb, areaPt2: gold.areaPt2, hash: gold.hash }, { w: mine.w, h: mine.h, bits: mb, areaPt2: mine.areaPt2, hash: mine.hash }, { tolPx: PMOD.OUTLINE_TOL_PX, areaTol: 0.01, scale: 6 });
+  const why = [gold.rings !== mine.rings ? `hoops ${mine.rings}, the page's ${gold.rings}` : '', t.ok ? '' : t.why, mine.id !== gold.id ? `id ${mine.id}, the page's ${gold.id}` : ''].filter(Boolean).join('; ');
+  return { ok: !why, why, diff: t.diff || 0, dA: t.areaDiff || 0, n, sameHash: !!t.sameHash, worstMm: t.worstMm || 0 };
 }
 async function nodeRun(backend, golden) {
   // the tripwires: no fetch, no Etsy module
@@ -136,14 +135,15 @@ async function nodeRun(backend, golden) {
     const t0 = Date.now(), out = await flow(argOf(mods)), ms = Date.now() - t0;
     console.log(`── canvas "${backend}": ${Object.values(out.designs).reduce((n, l) => n + l.length, 0)} design charms and ${SCENARIOS.length} lines made in ${ms} ms`);
     // 1 · every charm of every master
-    let charms = 0, bad = [], diffPx = 0, px = 0, worstA = 0, hashes = [];
+    let charms = 0, bad = [], diffPx = 0, px = 0, worstA = 0, worstMm = 0, hashes = [];
     for (const name of DESIGNS) {
       const gl = golden.designs[name] || [], ml = out.designs[name] || [];
       if (gl.length !== ml.length) { bad.push(`${name}: ${ml.length} charms, the page's ${gl.length}`); continue; }
-      gl.forEach((gc, i) => { charms++; const r = compareCharm(gc, ml[i]); diffPx += r.diff || 0; px += r.n || 0; worstA = Math.max(worstA, r.dA || 0); if (!r.ok) bad.push(`${name} #${i} (${gc.hash}): ${r.why}`); else if (!r.sameHash) hashes.push(`${name} #${i} ${ml[i].hash}/${gc.hash}`); });
+      gl.forEach((gc, i) => { charms++; const r = compareCharm(gc, ml[i]); diffPx += r.diff || 0; px += r.n || 0; worstA = Math.max(worstA, r.dA || 0); worstMm = Math.max(worstMm, r.worstMm || 0); if (!r.ok) bad.push(`${name} #${i} (${gc.hash}): ${r.why}`); else if (!r.sameHash) hashes.push(`${name} #${i} ${ml[i].hash}/${gc.hash}`); });
     }
-    say(!bad.length && charms > 0, `1 · ${charms} charms of ${DESIGNS.length} masters: the page's canvas size, every differing pixel on the edge of the page's silhouette, the area within 1 %`, bad.length ? bad.slice(0, 6).join(' | ') : `${diffPx} edge pixel(s) of ${px} differ; the largest area difference ${(worstA * 100).toFixed(3)} %`);
-    say(!hashes.length && charms > 0, `1h · the page's hash (the plan's criterion): ${charms - hashes.length} of ${charms} charms`, hashes.length ? `${hashes.length} differ (node/page): ${hashes.slice(0, 5).join(', ')}${hashes.length > 5 ? ' ...' : ''}` : '');
+    say(!bad.length && charms > 0, `1 · ${charms} charms of ${DESIGNS.length} masters: the page's canvas size, every differing pixel within ${PMOD.OUTLINE_TOL_MM} mm (${PMOD.OUTLINE_TOL_PX} px) of the page's edge, the area within 1 %`, bad.length ? bad.slice(0, 6).join(' | ') : `${diffPx} edge pixel(s) of ${px} differ, the furthest ${worstMm} mm from the page's edge; the largest area difference ${(worstA * 100).toFixed(3)} %`);
+    say(worstMm <= PMOD.OUTLINE_TOL_MM, `1w · no outline moved more than ${PMOD.OUTLINE_TOL_MM} mm (Paul, 20 Nov 2026)`, `the furthest: ${worstMm} mm`);
+    console.log(`  --   1h · the page's hash (reported only: the cloud never knows a design by it): ${charms - hashes.length} of ${charms} charms${hashes.length ? `; ${hashes.length} differ (node/page): ${hashes.slice(0, 5).join(', ')}${hashes.length > 5 ? ' ...' : ''}` : ''}`);
     // 2 · the pieces
     bad = []; hashes = []; let pieces = 0; const noHash = j => j && j.replace(/"charmHash":"[^"]*"/g, '"charmHash":""');
     for (const sc of SCENARIOS) {
@@ -157,7 +157,7 @@ async function nodeRun(backend, golden) {
       if (JSON.stringify(gp.paced) !== JSON.stringify(mp.paced)) bad.push(`${sc.id}: paced ${mp.paced}, the page's ${gp.paced}`);
     }
     say(!bad.length && pieces > 0, `2 · ${SCENARIOS.length} lines made up in node by the piece maker: ${pieces} pieces, the same pieces and pool rows as the page (byte for byte but for charmHash), every piece's silhouette within 1 above`, bad.slice(0, 6).join(' | '));
-    say(!hashes.length && pieces > 0, `2h · each piece's charmHash is the page's (the plan's criterion): ${pieces - hashes.length} of ${pieces}`, hashes.length ? `${hashes.length} differ: ${hashes.slice(0, 6).join(', ')}` : '');
+    console.log(`  --   2h · each piece's charmHash against the page's (reported only): ${pieces - hashes.length} of ${pieces}${hashes.length ? `; ${hashes.length} differ: ${hashes.slice(0, 6).join(', ')}` : ''}`);
     // 3 · the node host
     {
       const rowsOf = id => JSON.parse(out.pieces[id].pools || '[]');
@@ -173,6 +173,24 @@ async function nodeRun(backend, golden) {
       say(JSON.stringify(out.pieces['cloud-plain-calendar-x2'].paced) === JSON.stringify(['2/2']) && JSON.stringify(out.pieces['cloud-earrings-comet'].paced) === JSON.stringify(['2/2']) && out.pieces['plain-calendar-x2'].paced.length === 0, '3c · the pace is asked between the pieces of a line (before piece 2 of 2), only where the host gives one');
       let threw = null; const pace = PMk.pace({ budgetMs: 1000 }); await pace(); const t1 = Date.now(); while (Date.now() - t1 < 1100) { /* the budget passes */ } try { await pace(); } catch (e) { threw = e; }
       say(!!(threw && threw.budget), '3d · past its budget the pace ends the unit ({ budget: true })');
+      // BODYID: a design of two bodies already traced alone (src.solo), the whole charm's hash "whole", the bodies' "h0" and "h1"
+      const srcOf = () => ({ id: 'pool:x', sku: 'TWO', charms: [{ id: 'pool:x:0', hash: 'whole' }], solo: [{ id: 'pool:x:s0', hash: 'h0', oneBody: 0 }, { id: 'pool:x:s1', hash: 'h1', oneBody: 1 }], soloChecked: true });
+      const rowsMap = new Map([['4190000101_5000000101_1', { poolId: '4190000101_5000000101_1', oneBody: true, bodyIndex: 1, charmHash: 'drawn-an-edge-pixel-apart' }]]);
+      const cloudM = PMk.create({ cloud: true, window: {}, B: { pool: { rows: rowsMap, sources: new Map() }, master: { entries: new Map() } }, S: { settings: {} } });
+      const pageM = PMk.create({ window: {}, B: { pool: { rows: new Map(), sources: new Map() }, master: { entries: new Map() } }, S: { settings: {} } });
+      const s1 = srcOf(), saidOne = await cloudM.soloBase(s1, { oneBody: true, bodyIndex: 1, charmHash: 'not-a-body-hash' }), saidWhole = await cloudM.soloBase(srcOf(), { oneBody: false, charmHash: 'h1' });
+      const s2 = srcOf(), byRow = await cloudM.soloBase(s2, { poolId: '4190000101_5000000101_1', hash: 'h0' }), s3 = srcOf(), charmSaid = await cloudM.soloBase(s3, { oneBody: 0, hash: 'h1' });
+      say(saidOne === s1.solo[1] && saidWhole === null && byRow === s2.solo[1] && charmSaid === s3.solo[0], '3e · BODYID: in the cloud a piece\'s body is what its record says (oneBody, bodyIndex; a charm\'s oneBody index; its pool row\'s), never its hash');
+      let refused = null; try { await cloudM.soloBase(srcOf(), { charmHash: 'h1' }); } catch (e) { refused = e; }
+      const s4 = srcOf(), pageRule = await pageM.soloBase(s4, { charmHash: 'h1' });
+      say(!!(refused && refused.bodyUnknown) && pageRule === s4.solo[1], '3f · a record that says no body is refused in the cloud (never cut from a guessed body); on the page it is matched by its hash as before');
+      const PPk = mods.CharmNestPoolPieces, lib = fs.readFileSync(path.join(root, 'netlify/functions/charmNestLibrary.js'), 'utf8');
+      const cb = [PPk.cleanBody({ oneBody: true, bodyIndex: 1 }), PPk.cleanBody({ oneBody: false }), PPk.cleanBody({ poolId: '4190000101_5000000101_1', side: 'L', bodyIndex: 0, groupSize: 2, oneBody: false }), PPk.cleanBody({ bodyIndex: 1 }), PPk.cleanBody({ oneBody: true, bodyIndex: 12 })];
+      say(JSON.stringify(cb) === JSON.stringify([{ oneBody: true, bodyIndex: 1 }, { oneBody: false, bodyIndex: 0 }, { oneBody: false }, {}, {}]) && /PoolPieces\.cleanBody\(p\)/.test(lib) && /Object\.assign\(p, keep, body\)/.test(lib), '3g · poolPut keeps a cloud row\'s bodyIndex and oneBody (PoolPieces.cleanBody); a page\'s row, which sends neither, is written as before', JSON.stringify(cb));
+      const fake = (w, h, on) => { const b = new Uint8Array(w * h); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) b[y * w + x] = on(x, y) ? 1 : 0; return { w, h, bits: b, areaPt2: 1 }; };
+      const disc = r => (x, y) => (x - 20) ** 2 + (y - 20) ** 2 <= r * r, a = fake(41, 41, disc(12)), b1 = fake(41, 41, disc(13)), b3 = fake(41, 41, disc(15));
+      const w1 = PMk.silhouetteWithin(a, b1, { areaTol: 1 }), w3 = PMk.silhouetteWithin(a, b3, { areaTol: 1 });
+      say(w1.ok && w1.worstMm <= PMk.OUTLINE_TOL_MM && !w3.ok && w3.worstPx > 1, '3h · the 0.06 mm rule: an outline one pixel out is accepted, one three pixels out is refused', JSON.stringify({ w1: [w1.ok, w1.worstPx, w1.worstMm], w3: [w3.ok, w3.worstPx, w3.why] }));
     }
     // 4 · Etsy
     const loaded = Object.keys(require.cache).filter(k => /_etsyMailEtsy|_etsyImageCache|_charmNestEtsySku|_charmNestEtsyLink|_charmNestEtsyZodiac|_charmNestSandboxPull|_charmNestListingSkus/.test(k));

@@ -35,7 +35,8 @@ async function run(metal, word) {
  var O=window.CharmNestOrders,allSheets=()=>[sh],pagesOf=()=>[sh],stockFor=C.stockFor,esc=C.esc,labelOf=()=> '${word}';
  var Sets={ofRun:()=>[]},RunCtl={},Session=window.Session={schedule(){}},toast=()=>{},refreshAllCards=()=>{},api=C.api;
  var sheetDirty=()=>{},saveSettings=()=>{},startNest=()=>{};`);
-  const src = fs.readFileSync('charm-nest-bridge.js', 'utf8'); w.eval(src.slice(src.indexOf('const Gate ='), src.indexOf('/* ═══ 21', src.indexOf('const Gate ='))));
+  const src = fs.readFileSync('charm-nest-bridge.js', 'utf8'); w.eval(fs.readFileSync('charm-nest-place.js', 'utf8')); w.eval(fs.readFileSync('charm-nest-assembly-core.js', 'utf8'));   // (GATECORE: loaded before the bridge, as the page does)
+  w.eval(src.slice(src.indexOf('const Gate ='), src.indexOf('/* ═══ 21', src.indexOf('const Gate ='))));
 
   // ── the data layer (PS3) and the engine (PS2), faked: every call is counted ──
   const mine = [card(metal, 'p-old', { cutAt: Date.now() - 9 * 864e5, lastUsedAt: Date.now() - 9 * 864e5 }), card(metal, 'p-new', { wMm: 40, hMm: 30, areaMm2: 1000, estimate: { pieces: 3, low: 3, high: 3 }, lastUsedAt: Date.now() - 36e5, lastUsedBy: 'Bo', lastUsedSheet: 'Sheet 3' }), card(metal, 'p-used', { status: 'used' })];

@@ -50,6 +50,7 @@ const CN={sheetFileBase:sh=>'Set-'+sh.seq+'-'+sh.metal+'-'+sh.sheetIndex,persist
 const Sets={onSheetSaved:async(sh,_c,_u,o)=>{const set=o&&o.setOverride;if(!set.sheetIds.includes(sh.sheetId))set.sheetIds.push(sh.sheetId);if(!set.materials.includes(sh.metal))set.materials.push(sh.metal);},labelsReady:()=>true,ofRun:()=>[...B.sets.values()].sort((a,b)=>a.seq-b.seq),save:async()=>{},
   ensure:async(runId,group,o)=>{allocations++;const s={runId,group,seq:seq++,day:today(),setId:'set-'+allocations,name:'Set-'+(seq-1),sheetIds:[],labelFiles:[],materials:[],orders:{},sheetNos:{}};B.sets.set(s.setId,s);return s}};
 `, c);
+  require("./_gateCore.cjs")(c);   // (GATECORE: the page loads charm-nest-place.js and charm-nest-assembly-core.js before charm-nest-bridge.js)
   vm.runInContext(GATE, c);
   if (opts.emptySet) vm.runInContext(`{const s={runId:RUN,group:'dispatch',seq:1,day:today(),setId:'set-old',name:'Set-1',sheetIds:[],labelFiles:[],materials:[],orders:{},sheetNos:{}};B.sets.set(s.setId,s);seq=2;}`, c);
   const pages = (opts.sheets || PICTURE).map(pageOf);
