@@ -54,7 +54,7 @@ const warn = (what, e) => { try { console.warn("[repoAuth] " + what + ":", Strin
 const LIBRARY = { masterPutIndex: "upload", masterEditorPut: "upload", masterPutFile: "upload", startMaster: "upload", masterPatch: "modify", masterRemoveFile: "delete-file", masterRemoveSku: "delete-sku", masterRemoveSkus: "delete-sku", masterDownload: "download", sandboxPullLimitSet: "modify", customSaveCommit: "upload", listingEtsySkuWrite: "modify", zodiacListingPrepare: "modify", zodiacListingWrite: "modify", zodiacListingReconcile: "modify" };   // (sandboxPullLimitSet: Settings → how many newest Etsy orders the sandbox pulls; a setting, 11 Oct 2026; zodiacListing*: the Etsy ZODIAC SIGN drop-down check / write / settle, 12 Oct 2026, _charmNestEtsyZodiac.js; its status op only reads and is free)
 /* the buttons of the Settings menu that change shared state (plans/save-to-repo-1011/ADMINSESSION-settings.md): they need the SESSION unlock, from a person at the
    Settings menu or at the sandbox's Start button. Other sandbox ops (sandboxStream, sandboxStatus, sandboxCancel) are the sandbox page's own all-day traffic and stay free. */
-const SETTINGS_OPS = { purgeHistory: "settings", sandboxReset: "settings", sandboxPullOrders: "settings" };
+const SETTINGS_OPS = { purgeHistory: "settings", sandboxReset: "settings", sandboxPullOrders: "settings", driveSet: "settings" };   // (driveSet: CLOUDDRIVE build steps 8 and 15, who carries the runs: Off / Standby / Cloud carries)
 const MASTER_PATH = /^charmnest\/(?:sandbox\/)?master\//, MASTER_FILE_PATH = /^charmnest\/(?:sandbox\/)?master\/files\//;
 /** What an HTTP call to function `fn` with this op and body needs: { op, need } or null (free). Pure. */
 function requirement(fn, op, body) {
@@ -62,6 +62,8 @@ function requirement(fn, op, body) {
     if (Object.prototype.hasOwnProperty.call(LIBRARY, op)) return { op, need: LIBRARY[op] };
     // KEEP R1: the repair of saved designs runs by itself with its own grace (a day) and needs no password; asking it to remove files that young is a person's act (the upload unlock)
     if (op === "customSaveRepair" && body && body.olderThanMs != null && body.olderThanMs !== "" && Number.isFinite(Number(body.olderThanMs)) && Number(body.olderThanMs) < 3600000) return { op, need: "upload" };
+    // (CLOUDDRIVE build step 15: the owner's "Cloud carries" sent as a run's control is the same change of mode as Settings' driveSet, behind the same unlock)
+    if (op === "runControl" && body && body.action === "cloud") return { op, need: "settings" };
     return Object.prototype.hasOwnProperty.call(SETTINGS_OPS, op) ? { op, need: SETTINGS_OPS[op] } : null;
   }
   if (fn === "charmNestOutput") {

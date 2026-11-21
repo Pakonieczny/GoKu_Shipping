@@ -137,6 +137,19 @@ function withoutPieces(guard, gone, ctx = {}) {
   for (const i of keepIdx) { const own = slice(i); list.push({ ...trimmed[i], n: list.length + 1, lines: [lines.length, lines.length + own.length] }); lines.push(...own); }
   return { guard: build(guard.profile, lines, list), removed, kept: keepIdx.map(i => summary(i, stages)), exact: false, changed: true };
 }
+/* (CLOUDTAKEOFF, cloud plan v2 build step 9, P10) roseTakeOff's math as a pure helper: the caller holds the sheet record and its stock already (read inside ITS own
+   transaction), so the green lines can give up pieces in the same commit that takes them off the sheet (charmNestLibrary's cloudTakeOff). No read, no write.
+   gone: a Set (or list) of the charm ids leaving. → { guard: false, ... } (no saved lines: nothing to rewrite), { guard: true, changed: false, ... } (no line holds them),
+   or { guard: true, changed: true, protectedJson, removedLines, keptLines, exact }; partialGroups when only part of a group was named. The sheet must not be cut (the caller says so). */
+function guardTakeOff(sheet, stock, gone, o = {}) {
+  const ids = gone instanceof Set ? gone : new Set((Array.isArray(gone) ? gone : []).map(String));
+  const guard = protectedLayout(sheet), parts = partialGroups(sheet, ids), pg = parts.length ? { partialGroups: parts } : {};
+  if (!guard) return Object.assign({ guard: false, changed: false, protectedJson: null }, pg);
+  let prior = null; try { prior = stock ? parse(stock.profileJson) : null; } catch (_) { prior = null; }
+  const r = withoutPieces(guard, ids, { wPt: stock?.wPt, hPt: stock?.hPt, prior, allowanceMm: +o.allowanceMm || +sheet.roseAllowanceMm || .2 });
+  if (!r.changed) return Object.assign({ guard: true, changed: false, protectedJson: sheet.roseProtectedJson || null, planned: !!sheet.rosePlanJson }, pg);
+  return Object.assign({ guard: true, changed: true, protectedJson: r.guard ? JSON.stringify(r.guard) : null, removedLines: r.removed, keptLines: r.kept, exact: r.exact }, pg);
+}
 /* remnantSync (PS3, _charmNestRemnants.js `sync`): the partial sheet's record (Charm_Nest_Remnants/{stockId}-{revision}) follows the stock's owner INSIDE roseClaim's
    and roseRelease's own transactions: claimed -> 'inUse' (+ lastUsedAt), released -> 'available' again. The stock stays the one source of truth for who holds it. */
 module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel,recordRemnant,remnantSync,fence}){
@@ -454,19 +467,17 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       const sheet=sd.data();
       if(!Rose.cuts(sheet.metal))return {ok:true,changed:false};
       if(sheet.roseCutAt||+sheet.laserDoneAt>0)throw new Error('This layout was already cut: its green lines stay');
-      const guard=protectedLayout(sheet);
-      const parts=partialGroups(sheet,gone);   // (groups of which only some pieces were asked to leave: the caller decides, the answer says so)
-      if(!guard)return {ok:true,changed:false,protectedJson:null,...(parts.length?{partialGroups:parts}:{})};
-      const stockDoc=id(sheet.roseStockId)?await tx.get(stocks().doc(sheet.roseStockId)):null,stock=stockDoc&&stockDoc.exists?stockDoc.data():null;
-      let prior=null;try{prior=stock?parse(stock.profileJson):null;}catch(_){prior=null;}
-      const r=withoutPieces(guard,gone,{wPt:stock?.wPt,hPt:stock?.hPt,prior,allowanceMm:+b.allowanceMm||+sheet.roseAllowanceMm||.2});
-      if(!r.changed)return {ok:true,changed:false,protectedJson:sheet.roseProtectedJson||null,planned:!!sheet.rosePlanJson,...(parts.length?{partialGroups:parts}:{})};
-      const protectedJson=r.guard?JSON.stringify(r.guard):null;
+      // (CLOUDTAKEOFF: the math is guardTakeOff's, the pure helper the cloud's one-commit take-off uses too; this answer is the same as before, word for word)
+      const stockDoc=protectedLayout(sheet)&&id(sheet.roseStockId)?await tx.get(stocks().doc(sheet.roseStockId)):null,stock=stockDoc&&stockDoc.exists?stockDoc.data():null;
+      const g=guardTakeOff(sheet,stock,gone,{allowanceMm:b.allowanceMm}),parts=g.partialGroups||[];   // (groups of which only some pieces were asked to leave: the caller decides, the answer says so)
+      if(!g.guard)return {ok:true,changed:false,protectedJson:null,...(parts.length?{partialGroups:parts}:{})};
+      if(!g.changed)return {ok:true,changed:false,protectedJson:g.protectedJson,planned:g.planned,...(parts.length?{partialGroups:parts}:{})};
+      const protectedJson=g.protectedJson;
       // (what the sheet's charms were: the orders whose timeline says the line went)
       const orderOf=new Map((sheet.charms||[]).map(c=>[c.id,String(c.order||(/^(\d{1,30})_/.exec(String(c.poolId||''))||[])[1]||'')]));
       tx.update(sr,{roseProtectedJson:protectedJson,rosePlanJson:null,rosePlanHash:null,roseFingerprint:null,updatedAt:FV.serverTimestamp()});
-      return {ok:true,changed:true,protectedJson,removedLines:r.removed,keptLines:r.kept,exact:r.exact,...(parts.length?{partialGroups:parts}:{}),sheet:{id:sheet.id||b.sheetId,label:sheetLabel?sheetLabel(sheet):String(sheet.fileBase||b.sheetId).slice(0,80),setId:sheet.setId||''},
-        orders:r.removed.map(l=>({n:l.n,at:l.at,orders:[...new Set(l.ids.map(x=>orderOf.get(x)).filter(Boolean))]}))};
+      return {ok:true,changed:true,protectedJson,removedLines:g.removedLines,keptLines:g.keptLines,exact:g.exact,...(parts.length?{partialGroups:parts}:{}),sheet:{id:sheet.id||b.sheetId,label:sheetLabel?sheetLabel(sheet):String(sheet.fileBase||b.sheetId).slice(0,80),setId:sheet.setId||''},
+        orders:g.removedLines.map(l=>({n:l.n,at:l.at,orders:[...new Set(l.ids.map(x=>orderOf.get(x)).filter(Boolean))]}))};
     });
     // each order that had a piece in a line that went: a note on its timeline, kept for good (charmNestLibrary's stamp never throws)
     if(out.changed&&stamp&&out.removedLines.length){
@@ -584,3 +595,4 @@ module.exports.cutGroups=cutGroups;
 module.exports.partialGroups=partialGroups;
 module.exports.fitCheck=fitCheck;
 module.exports.assertProtected=assertProtected;
+module.exports.guardTakeOff=guardTakeOff;

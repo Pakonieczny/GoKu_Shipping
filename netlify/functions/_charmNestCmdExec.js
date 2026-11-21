@@ -1,0 +1,537 @@
+/*  netlify/functions/_charmNestCmdExec.js — WHAT EACH REQUEST DOES IN THE CLOUD (cloud plan v2, build step 13). One executor per type of CMD_TYPES (charmNestLibrary.js), the
+ *  cloud's port of charm-nest-run-follow.js execCmd: the same answers in the same words, made from the records (sheets, sets, pool rows, run lines, the world's lines), never from
+ *  a page's memory, never from Etsy (no table is asked for, no interpretAll: a reading comes from the world build, E4).
+ *
+ *  An executor is async (x) -> { done: { ok, text, freed? } } | { wait: { text, pct?, work } }, x = { ctx, cmd, a: cmd.args, work, now }. A request that needs more than one pass
+ *  (a nest, a reading of the orders, a placement) keeps its stage in `work` (Charm_Nest_Cmd_Work/<cmdId>, written by the commands unit) and is asked again next pass. Each one is
+ *  answered: done, or refused in words, or, past its own time limit, answered with what it did and what is left (a request never waits silently).
+ *
+ *    record only   reorder · delete · leaveset · setrebuild · unkeep · repicture
+ *    pieces        placewaiting · pairnow · sendhome · remakeline · keepsync · remake · skuonce · release
+ *    nest          renest · consolidate · empty · seat
+ *    in words      customsend (it needs its own design: a card's sent designs are made into pieces only on a computer today; the command says so)
+ *
+ *  What it needs of the other steps, by op name (an op that is not the cloud's in this build makes the request answer in words, never wait): nestStart (build step 6),
+ *  placeOnSheet (step 5), releaseAsk (Release Hold in the cloud), roseClaim (step 6), roseRelease, runLinesRetire (step 10a). The lanes a request needs must be in
+ *  Charm_Nest_Open/drive.cloudSteps: "nest" for anything that places or nests, "pool" as well for a piece made again, "files" for a picture.                              */
+"use strict";
+const OpClass = require("./_charmNestOpClass");
+const SheetName = require("../../charm-nest-sheet-name.js");
+const SetEdit = require("../../charm-nest-set-edit.js");
+let SetRepair = null; try { SetRepair = require("../../charm-nest-set-repair.js"); } catch (_) { SetRepair = null; }
+let SetRules = null; try { SetRules = require("../../charm-nest-set-rules.js"); } catch (_) { SetRules = null; }
+const CutLine = require("../../charm-nest-rose.js");
+const { busyRec, WORK } = require("./_charmNestCmdOps");
+
+const SHEETS = "Charm_Nest_Sheets", SETS = "Charm_Nest_Sets", POOL = "Charm_Pool", WORLD_LINES = "Charm_World_Lines", MASTER = "Charm_Master_Index", STOCK = "Charm_Nest_Rose_Stock", INTAKE = "Charm_Nest_Intake_Lines";
+const SOLID = new Set(["gold10k", "gold14k"]);
+const OPEN_LINE = l => !!l && !["gone", "committed", "skipped"].includes(String(l.state || ""));
+const NEST_MS = 25 * 60000, PLACE_MS = 15 * 60000, WORLD_MS = 15 * 60000, REMADE_MS = 25 * 60000, FILES_MS = 20 * 60000, RELEASE_PLACE_MS = 20 * 60000;
+const num = v => (Number.isFinite(+v) ? +v : 0);
+const str = (v, n) => String(v == null ? "" : v).slice(0, n || 200);
+const ms = v => (v && v.toMillis ? v.toMillis() : +v || 0);
+const plural = (n, one, more) => `${n} ${n === 1 ? one : more || one + "s"}`;
+const and = l => (l.length < 2 ? l.join("") : `${l.slice(0, -1).join(", ")} and ${l[l.length - 1]}`);
+const nameOf = r => { try { return (SheetName && SheetName.name && SheetName.name(r)) || r.fileBase || r.id; } catch (_) { return (r && (r.fileBase || r.id)) || "the sheet"; } };
+const cutRec = r => !!r && (!!r.roseCutAt || num(r.laserDoneAt) > 0);
+const lineDrawn = r => !!r && !!(r.rosePlanJson || r.roseProtectedJson);
+const ridOf = k => (/^(\d{1,30})_/.exec(String(k || "")) || [])[1] || "";
+const activeCharms = r => (r && Array.isArray(r.charms) ? r.charms : []).filter(c => c && !c.excluded);
+const ok = text => ({ done: { ok: true, text: str(text, 400) || "Done" } });
+const no = text => ({ done: { ok: false, text: str(text, 400) || "Not done" } });
+const wait = (text, work, pct) => ({ wait: Object.assign({ text: str(text, 160), work: work || {} }, pct == null ? {} : { pct }) });
+
+/* ── reading the records ── */
+const has = op => OpClass.isCloudOp(op);
+const lane = (ctx, l) => (ctx.cloudSteps || []).includes(l);
+async function runSheets(ctx, metal) {
+  let q = ctx.db.collection(SHEETS).where("runId", "==", ctx.runId); if (metal) q = q.where("metal", "==", metal);
+  const s = await q.get(); return s.docs.map(d => Object.assign({ id: d.id }, d.data())).filter(r => !r.archived);
+}
+async function sheetRec(ctx, id) { if (!id) return null; const s = await ctx.db.collection(SHEETS).doc(String(id)).get(); return s.exists ? Object.assign({ id: s.id }, s.data()) : null; }
+async function runSets(ctx) { const s = await ctx.db.collection(SETS).where("runId", "==", ctx.runId).get(); return s.docs.map(d => Object.assign({ setId: d.id, id: d.id }, d.data())); }
+async function setRec(ctx, id) { if (!id) return null; const s = await ctx.db.collection(SETS).doc(String(id)).get(); return s.exists ? Object.assign({ setId: s.id, id: s.id }, s.data()) : null; }
+async function pools(ctx, ids) {
+  const out = new Map(), list = [...new Set((ids || []).map(String))];
+  for (let i = 0; i < list.length; i += 100) for (const s of await ctx.db.getAll(...list.slice(i, i + 100).map(id => ctx.db.collection(POOL).doc(id)))) if (s.exists) out.set(s.id, s.data());
+  return out;
+}
+async function worldLine(ctx, key) { const s = await ctx.db.collection(WORLD_LINES).doc(String(key)).get(); if (!s.exists) return null; const d = s.data() || {}; if (d.gone) return { key, gone: true }; try { return Object.assign(JSON.parse(d.data || "{}"), { key, at: num(d.at) }); } catch (_) { return null; } }
+async function worldAt(ctx) { const s = await ctx.db.collection("Charm_World").doc("summary").get(); return s.exists ? ms((s.data() || {}).at) : 0; }
+const lines = ctx => (ctx.run && ctx.run.lines) || {};
+/** Where each piece is: the sheet whose record lists it (Placement's rule: the record decides). → Map poolId -> sheet */
+function listedBy(sheets) { const m = new Map(); for (const r of sheets) for (const id of r.poolIds || []) m.set(String(id), r); return m; }
+/** Whether a piece a sheet lists is seated (in its placements or feedWait) — the C4 rule. */
+function seated(r, poolId) {
+  const c = (r.charms || []).find(x => x && String(x.poolId) === String(poolId)); if (!c) return false;
+  return (r.placements || []).some(p => p && p.id === c.id) || (Array.isArray(r.feedWait) && r.feedWait.includes(c.id));
+}
+const committedSheet = (r, sets) => { const s = sets.find(x => x.setId === r.setId || (x.sheetIds || []).includes(r.id)); return !!(s && (SetEdit.committedSet(s) || s.processReady)); };
+const inAnySet = (r, sets) => !!(r && ((r.setId && !r.draft) || sets.some(s => (s.sheetIds || []).includes(r.id))));
+const orderOf = r => (Number.isFinite(+r.draftOrder) ? +r.draftOrder : num(r.page));
+const inOrder = list => list.slice().sort((x, y) => (orderOf(x) - orderOf(y)) || (ms(x.createdAt) - ms(y.createdAt)) || (x.id < y.id ? -1 : 1));
+/** The cloud's own write, with a unit key of its own (the mid: a replay writes once). */
+const put = (x, body, key) => x.ctx.call(body, `${x.ctx.runId}|cmd|${x.cmd.id}|${key}`);
+const err = r => (r && r.status >= 400 ? str(r.error || "refused", 300) : "");
+
+/* ── a sheet's nest, waited for: started by nestStart (append, or fresh), settled when its record has a newer layout, no nest owed, nothing running, and (with the cloud's files
+   lane on) its files written. → { settled, timedOut, rec } ── */
+async function startNest(x, sheetId, fresh, why) {
+  if (!has("nestStart")) return { started: false, queued: true };   // (the nest step's own unit starts every sheet that owes a nest: nestOwed)
+  const r = await put(x, { op: "nestStart", runId: x.ctx.runId, sheetId, fresh: !!fresh, why: str(why, 120) }, `nest|${sheetId}|${fresh ? "fresh" : "append"}|${x.work.nestAsk || 0}`);
+  if (err(r)) return { started: false, error: err(r) };
+  return { started: true, jobId: r.jobId || null };
+}
+async function nestSettled(x, w) {
+  const rec = await sheetRec(x.ctx, w.id), now = Date.now();
+  if (!rec || rec.archived) return { settled: true, rec: null, gone: true };
+  const files = lane(x.ctx, "files"), moved = num(rec.layoutRev) > num(w.layoutRev);
+  const settled = moved && !busyRec(rec, now) && !rec.nestOwed && (!files || !rec.filesOwed);
+  return { settled, rec, timedOut: !settled && now - num(w.at) > NEST_MS };
+}
+const placedWords = rec => { const all = activeCharms(rec).length, n = (rec.placements || []).length, v = rec.verification; return `${n} of ${all} placed${v ? (v.ok ? ", verified" : ", verification flagged") : ""}`; };
+
+/* ═══ record only ═══ */
+async function reorder(x) {
+  const m = x.a.metal; if (!SOLID.has(m)) return no("Sheets are arranged by hand for 10K and 14K Gold only.");
+  const sets = await runSets(x.ctx), pages = inOrder(await runSheets(x.ctx, m)), have = pages.map(p => p.id);
+  const want = [...new Set((x.a.ids || []).filter(id => have.includes(id)))]; have.forEach((id, i) => { if (!want.includes(id)) want.splice(Math.min(i, want.length), 0, id); });
+  const movable = p => !cutRec(p) && !committedSheet(p, sets);
+  const byId = new Map(pages.map(p => [p.id, p])), free = want.map(id => byId.get(id)).filter(movable), seats = pages.map((p, i) => (movable(p) ? i : -1)).filter(i => i >= 0);
+  const placed = pages.slice(); seats.forEach((at, k) => { placed[at] = free[k]; });
+  const values = seats.map(i => +pages[i].page).filter(Number.isFinite).sort((a, b) => a - b), usable = values.length === seats.length && new Set(values).size === values.length, val = k => (usable ? values[k] : k + 1);
+  let n = 0;
+  for (const [k, at] of seats.entries()) {
+    const p = placed[at]; if (p.draftOrder === val(k) && p.page === val(k)) continue;
+    const r = await put(x, { op: "putSheet", sheet: { id: p.id, draftOrder: val(k), page: val(k) } }, `order|${p.id}|${val(k)}`); if (err(r)) return no(`The order was not changed: ${err(r)}`);
+    p.draftOrder = val(k); p.page = val(k); n++;
+  }
+  return ok(n ? "Sheet order changed: " + placed.filter(movable).map(nameOf).join(", ") : "The sheets were already in that order");
+}
+async function del(x) {
+  const p = await sheetRec(x.ctx, x.a.sheetId); if (!p || p.runId !== x.ctx.runId) return no("That sheet is not on the run the cloud carries.");
+  const sets = await runSets(x.ctx), name = nameOf(p), now = Date.now();
+  if (activeCharms(p).length) return no(`Move its ${plural(activeCharms(p).length, "piece")} onto another sheet first`);
+  if (cutRec(p)) return no(`${name} was already cut`);
+  if (inAnySet(p, sets)) return no(`${name} is in a set`);
+  if (lineDrawn(p)) return no(`${name} has a cut line drawn`);
+  const busy = busyRec(p, now); if (busy) return no(`${name} ${busy}`);
+  let stockNote = "";
+  if (p.roseStockId && CutLine.cuts(p.metal) && p.metal !== "rose" && !num(p.roseRevision)) {
+    if (has("roseRelease")) { const r = await put(x, { op: "roseRelease", stockId: p.roseStockId, sheetId: p.id, metal: p.metal }, `rose|${p.id}`); if (err(r)) stockNote = `; its physical sheet stays reserved (${err(r)})`; }
+    else stockNote = "; its physical sheet stays reserved until it is let go in the Partial sheets list";
+  }
+  const r = await put(x, { op: "archiveEmptySheet", id: p.id, runId: x.ctx.runId }, `archive|${p.id}`); if (err(r)) return no(`${name} could not be removed: ${err(r)}`);
+  // the later sheets of the metal move up one place (the browser's removePage), each draft named again from its place
+  const left = inOrder(await runSheets(x.ctx, p.metal)).filter(q => q.id !== p.id && !cutRec(q) && !committedSheet(q, sets) && num(q.page) > num(p.page));
+  for (const q of left) { const pg = Math.max(1, num(q.page) - 1); await put(x, { op: "putSheet", sheet: { id: q.id, page: pg, draftOrder: pg } }, `order|${q.id}|${pg}`); }
+  return ok(`${name} deleted (it was empty)${stockNote}`);
+}
+async function leaveset(x) {
+  const p = await sheetRec(x.ctx, x.a.sheetId); if (!p || p.runId !== x.ctx.runId) return no("That sheet is not on the run the cloud carries.");
+  const setId = SetEdit.inSetOf(p); if (!setId) return no(`${nameOf(p)} is not in a set.`);
+  const was = nameOf(p), r = await put(x, { op: "cmdLeaveSet", runId: x.ctx.runId, setId, sheetIds: [p.id], by: x.cmd.by || "" }, `leave|${p.id}|${setId}`);
+  if (err(r)) return no(err(r));
+  return ok(`${was} was taken out of its set; it is a draft now and waits for the next set`);
+}
+async function setrebuild(x) {
+  if (!SetRepair || typeof SetRepair.plan !== "function") return no("The set rules are not loaded in the cloud: nothing was changed");
+  const set = await setRec(x.ctx, x.a.setId); if (!set) return no("That set could not be found: refresh the Library");
+  if (set.runId && set.runId !== x.ctx.runId) return no(`${SetEdit.setWord(set)} is made by a run the cloud does not carry: nothing was changed`);
+  const sets = await runSets(x.ctx), sheets = await runSheets(x.ctx), byId = new Map(sheets.map(r => [r.id, r]));
+  for (const id of set.sheetIds || []) if (!byId.has(id)) { const r = await sheetRec(x.ctx, id); if (r && !r.archived) byId.set(id, r); }
+  const now = Date.now(), run = x.ctx.run || {};
+  const p = SetRepair.plan(set, [...byId.values()], sets, { cloud: true, runHere: true, committing: !!run.commitRequested, busy: r => busyRec(r, now) });
+  if (!p.ok) return p.noop ? ok(p.refused.reason) : no(p.refused ? p.refused.reason : "The set was not rebuilt");
+  if (!p.expel.length) return ok((p.words && p.words.summary) || "The set already follows the rules");
+  const family = p.expel.filter(id => { const r = byId.get(id); const k = SetRules && r ? SetRules.metalClass(r) : ""; return ["RG", "10K", "14K"].includes(k); });
+  const r = await put(x, { op: "cmdLeaveSet", runId: x.ctx.runId, setId: set.setId, sheetIds: p.expel, whole: true, mark: family, by: x.cmd.by || "" }, `rebuild|${set.setId}|${p.signature || p.expel.join(",")}`);
+  if (err(r)) return no(`The set was not rebuilt: ${err(r)}`);
+  return ok((p.words && p.words.summary) || `${SetEdit.setWord(set)} was rebuilt: ${plural(p.expel.length, "sheet")} left it; the next sets form by the usual rules`);
+}
+async function unkeep(x) {
+  const want = new Set((x.a.ids || x.a.orders || []).map(v => String(v).replace(/\D/g, "")).filter(Boolean)); if (!want.size) return no("No order was named.");
+  const run = x.ctx.run || {}, was = (run.keepShipped || []).map(String), letGo = was.filter(v => want.has(v));
+  if (letGo.length) { const r = await put(x, { op: "runPut", run: { runId: x.ctx.runId, keepShipped: was.filter(v => !want.has(v)) }, merge: true }, `unkeep|${[...want].sort().join(",")}`); if (err(r)) return no(`The orders were not let go: ${err(r)}`); run.keepShipped = was.filter(v => !want.has(v)); }
+  // which of them are shipped at our stations or cancelled: our own records (never Etsy). The take-off lane takes their pieces off the open sheets.
+  let gone = 0;
+  try {
+    const sh = await x.ctx.read({ op: "shippedByUs", orders: [...want] }), cc = await x.ctx.read({ op: "cancelCheck", orderIds: [...want] });
+    const shipped = sh && sh.shipped, cancelled = cc && (cc.cancelled || cc.orders || cc);
+    for (const id of want) { const s = Array.isArray(shipped) ? shipped.map(String).includes(id) : !!(shipped && shipped[id]); const c = Array.isArray(cancelled) ? cancelled.map(String).includes(id) : !!(cancelled && typeof cancelled === "object" && cancelled[id]); if (s || c) gone++; }
+  } catch (_) { /* said as not known */ }
+  const off = lane(x.ctx, "takeoff") ? "the cloud takes their pieces off every sheet that is still open" : "their pieces come off every sheet that is still open at the next take-off";
+  return ok(`${letGo.length} shipped order(s) let go; ${gone} of them were shipped at our stations or cancelled: ${off}`);
+}
+async function repicture(x) {
+  if (!lane(x.ctx, "files")) return no("A sheet's picture is drawn by the cloud's sheet writer, which is not on yet: press Resume on a computer, then ask again");
+  if (!x.work.stage) {
+    const p = await sheetRec(x.ctx, x.a.sheetId); if (!p || p.archived) return no("That sheet is not in the cloud.");
+    if (cutRec(p)) return no(`${nameOf(p)} was cut: its picture stays as it was cut`);
+    if (num(p.previewRev) >= num(p.layoutRev) && p.preview) return ok(`${nameOf(p)}'s picture already shows the sheet as it is now`);
+    const at = Date.now(), r = await put(x, { op: "putSheet", sheet: { id: p.id, filesOwed: at } }, `picture|${p.id}|${num(p.layoutRev)}`); if (err(r)) return no(err(r));
+    return wait("Drawing the sheet's picture again…", { stage: "files", id: p.id, at, layoutRev: num(p.layoutRev) });
+  }
+  const rec = await sheetRec(x.ctx, x.work.id); if (!rec) return no("That sheet is no longer in the cloud.");
+  if (!rec.filesOwed && num(rec.previewRev) >= num(rec.layoutRev)) return ok(`${nameOf(rec)}: its picture was drawn again as the sheet is now`);
+  if (Date.now() - num(x.work.at) > FILES_MS) return no(`${nameOf(rec)}: its files are still owed; the cloud writes them when the sheet is free`);
+  return wait("Drawing the sheet's picture again…", x.work);
+}
+
+/* ═══ pieces ═══ */
+/** STRANDED (C4): the run's lines counted as pooled whose pieces stand on no sheet, put right on the records so the placement places them: a piece record that names a sheet
+ *  which does not list it lets that sheet go; a piece a sheet lists but never seated (a reject the overflow did not move on) makes that sheet owe a nest again; a line refused
+ *  because another run claimed it ("contended") is asked for again. Never a piece a sheet seats, one that is nesting, held, gone or cancelled. → { keys, pieces, writes }
+ *  o.tried (the stranded sweep's own journal, _charmNestSweeps.js): a line it tried less than 30 minutes ago waits. A person's request passes no journal, so every line is looked at
+ *  now, as the page's placeStranded did; no guard above is ever skipped for it (cloud plan v2 E1: the cloud passes no force). */
+async function strandedFix(x, o = {}) {
+  const ctx = x.ctx, L = lines(ctx), now = Date.now(), tried = o.tried || {}, out = { keys: [], pieces: 0, writes: 0, contended: [], resat: [] };
+  const sheets = await runSheets(ctx), on = listedBy(sheets);
+  const cand = Object.entries(L).filter(([k, l]) => OPEN_LINE(l) && !l.hold && !l.vacated && ["pooled", "written"].includes(l.state) && (l.poolIds || []).length && now - num(tried[k]) > 30 * 60000);
+  const stranded = [], resit = new Map();
+  for (const [k, l] of cand) {
+    let any = false;
+    for (const id of l.poolIds) {
+      const s = on.get(String(id));
+      if (!s) { any = true; continue; }
+      if (seated(s, id) || busyRec(s, now) || s.nestOwed || s.inplaceHold) continue;
+      if (cutRec(s)) continue;   // (a cut sheet keeps what it holds)
+      any = true; resit.set(s.id, s);
+    }
+    if (any) stranded.push([k, l]);
+  }
+  if (stranded.length) {
+    const cc = await ctx.read({ op: "cancelCheck", orderIds: [...new Set(stranded.map(([k]) => ridOf(k)))] }).catch(() => null), cancelled = cc && (cc.cancelled || cc.orders);
+    const isCancelled = rid => (Array.isArray(cancelled) ? cancelled.map(String).includes(rid) : !!(cancelled && typeof cancelled === "object" && cancelled[rid]));
+    const loose = [], toPooled = {};
+    const rows = await pools(ctx, stranded.flatMap(([, l]) => l.poolIds));
+    for (const [k, l] of stranded) {
+      if (isCancelled(ridOf(k))) continue;
+      out.keys.push(k); out.pieces += l.poolIds.length;
+      for (const id of l.poolIds) { const r = rows.get(String(id)); if (r && r.sheetId && !on.has(String(id)) && !["abandoned", "superseded", "committed"].includes(r.state)) loose.push(String(id)); }
+      if (l.state === "written") toPooled[k] = { state: "pooled" };
+    }
+    for (let i = 0; i < loose.length; i += 300) { const part = loose.slice(i, i + 300), r = await put(x, { op: "poolUpdate", poolIds: part, patch: { sheetId: null } }, `strand|loose|${part[0]}|${Math.floor(now / 120000)}`); if (!err(r)) out.writes++; }
+    if (Object.keys(toPooled).length) { const r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: toPooled }, `strand|lines|${Object.keys(toPooled).sort().join(",").slice(0, 400)}|${Math.floor(now / 120000)}`); if (!err(r)) out.writes++; }
+    // (a piece a sheet lists but never seated, the sheet at rest: its turned-away list is cleared and the sheet marked changed, so its nest tries it again (the nest step's owedNest);
+    //  what still does not fit is moved on by the writer's overflow, step 7b. A cut sheet keeps what it holds)
+    for (const s of resit.values()) { const r = await put(x, { op: "putSheet", sheet: { id: s.id, rejects: [], dirty: true } }, `strand|resit|${s.id}|${num(s.contentRev)}|${num(s.layoutRev)}`); if (!err(r)) { out.writes++; out.resat.push(s.id); } }
+  }
+  // CONTENDEDBACK: a line another run had claimed is asked for again (the server answers afresh)
+  const again = {}; for (const [k, l] of Object.entries(L)) if (l && l.state === "contended" && !l.hold) { again[k] = { state: "pulled", reason: null, wait: null }; out.contended.push(k); }
+  if (Object.keys(again).length) { const r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: again }, `strand|contended|${Object.keys(again).sort().join(",").slice(0, 400)}`); if (!err(r)) out.writes++; }
+  return out;
+}
+/** How many of these lines' pieces a sheet seats now. → { pieces, placed, names, waiting:[reason], open } */
+async function placedNow(ctx, keys) {
+  const run = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (run && run.run && run.run.lines) || lines(ctx);
+  const sheets = await runSheets(ctx), on = listedBy(sheets), out = { pieces: 0, placed: 0, names: new Set(), waiting: [], open: 0 };
+  for (const k of keys) {
+    const l = L[k]; if (!l || !OPEN_LINE(l)) continue;
+    if (["pulled", "pooled", "waiting", "contended"].includes(l.state) && !(l.poolIds || []).length) { out.open++; if (l.reason) out.waiting.push(String(l.reason)); continue; }
+    for (const id of l.poolIds || []) { out.pieces++; const s = on.get(String(id)); if (s && seated(s, id)) { out.placed++; out.names.add(nameOf(s)); } else out.open++; }
+    if (l.state === "waiting" && l.reason) out.waiting.push(String(l.reason));
+  }
+  out.names = [...out.names]; return out;
+}
+async function placewaiting(x) {
+  if (!lane(x.ctx, "nest")) return no("Placing pieces is not the cloud's yet: press Resume on a computer, then ask again");
+  if (!x.work.stage) {
+    const fix = await strandedFix(x);   // (a person's request: no journal of earlier tries, so nothing waits out the sweep's 30 minutes)
+    if (!fix.keys.length && !fix.contended.length) return ok("No piece stands outside a sheet.");
+    return wait("Placing the pieces that stand on no sheet…", { stage: "placing", keys: fix.keys.concat(fix.contended).slice(0, 300), pieces: fix.pieces, lines: fix.keys.length + fix.contended.length, at: Date.now() });
+  }
+  const v = await placedNow(x.ctx, x.work.keys || []);
+  if (!v.open || Date.now() - num(x.work.at) > PLACE_MS) return ok(v.pieces ? `${v.placed} of ${Math.max(v.pieces, x.work.pieces || 0)} stranded piece(s) (${x.work.lines} order line(s)) went onto a sheet${v.open && v.waiting.length ? " · " + v.waiting[0] : ""}` : "No piece stands outside a sheet.");
+  return wait(`Placing the pieces that stand on no sheet… ${v.placed} of ${v.pieces || "?"} placed`, x.work, v.pieces ? Math.round(100 * v.placed / v.pieces) : null);
+}
+async function pairnow(x) {
+  if (!lane(x.ctx, "nest")) return no("Placing pieces is not the cloud's yet: press Resume on a computer, then ask again");
+  if (!x.work.stage) {
+    const L = lines(x.ctx), keys = [...new Set((x.a.ids || []).map(String))].filter(k => { const l = L[k]; return l && l.state === "waiting" && l.wait && l.wait.kind === "pair" && !l.hold; });
+    if (!keys.length) return no("That line does not wait for a sheet to fill.");
+    const run = x.ctx.run || {}, free = [...new Set((run.pairFree || []).map(String).concat(keys.map(ridOf)))].slice(-400);
+    let r = await put(x, { op: "runPut", run: { runId: x.ctx.runId, pairFree: free }, merge: true }, `pairfree|${keys.sort().join(",")}`); if (err(r)) return no(`Not placed: ${err(r)}`);
+    const patch = {}; for (const k of keys) patch[k] = { state: (L[k].poolIds || []).length ? "pooled" : "pulled", wait: null, reason: null };
+    r = await put(x, { op: "runLinesPatch", runId: x.ctx.runId, lines: patch }, `pairnow|${keys.join(",")}`); if (err(r)) return no(`Not placed: ${err(r)}`);
+    return wait("Placing the waiting piece…", { stage: "placing", keys, at: Date.now() });
+  }
+  const v = await placedNow(x.ctx, x.work.keys || []);
+  if (v.pieces && !v.open) return ok(`${v.placed} piece(s) placed on ${and(v.names)}`);
+  if (Date.now() - num(x.work.at) > PLACE_MS) return v.placed ? ok(`${v.placed} piece(s) placed on ${and(v.names)}; the rest waits: ${v.waiting[0] || "for the next placement"}`) : no(`Not placed: ${v.waiting[0] || "the intake did not take it"}`);
+  return wait("Placing the waiting piece…", x.work);
+}
+async function sendhome(x) {
+  if (!lane(x.ctx, "nest") || !has("placeOnSheet")) return no("Moving a piece between sheets is not the cloud's yet: press Resume on a computer, then ask again");
+  const ctx = x.ctx;
+  if (!x.work.stage) {
+    const L = lines(ctx), sheets = await runSheets(ctx), on = listedBy(sheets), why = [], moves = [];
+    for (const k of [...new Set((x.a.ids || []).map(String))].slice(0, 12)) {
+      const l = L[k]; if (!l || !OPEN_LINE(l) || !(l.poolIds || []).length) { why.push(`${k}: no piece of it is on a sheet`); continue; }
+      const rows = await pools(ctx, l.poolIds), homeNames = [...new Set([...rows.values()].map(r => String(r.sheetName || "")).filter(Boolean))];
+      const nowOn = [...new Set(l.poolIds.map(id => on.get(String(id))).filter(Boolean))], home = homeNames.map(nm => sheets.find(s => s.fileBase === nm)).filter(s => s && !nowOn.includes(s));
+      const rid = ridOf(k);
+      if (!nowOn.length) { why.push(`${rid}: on no sheet`); continue; }
+      if (!home.length) { why.push(`${rid}: ${homeNames.length ? "already on " + homeNames.join(", ") : "the sheet it came off is not known"}`); continue; }
+      const cut = nowOn.concat(home).find(cutRec); if (cut) { why.push(`${rid}: ${nameOf(cut)} was already cut`); continue; }
+      for (const src of nowOn) {
+        const ids = l.poolIds.filter(id => on.get(String(id)) === src).map(String), charms = (src.charms || []).filter(c => c && ids.includes(String(c.poolId)));
+        const r = await put(x, { op: "placeOnSheet", runId: ctx.runId, metal: home[0].metal, lineKey: k, rid, poolIds: ids, charms, target: { sheetId: home[0].id, layoutBase: num(home[0].layoutRev), contentBase: num(home[0].contentRev) }, from: { sheetId: src.id, layoutBase: num(src.layoutRev), contentBase: num(src.contentRev), reason: "homeward" } }, `home|${k}|${src.id}|${home[0].id}|${num(home[0].layoutRev)}`);
+        if (err(r)) { why.push(`${rid}: ${err(r)}`); continue; }
+        moves.push({ key: k, home: home[0].id });
+      }
+    }
+    if (!moves.length) return no((why.join("; ") || "Nothing was moved.").slice(0, 380));
+    const homes = [...new Set(moves.map(m => m.home))], waitOn = [];
+    for (const id of homes) { const rec = await sheetRec(ctx, id); waitOn.push({ id, layoutRev: num(rec && rec.layoutRev), at: Date.now() }); await startNest(x, id, false, `pieces sent home, asked by ${x.cmd.by || "a person"}`); }
+    return wait("Putting the piece back on its own sheet…", { stage: "nest", sheets: waitOn, keys: moves.map(m => m.key), why });
+  }
+  return settleNests(x, "Putting the piece back on its own sheet…", async () => {
+    const v = await placedNow(ctx, x.work.keys || []);
+    return v.placed ? ok(`${(x.work.keys || []).length} order line(s) back on ${and(v.names)}${(x.work.why || []).length ? " · " + x.work.why.join("; ") : ""}`) : no(`${(x.work.keys || []).length} order line(s) were moved but are not seated yet: ${v.waiting[0] || "the sheet had no room; the overflow takes them on"}`);
+  });
+}
+/** Every sheet named in work.sheets has settled (or ran past its time): then fin() answers. */
+async function settleNests(x, text, fin) {
+  let open = 0, late = 0;
+  for (const w of x.work.sheets || []) { const s = await nestSettled(x, w); if (!s.settled) { open++; if (s.timedOut) late++; } }
+  if (open && late < open) return wait(text, x.work);
+  return fin(late);
+}
+
+/* INPLACE (REMAKELINE, KEEPREMOTE, REMAKESTALE, ANYWHERE): order lines made up again, each in the place its pieces had. The stages, one or more passes each:
+     world    a request that changes what a line reads as waits for the next reading of the orders (the world build after the request: summary.at), so the reading is the cloud's
+     pick     the lines (remakeline: the ones named; keepsync / remake: open lines of these SKUs whose pieces hold an older drawing or another SKU; skuonce: the one line)
+     vacate   each line's pieces leave their sheet, which keeps their place (cmdVacate); the line goes back to the intake (pulled, repoolChanged, vacated)
+     remade   the intake has made its pieces again (the line is pooled, its new pieces exist and stand on no sheet)
+     back     the new pieces go back on the sheet that kept their place (cmdPutBack), which owes a nest that seats them in its free room; with no place kept (the sheet was
+              cut or closed meanwhile) the line is placed as any line is
+     nest     the sheets settle. A sheet that is cut, behind a green line or in a committed set keeps its pieces as they are (said in the answer). */
+async function inplace(x, label) {
+  const ctx = x.ctx, w = x.work, now = Date.now();
+  if (!lane(ctx, "nest") || !lane(ctx, "pool")) return no(`${label} is not the cloud's yet (pieces are made and placed on a computer): press Resume on a computer, then ask again`);
+  if (!w.stage) return wait("Waiting for the next reading of the orders…", { stage: "world", asked: num(x.cmd.at) || now, at: now });
+  if (w.stage === "world") {
+    const at = await worldAt(ctx);
+    if (at > num(w.asked)) return wait("Reading the lines again…", Object.assign({}, w, { stage: "pick", worldAt: at }));
+    if (now - num(w.at) > WORLD_MS) return no("The orders were not read again in 15 minutes (the world build): nothing was made again. Ask again in a moment");
+    return wait("Waiting for the next reading of the orders…", w);
+  }
+  if (w.stage === "pick") {
+    const keys = await x.pick();
+    if (!keys.length) return ok(x.none || "Nothing to make again: every open piece already holds the drawing the library has now");
+    return wait("Taking the old pieces off…", Object.assign({}, w, { stage: "vacate", keys: keys.slice(0, 40), done: [], why: [], vac: {} }));
+  }
+  if (w.stage === "vacate") {
+    const L = lines(ctx), sheets = await runSheets(ctx), sets = await runSets(ctx), on = listedBy(sheets), vac = Object.assign({}, w.vac || {}), why = (w.why || []).slice(), patch = {};
+    let busy = 0;
+    for (const k of w.keys) {
+      if (vac[k]) continue; const l = L[k]; if (!l || !OPEN_LINE(l)) { vac[k] = { skip: true }; continue; }
+      const bySheet = new Map(); for (const id of l.poolIds || []) { const s = on.get(String(id)); if (s) (bySheet.get(s) || bySheet.set(s, []).get(s)).push(String(id)); }
+      // (a line is made again whole or not at all: a sheet that keeps what it holds (cut, behind a green line, in a set sent to the station) keeps the whole line as it is)
+      const keeps = [...bySheet.keys()].find(s => cutRec(s) || lineDrawn(s) || committedSheet(s, sets));
+      if (keeps) { why.push(`${ridOf(k)}: ${nameOf(keeps)} ${cutRec(keeps) ? "was already cut" : lineDrawn(keeps) ? "is behind a green line" : "is in a set sent to the station"}: its pieces stay as they are`); vac[k] = { skip: true }; continue; }
+      if ([...bySheet.keys()].some(s => busyRec(s, now))) { busy++; continue; }
+      const left = [], kept = [];
+      for (const [s, ids] of bySheet) {
+        const r = await put(x, { op: "cmdVacate", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: s.id, poolIds: ids, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "", why: label }, `vacate|${k}|${s.id}|${num(s.contentRev)}`);
+        if (err(r)) { if (r.keep) { kept.push(...ids); why.push(`${ridOf(k)}: ${err(r)}`); } else busy++; continue; }
+        left.push(s.id);
+      }
+      if (busy && !left.length) continue;
+      if (kept.length && !left.length) { vac[k] = { skip: true }; continue; }
+      vac[k] = { sheets: left };
+      // (the line goes back to the intake whole: its pieces keep their ids (O.poolId), so a piece a sheet kept after all (cut a moment ago) is still listed there and is not placed twice)
+      patch[k] = Object.assign({ state: "pulled", poolIds: [], repoolChanged: true, wait: null, reason: null }, left.length ? { vacated: { sheetIds: left, at: now } } : {});
+    }
+    if (Object.keys(patch).length) { const r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: patch }, `inplace|pulled|${Object.keys(patch).sort().join(",").slice(0, 400)}`); if (err(r)) return no(`Not made again: ${err(r)}`); }
+    const pending = w.keys.filter(k => !vac[k]);
+    if (pending.length && now - num(w.at) < NEST_MS) return wait("Taking the old pieces off… (a sheet is busy)", Object.assign({}, w, { vac, why }));
+    const todo = w.keys.filter(k => vac[k] && !vac[k].skip);
+    if (!todo.length) return no((why.join("; ") || "Nothing was made again").slice(0, 380));
+    return wait("Making the pieces again…", Object.assign({}, w, { stage: "remade", vac, why, todo, remadeAt: now }));
+  }
+  if (w.stage === "remade") {
+    const run = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (run && run.run && run.run.lines) || lines(ctx), ready = [], waiting = [];
+    for (const k of w.todo) { const l = L[k]; if (l && l.state === "pooled" && (l.poolIds || []).length) ready.push(k); else waiting.push(k); }
+    if (waiting.length && now - num(w.remadeAt) < REMADE_MS) return wait(`Making the pieces again… ${ready.length} of ${w.todo.length} made`, w, Math.round(100 * ready.length / w.todo.length));
+    return wait("Putting the new pieces in place…", Object.assign({}, w, { stage: "back", ready, late: waiting }));
+  }
+  if (w.stage === "back") {
+    const run = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (run && run.run && run.run.lines) || lines(ctx), placedOn = new Map(), why = (w.why || []).slice(), unvac = {};
+    for (const k of w.ready || []) {
+      const l = L[k], home = ((w.vac[k] || {}).sheets || [])[0]; unvac[k] = { vacated: null };
+      if (!l || !home) continue;
+      const jr = await ctx.db.collection(INTAKE).doc(k).get(), charms = jr.exists ? (jr.data() || {}).charms : null, s = await sheetRec(ctx, home);
+      const mine = Array.isArray(charms) ? charms.filter(c => c && (l.poolIds || []).map(String).includes(String(c.poolId)) && (!s || !c.metal || c.metal === s.metal)) : [];
+      if (!s || !mine.length) { why.push(`${ridOf(k)}: placed as a new piece (${!s ? "its sheet is gone" : "its new pieces are not described yet"})`); continue; }
+      const r = await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: home, poolIds: mine.map(c => String(c.poolId)), charms: mine, keepBacks: !!x.keepBacks, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "" }, `back|${k}|${home}|${num(s.contentRev)}`);
+      if (err(r)) { why.push(`${ridOf(k)}: ${err(r)}; it is placed as any piece is`); continue; }
+      if (!r.noop) placedOn.set(home, { id: home, layoutRev: num(r.layoutRev), at: now });
+    }
+    // every place still kept for these lines is let go (a line not put back is placed as any line), then the lines are placed by the cloud's placement as usual
+    for (const k of (w.ready || []).concat(w.late || [])) for (const sid of (w.vac[k] || {}).sheets || []) await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, sheetId: sid, release: true }, `release|${k}|${sid}`);
+    for (const k of w.late || []) { unvac[k] = { vacated: null }; why.push(`${ridOf(k)}: its pieces were not made again in time; the intake makes them and they are placed as new pieces`); }
+    if (Object.keys(unvac).length) await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: unvac }, `inplace|unvac|${Object.keys(unvac).sort().join(",").slice(0, 400)}`);
+    for (const s of placedOn.values()) await startNest(x, s.id, false, `${label}, asked by ${x.cmd.by || "a person"}`);
+    return wait("Seating the new pieces…", Object.assign({}, w, { stage: "nest", sheets: [...placedOn.values()], why }));
+  }
+  if (w.stage === "nest") {
+    return settleNests(x, "Seating the new pieces…", async () => {
+      const v = await placedNow(ctx, w.todo || []), made = (w.ready || []).length;
+      const text = `${made} order line(s) made again: ${v.placed} piece(s)${v.names.length ? " on " + and(v.names) : ""}${(w.why || []).length ? " · " + w.why.join("; ") : ""}`;
+      return made && (v.placed || !v.pieces) ? ok(text) : no(text);
+    });
+  }
+  return no("The request lost its place: ask again");
+}
+/** The open lines whose pieces hold an older drawing of these SKUs, or another SKU than the line reads as now (the world's line). */
+async function staleLines(ctx, skus) {
+  const want = new Set(skus.map(s => String(s).trim().toUpperCase()).filter(Boolean)), L = lines(ctx), out = [], entries = new Map();
+  const entryOf = async sku => { if (!entries.has(sku)) { const s = await ctx.db.collection(MASTER).doc(sku).get(); entries.set(sku, s.exists ? s.data() : null); } return entries.get(sku); };
+  for (const [k, l] of Object.entries(L)) {
+    if (!OPEN_LINE(l) || !(l.poolIds || []).length || l.hold) continue;
+    const wl = await worldLine(ctx, k), design = String((wl && wl.spec && wl.spec.designSku) || l.sku || "").toUpperCase(), rows = await pools(ctx, l.poolIds);
+    const skusHere = new Set([design].concat([...rows.values()].map(r => String(r.sku || "").toUpperCase())).filter(Boolean));
+    if (![...skusHere].some(s => want.has(s))) continue;
+    const e = design ? await entryOf(design) : null;
+    const stale = [...rows.values()].some(r => !r.custom && ((design && String(r.sku || "").toUpperCase() !== design) || (e && e.masterHash && r.masterHash && r.masterHash !== e.masterHash)));
+    if (stale) out.push(k);
+    if (out.length >= 40) break;
+  }
+  return out;
+}
+async function remakeline(x) {
+  x.keepBacks = true;
+  x.pick = async () => [...new Set((x.a.ids || []).map(String))].filter(k => OPEN_LINE(lines(x.ctx)[k]));
+  x.none = "Those lines are not open lines of the run";
+  return inplace(x, "Making the order's pieces again");
+}
+async function keepsync(x) {
+  x.pick = () => staleLines(x.ctx, x.a.ids || []);
+  return inplace(x, "Making the other orders again");
+}
+async function remake(x) {
+  x.pick = () => staleLines(x.ctx, x.a.ids || []);
+  return inplace(x, "Making the pieces of the older drawing again");
+}
+async function skuonce(x) {
+  const ctx = x.ctx, key = String((x.a.ids || [])[0] || ""), sku = String(x.a.sku || "").trim().toUpperCase();
+  if (!x.work.stage) {
+    const l = lines(ctx)[key]; if (!key || !sku) return no("not ready");
+    if (!l || !OPEN_LINE(l)) return no(`The piece ${key} is not in the run the cloud carries`);
+    const e = await ctx.db.collection(MASTER).doc(sku).get(); if (!e.exists) return no(`${sku} is not in the charm repo`);
+    if ((e.data() || {}).blocked || (e.data() || {}).block) return no(`${sku} is blocked in the master, so it cannot be cut`);
+    const was = String((l.skuOverride && l.skuOverride.sku) || l.sku || ""); if (was.toUpperCase() === sku) return ok(`This piece is ${sku} already`);
+    if ((l.poolIds || []).length && (!lane(ctx, "nest") || !lane(ctx, "pool"))) return no("Changing a placed piece is not the cloud's yet (pieces are made and placed on a computer): press Resume on a computer, then ask again");
+    const at = Date.now(), who = String(x.cmd.by || "").trim() || "a person", say = `Just this order: ${was || "no SKU"} → ${sku} (the listing and Etsy are not changed)`;
+    let r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: { [key]: { skuOverride: { sku, by: who, at, was }, repoolChanged: (l.poolIds || []).length > 0 } } }, `once|${key}|${sku}`); if (err(r)) return no(err(r));
+    r = await put(x, { op: "timelineAdd", events: [{ orderId: ridOf(key), type: "decided", id: `${key}.once.${at}`, at, by: who, station: "sorter", text: `Decided by ${who} · ${say}`.slice(0, 200), data: { sku, once: true, was: was || null } }] }, `once|tl|${key}|${sku}`);
+    if (!(l.poolIds || []).length) return ok(`${sku} for order ${ridOf(key)} only: its pieces are made at the next intake`);
+    x.work = { stage: "world", asked: at, at, once: { key, sku } };
+    return wait(`${sku} for this order only… waiting for the order to be read again`, x.work);
+  }
+  x.pick = async () => [key].filter(k => OPEN_LINE(lines(ctx)[k]));
+  const res = await inplace(x, `${sku} for this order only`);
+  if (res.done && res.done.ok) res.done.text = `${sku} for order ${ridOf(key)} only · ${res.done.text}`.slice(0, 380);
+  return res;
+}
+async function release(x) {
+  const ctx = x.ctx, rid = String((x.a.ids || [])[0] || "").replace(/\D/g, "");
+  if (!rid) return no("not ready");
+  if (!has("releaseAsk")) return no("Release Hold is not in the cloud in this build: press Resume on a computer, then ask again");
+  if (!x.work.stage) {
+    const r = await put(x, { op: "releaseAsk", orderId: rid, runId: ctx.runId, note: x.cmd.by ? `asked by ${x.cmd.by}` : "" }, `release|${rid}`);
+    if (err(r)) return no(err(r));
+    const keys = Object.keys(r.lines || {}).filter(k => k.startsWith(rid + "_"));
+    if (!lane(ctx, "nest") || !keys.length) return ok(`Order ${rid} released from hold, at the front of the queue${r.already ? " (it was not on hold in the cloud)" : ""}`);
+    return wait(`Order ${rid}: its place at the front is saved`, { stage: "placing", keys, at: Date.now() });
+  }
+  const v = await placedNow(ctx, x.work.keys || []);
+  if (v.pieces && !v.open) return ok(`Order ${rid} released from hold and placed on ${and(v.names)}`);
+  if (Date.now() - num(x.work.at) > RELEASE_PLACE_MS) return ok(`Order ${rid} released from hold, at the front of the queue${v.placed ? `; ${v.placed} piece(s) placed on ${and(v.names)}` : ""}${v.waiting[0] ? " · " + v.waiting[0] : ": its pieces are placed at the next intake"}`);
+  return wait(v.names.length ? `Placed on ${and(v.names)}…` : "Moving its pieces…", x.work);
+}
+
+/* ═══ nest ═══ */
+async function renest(x) {
+  if (!lane(x.ctx, "nest") || !has("nestStart")) return no("Nesting is not the cloud's yet: press Resume on a computer, then ask again");
+  if (!x.work.stage) {
+    const p = await sheetRec(x.ctx, x.a.sheetId), sets = await runSets(x.ctx), now = Date.now();
+    if (!p || p.archived || p.runId !== x.ctx.runId) return no("That sheet is not on the run the cloud carries.");
+    if (cutRec(p)) return no("That sheet was already cut: it is not nested again.");
+    if (busyRec(p, now)) return no("That sheet is being nested right now.");
+    if (committedSheet(p, sets)) return no("That sheet is in a committed set: it is not nested again.");
+    const s = await startNest(x, p.id, true, `Re-nest asked by ${x.cmd.by || "a person"}`); if (s.error) return no(s.error);
+    return wait("Starting the nest…", { stage: "nest", sheets: [{ id: p.id, layoutRev: num(p.layoutRev), at: now }], name: nameOf(p) });
+  }
+  return settleNests(x, "Nesting…", async late => {
+    const rec = await sheetRec(x.ctx, x.work.sheets[0].id); if (!rec) return no("The sheet is no longer in the cloud.");
+    if (late) return no(`the nest did not finish (${rec.status || "waiting"})`);
+    return rec.problem ? no(String(rec.problem.message || rec.problem)) : ok(`${x.work.name} was nested again: ${placedWords(rec)}`);
+  });
+}
+async function moveAndNest(x, src, t, words) {
+  const r = await put(x, { op: "cmdMovePieces", runId: x.ctx.runId, from: { sheetId: src.id, layoutBase: num(src.layoutRev), contentBase: num(src.contentRev) }, to: { sheetId: t.id, layoutBase: num(t.layoutRev), contentBase: num(t.contentRev) }, by: x.cmd.by || "", why: words }, `move|${src.id}|${t.id}|${num(src.contentRev)}|${num(t.contentRev)}`);
+  if (err(r)) return no(err(r));
+  const s = await startNest(x, t.id, false, `${words}, asked by ${x.cmd.by || "a person"}`); if (s.error) return no(`The pieces were moved onto ${nameOf(t)}, but its nest could not start: ${s.error}`);
+  return wait(`Nesting ${r.moved} piece(s) on ${nameOf(t)}…`, { stage: "nest", sheets: [{ id: t.id, layoutRev: num(r.to.layoutRev), at: Date.now() }], moved: (src.poolIds || []).map(String), from: nameOf(src), to: nameOf(t), n: r.moved });
+}
+async function moveSettled(x, empty) {
+  return settleNests(x, `Nesting on ${x.work.to}…`, async () => {
+    const sheets = await runSheets(x.ctx), on = listedBy(sheets), ids = x.work.moved || [], at = new Map();
+    let onT = 0; for (const id of ids) { const s = on.get(String(id)); if (!s) continue; if (nameOf(s) === x.work.to && seated(s, id)) onT++; else at.set(nameOf(s), (at.get(nameOf(s)) || 0) + 1); }
+    const rest = [...at].filter(([nm]) => nm !== x.work.to).map(([nm, n]) => `${n} on ${nm}`);
+    return ok(`${x.work.n} piece(s) of ${x.work.from} moved onto ${x.work.to}: ${onT} placed there${rest.length ? `; ${empty ? "the rest could not be placed there and went on" : "the rest went on"}: ${rest.join(", ")}` : ""}`);
+  });
+}
+async function consolidate(x) {
+  if (!lane(x.ctx, "nest")) return no("Nesting is not the cloud's yet: press Resume on a computer, then ask again");
+  if (x.work.stage) return moveSettled(x, false);
+  const src = await sheetRec(x.ctx, x.a.sourceId), t = await sheetRec(x.ctx, x.a.targetId);
+  if (!src || !t || src.id === t.id || src.metal !== t.metal) return no("Pick two sheets of one metal.");
+  if (!SOLID.has(src.metal)) return no("Sheets are combined by hand for 10K and 14K Gold only.");
+  return moveAndNest(x, src, t, "Merge sheets");
+}
+async function empty(x) {
+  if (!lane(x.ctx, "nest")) return no("Nesting is not the cloud's yet: press Resume on a computer, then ask again");
+  if (x.work.stage) return moveSettled(x, true);
+  const src = await sheetRec(x.ctx, x.a.sheetId); if (!src || src.runId !== x.ctx.runId) return no("That sheet is not here.");
+  if (!SOLID.has(src.metal)) return no("Sheets are emptied by hand for 10K and 14K Gold only.");
+  if (!activeCharms(src).length) return no(`${nameOf(src)} has no pieces`);
+  const sets = await runSets(x.ctx), ord = inOrder(await runSheets(x.ctx, src.metal)), i = ord.findIndex(p => p.id === src.id), now = Date.now();
+  const cand = ord.slice(0, Math.max(0, i)).concat(ord.slice(i + 1)).filter(p => p.id !== src.id && !cutRec(p) && !lineDrawn(p) && !inAnySet(p, sets) && !busyRec(p, now) && !(p.manualEdit && now - num(p.manualEdit.at) < 90000));
+  if (!cand.length) return no(`${nameOf(src)} has no other sheet that can take its pieces.`);
+  return moveAndNest(x, src, cand[0], "Empty sheet");
+}
+async function seat(x) {
+  if (!lane(x.ctx, "nest") || !has("nestStart") || !has("roseClaim")) return no("Moving a sheet onto a partial sheet is not the cloud's yet: press Resume on a computer, then ask again");
+  if (x.work.stage) return settleNests(x, "Nesting the pieces…", async late => {
+    const rec = await sheetRec(x.ctx, x.work.sheets[0].id); if (!rec) return no("The sheet is no longer in the cloud.");
+    const n = x.work.n, k = (rec.placements || []).length;
+    const text = `${x.work.name}'s ${k === n ? `${n} ${n === 1 ? "piece now lies" : "pieces now lie"}` : `${k} of ${n} pieces now lie`} on ${x.work.label}.${k < n ? ` ${n - k} went on to the next sheet or stay to be placed.` : ""}${x.work.freed ? ` The sheet ${x.work.name} lay on before is back in the repository as Available: keep it or delete it.` : ""}`;
+    return late ? no(`the nest did not finish: ${text}`) : { done: Object.assign({ ok: true, text }, x.work.freed ? { freed: x.work.freed } : {}) };
+  });
+  const p = await sheetRec(x.ctx, x.a.sheetId), now = Date.now(); if (!p || p.runId !== x.ctx.runId) return no("That sheet is not here.");
+  if (!CutLine.cuts(p.metal)) return no("Partial sheets are for Rose Gold, 10K Gold and 14K Gold sheets.");
+  if (num(p.laserDoneAt) > 0) return no("This sheet is Completed (laser cut): its metal has been cut, so its pieces cannot move to another partial sheet.");
+  if (busyRec(p, now)) return no("This sheet is nesting or saving right now. Wait a moment, then choose the partial sheet.");
+  const n = activeCharms(p).length; if (!n) return no("This sheet has no pieces to move yet.");
+  const ids = (Array.isArray(x.a.partialIds) && x.a.partialIds.length ? x.a.partialIds : [x.a.partialId]).filter(Boolean).map(String).slice(0, 8);
+  if (!ids.length) return no("Choose the sheet to move onto.");
+  if (ids[0] === p.roseStockId) return no("This sheet already sits on that partial sheet.");
+  const ss = await x.ctx.db.collection(STOCK).doc(ids[0]).get(), st = ss.exists ? ss.data() || {} : null;
+  if (!st || (st.metal && st.metal !== p.metal) || (st.status && st.status !== "available" && st.owner !== p.id)) return no("That partial sheet is not available any more. Choose another.");
+  const r = await put(x, { op: "roseClaim", sheetId: p.id, metal: p.metal, wPt: st.wPt, hPt: st.hPt, stockId: ids[0], revision: st.revision, nesting: true, exact: true, partialId: ids[0], swap: !!(p.roseStockId || p.roseCutAt || p.rosePlanJson || p.roseProtectedJson) }, `seat|${p.id}|${ids[0]}`);
+  if (err(r) || !r.stock) return no("That partial sheet could not be reserved: " + (err(r) || "no answer"));
+  if (ids.length > 1) await put(x, { op: "putSheet", sheet: { id: p.id, partialChain: ids.slice(1) } }, `chain|${p.id}|${ids.join(",")}`);
+  const s = await startNest(x, p.id, true, `moved onto a partial sheet, asked by ${x.cmd.by || "a person"}`); if (s.error) return no(`The partial sheet is reserved, but the nest could not start: ${s.error}`);
+  const mm = v => Math.round(+v / 72 * 25.4 * 10) / 10, label = st.wPt && st.hPt ? `the partial sheet ${mm(st.wPt)} × ${mm(st.hPt)} mm` : "the partial sheet you chose";
+  return wait(`${nameOf(p)}'s ${n} pieces are being nested on the sheet you chose`, { stage: "nest", sheets: [{ id: p.id, layoutRev: num(p.layoutRev), at: now }], name: nameOf(p), n, label, freed: p.roseStockId && p.roseStockId !== ids[0] ? p.roseStockId : null });
+}
+async function customsend() {
+  return no("A card's sent designs are made into pieces only on a computer for now (Send custom needs its own cloud design): press Resume on a computer, then send it again");
+}
+
+const EXEC = { reorder, delete: del, leaveset, setrebuild, unkeep, repicture, placewaiting, pairnow, sendhome, remakeline, keepsync, remake, skuonce, release, renest, consolidate, empty, seat, customsend };
+module.exports = { EXEC, strandedFix, placedNow, staleLines, runSheets, runSets, sheetRec, nameOf, cutRec, lineDrawn, listedBy, seated, has, lane, WORK };

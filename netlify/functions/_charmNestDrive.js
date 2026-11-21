@@ -16,6 +16,8 @@
 "use strict";
 const O = require("../../charm-nest-orders.js");
 const Lease = require("./_charmNestLease");
+const Standby = require("./_charmNestStandby");   // (build steps 8 and 15: what the cloud owns, the park's words, the reconcile of a run taken from a closed computer, the hand-over)
+const TakeOff = require("./_charmNestTakeOff");   // (build step 9: the take-off lane and the revalidate step)
 
 const DRIVE = "Charm_Nest_Drive", OPEN = "Charm_Nest_Open", CARRIER = "Charm_Nest_Run_Carrier", RUNS = "Charm_Nest_Runs", CMDS = "Charm_Nest_Run_Cmds";
 const LEASE_PATH = DRIVE + "/lease";
@@ -25,6 +27,8 @@ const UNIT_BUDGET_MS = 45000, UNIT_HARD_MS = 60000, PASS_TAIL_MS = 60000, RENEW_
 const AUTO_WAIT = [60000, 120000, 300000, 600000], RETRY_IN_PASS = [4000, 8000];
 const RUN_STEPS = O.RUN_STEPS;
 const LANES = ["files", "takeoff", "engrave"];   // (and "cmd:<type>": §1.5)
+/** Whether a pass item's lane is the cloud's: the lane itself in drive.cloudSteps, or for "<prefix>:*" any lane of that prefix ("cmd:*": any "cmd:<type>"). (build step 13) */
+const laneOn = (cloudSteps, l) => (/:\*$/.test(String(l)) ? cloudSteps.some(s => String(s).startsWith(String(l).slice(0, -1))) : cloudSteps.includes(String(l)));
 /* What a stopped run's words say it is (the page's kindOf, bridge ~17768), with Etsy's causes first (E8): an Etsy watchdog or a spent call budget is never taken up by the
    cloud, and a 429 / etsy_stopped is an "etsy" stop that follows Resume Etsy only. PASSING is the page's (bridge 17766), plus an answer the cloud's own call says is in flight. */
 const PASSING = /answer in time|timed out|network|Failed to fetch|HTTP 5\d\d|link is down|no reply|closed|Reconnect (to|before)|frame is not open|is being written already|ECONNRESET|ETIMEDOUT|socket hang up/i;
@@ -91,7 +95,7 @@ async function freshnessGate(db, o = {}) {
 }
 
 /* ── the run's record (RunCtl recordOf / sizeCheck / archiveFinished / updatePending, from the documents, never from a page's memory) ── */
-const RECORD_FIELDS = ["status", "step", "errors", "stoppedBy", "stopKind", "fix", "note", "setIds", "setId", "processingSignature", "processingComplete", "finishedAt", "pendingWork", "nothingToCut", "commitRequested", "awaitCommit", "claimedAt", "abandonedAt"];
+const RECORD_FIELDS = ["status", "step", "errors", "stoppedBy", "stopKind", "fix", "note", "setIds", "setId", "processingSignature", "processingComplete", "finishedAt", "pendingWork", "nothingToCut", "commitRequested", "awaitCommit", "claimedAt", "abandonedAt", "sheetHolds"];
 /** What the driver saves of a run: its scalar fields only (never its lines: they change only through runLinesAdd / runLinesPatch), the last fifty errors, the signature as a hash. */
 function recordOf(r) {
   const rec = { runId: r.runId };
@@ -125,7 +129,7 @@ async function archiveFinished(r, lines, put) {
 function updatePending(r, d = {}) {
   const lines = Object.values(r.lines || {}).filter(Boolean), pages = (d.sheets || []).filter(s => s && !s.archived && (s.charms || []).length);
   r.pendingWork = { orders: lines.filter(l => ["held", "waiting", "pulled", "pooled"].includes(l.state)).length, sheets: pages.filter(p => p.runHold || !p.outputs || !(p.verification && p.verification.ok) || p.dirty || p.filesOwed).length,
-    review: +d.review || 0, engraving: lines.filter(l => l.engrave && l.engrave.needed && !l.engrave.approved && !O.FINISHED_LINE.has(l.state)).length, sets: Object.keys(r.deferredSets || {}).length, commit: !!r.awaitCommit };
+    review: +d.review || 0, engraving: lines.filter(l => l.engrave && l.engrave.needed && !l.engrave.approved && !O.FINISHED_LINE.has(l.state)).length, sets: Object.values(r.deferredSets || {}).filter(Boolean).length, commit: !!r.awaitCommit };   // (a set that waits no more is kept as null: a merge cannot take a key away)
   return r.pendingWork;
 }
 const hasPending = r => Object.values(r.pendingWork || {}).some(Boolean);
@@ -138,8 +142,32 @@ function workSignature(r, d = {}) {
 
 /* ── the steps (§1.7). Step 2: every step is a stub with one unit that does nothing (the real units arrive in build steps 3 to 13). A step is a list of units; a unit is
    async (ctx) → undefined (done, next unit) | { more: true } (run me again) | { goto: step } | { wait: kind, why } | { stop: { why, fix, kind } } | { done: true }. ── */
-const stubStep = () => [async () => undefined];
-function stubSteps() { const out = {}; for (const s of RUN_STEPS) out[s] = stubStep(); return out; }
+const stubStep = () => Object.assign([async () => undefined], { stub: true });   // (.stub: a step that is not built is never "owned": the run parks at it with words, Standby.owns)
+/* The real units of a step, registered by the build step that makes them (a step not listed here is still a stub). Each runs only while its step is in drive.cloudSteps. */
+const STEP_UNITS = {};
+Object.assign(STEP_UNITS, TakeOff.STEPS);   // (build step 9: revalidate, read from the world behind the freshness gate)
+/* build step 4 (cloud plan v2): new orders join the run and become pool pieces in the cloud: the run's "pull" and "pool" steps, and the intake that opens its "checkpoint", are the
+   intake's units (_charmNestIntake.js); the pass's own intake runs beside the steps (pass, below). Each runs only for a step drive.cloudSteps names. */
+const Intake = require("./_charmNestIntake");
+/** Every step: a stub, with the steps built so far in their place (STEP_UNITS; build step 4: pull / pool / checkpoint, _charmNestIntake.js; build step 6: nest, _charmNestNestStep.js;
+ *  build step 5: placement first in nest, withUnits). */
+function stubSteps() { const out = {}; for (const s of RUN_STEPS) out[s] = STEP_UNITS[s] ? STEP_UNITS[s].slice() : stubStep(); return withUnits(Object.assign(out, Intake.steps(), require("./_charmNestNestStep").steps())); }
+/* The real units, over the stubs, as each build step adds them (§1.7). Build step 5: "nest: placement, then nestStart": every ready piece goes on its sheet record first
+   (_charmNestPlaceUnit.js; placeOnSheet, CLOUD_ONLY). Its placeAll is also the unit a checkpoint's intake calls after it pools (§1.6 item 6). */
+function withUnits(out) {
+  out.nest = [require("./_charmNestPlaceUnit").unit].concat(out.nest || []);
+  return out;
+}
+/* The steps and lanes the driver really has: the cron (tick), the background pass and Settings (driveStatus, driveSet) all read these, so what Settings says the cloud
+   does is what it does. A build step wires its units in here (a step: a list of units; a lane: true once built). */
+function defaultSteps() { return Object.assign({}, require("./_charmNestSteps").steps); }   // (stubSteps, with the unit modules of _charmNestSteps.js over them: hard-parts §0.1)
+function defaultLanes() {
+  const out = { takeoff: true };   // (build step 9: the take-off lane, TakeOff.lane in the pass)
+  for (const it of require("./_charmNestSteps").passItems || []) if (it && it.lane) out[String(it.lane)] = true;   // (the pass items' lanes, from the unit modules: build steps 10, 11, 13)
+  const wild = Object.keys(out).filter(k => /:\*$/.test(k)).map(k => k.slice(0, -1));   // ("cmd:*" → "cmd:")
+  for (const l of Standby.LANES || []) if (wild.some(p => String(l).startsWith(p))) out[l] = true;   // (a wildcard lane builds every lane of its kind: "cmd:*", every "cmd:<type>", build step 13)
+  return out;
+}
 
 const docAt = (db, p) => { const seg = String(p).split("/"); return db.collection(seg[0]).doc(seg[1]); };
 const num = v => (Number.isFinite(+v) ? +v : 0);
@@ -161,6 +189,8 @@ async function carrierCheck(db, tx, o = {}) {
   const cloud = !!(c && c.dev === CLOUD_DEV), computerAlive = !!(c && c.dev && !cloud && now - num(c.at) < COMPUTER_FRESH_MS);
   if (o.mustCarry && !cloud) return { ok: false, why: `${(c && c.by) || "a computer"} carries the run now`, handedBack: true };
   if (computerAlive || (mode === "on" && c && c.dev && !cloud)) return { ok: true, info: { mode, drive, runId, yield: true, carrier: c } };
+  // (build step 8: while the cloud owns no step of a run yet, listed and built, it takes no run: a run it could only park stays where it is, for a computer's Resume as today)
+  if (!cloud && typeof o.ownsRun === "function" && !o.ownsRun(Array.isArray(drive.cloudSteps) ? drive.cloudSteps.map(String) : [])) return { ok: true, info: { mode, drive, runId, yield: true, notYet: true, carrier: c } };
   if (cloud && cd.yieldTo && cd.yieldTo.dev && num(cd.yieldTo.at) >= num(c.since) && now - num(cd.yieldTo.at) < 10 * 60000) return { ok: true, info: { mode, drive, runId, carries: true, yieldTo: cd.yieldTo, carrier: c } };
   const next = { dev: CLOUD_DEV, by: CLOUD_BY, at: now, since: cloud ? num(c.since) || now : now, ...(!cloud && c && c.dev ? { took: { dev: c.dev, by: c.by || "", at: num(c.at) } } : {}) };
   return { ok: true, writes: [[cref, { runId, carrier: next, expireAt: new Date(now + 30 * 86400000) }, { merge: true }]], info: { mode, drive, runId, carries: true, carrier: next, took: !cloud } };
@@ -169,19 +199,34 @@ async function carrierCheck(db, tx, o = {}) {
 /** One pass (§1.6). env: { db, Lib, nonce, budgetMs?, steps?, sleep?, renewMs?, log? }. → { ok, again?, yield?, fenced?, refused?, ... } */
 async function pass(env) {
   const { db, Lib } = env, say = env.log || (() => {}), sleep = env.sleep || (t => new Promise(r => setTimeout(r, t)));
-  const steps = env.steps || stubSteps(), leaseRef = docAt(db, LEASE_PATH), stateRef = db.collection(DRIVE).doc("state");
+  const steps = env.steps || defaultSteps(), lanes = env.lanes || defaultLanes(), leaseRef = docAt(db, LEASE_PATH), stateRef = db.collection(DRIVE).doc("state");
   const startedAt = Date.now(), budgetEnd = startedAt + (env.budgetMs || BUDGET_MS);
-  const began = await Lease.begin(db, leaseRef, env.nonce, { heartbeat: true, check: tx => carrierCheck(db, tx) });
+  const ownsRun = list => Standby.owned(list, steps, lanes).some(s => RUN_STEPS.includes(s));   // (build step 8: the cloud takes a run only when it does at least one of its steps)
+  const began = await Lease.begin(db, leaseRef, env.nonce, { heartbeat: true, check: tx => carrierCheck(db, tx, { ownsRun }) });
   if (!began) return { ok: false, skipped: "not this pass's turn" };
   if (began.refused) { await Lease.end(db, leaseRef, env.nonce, { refused: began.why }).catch(() => {}); return { ok: false, refused: began.why }; }
   const info = began.info || {}, nonce = env.nonce, drive = info.drive || {}, cloudSteps = Array.isArray(drive.cloudSteps) ? drive.cloudSteps.map(String) : [];
+  const ownedSteps = Standby.owned(cloudSteps, steps, lanes), owns = s => Standby.owns(s, cloudSteps, steps, lanes);   // (listed in drive.cloudSteps AND built: build step 8)
   const out = { ok: true, mode: info.mode, runId: info.runId || null, units: 0, writes: 0 };
-  let timer = null, lost = false, handed = null;   // (lost: another pass holds the lease; handed: a person took the run back, or the drive was turned off)
+  let timer = null, lost = false, handed = null, yieldAsked = null;   // (lost: another pass holds the lease; handed: a person took the run back, or the drive was turned off; yieldAsked: a person's Resume waits for the step to end)
   const end = async (result, error) => { if (timer) clearInterval(timer); const e = await Lease.end(db, leaseRef, nonce, result, error).catch(() => ({ again: false })); out.again = out.again || !!e.again; return out; };
-  if (info.yield) { out.yield = true; out.why = `${(info.carrier && info.carrier.by) || "a computer"} carries the run`; return end({ yield: true }); }
-  if (info.yieldTo) { out.yield = true; out.why = `${info.yieldTo.by || "a computer"} asked for the run back: the cloud starts nothing new`; return end({ yield: true, to: info.yieldTo.dev }); }
+  /* (build steps 8 and 15) a change of mode the owner asked for comes first, whoever carries the run: the hand-over to "on" (the carrying computer's idle report, then
+     one transaction that flips the mode and takes the carrier), or the way back (a run the cloud carries is read and parked first, below). No unit runs while it waits. */
+  const handBack = !!(drive.pending && drive.pending.to && drive.pending.to !== "on");
+  if (drive.pending && drive.pending.to) {
+    const m = await Standby.modeChange({ db, drive, info, phase: "begin", steps, lanes, say }).catch(e => ({ ended: true, result: { error: String((e && e.message) || e).slice(0, 200) } }));
+    if (m && m.ended) { out.pending = drive.pending.to; out.modeChange = m.result; out.again = out.again || !!m.again; return end(Object.assign({ modeChange: true }, m.result)); }
+  }
+  if (info.yield) {
+    out.yield = true; out.why = info.notYet ? "the cloud does no step of a run yet: it takes no run" : `${(info.carrier && info.carrier.by) || "a computer"} carries the run`;
+    // (m:C7, build step 10a: while a computer carries the run, the cloud plans what it would do and keeps only its own notes; only when drive.shadow names a plan)
+    if (env.shadow && !info.notYet && info.runId && Array.isArray(drive.shadow) && drive.shadow.length) { try { out.shadow = await env.shadow({ db, runId: info.runId, drive }); await db.collection(DRIVE).doc("state").set({ shadowAt: Date.now() }, { merge: true }); } catch (e) { say("[drive] shadow: " + ((e && e.message) || e)); } }
+    return end({ yield: true });
+  }
+  if (info.yieldTo && !handBack) { out.yield = true; out.why = `${info.yieldTo.by || "a computer"} asked for the run back: the cloud starts nothing new`; return end({ yield: true, to: info.yieldTo.dev }); }
   const renewMs = env.renewMs == null ? RENEW_MS : env.renewMs;   // (the beat every 20 s, beside the one each unit's save makes: a long unit never starves it)
-  if (renewMs > 0) timer = setInterval(() => { Lease.renew(db, leaseRef, nonce, { check: tx => carrierCheck(db, tx, { runId: info.runId, mustCarry: !!info.runId }) }).then(r => { if (r && r.lost) lost = true; else if (!r || !r.ok) handed = (r && r.why) || "the run was handed back"; }).catch(() => {}); }, renewMs);
+  // (a person's Resume that asks for the run back while this pass works, yieldTo: the pass ends at the next unit's boundary, never in the middle of one, and starts nothing new)
+  if (renewMs > 0) timer = setInterval(() => { Lease.renew(db, leaseRef, nonce, { check: tx => carrierCheck(db, tx, { runId: info.runId, mustCarry: !!info.runId }) }).then(r => { if (r && r.lost) lost = true; else if (!r || !r.ok) handed = (r && r.why) || "the run was handed back"; else if (r.info && r.info.yieldTo) yieldAsked = r.info.yieldTo; }).catch(() => {}); }, renewMs);
   if (timer && typeof timer.unref === "function") timer.unref();
   const live = () => { if (lost) throw new Fenced("another pass holds the lease"); if (handed) throw new Yield(handed); };
   try {
@@ -198,29 +243,15 @@ async function pass(env) {
       return res;
     };
     const read = body => Lib.call(body, {});
-    const saveState = patch => Lease.renew(db, leaseRef, nonce, { check: async tx => { const c = await carrierCheck(db, tx, { runId: info.runId, mustCarry: !!info.runId && info.carries }); return c.ok ? { ok: true, writes: (c.writes || []).concat([[stateRef, Object.assign({}, patch, { at: Date.now() }), { merge: true }]]) } : c; } }).then(r => { if (!r || !r.ok) throw r && r.lost ? new Fenced("the lease was lost") : new Yield((r && r.why) || "the run was handed back"); });
+    const saveState = patch => Lease.renew(db, leaseRef, nonce, { check: async tx => { const c = await carrierCheck(db, tx, { runId: info.runId, mustCarry: !!info.runId && info.carries }); return c.ok ? { ok: true, writes: (c.writes || []).concat([[stateRef, Object.assign({}, patch, { at: Date.now() }), { merge: true }]]) } : c; } }).then(r => { if (!r || !r.ok) throw r && r.lost ? new Fenced("the lease was lost") : new Yield((r && r.why) || "the run was handed back"); if (r.info && r.info.yieldTo) yieldAsked = r.info.yieldTo; });
 
-    /* a change of mode the owner asked for (runControl cloud, P12, §4): the way back to standby is taken at once (the cloud has no task of its own before build step 6; a running
-       run is parked with words); "on" is refused in words until the drain exists (build step 14: every page a viewer, every lane the cloud's). → true when the pass ends here */
-    const pendingMode = async (r, stopRun) => {
-      const p = drive.pending; if (!p || !p.to) return false;
-      if (p.to === "standby" && r && r.status === "running") await stopRun("The cloud handed this run back: press Resume on a computer to carry it there", "Press Resume on a computer", "handback");
-      const dref = db.collection(OPEN).doc("drive");
-      await db.runTransaction(async tx => {
-        const dv = await tx.get(dref), d = dv.exists ? dv.data() || {} : {};
-        if (!d.pending || d.pending.at !== p.at) return;
-        if (p.to === "standby") tx.set(dref, { mode: "standby", pending: null, flippedAt: Date.now(), flippedBy: d.pending.by || "" }, { merge: true });
-        else tx.set(dref, { pending: null, pendingRefused: { at: Date.now(), to: p.to, why: "The cloud cannot carry every run yet: every page must first be a viewer (cloud plan build step 14) and every lane must be the cloud's. Nothing was changed" } }, { merge: true });
-      });
-      out.pending = p.to;
-      return p.to === "standby";
-    };
-    // ── no run open: in auto, the cloud opens one when there are open orders and it does the run's first step (runOpen, made by the cloud: carried by it)
+    // ── no run open: in auto, the cloud opens one when there are open orders and it does the run's first step (runOpen, made by the cloud: carried by it).
+    //    (build step 8: only when the cloud OWNS the pull step, listed and built: a stub never opens a run)
     let runId = info.runId;
     if (!runId) {
-      if (await pendingMode(null)) return end({ handedBack: true });
+      out.releases = await releasesUnit(db, call, say);   // (RELEASEHOLD: a release needs no run: its marks and its timeline step are the order's)
       const sum = await db.collection("Charm_World").doc("summary").get(), openLines = sum.exists ? num((sum.data() || {}).live) : 0;
-      if (drive.runMode === "auto" && openLines > 0 && cloudSteps.includes("pull") && !drive.pending) {
+      if (drive.runMode === "auto" && openLines > 0 && owns("pull") && !drive.pending) {
         const made = await call({ op: "runOpen", mode: "auto", day: torontoDay(Date.now()) }, "open|" + torontoDay(Date.now()));
         out.opened = made && made.runId; say(`[drive] opened ${out.opened}`);
         out.again = true;   // (the next pass carries it: its lease reads the carrier the run was made with)
@@ -239,24 +270,74 @@ async function pass(env) {
       await saveRun("stop|" + kind + "|" + Date.now()); say(`[drive] run stopped: ${why}`);
     };
 
-    if (await pendingMode(run, stop)) return end({ handedBack: true });
+    // (build step 15: the way back the owner asked for; the run the cloud carries is parked at this boundary, and the mode flips once no task of the cloud is alive)
+    if (handBack) {
+      const m = await Standby.modeChange({ db, drive, info, phase: "run", run, stopRun: stop, steps, lanes, say });
+      if (m && m.ended) { out.pending = drive.pending.to; out.modeChange = m.result; out.again = out.again || !!m.again; return end(Object.assign({ modeChange: true }, m.result)); }
+    }
+    // ── (build step 8) a run the cloud has just taken, from a computer not seen for 90 s or as the hand-over's carrier: rebuilt from the cloud only, once per take.
+    //    Its stop and the stop's kind are left as they are (an Etsy stop stays one, E8); the closed computer's own copy is never used.
+    if (info.carries) {
+      const rc = await Standby.reconcile({ db, run, runId, carrier: info.carrier, state, call, steps, lanes, cloudSteps, saveState, say });
+      if (rc) { out.reconciled = { nest: rc.nest.length, files: rc.files.length, owed: rc.owed.length, cmds: rc.cmds, pulled: rc.pulled }; run.note = String(rc.words || "").slice(0, 300); await saveRun("took|" + rc.since); }
+    }
     // ── control: the run's presses, oldest first, then acknowledged
     const ctlDone = await control(run, { call, stop, saveRun, cursorJobs: (state.cursor && state.cursor.jobIds) || [] });
     if (ctlDone.acted) out.control = ctlDone.acted;
     // ── requests from pages: a type the cloud does not do yet is answered at once, in words (a request never waits silently)
-    if (run.status !== "abandoned" && run.status !== "complete") out.answered = await answerCommands(db, runId, cloudSteps, call);
+    if (run.status !== "abandoned" && run.status !== "complete") out.answered = await answerCommands(db, runId, cloudSteps, call, (env.passItems || []).some(i => i && i.name === "commands"));
+    // ── take-offs (§1.6 item 2, build step 9, lane "takeoff"): cancelled, shipped at our station, completed at the Design Station, accepted changes, Hold and sheet Take off
+    //    presses. Before intake and placement, so a cancelled order is never placed; while the run is stopped or resting too, as the page's AutoCancel.
+    if (cloudSteps.includes("takeoff") && run.status !== "abandoned" && run.status !== "complete" && Date.now() < budgetEnd - PASS_TAIL_MS) {
+      out.takeoff = await TakeOff.lane({ db, run, runId, call, read, state, saveState, say, live, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, Date.now() + UNIT_BUDGET_MS) });
+      if (out.takeoff && out.takeoff.more) out.again = true;
+    }
+    // ── releases (§1.6 item 3, before intake; RELEASEHOLD): a Release Hold press releases the hold in the cloud at once (op releaseAsk); one a function left half done is finished here
+    out.releases = await releasesUnit(db, call, say);
+    // ── the intake (§1.6 item 5, build step 4): new orders join the run, and behind the gate (C5) become pool pieces, before the run's own step (_charmNestIntake.js; only for "pull" / "pool" in cloudSteps)
+    if (run.status !== "abandoned" && run.status !== "complete" && !ctlDone.stopped) {
+      const ik = await Intake.passIntake({ db, run, runId, drive, cloudSteps, call, read, fence, say, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, Date.now() + UNIT_BUDGET_MS) });
+      if (ik) { out.intake = ik.summary; if (ik.more) out.again = true; if (ik.stop && run.status !== "stopped") await stop(ik.stop.why, ik.stop.fix); }
+    }
+    // ── the files lane (build step 7a): a sheet owed its files, or whose nest ended, gets the one sheet writer (charmNestSheet-background); only while "files" is the cloud's (a stopped run's
+    //    sheets too: writing a placed layout's files nests nothing and asks Etsy nothing)
+    if (cloudSteps.includes("files") && run.status !== "abandoned" && run.status !== "complete") { try { const f = await require("./_charmNestFinishLane").driveUnit({ db, runId, sheets: await sheetsOf(db, runId), call: (b, u) => call(b, u), log: say }); if (f.started) out.files = f.asked; } catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; say("[drive] files: " + ((e && e.message) || e)); } }
     if (ctlDone.stopped) { await saveState({ runId, seenWorldAt: await worldAt(db), cursor: Object.assign({}, state.cursor || {}, { runId }) }); return end({ stopped: true }); }
+    // ── the pass items beside the steps (§1.6 items 2-6 and 9: take-offs, releases, commands, placement, engraving, sweeps; hard-parts §0.1 passItems, _charmNestSteps.js), in their
+    //    order (`order`, 50 when a module gives none), each only while its lane is the cloud's (laneOn: "cmd:*" is any "cmd:<type>"), every pass, whatever the run's step or status (a
+    //    unit says itself what it waits on): bounded like a unit, each its own gate, its own time and its own saved cursor (state.items). A unit's own failure is said and never stops the
+    //    run (a request answers its own); a fence or a hand-back ends the pass as it does for a step. (build steps 10, 11, 13)
+    const orderOf = it => (it && Number.isFinite(+it.order) ? +it.order : 50);
+    for (const item of (env.passItems || []).slice().sort((a, b) => orderOf(a) - orderOf(b))) {
+      if (!item || typeof item.unit !== "function" || !laneOn(cloudSteps, String(item.lane || item.name)) || ["abandoned", "complete"].includes(run.status)) continue;
+      if (item.name === "release" && out.releases !== undefined) continue;   // (RELEASEHOLD: this pass ran the release unit already, releasesUnit above)
+      if (Date.now() > budgetEnd - PASS_TAIL_MS) { out.again = true; break; }
+      live();
+      const t0 = Date.now(), itemCall = (b, u) => { if (Date.now() - t0 > UNIT_HARD_MS) throw Object.assign(new Error("the unit ran past its time: it goes on in the next pass"), { overBudget: true }); return call(b, u); };
+      let r = null;
+      try { r = await item.unit({ db, run, runId, step: "pass:" + item.name, cursor: Object.assign({}, (state.items || {})[item.name] || {}), call: itemCall, read, drive, cloudSteps, state, fence, live, say, unitKey: `${runId}|pass|${item.name}`, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, t0 + UNIT_BUDGET_MS), gate: o => freshnessGate(db, Object.assign({ stepStartedAt: 0 }, o)), pass: true }); out.units++; }
+      catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; if (e && e.overBudget) r = { more: true }; else { say(`[drive] ${item.name}: ${String((e && e.message) || e).slice(0, 300)}`); out.itemErrors = (out.itemErrors || []).concat([item.name]); } }
+      out.items = (out.items || 0) + 1;
+      if (r && r.more) out.again = true;
+      const keep = Object.assign({}, r && r.state ? r.state : {}, r && r.cursor ? { items: Object.assign({}, state.items || {}, { [item.name]: r.cursor }) } : {});
+      if (Object.keys(keep).length) { await saveState(Object.assign({ runId }, keep)); Object.assign(state, keep); }
+    }
 
     // ── a stopped run: taken up again only by §1.8's rules
     const retry = state.retry && state.retry.runId === runId ? state.retry : null;
     if (run.status === "stopped") {
-      const st = await stopRead(db), ok = autoResumable(run, { runMode: drive.runMode, stop: st, cloudSteps });
+      const st = await stopRead(db), ok = autoResumable(run, { runMode: drive.runMode, stop: st, cloudSteps: ownedSteps });
       const k = stopKindOf(run), due = k !== "transient" || !retry || Date.now() >= num(retry.next);
       if (ok && due) {
         say(`[drive] resuming by itself: ${run.stoppedBy}`);
         run.status = "running"; run.stoppedBy = null; run.fix = null; delete run.stopKind; run.stopKind = null; out.resumed = true;
         await saveRun("resume|" + Date.now());
-      } else { await saveState({ runId, seenWorldAt: await worldAt(db) }); out.why = ok ? "waiting for the next try" : "stopped"; return end({ stopped: true }); }
+      } else {
+        // (build step 8, C5: parked at the checkpoint step, the cloud keeps placing new orders: the pool and nest steps' units, once a pass, when the cloud owns them)
+        const pw = await Standby.parkedWork({ run, steps, lanes, cloudSteps, say, ctxFor: (step, i) => { const cur = { runId, step, i, stepStartedAt: Date.now(), parked: true }; return { db, run, runId, step, cursor: cur, call, read, drive, cloudSteps, fence, say, parked: true, unitKey: `${runId}|${step}|${i}|parked`, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, Date.now() + UNIT_BUDGET_MS), gate: o => freshnessGate(db, Object.assign({ stepStartedAt: cur.stepStartedAt }, o)) }; } });
+        if (pw) out.parkedWork = pw;
+        await saveState({ runId, seenWorldAt: await worldAt(db) }); out.why = ok ? "waiting for the next try" : "stopped"; return end({ stopped: true });
+      }
     }
     // ── a resting run: its signature moved → its steps again (poke)
     const sheets = await sheetsOf(db, runId);
@@ -273,10 +354,13 @@ async function pass(env) {
     while (run.status === "running") {
       if (Date.now() > budgetEnd - PASS_TAIL_MS) { out.again = true; break; }
       live();
+      // (build step 8, C6: a person's Resume asked for the run back while this pass worked: it ends here, between two units, and the run waits for that computer)
+      if (yieldAsked) { out.yield = true; out.why = `${yieldAsked.by || "a computer"} asked for the run back: the cloud ended its pass between two steps of work`; break; }
       // a press since the last unit is honoured now (a stop within one unit)
       { const c = await freshControl(db, runId); if (c && num(c.seq) > num(c.ack)) { run.control = c; const r2 = await control(run, { call, stop, saveRun, cursorJobs: cursor.jobIds || [] }); if (r2.stopped || run.status !== "running") break; } }
       const step = run.step;
-      if (!cloudSteps.includes(step)) { await stop(`The cloud parked this run at ${step}: it needs a computer for ${step}: press Resume on a computer`, "Press Resume on a computer", "parked"); break; }
+      // (build step 8: a step the cloud does not own, not listed in drive.cloudSteps or not built yet, parks the run with words naming what needs a computer)
+      if (!owns(step)) { await stop(Standby.parkWhy(step, cloudSteps, steps, lanes), Standby.parkFix, "parked"); break; }
       const units = steps[step] || stubStep();
       if (cursor.step !== step) cursor = { runId, step, i: 0, stepStartedAt: Date.now(), jobIds: [], sheetIds: [] };
       if (cursor.i >= units.length) {
@@ -290,7 +374,8 @@ async function pass(env) {
       }
       // (C7: a unit has a 45 s budget it reads (ctx.budgetEnd); one past 60 s is stopped before its next write, and runs again, from its own saved progress, in the next pass)
       const unitStart = Date.now(), unitCall = (b, u) => { if (Date.now() - unitStart > UNIT_HARD_MS) throw Object.assign(new Error("the unit ran past its time: it goes on in the next pass"), { overBudget: true }); return call(b, u); };
-      const unit = units[cursor.i], ctx = { db, run, runId, step, cursor, call: unitCall, read, drive, cloudSteps, unitKey: `${runId}|${step}|${cursor.i}`, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, unitStart + UNIT_BUDGET_MS), gate: o => freshnessGate(db, Object.assign({ stepStartedAt: cursor.stepStartedAt }, o)) };
+      const unit = units[cursor.i], ctx = { db, run, runId, step, cursor, call: unitCall, read, drive, cloudSteps, unitKey: `${runId}|${step}|${cursor.i}`, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, unitStart + UNIT_BUDGET_MS), gate: o => freshnessGate(db, Object.assign({ stepStartedAt: cursor.stepStartedAt }, o)), fence };   // (fence: a unit reads it again before a Storage write, C7)
+      ctx.say = say;   // (build step 4: a unit that writes a document of its own fences it on this pass's lease and the run's carrier, as Lib.call does: _charmNestIntake.js fencedWrite)
       let res;
       for (let attempt = 0; ; attempt++) {
         try { res = await unit(ctx); break; }
@@ -308,6 +393,7 @@ async function pass(env) {
       if (res && res.stopped) break;
       if (res && res.overBudget) { await saveState({ runId, cursor }); out.again = true; break; }
       if (res && res.stop) { await stop(res.stop.why, res.stop.fix, res.stop.kind); await saveState({ runId, cursor }); break; }
+      if (res && res.wait && res.cursor) Object.assign(cursor, res.cursor);   // (a waiting unit's own cursor is kept too: the nest step's job ids, which a Stop press stops)
       if (res && res.wait) { run.note = String(res.why || res.wait).slice(0, 300); await saveRun("wait|" + res.wait + "|" + run.note); await saveState({ runId, cursor, wait: { kind: String(res.wait), why: run.note, since: Date.now(), ids: (res.ids || []).slice(0, 50) } }); out.waiting = res.wait; break; }
       if (res && res.goto) { run.step = String(res.goto); cursor = { runId, step: run.step, i: 0, stepStartedAt: Date.now(), jobIds: [], sheetIds: [] }; await saveRun("goto|" + run.step + "|" + cursor.stepStartedAt); await saveState({ runId, cursor }); continue; }
       if (!(res && res.more)) cursor.i++;
@@ -337,9 +423,11 @@ async function control(run, k) {
   const c = run.control || {}, ack = num(c.ack), acts = ["stop", "resume", "next", "commit", "abandon", "start"].map(a => [a, c[a]]).filter(([, v]) => v && num(v.seq) > ack).sort((x, y) => num(x[1].seq) - num(y[1].seq));
   if (!acts.length) return { acted: null };
   let stopped = false; const acted = [];
+  // (build step 6: the cloud's nest jobs the step is waiting on are stopped with the run, within one step of their search; Resume asks for them again, under a new attempt)
+  const stopJobs = async why => { for (const id of [...new Set((k.cursorJobs || []).map(String))].slice(0, 60)) await k.call({ op: "stopJob", id, for: "run", why }, "stopjob|" + run.runId + "|" + id + "|" + num(c.seq)); };
   for (const [a] of acts) {
     acted.push(a);
-    if (a === "stop" && !["complete", "abandoned"].includes(run.status)) { await k.stop("stopped by the operator", "Press Resume when ready.", "operator"); stopped = true; }
+    if (a === "stop" && !["complete", "abandoned"].includes(run.status)) { await k.stop("stopped by the operator", "Press Resume when ready.", "operator"); await stopJobs("stopped by the operator"); stopped = true; }
     else if (a === "resume" && ["stopped", "paused", "processed"].includes(run.status)) { if (run.status === "processed") { run.step = "engrave"; run.processingComplete = false; } run.status = "running"; run.stoppedBy = null; run.fix = null; run.stopKind = null; stopped = false; }
     else if (a === "next" && run.status === "paused") run.status = "running";
     else if (a === "commit") { run.commitRequested = true; run.awaitCommit = false; if (["paused", "processed"].includes(run.status)) { run.status = "running"; run.processingComplete = false; run.step = "labels"; } }
@@ -348,6 +436,7 @@ async function control(run, k) {
       const open = Object.values(run.lines || {}).filter(l => l && l.state !== "committed" && Array.isArray(l.poolIds) && l.poolIds.length);
       const ids = [...new Set(open.flatMap(l => l.poolIds))].slice(0, 400);
       if (ids.length) await k.call({ op: "poolUpdate", poolIds: ids, patch: { state: "abandoned" } }, "abandon|" + run.runId);
+      await stopJobs("the run was given up");
       run.status = "abandoned"; run.abandonedAt = Date.now(); stopped = true;
     }
   }
@@ -356,15 +445,23 @@ async function control(run, k) {
   run.control = Object.assign({}, c, { ack: num(c.seq) });
   return { acted, stopped: stopped || run.status === "stopped" || run.status === "abandoned" };
 }
-/** A request a page sent (Charm_Nest_Run_Cmds) that the cloud cannot do yet: answered at once, in words, so it never waits for a computer that no longer carries the run. */
-async function answerCommands(db, runId, cloudSteps, call) {
-  const s = await db.collection(CMDS).doc(runId).get(), cmds = Object.values((s.exists && (s.data() || {}).cmds) || {}).filter(c => c && c.state === "waiting").sort((a, b) => num(a.at) - num(b.at));
+/** A request a page sent (Charm_Nest_Run_Cmds) that the cloud cannot do yet: answered at once, in words, so it never waits for a computer that no longer carries the run.
+ *  owned: the commands pass item is in this build (build step 13): a request whose lane "cmd:<type>" is the cloud's is left to it. */
+async function answerCommands(db, runId, cloudSteps, call, owned) {
+  const s = await db.collection(CMDS).doc(runId).get(), cmds = Object.values((s.exists && (s.data() || {}).cmds) || {}).filter(c => c && c.state === "waiting" && !(owned && cloudSteps.includes("cmd:" + c.type))).sort((a, b) => num(a.at) - num(b.at));
   let n = 0;
   for (const c of cmds.slice(0, 10)) {
     const lane = "cmd:" + c.type, why = cloudSteps.includes(lane) ? `The cloud carries this run and cannot do "${c.type}" yet: press Resume on a computer, then ask again` : `The cloud carries this run, and "${c.type}" is done on a computer: press Resume on a computer, then ask again`;
     await call({ op: "runCmdDone", runId, id: c.id, ok: false, text: why }, "cmd|" + runId + "|" + c.id); n++;
   }
   return n;
+}
+
+/** RELEASEHOLD (build step 13): the release unit, _charmNestHoldRelease.js driveUnit, through the pass's own fenced call. A fence or a hand-back ends the pass as any unit's does; any other failure is
+ *  said and left for the next pass (a release is finished by the next press too). -> how many releases were taken up */
+async function releasesUnit(db, call, say) {
+  try { return await require("./_charmNestHoldRelease").driveUnit({ db, call }); }
+  catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; (say || (() => {}))("[drive] releases: " + ((e && e.message) || e)); return 0; }
 }
 
 /* ── the cron's tick (§1.1): with the drive absent or off, ONE read and nothing else. Otherwise it reads what it needs, keeps the cloud's carrier alive while the cloud
@@ -374,6 +471,7 @@ async function tick(env) {
   const dv = await db.collection(OPEN).doc("drive").get(), drive = dv.exists ? dv.data() || {} : null, mode = drive && (drive.mode === "standby" || drive.mode === "on") ? drive.mode : "off";
   if (mode === "off") { out.off = true; return out; }
   const cloudSteps = Array.isArray(drive.cloudSteps) ? drive.cloudSteps.map(String) : [];
+  const steps = env.steps || defaultSteps(), lanes = env.lanes || defaultLanes(), owned = Standby.owned(cloudSteps, steps, lanes);   // (build step 8: what the cloud owns, listed and built)
   const [ls, st, ov, ws] = await db.getAll(db.collection(DRIVE).doc("lease"), db.collection(DRIVE).doc("state"), db.collection(OPEN).doc("run"), db.collection("Charm_World").doc("summary"));
   out.reads += 4;
   const L = ls.exists ? ls.data() || {} : {}, S = st.exists ? st.data() || {} : {}, runId = ov.exists ? (ov.data() || {}).runId || null : null, W = ws.exists ? ws.data() || {} : {};
@@ -390,21 +488,38 @@ async function tick(env) {
     out.kept = true;
   }
   const cloudCarries = !!(carrier && carrier.dev === CLOUD_DEV), computerAlive = !!(carrier && carrier.dev && !cloudCarries && now - num(carrier.at) < COMPUTER_FRESH_MS);
-  if (run && !closed && !computerAlive) {
+  if (run && !closed && !computerAlive && (cloudCarries || owned.some(s => RUN_STEPS.includes(s)))) {   // (build step 8: a run the cloud could only park is not a reason to start a pass)
     if (run.status === "running") why.push("running");
     const ctl = run.control || {}; if (num(ctl.seq) > num(ctl.ack)) why.push("a press waits");
     if (run.status === "stopped") {
       const sr = await stopRead(db); out.reads++;
-      if (autoResumable(Object.assign({ runId }, run), { runMode: drive.runMode, stop: sr, cloudSteps })) { const r = S.retry && S.retry.runId === runId ? S.retry : null; if (stopKindOf(run) !== "transient" || !r || now >= num(r.next)) why.push("a stop may be taken up"); }
+      if (autoResumable(Object.assign({ runId }, run), { runMode: drive.runMode, stop: sr, cloudSteps: owned })) { const r = S.retry && S.retry.runId === runId ? S.retry : null; if (stopKindOf(run) !== "transient" || !r || now >= num(r.next)) why.push("a stop may be taken up"); }
     }
-    if (["processed", "paused"].includes(run.status) && ms(W.at) > num(S.seenWorldAt)) why.push("the world moved");
+    if (["processed", "paused", "review"].includes(run.status) && ms(W.at) > num(S.seenWorldAt)) why.push("the world moved");   // (review: a run in review at engraving takes new orders too, build step 4's gate)
+    if (cloudCarries && cloudSteps.includes("files")) { const w = await require("./_charmNestFinishLane").tickWhy(db, runId, now).catch(() => null); out.reads++; if (w) why.push(w); }   // (build step 7a: a sheet writer's task that went quiet)
+    // (build step 8, C5: a run the cloud parked at the checkpoint step keeps placing new orders: a new world is a reason to look)
+    if (run.status === "stopped" && run.stopKind === "parked" && run.step === "checkpoint" && (owned.includes("pool") || owned.includes("nest")) && ms(W.at) > num(S.seenWorldAt)) why.push("new orders for a parked run");
     if (cloudCarries || !carrier) {
       const cs = await db.collection(CMDS).doc(runId).get(); out.reads++;
-      if (Object.values((cs.exists && (cs.data() || {}).cmds) || {}).some(c => c && c.state === "waiting")) why.push("a request waits");   // (read from the run's own requests document, which runCmdPut writes: never the shared feed, m:C2)
+      const cmdList = Object.values((cs.exists && (cs.data() || {}).cmds) || {});
+      if (cmdList.some(c => c && c.state === "waiting")) why.push("a request waits");   // (read from the run's own requests document, which runCmdPut writes: never the shared feed, m:C2)
+      else if (cmdList.some(c => c && c.state === "running" && c.claim && c.claim.dev === CLOUD_DEV)) why.push("a request is under way");   // (build step 13: a request the cloud works on over several passes)
+      // (build step 9: a cancel recorded since the lane's last read, a take-off a person asked for or one that waits, or the lane's 10-minute look)
+      if (cloudSteps.includes("takeoff") && !["complete", "abandoned"].includes(String(run.status || ""))) { const t = await TakeOff.due(db, S, now); out.reads += t.reads; if (t.why) why.push(t.why); }
     }
+    // (build step 11: an approved engraving whose file the cloud writes: a press no pass took up, a pass that died while writing it, or one waiting for its sheet, looked at again every 5 minutes)
+    if (cloudCarries && cloudSteps.includes("engrave")) {
+      const et = await db.collection("Charm_Engrave_Files").where("state", "in", ["waiting", "working"]).limit(20).get(); out.reads++;
+      if (et.docs.map(d => d.data() || {}).some(t => t.runId === runId && (t.state === "working" ? now - num(t.beatAt) > DISPATCH_STALE_MS : !t.waitingSince || now - num(t.updatedAt) > 5 * 60000))) why.push("an engraving file waits");
+    }
+    // (build step 11, C3: a line's paid reading started by the classify unit and not answered yet, looked at again every minute until it is)
+    if (cloudCarries && cloudSteps.includes("engrave")) { const ci = (S.items || {})["engrave-classify"] || {}; if (ci.runId === runId && num(ci.readingAt) > 0 && now - num(ci.readingAt) >= 60000) why.push("an engraving reading waits"); }
+    if (cloudCarries && cloudSteps.includes("sweeps") && now - num((S.sweeps || {}).at) >= 2 * 60000) why.push("a sweep is due");   // (build step 13: the repair sweeps' two-minute look)
   }
-  if ((!runId || closed) && drive.runMode === "auto" && num(W.live) > 0 && cloudSteps.includes("pull") && !drive.pending) why.push("open orders and no run");
+  if ((!runId || closed) && drive.runMode === "auto" && num(W.live) > 0 && owned.includes("pull") && !drive.pending) why.push("open orders and no run");
+  { const rq = await db.collection(require("./_charmNestHoldRelease").JOBS).where("state", "==", "lifting").limit(1).get().catch(() => null); out.reads++; const j = rq && !rq.empty ? rq.docs[0].data() || {} : null; if (j && now - Math.max(num(j.beatAt), num(j.at)) >= 60000) why.push("a release waits"); }   // (RELEASEHOLD: one a function left half done)
   if (L.again) why.push("asked again");
+  if (run && !closed && computerAlive && Array.isArray(drive.shadow) && drive.shadow.length && now - num(S.shadowAt) > 5 * 60000) why.push("a shadow plan is due");   // (m:C7: every 5 minutes while a computer carries, and only when the owner asked for it)
   if (drive.pending) why.push("a change of mode waits");
   if (L.state === "running" && Lease.stale(L, now) && run && run.status === "running") why.push("a pass went quiet");
   out.why = why;
@@ -422,5 +537,5 @@ async function kick(nonce) {
   catch (e) { console.warn("[drive] could not start the next pass:", e && e.message); }
 }
 
-module.exports = { pass, tick, kick, kindOf, stopKindOf, autoResumable, stopRead, freshnessGate, recordOf, sizeCheck, archiveFinished, updatePending, workSignature, carrierCheck, stubSteps,
+module.exports = { pass, tick, kick, kindOf, stopKindOf, autoResumable, stopRead, freshnessGate, recordOf, sizeCheck, archiveFinished, updatePending, workSignature, carrierCheck, stubSteps, defaultSteps, defaultLanes, laneOn,
   PASSING, AUTO_WAIT, RETRY_IN_PASS, RUN_STEPS, LANES, LEASE_PATH, CLOUD_FRESH_MS, COMPUTER_FRESH_MS, DISPATCH_STALE_MS };

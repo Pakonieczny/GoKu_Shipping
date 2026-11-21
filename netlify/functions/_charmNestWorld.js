@@ -203,6 +203,9 @@ async function build(opts) {
   const stateRef = db.collection(WORLD).doc("state"), st = (await stateRef.get()).data() || {};
   const open = Object.assign({}, st.open || {});   // receipt id → its update stamp, every receipt open on Etsy
 
+  /* (CLOUDDRIVE build step 9, P11 / E7; an additive field pages ignore): when the mail system last finished a copy of Etsy's receipts, read BEFORE the copy is read below, so a
+     step that waits for a sync after it started knows this build read that sync's copy (the driver's freshness gate: summary.mirrorBefore). mirrorAt below stays as it is. */
+  let mirrorBefore = null; try { const ms0 = await db.doc("EtsyMail_Config/receiptsMirrorState").get(), m0 = ms0.exists ? ms0.data() || {} : {}, t0 = m0.lastSyncCompletedAt; mirrorBefore = t0 && t0.toMillis ? t0.toMillis() : +t0 || null; } catch (_) { mirrorBefore = null; }
   /* 1 · which receipts are open: from the receipts the mail system copies from Etsy (no Etsy call here) */
   const sweep = opts.sweep || !st.sweptAt || now - st.sweptAt > SWEEP_MS || !Object.keys(open).length;
   let watermark = Number(st.mirrorMark) || 0, etsyMoved = 0;
@@ -255,12 +258,14 @@ async function build(opts) {
     if (stopped) { errors.push(`Etsy is stopped for the whole shop: ${stale.length} receipt(s) wait for Resume Etsy`); doNow = []; }
   }
   if (stale.length) say(`[world] ${stale.length} receipt(s) the copy does not hold whole: ${doNow.length} asked of Etsy now (at most ${ETSY_DAY_CAP} calls a day)`);
+  const readNow = new Set();
   await pool(doNow, HYDRATE_PAR, async id => {
     if (Date.now() > budgetEnd || etsyRefused) return;
     if (!(await etsySpend(db).catch(() => false))) { etsyRefused++; return; }
     etsyCalls++;
     const raw = await etsy.getShopReceiptFull(id);
     if (!raw || !raw.receipt_id) return;
+    readNow.add(id);   // (CLOUDDRIVE: read whole now; summary.toReadIds lists the ones still to read)
     const rec = { rid: id, stamp: stampOf(raw), raw, via: "etsy", readAt: Date.now(), open: isOpenReceipt(raw) };
     kept.set(id, Object.assign({}, kept.get(id), rec));
     if (!rec.open) delete open[id];
@@ -373,11 +378,19 @@ async function build(opts) {
   const live = rows.filter(r => r.state !== "gone"), sigs = {};
   let writes = 0, batch = db.batch(), inBatch = 0;
   const flush = async () => { if (inBatch) { await batch.commit(); batch = db.batch(); inBatch = 0; } };
+  const moved = [];   // (the lines whose record changed, made first and written after the change marks below have read their stored copies)
   for (const r of rows) {
     const doc = { v: VERSION, key: r.key, receiptId: String(r.key).split("_")[0], order: r.order, line: r.line, spec: r.spec || null, problems: r.problems || [], state: r.state || "pulled", reason: r.reason || null,
       run: r._run || runFacts(r), etsyOpen: !!r.etsyOpen, inRun: !!r.inRun, fromRecord: !!r.fromRecord, runId: run ? run.runId : null };
     const data = J(doc), sig = sha(data); sigs[r.key] = sig;
     if (prevSigs[r.key] === sig) continue;
+    moved.push({ r, doc, data, sig });
+  }
+  /* 9a · (CLOUDDRIVE build step 9, revalidate read from the world; DORMANT: only while the drive is standby or on) a line of the run whose order Etsy updated after it was
+     read (its update time moved) and whose making changed (material, design, size, count) or whose customer's words changed: a change mark (Charm_World/changed), kept until
+     the run's revalidate step has taken it (the line's changedAt), read by nothing else. The comparison is the page's own (bridge Orders.revalidate). */
+  if (run && (await driveOn(db))) { try { await changeMarks(db, rows, moved, prevSigs, runLines, M, now); } catch (e) { errors.push("changes: " + String(e.message || e).slice(0, 160)); } }
+  for (const { r, doc, data, sig } of moved) {
     // (the line is kept as the exact JSON text of what was read, beside the fields a query needs: Firestore refuses an empty field and an array inside an array, and the reader's spec may hold either)
     batch.set(db.collection(LINES).doc(r.key), { v: VERSION, key: r.key, receiptId: doc.receiptId, state: doc.state, runId: doc.runId, sig, at: now, gone: false, data }, { merge: false }); inBatch++; writes++;
     if (inBatch >= 400) await flush();
@@ -474,10 +487,47 @@ async function build(opts) {
   const openKeys = live.map(r => r.key).sort();
   const summary = { v: VERSION, at: now, runId: run ? run.runId : null, lines: rows.length, live: live.length, states, receipts: rids.length, openOnEtsy: Object.keys(open).length,
     keysHash: sha(openKeys.join(",")), held: live.filter(r => r.state === "held").map(r => r.key).sort(), unmatched: live.filter(r => r.state === "unmatched").map(r => r.key).sort(),
-    counts: review ? review.counts : null, writes, toRead: Math.max(0, stale.length - etsyCalls), etsyCalls, etsyToday: await etsyUsed(db), etsyCap: ETSY_DAY_CAP, mirrorAt, library, errors: errors.slice(0, 20), notes: notes.slice(-20), sigs };
+    counts: review ? review.counts : null, writes, toRead: Math.max(0, stale.length - etsyCalls), etsyCalls, etsyToday: await etsyUsed(db), etsyCap: ETSY_DAY_CAP, mirrorAt, library, errors: errors.slice(0, 20), notes: notes.slice(-20), sigs,
+    // (CLOUDDRIVE build step 9, P11 / E7: additive, pages ignore them) the mail system's sync this build read, and the receipts still to be read whole (the first 500)
+    mirrorBefore, toReadIds: stale.filter(id => !readNow.has(id)).slice(0, 500) };
   await db.collection(WORLD).doc("summary").set(JSON.parse(J(summary)));
   await stateRef.set({ open, mirrorMark: watermark, sweptAt: st.sweptAt || null, lastBuildAt: now, checkedAt: now, token, toRead: Math.max(0, stale.length - etsyCalls) }, { merge: false });
   return Object.assign({}, summary, { sigs: undefined });
+}
+
+/* ── (CLOUDDRIVE build step 9) the change marks: what Etsy changed in an order of the run after its line was read (the page's Orders.revalidate, bridge, without the Etsy reads) ── */
+/** The change between the stored line (prev) and the line as read now (r), when Etsy updated the order since (its update time moved): its making (material, design, size,
+    count) or the customer's words. null: no change a line is made from (an address, a gift note, another line of the order). */
+function changeOf(prev, r, entryFor, now) {
+  const po = prev && prev.order, ps = prev && prev.spec, no = r.order, ns = r.spec;
+  if (!po || !ps || !no || !ns || !(+no.updateTs > 0) || +po.updateTs === +no.updateTs) return null;
+  const wordsKey = sp => { const c = sp && O.decodeWords ? O.decodeWords(Object.assign({}, sp)) : sp; return JSON.stringify([c && c.personalization, c && c.buyerMessage, c && c.staffNote]); };
+  const words = wordsKey(ps) !== wordsKey(ns), material = ps.material !== ns.material, sku = !O.sameDesign(ps.designSku, ns.designSku, k => entryFor(k));
+  const shape = material || sku || ps.size !== ns.size || ps.quantity !== ns.quantity;
+  if (!shape && !words) return null;
+  const rid = String(r.key).split("_")[0];
+  return { at: now, ts: +no.updateTs, shape, words, why: `Etsy updated order ${rid} after the pull${material ? " · material changed" : ""}${sku ? " · SKU changed" : ""}${words ? " · the customer's words changed" : ""}` };
+}
+/** Charm_World/changed { marks: { lineKey: { at, ts, shape, words, why } }, ts: { lineKey: the order's update time as last read } }: written only when it changes. Only the
+    run's lines with pieces are followed; a line whose update time moved is compared with its stored copy (read before this build writes it). A mark goes once the run's
+    revalidate step took it (the line's changedAt) or the line left the run. */
+async function changeMarks(db, rows, moved, prevSigs, runLines, M, now) {
+  const ref = db.collection(WORLD).doc("changed"), snap = await ref.get(), was = snap.exists ? snap.data() || {} : {};
+  const marks = Object.assign({}, was.marks || {}), ts = Object.assign({}, was.ts || {}), movedKeys = new Set(moved.map(x => x.r.key)), ask = [];
+  for (const r of rows) {
+    if (!r.inRun || !r.order || !r.spec || r.fromRecord || !(r.poolIds || []).length) continue;
+    const t = +r.order.updateTs || 0, before = +ts[r.key] || 0;
+    if (t && before && t !== before && prevSigs[r.key] && movedKeys.has(r.key)) ask.push(r);
+    if (t) ts[r.key] = t;
+  }
+  for (let i = 0; i < ask.length; i += 300) {
+    const part = ask.slice(i, i + 300), docs = await db.getAll(...part.map(r => db.collection(LINES).doc(r.key)));
+    docs.forEach((d, j) => { const prev = d.exists ? lineOf(d.data()) : null, m = prev && !prev.gone ? changeOf(prev, part[j], M.entryFor, now) : null; if (m) marks[part[j].key] = m; });
+  }
+  for (const [k, m] of Object.entries(marks)) { const l = runLines[k]; if (!l || ["gone", "committed", "skipped"].includes(String(l.state || "")) || +l.changedAt >= +m.at) delete marks[k]; }
+  for (const k of Object.keys(ts)) if (!runLines[k]) delete ts[k];
+  if (J(marks) !== J(was.marks || {}) || J(ts) !== J(was.ts || {})) await ref.set({ v: VERSION, at: now, marks, ts });
+  return marks;
 }
 
 /** A stored line as a page reads it: the JSON text opened, the query fields beside it. */

@@ -18,7 +18,7 @@
  *  moment it is deployed with no console setup.
  *
  *  OPS
- *    POST {op:"put", orders:[record,…]}   upsert up to 50, mirror item images
+ *    POST {op:"put", orders:[record,…]}   upsert up to 50, mirror item images (noMirror:true: no picture fetched)
  *    GET  ?op=index&since=<ms>&limit=&cursor=   slim rows for client sync
  *    GET  ?op=day&date=YYYY-MM-DD               full records completed that day
  *    GET  ?op=days&from=YYYY-MM-DD&to=          per-day completion counts
@@ -174,8 +174,10 @@ exports.handler = async (event) => {
         // Mirror the primary image of each item, up to the per-request budget. Not in the sandbox: every rehearsal (and
         // every replay after a reset) made new full-size photos under the production design-archive/ prefix that nothing
         // ever deleted. A sandbox record keeps the listing's own image URL.
+        // (CLOUDDRIVE build step 12, E6): a put sent with noMirror (the cloud's commit) fetches no picture either: the record keeps the listing's own image URL.
+        // Without the flag nothing changes.
         for (const it of items) {
-          if (PREFIX) break;
+          if (PREFIX || body.noMirror === true) break;
           if (mirrored >= MAX_MIRROR) break;
           if (it.mirrorUrl) continue;
           if (!it.imageUrl) continue;

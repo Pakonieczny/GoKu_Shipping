@@ -12,6 +12,15 @@
  *
  *  Kicked by charmNestLibrary op=startJob with {id, job}; pieces arrive with
  *  their silhouette bits base64-encoded.
+ *
+ *  SLOT MODE (cloud plan v2, build step 6; DORMANT): { nonce, jobId, slot }
+ *  is one slot of the cloud's own nest of a sheet (_charmNestNestSlot.js):
+ *  its input made once from the sheet's record and kept in Storage, a seed
+ *  from the job's id, checkpoints of its best layout and a resume from them,
+ *  every write fenced on the slot's lease and the run's carrier. Only the
+ *  cloud driver (and a job's own slot 0) hands out the nonce, and the lease
+ *  refuses while Charm_Nest_Open/drive is absent or "off". The {id, job}
+ *  mode below is kept for pages (m:C12) until the drive has been "on" a week.
  *  ═══════════════════════════════════════════════════════════════════════ */
 "use strict";
 const admin = require("./firebaseAdmin");
@@ -24,6 +33,7 @@ const MAX_BUDGET_MS = 13 * 60 * 1000;         // leave margin under the 15-minut
 
 exports.handler = async (event) => {
   const body = parseBody(event);
+  if (body && body.nonce && body.jobId != null && body.slot != null) return require("./_charmNestNestSlot").handler(body, { admin, db });   // (the cloud's slot mode)
   const id = String(body.id || "").replace(/[^\w\-]/g, "").slice(0, 80);
   const job = body.job;
   if (!id || !job || !Array.isArray(job.pieces)) { console.warn("[charmNestSolve] bad payload"); return { statusCode: 400, body: "bad payload" }; }
