@@ -44,6 +44,7 @@ tryUnits("./_charmNestLabels", () => require("./_charmNestLabels"));           /
 tryUnits("./_charmNestGreenLine", () => require("./_charmNestGreenLine"));     // build step 10b: the green-line presses (lane "rosecut"); the automatic Rose Gold cut, called in checkpoint and labels
 tryUnits("./_charmEngraveClassify", () => require("./_charmEngraveClassify"));   // build step 11 (C3): lane "engrave": the reading of a line's words, before the fit (order 80)
 tryUnits("./_charmEngraveFiles", () => require("./_charmEngraveFiles"));       // build step 11: lane "engrave": the fit, the back files, the sheet's back index (order 81-83)
+tryUnits("./_charmEngraveStep", () => require("./_charmEngraveStep"));         // ONSWITCH: the run's "engrave" step: the engraving lane once more at its moment, then what waits; never blocks
 tryUnits("./_charmNestCommit", () => require("./_charmNestCommit"));           // build step 12: commit, complete (sending finished sets to the Design Station)
 tryUnits("./_charmNestCmdUnit", () => require("./_charmNestCmdUnit"));   // build step 13: a person's requests (cmd:<type>), order 40
 tryUnits("./_charmNestSweeps", () => require("./_charmNestSweeps"));     // build step 13: the repair sweeps (lane "sweeps"), order 90: after every other pass item
@@ -51,6 +52,10 @@ tryUnits("./_charmNestSweeps", () => require("./_charmNestSweeps"));     // buil
 // order 20, lane "cmd:release". (the require sits in its own try: a copy without that module is still bundled, and the line is skipped). The driver's pass runs the same
 // driveUnit itself every pass (releasesUnit, RELEASEHOLD live), so it skips this item in a pass that already did it: one release unit a pass.
 tryUnits("./_charmNestHoldRelease", () => { let m; try { m = require("./_charmNestHoldRelease"); } catch (e) { throw e; } return { passItems: typeof m.driveUnit === "function" ? [{ name: "release", lane: "cmd:release", order: 20, unit: ctx => m.driveUnit({ db: ctx.db, call: ctx.call }).then(() => undefined) }] : [] }; });
+
+// build step 7b: lane "files" (the one sheet writer, _charmNestFinishLane.js) is built: its pass item makes it so (the driver's defaultLanes read the pass items' lanes, and readiness with
+// them). The driver looks at the lane itself every pass (its own block in pass, build step 7a: a stopped run's sheets too) and skips this item in a pass that did: one files look a pass.
+tryUnits("./_charmNestFinishLane", () => { const m = require("./_charmNestFinishLane"); return { passItems: [{ name: "files", lane: "files", order: 60, unit: async ctx => { const q = await ctx.db.collection("Charm_Nest_Sheets").where("runId", "==", ctx.runId).get(); await m.driveUnit({ db: ctx.db, runId: ctx.runId, sheets: q.docs.map(d => Object.assign({ id: d.id }, d.data())), call: ctx.call, log: ctx.say }); return undefined; } }] }; });
 
 /** The driver's shadow plans, one call: each module's, in load order. → { [path]: answer } */
 async function shadow(o) { const out = {}; for (const [p, f] of Object.entries(shadows)) { try { out[p] = await f(o); } catch (e) { out[p] = { error: String((e && e.message) || e).slice(0, 200) }; } } return out; }

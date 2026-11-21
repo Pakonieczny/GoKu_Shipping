@@ -5786,6 +5786,8 @@ async function op_runCarrier(b) {
     }
     if (c && c.dev === dev) { const n = carryDrain({ dev, by: by || c.by || "", at: now, since: num(c.since) || now }, c, b, now); tx.set(ref, { runId, carrier: n, expireAt: new Date(now + 30 * 86400000) }); return { ok: true, mine: true, alive: true, carrier: n }; }
     if (alive && !b.take) return { ok: true, mine: false, alive: true, carrier: c };
+    // (ONSWITCH: in mode "on" no page ever becomes a run's carrier, whoever carried it before and however long ago: the cloud carries every run; read only where a take would be written)
+    if (!MARKED && !PREFIX && !cloud) { const dv = await tx.get(driveRef()); if (driveModeOf(dv.exists ? dv.data() : null) === "on") return { ok: true, mine: false, alive, carrier: c, cloud: true }; }
     const n = { dev, by, at: now, since: now, ...(c && c.dev ? { took: { dev: c.dev, by: c.by || "", at: num(c.at) || 0 } } : {}) };
     tx.set(ref, { runId, carrier: n, expireAt: new Date(now + 30 * 86400000) });
     return { ok: true, mine: true, alive: true, took: alive, carrier: n };

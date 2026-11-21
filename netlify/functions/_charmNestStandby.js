@@ -4,8 +4,11 @@
  *
  *  THE OWNER'S CONTROL (driveSet, admin-locked like the other Settings buttons):
  *    Off → Standby     at once. The cloud's steps for standby are pull, claim, pool, plan, nest and the files lane (build step 8).
- *    Standby → Cloud carries   only when every computer seen in the last 24 h has the viewer build and every step and lane is built (refused in words, naming
- *                      what is missing). Then only drive.pending is written: the hand-over below flips the mode.
+ *    Standby → Cloud carries   only when every computer OPEN NOW (seen in the last 10 minutes) has the viewer build and every step and lane is built (refused in
+ *                      words, naming what is missing). A computer seen earlier in the day without it is only listed ("loads the viewer page when it is opened"):
+ *                      (ONSWITCH, Paul 20 Nov 2026: ON tonight with the shop's other computers closed) whatever an old page still open on it sends in mode "on" is
+ *                      refused: its production writes and its presses (no cv: the reload words, charmNestLibrary modeOnRefusal), its writes of a sheet's or a set's
+ *                      files (charmNestOutput's door), and it never takes the run (runCarrier). Then only drive.pending is written: the hand-over below flips the mode.
  *    Cloud carries → Standby   the way back (rollback): drive.pending; the driver parks the run at a step boundary (stopKind "handback") and flips when no task of
  *                      the cloud holds a live lease. Computers carry again only through a person's Resume.
  *    Standby → Off     at once when the cloud carries nothing; otherwise drive.pending, parked and flipped the same way, and the cloud's carrier is released.
@@ -28,10 +31,14 @@ const OPEN = "Charm_Nest_Open", DRIVE_ID = "drive", CARRIER = "Charm_Nest_Run_Ca
 const JOBS = "Charm_Nest_Jobs", FINISH = "Charm_Nest_Finish", COMPUTERS = "Charm_Nest_Computers", DRIVE_COLL = "Charm_Nest_Drive";
 const CLOUD_DEV = "cloud", CLOUD_BY = "Cloud";
 const COMPUTER_FRESH_MS = 90000, DRAIN_MS = 10 * 60000, TASK_BEAT_MS = 5 * 60000, OWED_FILES_MS = 2 * 60000, CMD_STALE_MS = 10 * 60000, SEEN_DAY_MS = 24 * 3600000;
+/* (ONSWITCH) a computer is OPEN NOW when its last report (charm-nest-drift.js, every 4 minutes or so) is younger than 10 minutes: only those must have the viewer build */
+const OPEN_NOW_MS = 10 * 60000;
 const RUN_STEPS = O.RUN_STEPS;
 /* the relayed requests (charmNestLibrary CMD_TYPES): each is a lane "cmd:<type>" the cloud owns once it does it (build step 13) */
 const CMD_TYPES = ["reorder", "consolidate", "empty", "delete", "repicture", "seat", "renest", "remake", "unkeep", "placewaiting", "customsend", "setrebuild", "pairnow", "leaveset", "sendhome", "remakeline", "keepsync", "release", "skuonce"];
-const LANES = ["files", "takeoff", "engrave"].concat(CMD_TYPES.map(t => "cmd:" + t));
+/* (ONSWITCH) the pass items' own lanes are lanes too: "rosecut" (the green line: the Rose Gold cut by itself and its presses, build step 10b) and "sweeps" (the repair sweeps,
+   build step 13): in mode "on" no page does either, so "Cloud carries" lists them with the rest (a lane left out of cloudSteps would never run) */
+const LANES = ["files", "takeoff", "engrave", "rosecut", "sweeps"].concat(CMD_TYPES.map(t => "cmd:" + t));
 /* Standby's steps (build step 8, §4 phase 1): orders arrive and are placed, nested and saved with every computer closed */
 const STANDBY_STEPS = ["pull", "claim", "pool", "plan", "nest", "files"];
 /* "Cloud carries" (step 15): every step and every lane */
@@ -41,7 +48,8 @@ const ALLOWED = new Set(ON_STEPS);
 const STEP_WORDS = { pull: "taking in new orders", claim: "claiming orders", pool: "making pieces", plan: "planning sheets", nest: "nesting", checkpoint: "sets", engrave: "engraving files", revalidate: "checking the orders again", labels: "labels", commit: "commit", complete: "finishing the run" };
 const PARK_PREFIX = "The cloud parked this run";   // (the driver's kindOf reads a stop with these words as "parked")
 const HANDBACK_WHY = "The cloud handed this run back: press Resume on a computer to carry it there";
-/* The capability a page reports when it is a viewer (build step 14 adds it, charm-nest-drive.js cap("viewer")): "Cloud carries" needs it on every computer seen in a day */
+/* The capability a page reports when it is a viewer (charm-nest-viewer.js, build step 14: charm-nest-drive.js caps() says "viewer" once it is loaded): "Cloud carries" needs it on
+   every computer open now (ONSWITCH) */
 const VIEWER_CAP = "viewer";
 
 const num = v => (Number.isFinite(+v) ? +v : 0);
@@ -101,7 +109,8 @@ async function busyWords(db, runId, car) {
 }
 
 /* ── the readiness for "Cloud carries" (§4 phase 3, C1, C2), read from the cloud ── */
-/** { ok, missing: [words], computers: [{ dev, by, ageS, caps, viewer }] }. o: { steps, lanes, now } */
+/** { ok, missing: [words], later: [words], computers: [{ dev, by, ageS, caps, viewer, open }] }. o: { steps, lanes, now }
+ *  (ONSWITCH) only a computer open now (seen in the last 10 minutes) without the viewer build holds "Cloud carries"; one seen earlier in the day is listed in `later`. */
 async function readiness(db, o = {}) {
   const now = o.now || Date.now(), missing = [];
   const stepsOut = RUN_STEPS.filter(s => !isBuilt(o.steps, s));
@@ -109,16 +118,18 @@ async function readiness(db, o = {}) {
   const lanesOut = LANES.filter(l => !laneBuilt(o.lanes, l));
   if (lanesOut.length) {
     const reqs = lanesOut.filter(l => l.startsWith("cmd:")).map(l => l.slice(4)), other = lanesOut.filter(l => !l.startsWith("cmd:"));
-    missing.push(`a person's presses with no cloud path yet: ${[...other.map(l => ({ files: "writing a sheet's files", takeoff: "taking pieces off (cancel, Hold, Take off)", engrave: "engraving files" })[l] || l), ...(reqs.length ? [`the Sheets card's requests (${reqs.join(", ")})`] : [])].join("; ")}`);
+    missing.push(`a person's presses with no cloud path yet: ${[...other.map(l => ({ files: "writing a sheet's files", takeoff: "taking pieces off (cancel, Hold, Take off)", engrave: "engraving files", rosecut: "the Rose Gold cut", sweeps: "the repair sweeps" })[l] || l), ...(reqs.length ? [`the Sheets card's requests (${reqs.join(", ")})`] : [])].join("; ")}`);
   }
   let computers = [];
   try {
     const q = await db.collection(COMPUTERS).where("at", ">", now - SEEN_DAY_MS).get();
-    computers = q.docs.map(d => { const x = d.data() || {}, caps = String(x.drive || "").split(/\s+/).filter(Boolean); return { dev: d.id, by: str(x.by, 80), station: str(x.station, 60), ageS: Math.max(0, Math.round((now - num(x.at)) / 1000)), caps, viewer: caps.includes(VIEWER_CAP) }; });
+    computers = q.docs.map(d => { const x = d.data() || {}, caps = String(x.drive || "").split(/\s+/).filter(Boolean); return { dev: d.id, by: str(x.by, 80), station: str(x.station, 60), ageS: Math.max(0, Math.round((now - num(x.at)) / 1000)), caps, viewer: caps.includes(VIEWER_CAP), open: now - num(x.at) < OPEN_NOW_MS }; });
   } catch (e) { missing.push("the list of computers could not be read: " + str(e && e.message, 120)); }
-  const old = computers.filter(c => !c.viewer);
-  if (old.length) missing.push(`${old.length === 1 ? "this computer has" : "these computers have"} not loaded the viewer build (reload ${old.length === 1 ? "it" : "them"} once it is out): ${old.slice(0, 12).map(c => `${c.by || "someone"} on ${c.station || c.dev}`).join(", ")}${old.length > 12 ? "…" : ""}`);
-  return { ok: !missing.length, missing, computers };
+  const names = a => `${a.slice(0, 12).map(c => `${c.by || "someone"} on ${c.station || c.dev}`).join(", ")}${a.length > 12 ? "…" : ""}`;
+  const old = computers.filter(c => !c.viewer && c.open), closed = computers.filter(c => !c.viewer && !c.open), later = [];
+  if (old.length) missing.push(`${old.length === 1 ? "this computer is open and has" : "these computers are open and have"} not loaded the viewer build (reload ${old.length === 1 ? "it" : "them"}): ${names(old)}`);
+  if (closed.length) later.push(`${closed.length === 1 ? "this computer was" : "these computers were"} not open in the last 10 minutes: ${closed.length === 1 ? "it loads" : "each loads"} the viewer page when it is opened (an older page still open there is refused every production write and press): ${names(closed)}`);
+  return { ok: !missing.length, missing, later, computers };
 }
 
 /* ── the drive document is changed only inside a transaction, read whole and written whole (no deep merge keeps a stale pending field) ── */
@@ -334,11 +345,11 @@ async function status(db, ctx = {}) {
     if (c) carrier = { dev: c.dev || "", by: c.by || "", at: num(c.at), since: num(c.since), ageS: num(c.at) ? Math.max(0, Math.round((now - num(c.at)) / 1000)) : null, cloud: c.dev === CLOUD_DEV, idleAt: num(c.idleAt) || null, busy: c.busy || null, took: c.took || null, released: num(c.released) || null };
   }
   const cloudSteps = d && Array.isArray(d.cloudSteps) ? d.cloudSteps : [];
-  const ready = mode === "standby" || mode === "off" ? await readiness(db, { steps: ctx.steps, lanes: ctx.lanes, now }) : { ok: true, missing: [], computers: [] };
+  const ready = mode === "standby" || mode === "off" ? await readiness(db, { steps: ctx.steps, lanes: ctx.lanes, now }) : { ok: true, missing: [], later: [], computers: [] };
   return { ok: true, mode, runMode: (d && d.runMode) || "manual", cloudSteps, owned: owned(cloudSteps, ctx.steps, ctx.lanes), built: RUN_STEPS.filter(s => isBuilt(ctx.steps, s)), lanesBuilt: LANES.filter(l => laneBuilt(ctx.lanes, l)), standbySteps: STANDBY_STEPS, allSteps: ON_STEPS,
     pending: (d && d.pending) || null, pendingWait: (d && d.pendingWait) || null, pendingRefused: (d && d.pendingRefused) || null, flippedAt: (d && num(d.flippedAt)) || null, flippedBy: (d && d.flippedBy) || null,
     run, carrier, lease: L ? { state: L.state || null, at: num(L.at), beatAt: num(L.beatAt), endedAt: num(L.endedAt), error: L.error || null } : null, ready, now };
 }
 
-module.exports = { STANDBY_STEPS, ON_STEPS, LANES, CMD_TYPES, STEP_WORDS, HANDBACK_WHY, PARK_PREFIX, VIEWER_CAP, DRAIN_MS, COMPUTER_FRESH_MS,
+module.exports = { STANDBY_STEPS, ON_STEPS, LANES, CMD_TYPES, STEP_WORDS, HANDBACK_WHY, PARK_PREFIX, VIEWER_CAP, DRAIN_MS, COMPUTER_FRESH_MS, OPEN_NOW_MS,
   isBuilt, laneBuilt, owns, owned, parkWhy, parkFix, readiness, liveTasks, busyWords, modeChange, reconcile, parkedWork, setMode, status, modeOf };

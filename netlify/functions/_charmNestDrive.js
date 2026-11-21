@@ -301,17 +301,18 @@ async function pass(env) {
     }
     // ── the files lane (build step 7a): a sheet owed its files, or whose nest ended, gets the one sheet writer (charmNestSheet-background); only while "files" is the cloud's (a stopped run's
     //    sheets too: writing a placed layout's files nests nothing and asks Etsy nothing)
-    if (cloudSteps.includes("files") && run.status !== "abandoned" && run.status !== "complete") { try { const f = await require("./_charmNestFinishLane").driveUnit({ db, runId, sheets: await sheetsOf(db, runId), call: (b, u) => call(b, u), log: say }); if (f.started) out.files = f.asked; } catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; say("[drive] files: " + ((e && e.message) || e)); } }
+    let filesLooked = false;   // (build step 7b: the lane's pass item, _charmNestSteps.js, is skipped in a pass that looked here already: one files look a pass)
+    if (cloudSteps.includes("files") && run.status !== "abandoned" && run.status !== "complete") { filesLooked = true; try { const f = await require("./_charmNestFinishLane").driveUnit({ db, runId, sheets: await sheetsOf(db, runId), call: (b, u) => call(b, u), log: say }); if (f.started) out.files = f.asked; } catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; say("[drive] files: " + ((e && e.message) || e)); } }
     if (ctlDone.stopped) { await saveState({ runId, seenWorldAt: await worldAt(db), cursor: Object.assign({}, state.cursor || {}, { runId }) }); return end({ stopped: true }); }
     // ── the pass items beside the steps (§1.6 items 2-6 and 9: take-offs, releases, commands, placement, engraving, sweeps; hard-parts §0.1 passItems, _charmNestSteps.js), in their
     //    order (`order`, 50 when a module gives none), each only while its lane is the cloud's (laneOn: "cmd:*" is any "cmd:<type>"), every pass, whatever the run's step or status (a
     //    unit says itself what it waits on): bounded like a unit, each its own gate, its own time and its own saved cursor (state.items). A unit's own failure is said and never stops the
     //    run (a request answers its own); a fence or a hand-back ends the pass as it does for a step. (build steps 10, 11, 13)
     const orderOf = it => (it && Number.isFinite(+it.order) ? +it.order : 50);
-    for (const item of (env.passItems || []).slice().sort((a, b) => orderOf(a) - orderOf(b))) {
-      if (!item || typeof item.unit !== "function" || !laneOn(cloudSteps, String(item.lane || item.name)) || ["abandoned", "complete"].includes(run.status)) continue;
-      if (item.name === "release" && out.releases !== undefined) continue;   // (RELEASEHOLD: this pass ran the release unit already, releasesUnit above)
-      if (Date.now() > budgetEnd - PASS_TAIL_MS) { out.again = true; break; }
+    const items = (env.passItems || []).slice().sort((a, b) => orderOf(a) - orderOf(b));
+    /** One pass item, bounded like a unit, with its own saved cursor (state.items). → its answer ({} for none), or false when the pass's time is spent. */
+    const runItem = async item => {
+      if (Date.now() > budgetEnd - PASS_TAIL_MS) { out.again = true; return false; }
       live();
       const t0 = Date.now(), itemCall = (b, u) => { if (Date.now() - t0 > UNIT_HARD_MS) throw Object.assign(new Error("the unit ran past its time: it goes on in the next pass"), { overBudget: true }); return call(b, u); };
       let r = null;
@@ -321,6 +322,44 @@ async function pass(env) {
       if (r && r.more) out.again = true;
       const keep = Object.assign({}, r && r.state ? r.state : {}, r && r.cursor ? { items: Object.assign({}, state.items || {}, { [item.name]: r.cursor }) } : {});
       if (Object.keys(keep).length) { await saveState(Object.assign({ runId }, keep)); Object.assign(state, keep); }
+      return r || {};
+    };
+    for (const item of items) {
+      if (!item || typeof item.unit !== "function" || !laneOn(cloudSteps, String(item.lane || item.name)) || ["abandoned", "complete"].includes(run.status)) continue;
+      if (item.name === "release" && out.releases !== undefined) continue;   // (RELEASEHOLD: this pass ran the release unit already, releasesUnit above)
+      if (item.name === "files" && filesLooked) continue;   // (build step 7b: the files lane ran above in this pass already)
+      if ((await runItem(item)) === false) break;
+    }
+    /* (ONSWITCH) a run step's unit may run one lane's pass items again at its moment of the run, each as above (its own budget, cursor and saved state; a failure said, never a
+       stop): the engrave step runs the engraving lane, as the page's step ran Engrave.background. Only a lane that is the cloud's (laneOn): never a lane a computer keeps (P9). */
+    const laneNow = async name => {
+      const ran = [];
+      if (!laneOn(cloudSteps, String(name))) return { ran, off: true };
+      for (const item of items) { if (!item || typeof item.unit !== "function" || String(item.lane || item.name) !== String(name)) continue; const r = await runItem(item); if (r === false) break; ran.push(item.name); }
+      return { ran };
+    };
+
+    // ── (ONSWITCH, Paul 20 Nov 2026: "ON now") a set look at once when the cloud takes a run (from a computer that closed, or in the hand-over to "on") and when the owner turns
+    //    the cloud on: the checkpoint step's set assembly (_charmNestAssembly.js over charm-nest-assembly-core.js, the owner's set rules unchanged), never waiting for new orders. A
+    //    run resting (processed) goes through its steps again from the checkpoint, as a computer's poke does (the assembly; engraving, labels and commit then follow as their
+    //    own units and the owner's settings say); a run past its checkpoint gets one look now; a run stopped or paused waits for its person. Once per take, per flip and per
+    //    ownership of the checkpoint step (state.setLook).
+    if (info.carries && !["abandoned", "complete"].includes(run.status)) {
+      const lookKey = [runId, num(info.carrier && info.carrier.since), info.mode || "", num(drive.flippedAt), owns("checkpoint") ? 1 : 0].join("|");
+      if (state.setLook !== lookKey) {
+        let keep = {};
+        if (owns("checkpoint") && run.status === "processed") {
+          run.status = "running"; run.processingComplete = false; run.step = "checkpoint";
+          await saveRun("look|" + lookKey);
+          state.cursor = { runId, step: "checkpoint", i: 0, stepStartedAt: Date.now(), jobIds: [], sheetIds: [] }; keep = { cursor: state.cursor, retry: null };
+          out.setLook = "steps"; say(`[drive] a set look at once: the resting run goes through its steps again from the checkpoint`);
+        } else if (owns("checkpoint") && run.status === "running" && O.stepIndex(run.step) > O.stepIndex("checkpoint")) {
+          try { const r = await require("./_charmNestAssembly").assemblyUnit({ db, run, runId, step: "checkpoint", cursor: { runId, step: "checkpoint", i: 0, stepStartedAt: Date.now() }, call, read, drive, cloudSteps, fence, say, unitKey: `${runId}|look`, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, Date.now() + UNIT_BUDGET_MS) }); out.setLook = r && r.wait ? "deferred" : "look"; }
+          catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; out.setLook = e && e.overBudget ? "later" : "failed"; if (!(e && e.overBudget)) say("[drive] set look: " + ((e && e.message) || e)); }
+          await saveRun("look|" + lookKey);
+        }
+        if (out.setLook !== "later") { await saveState(Object.assign({ runId, setLook: lookKey }, keep)); state.setLook = lookKey; }
+      }
     }
 
     // ── a stopped run: taken up again only by §1.8's rules
@@ -374,7 +413,7 @@ async function pass(env) {
       }
       // (C7: a unit has a 45 s budget it reads (ctx.budgetEnd); one past 60 s is stopped before its next write, and runs again, from its own saved progress, in the next pass)
       const unitStart = Date.now(), unitCall = (b, u) => { if (Date.now() - unitStart > UNIT_HARD_MS) throw Object.assign(new Error("the unit ran past its time: it goes on in the next pass"), { overBudget: true }); return call(b, u); };
-      const unit = units[cursor.i], ctx = { db, run, runId, step, cursor, call: unitCall, read, drive, cloudSteps, unitKey: `${runId}|${step}|${cursor.i}`, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, unitStart + UNIT_BUDGET_MS), gate: o => freshnessGate(db, Object.assign({ stepStartedAt: cursor.stepStartedAt }, o)), fence };   // (fence: a unit reads it again before a Storage write, C7)
+      const unit = units[cursor.i], ctx = { db, run, runId, step, cursor, call: unitCall, read, drive, cloudSteps, unitKey: `${runId}|${step}|${cursor.i}`, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, unitStart + UNIT_BUDGET_MS), gate: o => freshnessGate(db, Object.assign({ stepStartedAt: cursor.stepStartedAt }, o)), fence, lane: laneNow, sheets: () => sheetsOf(db, runId) };   // (fence: a unit reads it again before a Storage write, C7; lane: one lane's pass items now, ONSWITCH)
       ctx.say = say;   // (build step 4: a unit that writes a document of its own fences it on this pass's lease and the run's carrier, as Lib.call does: _charmNestIntake.js fencedWrite)
       let res;
       for (let attempt = 0; ; attempt++) {

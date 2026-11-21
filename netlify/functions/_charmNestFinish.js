@@ -25,7 +25,12 @@
  *                 cut green-line sheet; what it changes is checked again: S3, S4)
  *    S6 verdict   OVNOHOLD's verification, CharmNestCustomPool.checkWritten, finish-core buildReport, the preview (resvg)
  *    S7 save      the record (one putSheet with layoutBase), finishClaim files, the four files to their final paths (tokens kept), the final putSheet (filesOwed compare-and-clear,
- *                 filesJob cleared), sheetPdf for a final sheet, putCalibration (as persistSheet)
+ *                 filesJob cleared), sheetPdf for a final sheet, putCalibration (as persistSheet). A nest's record also carries finishNest's after-nest marks (build step 7b, C4:
+ *                 finish-core sheetFull and topupSettle: releaseFull and the gap fill; intakeOptimized / intakeFinalized; the turn still waiting, feedWait); a released sheet stays
+ *                 released (RELEASEMARK); a draft is named `${TAG}_working_${id}` (finish-core sheetFileBase), and an existing file name is never changed
+ *    S8 after     (build step 7b) what the nest turned away goes on: finish-core overflowPlan; the next sheet chosen by charm-nest-place.js nextSheet, or a new draft, takes it in ONE
+ *                 transaction (finishOverflow) and is asked to nest once (nestStart); feedOn's waiting turn asks this sheet's next nest once (finish-core feedNext); an oldest order that
+ *                 cannot fit on an empty sheet is cut in two when it can be (rechunkStalled) and otherwise stops the run with those words (problemStop, read by the nest step)
  *  MEMBERSHIP (P4, NOPARTIALSET / SETSHUT / KEEPINSET): the writer never sends draft, setId, setSeq, sheetIndex or solidIncluded; putSheet leaves membership alone without them.
  *  What membershipOf (finish-core, with SETSHUT's held rule and KEEPINSET through CharmNestSetRules.isPartial) says the sheet's membership should be is worked out at S7 and,
  *  when it differs from the record's (a partial sheet its set does not list), only noted on the task (membership) for the assembly unit: the writer changes no set.
@@ -37,7 +42,7 @@ const Lease = require("./_charmNestLease");
 
 const FINISH = "Charm_Nest_Finish", SHEETS = "Charm_Nest_Sheets", SETS = "Charm_Nest_Sets", JOBS = "Charm_Nest_Jobs", OPEN = "Charm_Nest_Open", CARRIER = "Charm_Nest_Run_Carrier";
 const BUDGET_MS = 12 * 60000, TAIL_MS = 90000, RENEW_MS = 20000, WORK = "charmnest/_work/finish";
-const STEPS = ["S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7"];
+const STEPS = ["S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"];
 const ENDED = new Set(["done", "superseded", "failed", "skipped", "waiting"]);
 const num = v => (Number.isFinite(+v) ? +v : 0);
 const sha = (s, n) => crypto.createHash("sha256").update(String(s)).digest("hex").slice(0, n || 24);
@@ -160,13 +165,14 @@ STEP.S0 = async X => {
     if (result && Array.isArray(result.placements)) {
       const base = j.layoutRev != null ? num(j.layoutRev) : j.input && j.input.layoutRev != null ? num(j.input.layoutRev) : null;
       if (base != null && base !== num(rec.layoutRev)) throw new Stop("superseded", `the nest ${want.nestJobId} was made for layout ${base}; the sheet is at ${num(rec.layoutRev)} now: it is not written`);
-      nest = { jobId: String(want.nestJobId), result, appendOnly: j.appendOnly != null ? !!j.appendOnly : j.input && j.input.appendOnly != null ? !!j.input.appendOnly : null };
+      nest = { jobId: String(want.nestJobId), result, appendOnly: j.appendOnly != null ? !!j.appendOnly : j.input && j.input.appendOnly != null ? !!j.input.appendOnly : null,
+        intakePhase: j.auto && String(j.mode || "auto") !== "fresh" ? "fill" : null };   // (build step 7b: the cloud's own ask of a nest is the page's live intake, its quick gap fill: phase "fill")
     }
   }
   if (!nest && !(num(rec.filesOwed) > 0)) throw new Stop("skipped", "Nothing is owed: the sheet's files stand as they are");
   if (!(rec.placements || []).length && !(nest && nest.result.placements.length)) throw new Stop("skipped", "The sheet places no piece: there is nothing to write");
   const jobId = "fin-" + sha([X.sheetId, num(rec.layoutRev), num(rec.contentRev), nest ? nest.jobId : "", num(want.at)].join("|"), 20);
-  X.task.job = { jobId, step: "S0", steps: [], startedAt: Date.now(), nestJobId: nest ? nest.jobId : null, appendOnly: nest ? nest.appendOnly : null, wantAt: num(want.at), reason: want.reason || null };
+  X.task.job = { jobId, step: "S0", steps: [], startedAt: Date.now(), nestJobId: nest ? nest.jobId : null, appendOnly: nest ? nest.appendOnly : null, intakePhase: nest ? nest.intakePhase : null, wantAt: num(want.at), reason: want.reason || null };
   const c = await X.call({ op: "finishClaim", id: X.sheetId, jobId, stage: "begin", nestJobId: nest ? nest.jobId : null }, "begin");
   if (!c || c.status >= 400 || !c.ok) {
     if (c && c.busy) throw new Stop("waiting", c.error || "the sheet is busy");
@@ -181,13 +187,18 @@ STEP.S0 = async X => {
     if (keyOf(nest.result.placements.map(p => Object.assign({}, p, { scale: ((rec.placements || []).find(q => q.id === p.id) || {}).scale || p.scale }))) === keyOf(rec.placements || [])) {
       X.task.job.shortcut = true;
       await X.saveTask({ job: X.task.job, step: "S7", outcome: null });
-      const rejects = (nest.result.rejects || []).filter(id => byId.has(id)), status = rejects.length ? "partial" : "complete";
-      const fin = await X.call({ op: "putSheet", sheet: { id: X.sheetId, status, endedBy: nest.result.endedBy || "kept", trials: num(nest.result.trials), saving: false, filesOwed: null, filesJob: null, dirty: false }, contentBase: num(c.contentRev), filesOwedBase: num(c.filesOwed), filesJobBase: jobId }, "shortcut");
+      const rejects = (nest.result.rejects || []).map(String).filter(id => byId.has(id)), status = rejects.length ? "partial" : "complete";
+      // (build step 7b: the shortcut keeps finishNest's after-nest marks too (releaseFull, the gap fill, the intake marks), and what the nest turned away is moved on at S8)
+      const FN = require("../../charm-nest-nest-plan.js"), sh0 = { sheetId: rec.id, metal: rec.metal, charms: rec.charms || [], placements: rec.placements || [], rejects, verification: rec.verification, topup: rec.topup ? JSON.parse(JSON.stringify(rec.topup)) : null,
+        nestInitial: (rec.placements || []).slice(), feedWait: (nest.result.feedWait || []).map(String), roseProtected: !!rec.roseProtectedJson, intakePhase: nest.intakePhase || undefined, runId: rec.runId };
+      const marks = await afterNestMarks(X, sh0, Object.assign({}, nest.result, { rejects }), (rec.charms || []).filter(ch => ch && !ch.excluded), { FC, NP: FN, rec, S: await require("./_charmNestFinishHost").settings(db) });
+      const fw = (nest.result.feedWait || []).map(String).filter(id => byId.has(id) && !(rec.placements || []).some(p => String(p.id) === id));
+      const fin = await X.call({ op: "putSheet", sheet: Object.assign({ id: X.sheetId, status, endedBy: nest.result.endedBy || "kept", trials: num(nest.result.trials), rejects, feedWait: fw.length ? fw : null, saving: false, filesOwed: null, filesJob: null, dirty: false }, marks), contentBase: num(c.contentRev), filesOwedBase: num(c.filesOwed), filesJobBase: jobId }, "shortcut");
       if (!fin || fin.status >= 400) throw new Stop("superseded", (fin && fin.error) || "the sheet changed: its state was not written");
       X.task.job.written = { layoutRev: num(c.layoutRev), contentRev: num(c.contentRev) };
       X.notes.push(fin.filesOwedKept ? "the files were asked for again meanwhile" : "no room for the new pieces: the layout and its files stand as they are");
-      await endJob(X, "done", "the layout and its saved files stand as they are");
-      return "end";
+      X.task.job.doneWhy = "the layout and its saved files stand as they are";
+      return "S8";
     }
   }
   X.nest = nest;
@@ -327,6 +338,15 @@ STEP.S7 = async X => {
     for (const k of WRITER_FIELDS) if (full[k] !== undefined) sheet[k] = full[k];
     sheet.status = W.allPlaced && sh.verification.ok ? "complete" : "partial";
     if (!rec.fileBase) { sheet.fileBase = names.name; sheet.folder = names.name; sheet.day = names.day; }   // (a sheet with no file name yet takes the one its files are written under; an existing one is never changed)
+    // (build step 7b, C4: a nest's write carries finishNest's after-nest marks: releaseFull (sheetFull, then the gap fill), the gap fill's state, intakeOptimized / intakeFinalized, and the later
+    //  orders still waiting their turn (feedWait); a sheet released full stays released (RELEASEMARK); a sheet the oldest order stopped is let go of that stop once it places pieces again)
+    if (job.nestJobId) {
+      const items = sh.charms.filter(c => !c.excluded), placedIds = new Set(sh.placements.map(p => String(p.id)));
+      Object.assign(sheet, await afterNestMarks(X, Object.assign(sh, { intakePhase: job.intakePhase || undefined, topup: rec.topup ? JSON.parse(JSON.stringify(rec.topup)) : null }), Object.assign({}, W.result, { rejects: (W.result && W.result.rejects) || sh.rejects }), items));
+      const fw = ((W.result && W.result.feedWait) || []).map(String).filter(id => X.byId.has(id) && !placedIds.has(id));
+      sheet.feedWait = fw.length ? fw : null;
+    }
+    if (rec.problemStop && sh.placements.length) { sheet.problem = null; sheet.problemStop = null; }
     const ans = await X.call({ op: "putSheet", sheet, layoutBase: job.base.layoutRev, contentBase: job.base.contentRev, filesJobBase: job.jobId }, "record");
     if (!ans || ans.status >= 400 || !ans.ok) {
       if (ans && (ans.conflict || ans.status === 409)) throw new Stop("superseded", (ans && ans.error) || "the sheet changed since its files were made: they are not written");
@@ -368,9 +388,94 @@ STEP.S7 = async X => {
       if (cal.density > 0 && cal.count > 0 && (rec.releaseFull || cal.placedAll === false)) { const r = await X.call({ op: "putCalibration", row: Object.assign({ sheetId: X.sheetId, metal: rec.metal, clearancePt: +X.S.settings.clearancePt }, cal) }, "calibration"); if (!r || r.status >= 400) X.notes.push("calibration not recorded: " + ((r && r.error) || "no answer")); }
     } catch (e) { if (e && e.fenced) throw e; X.notes.push("calibration not recorded: " + e.message); }
   }
-  await endJob(X, "done", `written: ${files.map(f => f[2].split("/").pop()).join(", ")}`);
-  return "end";
+  job.doneWhy = `written: ${files.map(f => f[2].split("/").pop()).join(", ")}`;
+  return "S8";
 };
+
+/** S8 (build step 7b, C4): once the files are written, what finishNest did after its save: (b) what the nest turned away goes on to the next sheet (overflowToNextSheet), (c) the later
+ *  orders waiting their turn get it (feedOn), (d) the oldest order that cannot fit on an empty sheet is cut in two, or stops the run with those words. Each write is the writer's own
+ *  fenced call under this job's unit, so a replay is written once. Only a nest's write moves pieces on: a sheet written as it stands keeps what it has. */
+STEP.S8 = async X => {
+  const { db } = X, job = X.task.job, end = async why => { await endJob(X, "done", [job.doneWhy || "written", why].filter(Boolean).join(" · ")); return "end"; };
+  if (!job.nestJobId) {
+    // (mcWriteStandalone's last step: a sheet its set lists, written again after a change by hand, an artwork edit or a take-off, says its set changed after it was released, as the page's
+    //  Review.inPlaceRefile says it; RELEASEMARK: only a set that lists the sheet)
+    const r0 = await readSheet(db, X.sheetId);
+    if (r0 && r0.setId && !r0.draft && !r0.archived && !(num(r0.laserDoneAt) > 0)) {
+      let listed = false; try { const ss = await db.collection(SETS).doc(String(r0.setId)).get(); listed = ss.exists && ((ss.data() || {}).sheetIds || []).includes(r0.id); } catch (_) { listed = false; }
+      if (listed) {
+        const set = `Set ${r0.setSeq || ""}`.trim(), nm = r0.fileBase || r0.metalLabel || r0.id;
+        const r = await X.call({ op: "putSheet", sheet: { id: r0.id, releasedChange: { setId: r0.setId, set, at: Date.now(), by: "Cloud", orders: [], word: `${set} changed after it was released: ${nm} — its files are written again` } } }, "released-change");
+        if (!r || r.status >= 400) X.notes.push("its set was not told it changed: " + ((r && r.error) || "no answer"));
+      }
+    }
+    return end("");
+  }
+  const rec = await readSheet(db, X.sheetId);
+  if (!rec || rec.archived || num(rec.laserDoneAt) > 0 || rec.roseCutAt || !rec.runId || rec.endedBy === "stopped") return end("");
+  if (job.written && (num(rec.layoutRev) !== num(job.written.layoutRev) || num(rec.contentRev) !== num(job.written.contentRev))) return end("the sheet changed after its files were written: what it turned away waits for its next nest");
+  const Nest = require("./_charmNestNest"), NP = require("../../charm-nest-nest-plan.js"), FC = require("../../charm-nest-finish-core.js"), O = require("../../charm-nest-orders.js"), Place = require("../../charm-nest-place.js");
+  const S = await Nest.readSettings(db), view = Object.assign({}, rec, { sheetId: rec.id }), name = rec.fileBase || rec.metalLabel || rec.id, said = [];
+  const env = { maxFill: +S.settings.maxFill || 0.8, orderKey: NP.orderKey, orderRank: c => NP.orderRank(c, O), inflatedArea: c => Nest.inflatedArea(S, c), usablePt2: Nest.usableArea(S, view), groupOf: Nest.groupOf,
+    NS: S.settings.nospread !== "off" ? require("../../charm-nest-nospread.js") : null, topupRoom: v => Nest.topupRoom(v, false) };
+  const feed = FC.feedNext(view, env);
+  const rejects = new Set((rec.rejects || []).map(r => String(r && typeof r === "object" ? r.id : r))); for (const id of feed.pass || []) rejects.add(String(id));
+  const plan = FC.overflowPlan(Object.assign({}, view, { rejects: [...rejects] }), env);
+  if (plan.kind === "stop") {
+    // (d) the oldest order cannot fit on an empty sheet at these settings: its pieces stay on the sheet, and the run stops with those words (the nest step reads problemStop once; after a Resume the sheet is held)
+    const r = await X.call({ op: "putSheet", sheet: { id: rec.id, problem: plan.why, problemStop: { at: Date.now(), why: plan.why, by: "cloud" }, status: "partial" } }, "stop");
+    if (!r || r.status >= 400) X.notes.push("the stop was not recorded on the sheet: " + ((r && r.error) || "no answer"));
+    return end(plan.why);
+  }
+  if (plan.kind === "rechunk") {
+    // (NOSPREAD: the oldest unit is cut in two and the sheet nests again, in order)
+    const charms = (rec.charms || []).map(c => (c && plan.chunks[String(c.id)] ? Object.assign({}, c, { chunk: plan.chunks[String(c.id)] }) : c));
+    const r = await X.call({ op: "putSheet", sheet: { id: rec.id, charms, rejects: [], problem: null, status: "ready", dirty: true, appendOnly: false, intakeAppend: false }, layoutBase: num(rec.layoutRev), contentBase: num(rec.contentRev) }, "rechunk");
+    if (r && r.ok && r.status < 400) { const n = await X.call({ op: "nestStart", sheetId: rec.id, auto: true, why: plan.words }, "rechunk-nest"); if (!n || n.status >= 400) X.notes.push("its nest was not asked: " + ((n && n.error) || "no answer")); said.push(plan.words); }
+    else X.notes.push("the order was not cut: " + ((r && r.error) || "no answer"));
+    return end(said.join(" · "));
+  }
+  if (plan.kind === "move") {
+    // (b) the next sheet in line (charm-nest-place.js nextSheet: NOSPREAD, PAIR / PAIR2, ONEFILL / PAIRFIX), or a new draft, takes them in one transaction and nests once
+    const world = await require("./_charmNestPlaceUnit").readWorld({ db, runId: rec.runId, read: X.read });
+    const rs = await db.collection("Charm_Nest_Runs").doc(String(rec.runId)).get(), run = Object.assign({ runId: rec.runId }, rs.exists ? rs.data() || {} : {});
+    const H = Place.recordHost({ run, records: world.records, sets: world.sets, settings: world.settings, preset: world.preset, partial: world.partial });
+    const me = H.views().find(v => v.sheetId === rec.id) || H.refresh(rec), ids = new Set(plan.moving.map(c => String(c.id))), movingV = (me.charms || []).filter(c => ids.has(String(c.id)));
+    const next = H.rules.nextSheet(me, movingV.length ? movingV : plan.moving, { orderKey: NP.orderKey, admitted: (p, units) => Nest.planEnv(S).nospreadAdmitted(p, units) });
+    const fresh = () => ({ create: { metal: rec.metal, page: next && next._new ? next.page : Math.max(0, ...H.views().filter(v => v.metal === rec.metal).map(v => num(v.page))) + 1, day: run.day || null, greenLeftover: next && next._new ? next.greenLeftover || null : null } });
+    const body = { op: "finishOverflow", id: rec.id, runId: rec.runId, layoutBase: num(rec.layoutRev), contentBase: num(rec.contentRev), pieceIds: [...ids], why: `turned away by ${name}'s nest`,
+      to: !next || next._new || !next.sheetId ? fresh() : { sheetId: next.sheetId, layoutBase: num(next.layoutRev), contentBase: num(next.contentRev) } };
+    let r = await X.call(body, "overflow");
+    // (the sheet chosen changed or shut meanwhile: a new draft takes them, as the page opens one when the next sheet is shut or busy)
+    if (r && r.status === 409 && r.conflict && body.to.sheetId && !/changed since its pieces were turned away/.test(String(r.error || ""))) r = await X.call(Object.assign({}, body, { to: fresh() }), "overflow-new");
+    if (r && r.ok && r.moved) {
+      said.push(`${r.moved} piece(s) moved on to ${r.to.name || "a new draft"}`);
+      const n = await X.call({ op: "nestStart", sheetId: r.to.sheetId, auto: true, why: `${r.moved} piece(s) moved on from ${name}` }, "nest-next");
+      if (!n || n.status >= 400) X.notes.push("the next sheet's nest was not asked: " + ((n && n.error) || "no answer"));
+    } else if (r && r.status >= 400) X.notes.push("what the nest turned away was not moved on: " + (r.error || r.status));
+  }
+  // (c) feedOn: the later orders waiting their turn on this sheet get it, once
+  if (feed.act === "nest" || feed.act === "pass+nest") {
+    const n = await X.call({ op: "nestStart", sheetId: rec.id, auto: true, why: `${name}: the next orders waiting their turn` }, "feed");
+    if (n && n.status < 400) said.push("its next orders take their turn"); else X.notes.push("its next turn was not asked: " + ((n && n.error) || "no answer"));
+  }
+  return end(said.join(" · "));
+};
+
+/** finishNest's after-nest marks on a nest's write (build step 7b, C4): releaseFull (finish-core sheetFull, then topupSettle: the gap fill), the gap fill's state, intakeOptimized /
+ *  intakeFinalized. A sheet released full stays released whatever the nest says (RELEASEMARK: only a person reopens it, and putSheet keeps the mark too). The gap fill waits for later
+ *  orders only on the open Auto run (live). → the record's fields */
+async function afterNestMarks(X, sh, result, items, o = {}) {
+  const FC = o.FC || X.FC, NP = o.NP || X.NP, rec = o.rec || X.rec, S = o.S || X.S, Nest = require("./_charmNestNest"), O = require("../../charm-nest-orders.js");
+  let run = null; if (rec.runId) { try { const rs = await X.db.collection("Charm_Nest_Runs").doc(String(rec.runId)).get(); run = rs.exists ? rs.data() || {} : null; } catch (_) { run = null; } }
+  const live = !!run && run.mode === "auto" && !["complete", "abandoned", "archived"].includes(String(run.status || ""));
+  // (NOSPREAD's turn-away (sh._nsCheck / _nsPassed) counts only in the one extra nest the page's nospreadSettle asks after a quiet stretch; a write here is never that nest, so it is not read)
+  sh._nsCheck = false;
+  const env = { maxFill: +S.settings.maxFill || 0.8, orderKey: NP.orderKey, orderRank: c => NP.orderRank(c, O), inflatedArea: c => Nest.inflatedArea(S, c), live, manual: !!run && run.mode === "manual", topupOff: S.settings.topup === "off",
+    now: () => Date.now(), log: (s, w) => X.notes.push(w) };
+  const full = FC.topupSettle(sh, result, FC.sheetFull(sh, result, items, env), env) || !!rec.releaseFull;
+  return Object.assign({ releaseFull: !!full, topup: sh.topup || null }, sh.releaseWhy ? { releaseWhy: sh.releaseWhy } : {}, FC.intakeMarks(sh, result, items));
+}
 /* The fields of finish-core's record() the writer sends (persistSheet's record, less what is not the writer's: membership (P4), the sheet's name, day and folder once it has one,
    its pieces' list, orders and listings (they change only with its pieces), its label, backs, release marks (build step 7b) and the page's own marks). */
 const WRITER_FIELDS = ["status", "endedBy", "trials", "searchMetrics", "elapsedMs", "totalMs", "stock", "params", "density", "freePt2", "usablePt2", "pocket", "charmCount", "placedCount", "rejectCount", "verification", "placements", "rejects", "names"];
@@ -466,7 +571,9 @@ async function layoutOf(X) {
   const ids = new Set(sh.placements.map(p => p.id));
   sh.nestInitial = sh.placements.filter(p => was.has(p.id)).map(p => Object.assign({}, p));   // (the saved layout as this write holds it: the checks and the fixes keep it where it lies)
   return { placements: sh.placements, rejects: sh.rejects.filter(id => !ids.has(id)), nestInitial: sh.nestInitial, dirty: gone > 0,
-    result: { params: r.params || {}, endedBy: r.endedBy || "complete", trials: num0(r.trials), elapsedMs: num0(r.elapsedMs), density: num0(r.density), usablePt2: num0(r.usablePt2), freePt2: num0(r.freePt2), placedPt2: num0(r.placedPt2), pocket: r.pocket || null, metrics: r.metrics || null, pocketFilled: r.pocketFilled || [] } };
+    result: { params: r.params || {}, endedBy: r.endedBy || "complete", trials: num0(r.trials), elapsedMs: num0(r.elapsedMs), density: num0(r.density), usablePt2: num0(r.usablePt2), freePt2: num0(r.freePt2), placedPt2: num0(r.placedPt2), pocket: r.pocket || null, metrics: r.metrics || null, pocketFilled: r.pocketFilled || [],
+      // (build step 7b: what sheetFull and topupSettle read of a nest's result, and the later orders it left waiting their turn, feedWait)
+      rejects: (r.rejects || []).map(String), feedWait: (r.feedWait || []).map(String), ...(r.smallRoom === false || r.smallRoom === true ? { smallRoom: r.smallRoom } : {}), ...(r.timedOut ? { timedOut: true, noRoom: (r.noRoom || []).map(String), capped: (r.capped || []).map(String) } : {}) } };
 }
 /** The work state onto the sheet (placements, rejects, saved layout, the checks so far). */
 function applyW(X) {
@@ -520,7 +627,8 @@ async function pathsOf(X) {
   //  in it (not a draft) and the set's record lists it; every other sheet is filed as a sheet of its own day
   const filed = !!rec.setId && !rec.draft && !!set && (set.sheetIds || []).includes(rec.id);
   const setDay = (filed && set.day) || rec.day || torontoDay(Date.now());
-  const name = rec.fileBase || (rec.draft || rec.numberOwed ? `${tag}_working_${rec.id}` : O.sheetName(rec.metal, setDay, rec.setSeq || 1, rec.sheetIndex || rec.page || 1));
+  // (build step 7b: finish-core sheetFileBase, the page's rule: a draft, or a sheet owed its number, is `${TAG}_working_${id}`; an existing file name is never changed)
+  const name = rec.fileBase || X.FC.sheetFileBase({ metal: rec.metal, sheetId: rec.id, draft: !!rec.draft, numberOwed: !!rec.numberOwed, setDay, seq: rec.setSeq || 1, sheetIndex: rec.sheetIndex, page: rec.page }, { tag: () => tag, sheetName: O.sheetName, today: () => setDay });
   const aiPath = rec.outputs && rec.outputs.ai && rec.outputs.ai.path, folder = aiPath ? aiPath.replace(/\/[^/]+$/, "") : "";
   const kept = !filed && /^charmnest\/sheets\/\d{4}-\d{2}-\d{2}\//.test(folder) && folder.endsWith("/" + name) ? folder : null;
   const base = filed ? `${O.setFolder(setDay, rec.setSeq)}/${name}` : kept || `charmnest/sheets/${rec.day || setDay}/${name}`;
@@ -542,4 +650,4 @@ async function membershipCheck(X) {
   return { own, wanted, differs, why: differs ? "NOPARTIALSET: a partial sheet its set does not list is a draft; the writer changes no membership (P4): the assembly unit drafts it" : null, at: Date.now() };
 }
 
-module.exports = { run, carries, STEPS, WRITER_FIELDS, workDir, FINISH, BUDGET_MS };
+module.exports = { run, carries, STEPS, STEP, WRITER_FIELDS, workDir, FINISH, BUDGET_MS, afterNestMarks, pathsOf };

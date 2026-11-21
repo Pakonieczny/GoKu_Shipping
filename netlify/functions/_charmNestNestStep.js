@@ -74,6 +74,14 @@ async function nestCore(ctx) {
     const mine = jobs.filter(j => j.sheetId === rec.id);
     // (a held sheet that a person nested again: its hold is lifted, as the page's startNestReady lifts runHold)
     if (holds[rec.id] && mine.some(j => LIVE.has(j.status) && !j.auto)) hold(rec.id, null);   // (null, not a deleted key: the driver's record save merges)
+    // (build step 7b, C4 (d): the sheet writer found that the oldest order cannot fit on an empty sheet (problemStop): the run stops with those words once, as the page's overflowToNextSheet
+    //  stopped it; after a person's Resume the sheet is held (the run goes on with the others) until a person nests it again)
+    if (rec.problemStop && rec.problemStop.why && !(rec.placements || []).length && !mine.some(j => LIVE.has(j.status))) {
+      const why = str(rec.problemStop.why, 300), said = (run.errors || []).some(e => e && e.why === why && num(e.t) >= num(rec.problemStop.at));
+      if (!said && run.status === "running") return { stop: { why, fix: "Review the order's size or the fill ceiling, then press Nest on its sheet and Resume", kind: "error" }, cursor: { jobIds: jobs.filter(j => LIVE.has(j.status)).map(j => j.id).slice(0, 60) } };
+      if (!holds[rec.id]) hold(rec.id, `${rec.fileBase || rec.metalLabel || rec.id}: ${why}`);
+      continue;
+    }
     const owed = Nest.owedNest(rec, run, now);
     if (!owed.owed) { if (owed.wait) waits.push(owed.why); continue; }
     const at = mine.filter(j => num(j.layoutBase) === num(rec.layoutRev) && num(j.contentBase) === num(rec.contentRev));

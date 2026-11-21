@@ -78,6 +78,7 @@ CLOUD_READS.push("engraveSyncGet"); CLOUD_WRITES.push("engraveSyncPut");
 CLOUD_WRITES.push("engraveIntentStart"); CLOUD_READS.push("getAgent");
 CLOUD_READS.push("commitGet", "setCommitCheck"); CLOUD_WRITES.push("commitJournal");   // (build step 12: sending finished sets to the Design Station)
 CLOUD_WRITES.push(...words(`runCmdClaim cmdWorkPut cmdMovePieces cmdLeaveSet cmdVacate cmdPutBack`));   // (build step 13)
+CLOUD_ONLY.add("finishOverflow"); CLOUD_WRITES.push("finishOverflow");   // (build step 7b: the sheet writer's overflow, what a nest turned away moved on to the next sheet: _charmNestFinishOps.js)
 const CLOUD_OPS = new Set([...CLOUD_READS, ...CLOUD_WRITES]);
 /* RELEASEHOLD (Paul, 20 Nov 2026; build step 13, live): a person's Release Hold press, done in the cloud at once (_charmNestHoldRelease.js): releaseAsk is a PRESS from a page and the cloud's own
    call when the driver's release unit finishes one a function left half done; releaseJobGet reads its journal. Neither calls Etsy. */
