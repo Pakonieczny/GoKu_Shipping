@@ -54,7 +54,7 @@ async function partS() {
     // the cloud's next nest of the sheet, as it begins: the REAL prepare (slot 0), at the record's revisions and input key
     const nestOf = async mode => { const r = Object.assign({ id: SH }, rec()); const job = { id: 'nest-item12-' + mode, sheetId: SH, layoutBase: +r.layoutRev || 0, contentBase: +r.contentRev || 0, inputKey: await keyOf(r, mode), mode, seed: 7 };
       const out = await Slot.prepare({ db: F.db, bucket: F.bucket, job, log: () => {}, tick: async () => {}, stop: false });
-      const pieces = out && out.solverJob ? out.solverJob.pieces : []; return { out, by: id => pieces.find(p => p.id === id) || null }; };
+      const pieces = out && out.solverJob ? out.solverJob.pieces : [], alt = out && out.altJob ? out.altJob.pieces : []; return { out, by: id => pieces.find(p => p.id === id) || null, alt: id => alt.find(p => p.id === id) || null }; };
 
     seed('on');
     const before = rec(), key0 = await keyOf(Object.assign({ id: SH }, before), 'fresh');
@@ -71,8 +71,11 @@ async function partS() {
       !!n.out && !n.out.error && !n.out.stale && n.by(ids[0]) && n.by(ids[0]).hold === true && n.by(ids[0]).pinned && n.by(ids[0]).pinned.cxPt === 40.25 && n.by(ids[0]).pinned.cyPt === 60.5 && n.by(ids[1]) && n.by(ids[1]).hold === false && n.by(ids[1]).pinned === null,
       { err: n.out && (n.out.error || n.out.stale), p0: n.by(ids[0]) && { hold: n.by(ids[0]).hold, pinned: n.by(ids[0]).pinned }, p1: n.by(ids[1]) && { hold: n.by(ids[1]).hold, pinned: n.by(ids[1]).pinned } });
     n = await nestOf('auto');
-    ok('S5 ... and its nest that keeps the layout holds it for good (a person\'s pin), the others pinned by the run only (may be lifted)',
-      n.by(ids[0]) && n.by(ids[0]).hold === true && n.by(ids[1]) && n.by(ids[1]).hold === false && !!n.by(ids[1]).pinned, { p0: n.by(ids[0]) && n.by(ids[0]).hold, p1: n.by(ids[1]) && [n.by(ids[1]).hold, n.by(ids[1]).pinned] });
+    // (NQ, 21 Nov 2026: a GF sheet in no set is laid out whole by "Nest the rest" too: the person's pin is held for good, the others are free; the slot that appends to the saved
+    //  layout holds them by the run's pin only (may be lifted): cloud-nest-quality.cjs)
+    ok('S5 ... and its nest that keeps the layout holds it for good (a person\'s pin); the others are laid out again, and pinned by the run only (may be lifted) in the slot that appends',
+      n.by(ids[0]) && n.by(ids[0]).hold === true && n.by(ids[1]) && n.by(ids[1]).hold === false && n.by(ids[1]).pinned === null && n.alt(ids[0]) && n.alt(ids[0]).hold === true && n.alt(ids[1]) && n.alt(ids[1]).hold === false && !!n.alt(ids[1]).pinned,
+      { p0: n.by(ids[0]) && n.by(ids[0]).hold, p1: n.by(ids[1]) && [n.by(ids[1]).hold, n.by(ids[1]).pinned], a1: n.alt(ids[1]) && [n.alt(ids[1]).hold, n.alt(ids[1]).pinned] });
     r = await P({ op: 'sheetLayoutPatch', id: SH, by: 'Michelle', pins: { [ids[0]]: { pinned: false } }, dev: PAGE, cv: CV });
     c0 = charmOf(ids[0]); n = await nestOf('fresh');
     ok('S6 Unpin from a viewer takes the mark and the pin off the record, and the next nest frees that charm',

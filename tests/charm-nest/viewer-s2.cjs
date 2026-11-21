@@ -100,7 +100,7 @@ async function partP() {
   const html = fs.readFileSync(path.join(ROOT, 'charm-nest-1.html'), 'utf8');
   ok('P13 charm-nest-1.html loads the changed bridge and viewer under new tokens (-s2)', /charm-nest-bridge\.js\?v=[^"]*-s2(?:-\w+)*"/.test(html) && /charm-nest-viewer\.js\?v=[^"]*-s2(?:-\w+)*"/.test(html));
   const entries = fs.readFileSync(path.join(ROOT, 'scripts/netlify-function-entries.json'), 'utf8');
-  ok('P14 the new server helper is classified as a helper (next to _charmNestCustomMake.js)', /"_charmNestCustomMake\.js", "_charmNestReviewSettled\.js"/.test(entries));
+  ok('P14 the new server helper is classified as a helper (next to _charmNestCustomMake.js)', /"_charmNestCustomMake\.js",[^\]]*"_charmNestReviewSettled\.js"/.test(entries));
 }
 
 /* ═══ S · T · C: the cloud, offline (one child process: the fakes' clock is its own) ═══ */
