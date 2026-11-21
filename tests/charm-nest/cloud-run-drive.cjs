@@ -209,10 +209,12 @@ const unitsOf = (log, n = {}) => { const out = {}; for (const s of STEPS) out[s]
     ok('F2 · the 20 builds ran and each moved the feed (feed-x)', feeds.every((n, i) => i === 0 || n > feeds[i - 1]) && feeds[19] > feeds[0], feeds);
     ok('F2 · after each build the driver was told and one pass ran (it read the run)', passes.length === 20 && passes.every(p => p.includes('runGet')), passes.slice(0, 3));
     // (build step 8, commit e1032d4: the cloud reconciles a run it takes ONCE per take, keyed on carrier.since, and says so on the run (its note). This run was handed to the cloud
-    //  just before the builds, so the first pass makes that one write; no world build makes the driver write anything (E1))
+    //  just before the builds, so the first pass makes the take's writes; no world build makes the driver write anything (E1).
+    //  ONSWITCH (Paul, 20 Nov 2026): a take also makes ONE set look at once: with "checkpoint" the cloud's, the resting run goes through its steps again from the checkpoint, in that
+    //  first pass, and waits at revalidate behind the Etsy freshness gate; the take's and the look's writes are the run's record only (runPut): no sheet or set here)
     const st = F.doc('Charm_Nest_Drive/state') || {};
-    ok('F2 · the take\'s own words, once (step 8: reconciled once per take), in the first pass', JSON.stringify(perPass[0]) === '["runPut"]' && /^The cloud carries this run since/.test(String(run(R).note || '')) && !!(st.reconciled && st.reconciled.runId === R && st.reconciled.done), { first: perPass[0], note: run(R).note, reconciled: st.reconciled });
-    ok('F2 · 0 Lib.call writes after it, across the other 19 builds (the resting run was left as it is)', writes.length === 1 && perPass.slice(1).every(p => !p.length) && run(R).status === 'processed', { writes: writes.slice(0, 5), perPass });
+    ok('F2 · the take\'s own writes, in the first pass only (step 8: reconciled once per take; ONSWITCH: one set look per take): the run\'s record only', perPass[0].length >= 1 && perPass[0].every(op => op === 'runPut') && !!(st.reconciled && st.reconciled.runId === R && st.reconciled.done) && String(st.setLook || '').startsWith(R + '|'), { first: perPass[0], note: run(R).note, reconciled: st.reconciled, setLook: st.setLook });
+    ok('F2 · 0 Lib.call writes after it, across the other 19 builds (the run waits at revalidate behind the freshness gate, as it was left)', writes.length === perPass[0].length && perPass.slice(1).every(p => !p.length) && run(R).status === 'running' && run(R).step === 'revalidate' && /Re-checking the orders waits/.test(String(run(R).note || '')), { writes: writes.slice(0, 5), perPass, status: run(R).status, step: run(R).step, note: run(R).note });
     ok('F2 · 0 Charm_World/lease dispatches by a change or by the drive (the driver never builds the world)', bys.every(b => !/^change:|^drive/.test(String(b || ''))), bys);
     ok('F2 · and the pair cannot loop: no kick was left waiting', F.net.kicks.length === 0, F.net.kicks.map(k => k.name));
   }
@@ -271,11 +273,13 @@ const unitsOf = (log, n = {}) => { const out = {}; for (const s of STEPS) out[s]
     const steps = {}; for (const s of STEPS) steps[s] = [async () => {}];
     let n = kickedNonce();
     ok('P12 · the press kicked the driver (driveSoon)', !!n);
+    // (build step 7b built the files lane, the last lane readiness listed: a computer seen today that has not loaded the viewer build is what refuses "on" here)
+    F.seed('Charm_Nest_Computers/dev-old', { by: 'Ann', station: 'Sorting', at: Date.now() - 3600e3, drive: '' });
     await Drive.pass({ db: F.db, Lib: lib, nonce: n, steps, sleep: noSleep, renewMs: 0 });
     const d = F.doc('Charm_Nest_Open/drive');
     // (step 15, e1032d4, plan §4 phase 3: "Cloud carries" needs every step and lane built and every computer seen in a day on the viewer build, else it is refused in words naming
-    //  what is missing; here the files lane's page gate, build step 7b, is not built yet)
-    ok('P12 · the driver refuses "on" in words naming what the cloud cannot do yet, and changes nothing (step 15\'s readiness)', d.mode === 'standby' && !d.pending && d.pendingRefused && /cannot carry every run yet: .+\. Nothing was changed/.test(d.pendingRefused.why) && F.doc('Charm_Nest_Run_Carrier/' + R).carrier.dev === 'cloud', d);
+    //  what is missing; since build step 7b the files lane is built, so the words no longer name "writing a sheet's files")
+    ok('P12 · the driver refuses "on" in words naming what the cloud cannot do yet, and changes nothing (step 15\'s readiness)', d.mode === 'standby' && !d.pending && d.pendingRefused && /cannot carry every run yet: .+\. Nothing was changed/.test(d.pendingRefused.why) && /not loaded the viewer build/.test(d.pendingRefused.why) && !/writing a sheet's files/.test(d.pendingRefused.why) && F.doc('Charm_Nest_Run_Carrier/' + R).carrier.dev === 'cloud', d);
     setDrive('on'); seedRun(R, { status: 'running', step: 'nest' });
     r = await PS({ op: 'runControl', action: 'cloud', to: 'standby', by: 'Paul', cv: 'test' });
     n = kickedNonce(); await Drive.pass({ db: F.db, Lib: lib, nonce: n, steps, sleep: noSleep, renewMs: 0 });
