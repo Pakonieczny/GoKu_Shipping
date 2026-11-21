@@ -4276,7 +4276,7 @@ const Master = window.Master = (() => {
         try { if (window.Review && Review.redrawNoted) Review.redrawNoted(new Map([[now.sku, was]]), new Map([[now.sku, now]])); } catch (e) { console.warn("[repoedit] the open pieces were not looked at:", e && e.message); }
         try { render(); } catch (_) { /* the Library tab paints at its next look */ }
         // a page that follows a run: the computer carrying it reads the library now and makes the open pieces again (never when the placed pieces are to stay)
-        if (!B.run && spec.keepPlaced !== true && typeof window.CNRelayAsk === "function") { try { say("Telling the computer that carries the run…"); await window.CNRelayAsk({ type: "keepsync", ids: [sku] }, t => say(String(t || "")), 120000); } catch (e) { console.warn("[repoedit] the carrier was not told:", e && e.message); } }
+        if (!B.run && spec.keepPlaced !== true && typeof window.CNRelayAsk === "function") { try { say(window.CNViewer && CNViewer.on && CNViewer.on() ? "Telling the cloud…" : "Telling the computer that carries the run…"); await window.CNRelayAsk({ type: "keepsync", ids: [sku] }, t => say(String(t || "")), 120000); } catch (e) { console.warn("[repoedit] the carrier was not told:", e && e.message); } }
       }
       return { ok: true, sku, size: size || null, entry: now || was, was: r.was || String(spec.expect), same: !!r.same };
     } catch (e) {
@@ -6682,12 +6682,12 @@ const Gate = window.Gate = (() => {
   }
   const said = text => Object.assign(new Error(text), { said: true });   // a refusal the switch shows as its line
   /** The one short line next to the switch (never a tooltip): the reason, for a few seconds, and the switch shakes (or flashes, with reduced motion) once. */
-  function sayNo(node, text) {
+  function sayNo(node, text, o) {   // (o.ok, item 7: the cloud's "done" in the same line, without the shake)
     const inc = node && node._optInclude, line = inc && typeof inc.querySelector === "function" ? inc.querySelector('[data-solid="say"]') : null;
-    if (!line) { toast(text, "bad"); return; }   // (no line to draw it in: never silent)
+    if (!line) { toast(text, o && o.ok ? "ok" : "bad"); return; }   // (no line to draw it in: never silent)
     const sw = inc.querySelector(".osSwitch"), sr = inc.querySelector('[data-solid="status"]');
     line.textContent = text; line.hidden = false; if (sr) sr.textContent = text;
-    if (sw && sw.classList) { sw.classList.remove("nope"); void sw.offsetWidth; sw.classList.add("nope"); }
+    if (sw && sw.classList && !(o && o.ok)) { sw.classList.remove("nope"); void sw.offsetWidth; sw.classList.add("nope"); }
     clearTimeout(node._sayT);
     node._sayT = setTimeout(() => { line.hidden = true; line.textContent = ""; if (sw && sw.classList) sw.classList.remove("nope"); if (sr && sr.textContent === text) sr.textContent = ""; }, SAY_MS);
   }
@@ -6705,7 +6705,7 @@ const Gate = window.Gate = (() => {
     return {};
   }
   /** Out of a committed set, or back into it, through LibraryFlow (the Library's own path). Resolves "" when done, or a short line to show (a warning); throws said() for a refusal. */
-  async function runEdit(sh, want) {
+  async function runEdit(sh, want, o) {   // (G6: o.viewer, a viewer's press: the done line says what happened, in words)
     const LF = window.LibraryFlow;
     if (!sh.sheetId) throw said("Not saved yet. Try again in a moment.");
     if (!S.cloud.ok) throw said("Offline. Try again when connected.");
@@ -6725,18 +6725,88 @@ const Gate = window.Gate = (() => {
     if (!res || res.ok === false) throw said(errWords(res));
     if (want) delete sh.leftSet; else sh.leftSet = (plan.from && plan.from.setId) || null;
     Session.schedule();
+    if (o && o.viewer) {   // (G6: a viewer is never left with a silent "done": what changed, and that the set's labels and files are the cloud's to make)
+      const nm = o.seq ? `Set ${o.seq}` : "its set", asked = (res.applied || []).some(a => /asked of the cloud/i.test(String(a && a.label || "")));
+      return (want ? `Back in ${nm}.` : `Taken out of ${nm}.`) + (res.warnings && res.warnings.length ? " Its labels are not remade yet." : asked ? " Its labels are asked of the cloud." : "");
+    }
     return res.warnings && res.warnings.length ? "Saved. The set's labels are not remade yet." : "";
   }
-  async function editCommitted(sh, node, want) {
+  async function editCommitted(sh, node, want, o) {   // (G6: o.viewer, a viewer's press: its done line is shown as done, without the shake)
     SETEDIT.busy = sh; sh._incBusy = { want, text: want ? "Putting in…" : "Taking out…" };
     renderRelease(sh, node);   // (the pill shows the pressed position and the spinner while it saves)
-    let line = "";
-    try { line = await runEdit(sh, want); }
+    let line = "", good = false;
+    try { line = await runEdit(sh, want, o); good = !!(o && o.viewer); }
     catch (e) { line = e && e.said ? e.message : "Not saved: " + (SHORT(e && e.message) || "try again."); }
     finally { SETEDIT.busy = null; sh._incBusy = null; }
     try { refreshMembership(); } catch (e) { console.warn("[In current set]", e); }   // every card follows the truth, the switch with them
-    if (line) sayNo(node, line);
+    if (line) sayNo(node, line, good ? { ok: true } : undefined);
   }
+  /* (VIEWINCLUDE, item 7, Paul 21 Nov 2026: the 10K / 14K "In current set" switch on a staff computer said "Changed on the computer that carries the run", and since the cloud carries every run no
+     computer does, so the switch could never be used): on a viewer (mode "on", no run held here) a Rose Gold, 10K or 14K sheet's press is ONE ask to the cloud (roseCutAsk kind "include" /
+     "exclude", lane "rosecut", _charmNestGreenLine.js member): the cloud records the person's yes and looks at the sets by the set rules (charm-nest-assembly-core.js), or takes the sheet out
+     of its open set (cmdLeaveSet: the order rule, a cut, the owner's set refuse it in words). The switch shows the press and a spinner while the cloud works, then the cloud's own words; nothing
+     is changed on this computer but its copy of the sheet's tick. A sheet of a committed set keeps the Library's own path (editCommitted). Mode off: never asked (cloudPress is false). */
+  const cloudPress = sh => !B.run && !!sh.runId && goldFamily(sh.metal) && !!(window.CNViewer && typeof CNViewer.on === "function" && CNViewer.on());
+  const leftCommitted = sh => !!sh.leftSet && Sets.ofRun(sh.runId).some(s => s.committedAt && String(s.setId) === String(sh.leftSet));
+  const ASK_MS = 4 * 60000;
+  async function cloudInclude(sh, node, want) {
+    const name = sheetNameOf(sh), done = (line, o) => { sh._incBusy = null; try { refreshMembership(); } catch (e) { console.warn("[In current set]", e); } if (line) sayNo(node, line, o); };
+    if (!sh.sheetId) return done("Not saved yet. Try again in a moment.");
+    if (!(typeof window.CharmNestCloudLanes === "function" && window.CharmNestCloudLanes("rosecut", sh))) return done("The cloud does not take this switch yet. Nothing was changed.");
+    const by = who() || (typeof needEmployee === "function" ? await needEmployee("Kept with this change to the set.") : "");
+    if (!by) return done("Sign in to change a set.");
+    sh._incBusy = { want, text: "Asking the cloud…" }; renderRelease(sh, node);
+    const F = window.CharmNestRunFollow, dev = (() => { try { return F && typeof F.dev === "function" ? F.dev() : ""; } catch (_) { return ""; } })();
+    let r = null; try { r = await api("charmNestLibrary", { op: "roseCutAsk", sheetId: sh.sheetId, kind: want ? "include" : "exclude", by, dev }, { quiet: true }); } catch (e) { r = { error: (e && e.data && e.data.error) || (e && e.message) || String(e) }; }
+    if (!r || r.error || !r.ask) return done("Not sent: " + (SHORT((r && r.error) || "") || "the cloud did not answer."));
+    if (r.again && r.ask.kind !== (want ? "include" : "exclude")) return done("The cloud is still on another press of this sheet. Try again soon.");
+    const seq = r.ask.seq;
+    for (const t0 = Date.now(); Date.now() - t0 < ASK_MS;) {
+      await new Promise(res => setTimeout(res, Date.now() - t0 < 60000 ? 3000 : 6000));
+      let g = null; try { g = await api("charmNestLibrary", { op: "roseCutAskGet", sheetId: sh.sheetId }, { quiet: true }); } catch (_) { continue; }
+      const a = ((g && g.asks) || []).find(x => x && x.sheetId === sh.sheetId); if (!a || +a.seq !== +seq) continue;
+      if (a.state === "refused") return done(SHORT(a.why, 140) || "The cloud did not change it.");
+      if (a.state !== "done") continue;
+      // (this computer's copy of the tick follows the cloud's answer; the sheet's set, number and draft mark come with the next look at the run's records)
+      if (want) { sh.solidPick = true; delete sh.leftSet; if (sh.metal === "rose") delete sh.autoCutOff; } else { sh.solidPick = false; if (sh.metal === "rose") sh.autoCutOff = true; }
+      try { if (F && typeof F.now === "function") F.now("include"); } catch (_) { /* the next look brings it */ }
+      try { toast(`${name}: ${SHORT(a.why, 160) || (want ? "included by the cloud" : "taken out by the cloud")}`, "ok", 6000); } catch (_) { /* the line says it */ }
+      return done(SHORT(a.why, 140) || (want ? "Included." : "Taken out."), { ok: true });
+    }
+    return done("Asked. The cloud has not answered yet: this card shows it when it does.", { ok: true });
+  }
+  /* ── G6 BEGIN (Paul 21 Nov 2026: on a viewer the switch refused, in words, a take-out of a sheet of a COMMITTED set whenever this page had not read that set's record: the page could not
+     tell the set was committed, so the press went to the cloud's member(), whose cmdLeaveSet refuses a committed set; and a sheet taken out of a committed set could not be put back).
+     Now, on a viewer, before a press is asked of the cloud, the sheet's own record and its set's record are read from the cloud (getSheet, setGet: READ ops) whenever this page cannot
+     tell: a sheet of a committed set (out of it, or back into the committed set it was taken out of) goes by the Library's own path (editCommitted: LibraryFlow, op flowApply step
+     setMember, which the server takes from a page in mode "on"; the set's QR labels and files then asked of the cloud, labelsAsk) with the Library's rules and words; every other press is
+     the cloud's (cloudInclude, member()). The person sees the answer in the line next to the switch. Rose Gold joins a committed set only by its Cut Sheet press, as before. Mode "off":
+     never comes here (cloudPress is false). → true when the press was answered here, false when it is the cloud's. ── */
+  const g6Committed = s => !!(s && s.committedAt);
+  async function g6SetOf(sh, want) {   // → { setId, seq } when the press belongs to a committed set, else null
+    let rec = null;
+    try { rec = ((await api("charmNestLibrary", { op: "getSheet", id: sh.sheetId }, { quiet: true })) || {}).sheet || null; } catch (_) { rec = null; }
+    const setNow = rec ? (rec.setId && !rec.draft && rec.solidIncluded !== false ? String(rec.setId) : null) : inSetNow(sh) ? String(sh.setId) : null;   // (the record is the truth; unread, the page's copy)
+    const id = want ? (setNow ? null : String((rec && (rec.leftSet || leftSetOf(rec))) || sh.leftSet || "") || null) : setNow;
+    if (!id) return null;
+    let set = null; try { set = Sets.ofRun(sh.runId).find(s => String(s.setId) === id) || null; } catch (_) { set = null; }
+    if (!g6Committed(set)) { try { set = ((await api("charmNestLibrary", { op: "setGet", setId: id }, { quiet: true })) || {}).set || set; } catch (_) { /* unread: the cloud's own answer */ } }
+    return g6Committed(set) && (want || !set.sheetIds || set.sheetIds.map(String).includes(String(sh.sheetId))) ? { setId: id, seq: set.seq || null } : null;
+  }
+  async function g6ViewerRoute(sh, node, want) {
+    const route = includeRoute(sh, want);
+    if (route.no) { renderRelease(sh, node); sayNo(node, route.no); return true; }
+    const seqOf = id => { try { return (Sets.ofRun(sh.runId).find(s => String(s.setId) === String(id)) || {}).seq || null; } catch (_) { return null; } };
+    if (route.edit && (route.edit === "out" || leftCommitted(sh))) { await editCommitted(sh, node, want, { viewer: true, seq: seqOf(want ? sh.leftSet : sh.setId) }); return true; }   // (this page knows the committed set)
+    if (!sh.sheetId || (want && sh.metal === "rose") || !(S.cloud && S.cloud.ok)) return false;
+    sh._incBusy = { want, text: "Reading its set…" }; renderRelease(sh, node);
+    let c = null; try { c = await g6SetOf(sh, want); } catch (_) { c = null; } finally { sh._incBusy = null; }
+    if (!c) return false;
+    if (want) sh.leftSet = c.setId;   // (the committed set it was taken out of, as its record says: runEdit puts it back there)
+    await editCommitted(sh, node, want, { viewer: true, seq: c.seq });
+    return true;
+  }
+  /* ── G6 END ── */
   /** The open run on this screen lets a sheet go from the set it is still making (the Library's drop on In progress, Paul 10 Oct: "I should be able to move it completely freely").
    *  The Library has already had the server check the rules and write the hold and the "taken out" record. The sheet is marked as taken out of its set and made a draft, and the run's own
    *  assembly (assembleNow) does the rest, as it does for a sheet that stops qualifying: the pieces back to ready, the membership saved, the set's sheet list, order lines and labels made
@@ -6851,6 +6921,12 @@ const Gate = window.Gate = (() => {
     const retry=inc.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
     retry.onclick=()=>changeMembership(m,picked(sh),sh).catch(()=>{});
     include.onchange=async e=>{
+      // (VIEWINCLUDE, item 7, Paul 21 Nov 2026: on a viewer in mode "on" the press is the cloud's to do: asked, its answer shown here; a committed set's sheet keeps the Library's path)
+      // (G4, Paul 21 Nov 2026: a cut sheet a committed set still lists, whose copy here lost its place, was "Its set is fixed." here: the cloud answers from the records (Gate.rejoin's case: "in Set N already",
+      //  and this page follows the record; or where it is put back), _charmNestGreenLine.js joinCut. A cut sheet in no set: its Include is the cloud's join there too, never a second cut)
+      if(cloudPress(sh)&&e.target.checked&&sh.roseCutAt&&!inSetNow(sh)&&!sh.recalled&&committedSheet(sh))return cloudInclude(sh,node,true);
+      // (G6, Paul 21 Nov 2026: a sheet of a committed set, read from the cloud when this page lacks the set's record, goes by the Library's path; every other press is the cloud's)
+      if(cloudPress(sh)){const want=e.target.checked;if(await g6ViewerRoute(sh,node,want))return;const route=includeRoute(sh,want);if(route.no){renderRelease(sh,node);return sayNo(node,route.no);}if(route.edit&&(route.edit==='out'||leftCommitted(sh)))return editCommitted(sh,node,want);return cloudInclude(sh,node,want);}
       if(!B.run&&sh.runId&&solid(m)){renderRelease(sh,node);return sayNo(node,"Changed on the computer that carries the run");}   // (FOLLOWOPTIONS: the set a sheet is in is the run's to decide)
       const want=e.target.checked,route=includeRoute(sh,want);
       // a press the rule refuses: the switch goes back to where the truth is and says why, next to itself
@@ -6899,8 +6975,12 @@ const Gate = window.Gate = (() => {
      engraving backs go with their charms. Pressing Merge or Re-nest closes the panel, so the sheet is in full view for the
      merge (mergeScene); its progress is the card's own status line (mergeStage), and "Done" is a note under it. ── */
   const MERGE = {};   // metal → { ask, busy, done }: this page's own, never saved (R is)
-  const busyPage = p => ["nesting", "finishing", "queued"].includes(p.status) || !!p._operationStarting || !!p._learnedStarting || !!(p.persisted && !p.persistedDone);
-  const mergeable = p => solid(p.metal) && p.charms.length > 0 && modern(p.runId) && membershipEditable(p) && !p.roseCutAt && !p.laserDoneAt && !holding(p) && !(p.rosePlan || p.roseProtected);   // (a sheet behind a green line keeps its charms where they are)
+  /* S4 (Paul 21 Nov 2026): on a viewer (cloud mode "on": B.run is null, the run is followed) Merge sheets was hidden (modern(runId) is false for a run this page does not hold). Its
+     sheets of the FOLLOWED run are offered, and the press is sent to the cloud (runCmdPut consolidate / renest, through CNRelayAsk), never done on this computer. */
+  const s4Run = () => { try { return !B.run && window.CNViewer && typeof CNViewer.on === "function" && CNViewer.on() ? (window.CharmNestRunFollow?.state?.().runId || null) : null; } catch (_) { return null; } };
+  const s4Sheet = p => !!p.sheetId && !!p.runId && p.runId === s4Run();
+  const busyPage = p => ["nesting", "finishing", "queued"].includes(p.status) || !!p._operationStarting || !!p._learnedStarting || !!(p.persisted && !p.persistedDone) || !!(window.CNViewer && typeof CNViewer.nestOf === "function" && CNViewer.nestOf(p));   // (S4: a sheet the cloud is nesting)
+  const mergeable = p => solid(p.metal) && p.charms.length > 0 && (modern(p.runId) || s4Sheet(p)) && membershipEditable(p) && !p.roseCutAt && !p.laserDoneAt && !holding(p) && !(p.rosePlan || p.roseProtected);   // (a sheet behind a green line keeps its charms where they are)
   const charmsWord = n => `${n} charm${n === 1 ? "" : "s"}`;
   const pw = p => window.CharmNestSheetName ? CharmNestSheetName.short(p) : `Sheet ${p.page}`;   // "Sheet 2" in a set, "Draft 2" outside every set (charm-nest-sheet-name.js)
   const sheetsWord = list => list.length === 1 ? pw(list[0]) : `${list.slice(0, -1).map(pw).join(", ")} and ${pw(list.at(-1))}`;
@@ -6973,6 +7053,38 @@ const Gate = window.Gate = (() => {
     if (M && at && typeof document !== "undefined" && !document.hidden && at.getClientRects().length) { const r = at.getBoundingClientRect(); if (r.bottom > 0 && r.top < innerHeight) { M.note(line, { text: done.text, ms: done.bad ? 12000 : 7000 }); return; } }
     toast(done.text, done.bad ? "bad" : "ok", 6000);
   }
+  /* S4-MERGE-BEGIN · a viewer's Merge sheets, done by the cloud. "move": one consolidate per later sheet onto the first (the cloud moves its pieces and nests the first sheet; what does not
+     fit goes on); "renest": one renest per sheet (the cloud nests each sheet again from scratch). Each request is put in the cloud (CNRelayAsk, always: whatever the cloud's beat) and
+     followed to its answer; the card's status line shows the cloud's steps, and what the cloud answered is said once, never "done" before it answered. → true when every request was taken. */
+  function s4Words(plan, kind) {
+    const t = plan.target;
+    if (kind === "move") return `The cloud moves ${charmsWord(plan.moving)} from ${sheetsWord(plan.sources)} into ${pw(t)}'s free room and nests ${pw(t)}: its charms stay where they are, and whatever does not fit goes on to the next sheet.`;
+    return `The cloud nests ${sheetsWord(plan.pages)} again from scratch, one after another, each sheet with the charms it holds now (${charmsWord(plan.total)} in all).`;
+  }
+  async function s4Merge(m, kind, plan, st) {
+    const t = plan.target, at = Date.now();
+    st.ask = null; st.done = null;
+    st.busy = { kind, at, text: "Asking the cloud…", pages: new Set(plan.pages), target: t, s4: true };
+    try { closeOptions(m); } catch (_) { /* the panel may be shut already */ }
+    repaintMerge(m);
+    const cmds = kind === "move" ? plan.sources.map(p => ({ type: "consolidate", metal: m, sourceId: p.sheetId, targetId: t.sheetId, label: `Merge sheets: ${pw(p)} onto ${pw(t)}`.slice(0, 150) }))
+      : plan.pages.map(p => ({ type: "renest", metal: m, sheetId: p.sheetId, label: `Re-nest ${pw(p)}`.slice(0, 150) }));
+    const said = []; let bad = false, waiting = false;
+    for (let i = 0; i < cmds.length; i++) {
+      const cmd = cmds[i], pre = cmds.length > 1 ? `${i + 1} of ${cmds.length} · ` : "";
+      const step = text => { if (st.busy) { st.busy.text = pre + String(text || "").replace(/^the cloud: /i, "The cloud: "); repaintMerge(m); } };
+      step(`Asking the cloud: ${cmd.label}…`);
+      const r = typeof window.CNRelayAsk === "function" ? await window.CNRelayAsk(cmd, t2 => step(t2), 600000, { always: true }) : { ok: false, text: "This page cannot reach the cloud. Reload it, then press it again." };
+      if (r && r.ok) said.push(r.text || `${cmd.label}: done`);
+      else if (r && r.queued) { waiting = true; said.push(`${cmd.label}: sent; ${r.text || "the cloud does it at its next pass."}`); }
+      else { bad = true; said.push(`${cmd.label}: not done. ${(r && r.text) || "No answer."}${i + 1 < cmds.length ? " The rest was not asked." : ""}`); break; }
+    }
+    st.busy = null;
+    st.done = { text: (bad ? "Merge sheets: " : waiting ? "Merge sheets sent to the cloud: " : "Merge sheets done by the cloud: ") + said.join(" · "), bad, at: Date.now() };
+    repaintMerge(m); mergeNote(m, st.done); setTimeout(() => repaintMerge(m), 12500);
+    return !bad;
+  }
+  /* S4-MERGE-END */
   /** Merge a metal's sheets: kind "move" (the later sheets' charms into Sheet 1's free room) or "renest" (all of them
    *  again, from scratch). Resolves once the sheets it took are nested and saved (or it stopped), true when it ran. */
   function mergeSheets(m, kind, spec) {
@@ -6980,6 +7092,7 @@ const Gate = window.Gate = (() => {
     if (spec) kind = "move";
     const plan = spec ? specPlan(m, spec) : mergePlan(m), st = MERGE[m] || (MERGE[m] = {});
     if (!plan || st.busy || !["move", "renest"].includes(kind)) return Promise.resolve(false);
+    if (!spec && s4Run()) return s4Merge(m, kind, plan, st);   // (S4: a viewer sends the merge to the cloud)
     const run = B.run, t = plan.target, ops = window.CharmNestOperations;
     st.ask = null; st.done = null;
     st.busy = { kind, at: Date.now(), text: "Waiting for the sheets to finish their current step…", pages: new Set(plan.pages), before: new Set(pagesOf(m)), target: t, ...(spec ? { retire: new Set(spec.keep ? [] : plan.sources), source: plan.sources[0], names: new Map(plan.pages.map(p => [p, pw(p)])) } : {}) };
@@ -7300,7 +7413,7 @@ const Gate = window.Gate = (() => {
     help.hidden = !!st.busy || asking;
     help.classList.toggle("bad", !!done?.bad);
     help.textContent = done ? done.text : blocked ? "Wait until the sheets finish nesting and saving." : plan ? `Use Move all when ${pw(plan.target)} has free room and its charms should stay where they are; use Re-nest to pack every charm again for the tightest fit.` : "";
-    if (asking) { q("ask-text").textContent = mergeWords(plan, st.ask); q("go").textContent = st.ask === "move" ? "Merge" : "Re-nest"; }
+    if (asking) { q("ask-text").textContent = s4Run() ? s4Words(plan, st.ask) : mergeWords(plan, st.ask); q("go").textContent = st.ask === "move" ? "Merge" : "Re-nest"; }   // (S4: on a viewer the cloud does it, in its own words: s4Words)
     const ask = kind => { st.ask = kind; st.done = null; paintMerge(sh, node); q("go").focus(); };
     move.onclick = () => ask("move"); renest.onclick = () => ask("renest");
     q("cancel").onclick = () => { st.ask = null; paintMerge(sh, node); move.focus(); };
@@ -8238,13 +8351,13 @@ const Engrave = window.Engrave = (() => {
     })().catch(e=>toast(e.message,"bad",7000)).finally(()=>{openingBack=null;openingBackId=null;});
     return openingBack;
   }
-  async function syncEditedBack(job) {
+  async function syncEditedBack(job, o) {
     const {sheet:d}=await api("charmNestLibrary",{op:"getSheet",id:job.editSheet.sheetId});
     if(!d) return;
     job.editSheet.backPool=d.backPool || [];
     for(const p of allSheets()) if(p.sheetId===d.id) {p.backPool=d.backPool || [];p.backOutputs=d.backOutputs || null;if(p.recalled) Object.assign(p.recalled,{backPool:p.backPool,backs:p.backPool});}
     for(const r of S.library.rows) if(r.id===d.id) Object.assign(r,{backPool:d.backPool || [],backs:d.backPool || [],backCount:(d.backPool || []).length});
-    if(["written","skipped"].includes(job.state)) {
+    if(["written","skipped"].includes(job.state) && !(o && o.cloud)) {   // (ITEM 9: the cloud wrote an edit as its line's job's approval: that job and the line's words are the cloud's record, read with the line)
       const taken=[];
       for(const other of items().values()) if(other!==job && other.copies.includes(job.copies[0]) && faceOf(other)===faceOf(job)) {   // (the piece's other face keeps its own job)
         taken.push(other);
@@ -9901,7 +10014,8 @@ const Engrave = window.Engrave = (() => {
     if(EG.cardKey===job.key) EG.card?._flushSpacing?.();
     const approvalButton=(button?.isConnected===false ? null : button) || (EG.cardKey===job.key ? EG.card?.querySelector('[data-a="approve"]') : null);
     const wasDisabled=!!approvalButton?.disabled;
-    if(approvalButton){approvalButton.textContent=(job.editingBack || unplacedPre(job)) ? "Approved" : "Saving…";approvalButton.disabled=true;approvalButton.setAttribute?.("aria-busy","true");}
+    const cloudEdit=!!job.editingBack && (cloudBacks() || !!window.CNViewer?.on?.());   // (ITEM 9, Paul 21 Nov 2026: an edited back the cloud saves is "Saving…" until it is saved, never "Approved" first)
+    if(approvalButton){approvalButton.textContent=((job.editingBack && !cloudEdit) || unplacedPre(job)) ? "Approved" : "Saving…";approvalButton.disabled=true;approvalButton.setAttribute?.("aria-busy","true");}
     job.approvalPreparing=true;
     try {
     if(EG.cardKey===job.key) {
@@ -9925,14 +10039,17 @@ const Engrave = window.Engrave = (() => {
     if (!job.fit || !job.verify || !job.verify.geometry.ok) { notApproved(job, !job.fit ? "Not approved: the words are not placed on the charm yet" : !job.verify ? "Not approved: the placement is still being checked" : "Not approved: the placement failed its check · move or resize the words first", 4000); return; }
     // (CLOUDLANE, cloud plan v2 build step 11, P9; DORMANT: only while the cloud carries this run and "engrave" is one of its lanes, never while the drive is off) the cloud builds, checks, uploads and
     //  records the file (SEALAFTERSAVE there too): the press is sent to it, and nothing is built or written here. The face waits in `approving` until the cloud's record says it is written.
+    // (ITEM 9, Paul 21 Nov 2026: an approved engraving EDITED from the Library sheet preview (editingBack) skipped this lane and was built on this browser: on a viewer its save was refused
+    //  ("Workspace checkpoint waits ..."), with the cloud writing the run's files saveBacks returned at once, and the card said Approved with its seal while nothing was saved. It goes to the
+    //  cloud now as an edit of its line's job (CharmNestEngraveCloud.approve: the cloud reopens the job, writes that piece's file; cloudEditSaved brings the seal down once it is saved).)
     { const EC = window.CharmNestEngraveCloud;
-      if (EC && typeof EC.lane === "function" && !job.editingBack && !unplacedPre(job) && await EC.lane(job)) {
+      if (EC && typeof EC.lane === "function" && !unplacedPre(job) && await EC.lane(job)) {
         const sent = await EC.approve(job, by);
-        if (sent && sent.ok) { job.approving = { at: sent.at, by, text: job.text, cloud: true }; approveSay(job, `Sent to the cloud: it saves the ${faceWord(job)} file, then the seal comes down`, null, true); try { Session.schedule(); } catch (_) {} for (const show of [render, () => Orders.render()]) try { show(); } catch (_) {} return; }
-        if (!(sent && sent.local)) { notApproved(job, `Not approved: ${String((sent && sent.message) || "the cloud did not take the approval").replace(/^Not approved:\s*/i, "")}`); return; }
+        if (sent && sent.ok) { job.approving = { at: sent.at, by, text: job.text, cloud: true, ...(sent.jobKey ? { jobKey: sent.jobKey } : {}) }; approveSay(job, `Sent to the cloud: it saves the ${faceWord(job)} file, then the seal comes down`, null, true); try { Session.schedule(); } catch (_) {} for (const show of [render, () => Orders.render()]) try { show(); } catch (_) {} return; }
+        if (!(sent && sent.local) || cloudEdit) { notApproved(job, `Not approved: ${String((sent && sent.message) || "the cloud did not take the approval").replace(/^Not approved:\s*/i, "")}`); return; }   // (ITEM 9: an edit the cloud does not take is said, never built here)
       }
-      // (VIEWAPPROVE, Paul 21 Nov 2026: a viewer writes no file and keeps no workspace, so a placed piece the cloud did not take is said in words, never tried on this browser)
-      else if (!job.editingBack && !unplacedPre(job) && window.CNViewer?.on?.()) { notApproved(job, "Not approved: the cloud could not be reached to take this approval. Press Approve again in a moment."); return; } }
+      // (VIEWAPPROVE, Paul 21 Nov 2026: a viewer writes no file and keeps no workspace, so a placed piece the cloud did not take is said in words, never tried on this browser; ITEM 9: an edit too)
+      else if (!unplacedPre(job) && (window.CNViewer?.on?.() || cloudEdit)) { notApproved(job, "Not approved: the cloud could not be reached to take this approval. Press Approve again in a moment."); return; } }
     const approvedAt=Date.now();let prepared;
     jobStep(job,"file",`Making and checking the ${faceWord(job)} file…`);
     try{prepared=await approveWithin(prepareApproval(job,by,approvedAt),APPROVE_MS.file,`the ${faceWord(job)} file was not made in ${minutesOf(APPROVE_MS.file)}. Press Approve to try again`);}catch(e){notApproved(job,`Not approved: ${e.message}`);return;}
@@ -9984,6 +10101,20 @@ const Engrave = window.Engrave = (() => {
       if(approvalButton){approvalButton.removeAttribute?.("aria-busy");approvalButton.textContent=job.state==="review" ? "Approve" : "Approved";if(job.state==="review")approvalButton.disabled=wasDisabled;}   // (APPROVEFIX: a press that did not approve leaves "Approve", never a live "Approved")
       if(job.state==="review")render();
     }
+  }
+  /** (ITEM 9, Paul 21 Nov 2026) The cloud wrote an edited back (CharmNestEngraveCloud's watch saw its task done): the approval is made on this card now (state, seal), the sheet's backs and the
+      Library are read again, and the person is told. false when this card no longer waits on that approval (a newer press, or it was put away). */
+  async function cloudEditSaved(job, at) {
+    if (!job || !job.editingBack || !(job.approving && job.approving.cloud && +job.approving.at === +at)) return false;
+    const by = job.approving.by;
+    try { CNEngravingSeals.add(job, "engraveApproved", by, +at); } catch (e) { console.warn("Engraving seal", e); }
+    job.state = "written"; job.approvedBy = by; job.approvedAt = +at; job.expectedApprovedAt = +at; job.reason = null;
+    if (job.row && job.row.engrave) job.row.engrave.state = "written";
+    delete job.approving; delete job.approvalIntent;
+    try { await syncEditedBack(job, { cloud: true }); } catch (e) { console.warn("Edited back: the sheet's backs were not read again", e); }
+    toast(`${isFront(job) ? "Front" : "Back"} engraving updated`, "ok");
+    for (const show of [render, () => Orders.render()]) try { show(); } catch (_) {}
+    return true;
   }
   /** CLOUDLANE (cloud plan v2 build step 11, P9; DORMANT: false while the drive is off): the cloud carries this run and "engrave" is one of its lanes, so its back files are the cloud's to write. */
   const cloudBacks = () => { try { const EC = window.CharmNestEngraveCloud; return !!(EC && typeof EC.carries === "function" && EC.carries()); } catch (_) { return false; } };
@@ -14108,7 +14239,7 @@ const Engrave = window.Engrave = (() => {
     return n;
   }
   artChanged._again = new Map();
-  return { viewFaceOf, setViewFace, showFace, showStage: svShowStage, stageNow: svStageNow, stageSeq: k => { const r = SV_STAGES.get(String(k == null ? "" : k)); return r ? r.seq : 0; }, stagePlaceOf: svPlaceOf, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, heldNoPiece, unplacedPre, settleStuckBacks, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, discardStaged, stageFace, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, pendingOrderIds, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, placeOf, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { viewFaceOf, setViewFace, showFace, showStage: svShowStage, stageNow: svStageNow, stageSeq: k => { const r = SV_STAGES.get(String(k == null ? "" : k)); return r ? r.seq : 0; }, stagePlaceOf: svPlaceOf, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, heldNoPiece, unplacedPre, settleStuckBacks, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, discardStaged, stageFace, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, pendingOrderIds, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, placeOf, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, cloudEditSaved, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
    list of pieces, the Pieces counts and a monogram line's pieces (the same slots and piece keys: "<line>" for one piece, "<line>#C<u>" for several) read THIS. Added beside the Engrave object, not inside its return. */
@@ -15833,9 +15964,9 @@ const RunCtl = window.RunCtl = (() => {
     let res = null; try { res = await carrier(r.runId); } catch (_) { return; }
     try { if (window.CharmNestDrive) CharmNestDrive.beat(res, r); } catch (_) { /* (CLOUDDRIVE build step 15: the hand-over to the cloud, charm-nest-drive.js; nothing while the drive is off) */ }
     if (!res || !res.ok || res.mine || r !== B.run) return;
-    carrierLost = true; const who = (res.carrier && res.carrier.by) || "another computer";
-    try { agent({ run: r.runId }, "warn", `This run is now carried by ${who} on another computer: this page reloads and follows it from the cloud`); } catch (_) {}
-    try { toast(`This run is now carried by ${who} on another computer: this page reloads to follow it`, "bad", 8000); } catch (_) {}
+    carrierLost = true; const who = (res.carrier && res.carrier.by) || "another computer", byWhom = res.carrier && res.carrier.dev === "cloud" ? "the cloud" : `${who} on another computer`;   // (G9: the cloud is no computer)
+    try { agent({ run: r.runId }, "warn", `This run is now carried by ${byWhom}: this page reloads and follows it from the cloud`); } catch (_) {}
+    try { toast(`This run is now carried by ${byWhom}: this page reloads to follow it`, "bad", 8000); } catch (_) {}
     window.__runHandedOver = true; setTimeout(() => { try { location.reload(); } catch (_) {} }, 2500);
   }
   if (typeof setInterval === "function" && typeof window !== "undefined" && !window.__carrierTimer) window.__carrierTimer = setInterval(() => { carrierBeat().catch(() => {}); }, 20000);
@@ -16772,7 +16903,7 @@ const RunCtl = window.RunCtl = (() => {
     try {
       if (globalThis.navigator?.onLine === false) throw new Error("the network is down");
       if (!await claimRun(r.runId)) throw new Error("another sorter tab is carrying on with this run");
-      { const c = await carrier(r.runId).catch(() => null); if (c && c.ok && !c.mine && c.alive) throw new Error(`${(c.carrier && c.carrier.by) || "another computer"} carries this run on another computer`);
+      { const c = await carrier(r.runId).catch(() => null); if (c && c.ok && !c.mine && c.alive) throw new Error(c.carrier && c.carrier.dev === "cloud" ? "the cloud carries this run: a person's Resume takes it back" : `${(c.carrier && c.carrier.by) || "another computer"} carries this run on another computer`);
         if (c && c.ok && !c.mine && c.cloud) throw new Error("the cloud carries this run: a person's Resume takes it back");   // (CLOUDDRIVE P8: a run the cloud carries is never taken by Auto, whatever the age of its beat; never while the drive is off)
       }   // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access")
       await api("charmNestLibrary", { op: "ping", calibration: false }, { quiet: true });
@@ -16830,8 +16961,9 @@ const RunCtl = window.RunCtl = (() => {
       const n = B.openRuns.length, runs = `${n} open run${n === 1 ? "" : "s"}`;
       // (FOLLOWSTATE, Paul 15 Nov 2026: "Michelle's computer doesn't say that it just says running"): a computer that follows the run says the run's state as the cloud has it, with the reason it stopped
       const fs = window.CharmNestRunFollow && CharmNestRunFollow.state(), fr = fs && fs.runId && fs.run;
-      const fShort = !fr ? runs : fr.status === "stopped" ? "Run stopped on the computer that carries it" : `Following the run · ${fr.status === "processed" ? "processed, sheets filling" : fr.status || "open"}`;
-      const fWhy = !fr ? `<b>${runs}</b> · left from an earlier session` : fr.status === "stopped" ? `<b>Stopped on the computer that carries the run:</b> ${esc(fr.stoppedBy || "")} — it is resumed there` : `<b>This computer follows the run</b> · it is carried on another computer · ${esc(fr.status || "open")}`;
+      const fCloud = !!(window.CNViewer && CNViewer.on && CNViewer.on());   // (G9: in mode "on" the cloud carries the run: the words name it, never a computer)
+      const fShort = !fr ? runs : fr.status === "stopped" ? (fCloud ? "Run stopped in the cloud" : "Run stopped on the computer that carries it") : `Following the run · ${fr.status === "processed" ? "processed, sheets filling" : fr.status || "open"}`;
+      const fWhy = !fr ? `<b>${runs}</b> · left from an earlier session` : fr.status === "stopped" ? (fCloud ? `<b>Stopped in the cloud:</b> ${esc(fr.stoppedBy || "")} — Resume asks the cloud to carry on` : `<b>Stopped on the computer that carries the run:</b> ${esc(fr.stoppedBy || "")} — it is resumed there`) : (fCloud ? `<b>This computer follows the run</b> · the cloud carries it · ${esc(fr.status || "open")}` : `<b>This computer follows the run</b> · it is carried on another computer · ${esc(fr.status || "open")}`);
       return { tone: fr && fr.status === "stopped" ? "stop" : "wait", short: fShort, why: fWhy,
         acts: B.openRuns.slice(0, 3).map(x => `<button class="btn gold sm" data-rbres="${esc(x.runId)}" title="carry on from ${esc(x.step)} · ${x.lines} piece(s) · ${new Date(x.updatedAt).toLocaleString()}">Resume ${esc(x.runId.slice(-8))} · ${esc(x.step)}</button>`).join("") + `<button class="btn ghost sm" id="rbLater" title="leave these for later — they stay on record">Not now</button>` };
     }
@@ -17894,7 +18026,11 @@ const CustomSheet = window.CustomSheet = (() => {
    *  window steps out of the way and comes back as it was (SendTour); no copy of the card behind it is lifted.
    *  (MONOSEND, Paul 18 Oct 2026: the monogram's Approve sends with how.by, the person who pressed it, how.stamp false (its own monogram seal was the press, so no sheet stamp
    *  comes down on a card that is not on screen) and how.tour false (the press was on the monogram's card, not on a Review card: no tour of the Review tab). A design tagged with its monogram line (F.mono.line) is that line's copy, not the next line's in turn.) */
+  /* CUSTOMSEND (21 Nov 2026): a viewer (mode "on": CNViewer, its workspace frozen, no run held) keeps nothing of a send on this browser: the send is the cloud's (customSheetPut, runCmdPut
+     customsend), so its checkpoints are not asked of a workspace that cannot save (they threw "Workspace saving is unavailable" and the send stopped before the cloud ever heard of it). */
+  const viewerSend = () => { try { return !B.run && !!(window.CNViewer && typeof CNViewer.on === "function" && CNViewer.on()); } catch (_) { return false; } };
   async function checkpoint() {
+    if (viewerSend()) return;
     Session.schedule();
     if (await Session.flushNow?.() === false) throw new Error("Workspace saving is unavailable; keep this order open and retry the send");
   }
@@ -18001,9 +18137,11 @@ const CustomSheet = window.CustomSheet = (() => {
       // The exact file/copy assignment and signer are durable before any pool mutation or stamp.
       await checkpoint();if(!current())return;
       const receipt=await saveCloud(e,"pending");if(!current())return;
-      if(receipt?.phase==="sent"){
+      if(receipt?.phase==="sent" && !(viewerSend() && window.CharmNestRunFollow?.state?.().runId)){   // (CUSTOMSEND: on a viewer a send already recorded is still asked of the cloud: it answers at once when its pieces are already these designs)
         e.sent={id:intent.id,at:intent.at,by:intent.by,lines:intent.lines};delete e.sendIntent;delete e.sendError;e.sendCloudPending=false;ver++;keepSheetSeal(e);await checkpoint();redraw();return e.sent;
       }
+      // S4: a viewer (mode "on") places nothing itself, and with no run open the cloud has no sheet for the piece: nothing is placed, nothing is said sent, and the person is told what to do
+      if(viewerSend() && !window.CharmNestRunFollow?.state?.().runId){e.sendError="No run is open in the cloud.";if(!how.recover)toast(`Order ${e.rid}: not on a sheet. No run is open in the cloud, so there is no sheet to put it on yet; its design is saved. Start the run (Start on the run banner), then press Send to Sheet again.`,"warn",14000);return null;}
       const touring=!how.recover && how.tour!==false && tourOk();if(touring && !how.from)try{snap=SendTour.snap(cardNode(ck));}catch(_){}
       holdKey=touring?cardNode(ck)?.dataset.mkey || "":"";if(holdKey && window.Motion && Motion.carry)Motion.carry(holdKey,30000);
       if(!how.recover && !intent.pressed){
@@ -18024,9 +18162,14 @@ const CustomSheet = window.CustomSheet = (() => {
       if(remoteRun){
         await saveCloud(e,"sent");if(!current())return;
         e.carrierPending={at:Date.now(),runId:remoteRun,askedAt:Date.now()};await checkpoint();
-        say("Asking the computer that carries the run…");
+        say(viewerSend()?"Asking the cloud…":"Asking the computer that carries the run…");
         try{remoteOut=await askCarrier(e,t=>say(t));}catch(err){remoteOut={ok:false,retry:true,text:String(err?.message || err)};}
         if(!current())return;
+        /* CUSTOMSEND (21 Nov 2026): the send is through only once the computer or the cloud that carries the run answered done. A refusal or no answer yet is said in its own words, and nothing
+           is sealed, released or said "sent" here: the order's hold stays, so an old piece is never left on its sheet unheld behind a send that did not happen. */
+        if(viewerSend() && (!remoteOut || !remoteOut.ok)){e.sendError=String((remoteOut && remoteOut.text) || "No answer.").slice(0,300);nestHold?.releaseAll();if(snap?.ghost)snap.ghost.remove();letGo();stampHost?.remove();stampHost=null;busy.delete(ck);redraw();
+          if(!how.recover)toast(remoteOut && remoteOut.retry?`Order ${e.rid} is saved but not on a sheet yet: ${remoteOut.text} Press Send to Sheet again to ask again.`:`Order ${e.rid}: not on a sheet. ${(remoteOut && remoteOut.text) || "No answer."}`,"warn",14000);
+          return null;}
       }else{
       say("Placing on the sheets…");
       for(const r of rows){
@@ -18091,32 +18234,35 @@ const CustomSheet = window.CustomSheet = (() => {
     if(carrierAsks.has(e.ck))return carrierAsks.get(e.ck);
     const task=(async()=>{
       const F=window.CharmNestRunFollow,runId=F?.state?.().runId,dev=typeof F?.dev==="function"?F.dev():"";
-      if(B.run || !runId || !dev)throw new Error("No run is open on another computer to place it.");
-      const c=await api("charmNestLibrary",{op:"runCarrier",runId,dev,check:true},{quiet:true});
-      if(!c?.alive || c.mine)throw new Error("The computer that carries the run is not open right now.");
-      const name=c.carrier?.by || "the computer that carries the run";
+      /* S4 (Paul 21 Nov 2026): in cloud mode "on" the cloud carries every run, so the send is put in the cloud whatever its last beat says (a late beat refused it: "not open right now"), as
+         CNRelayAsk does, and the words name the cloud; with no run open the person is told what to do, in true words. Mode "off": as before. */
+      const s4On=viewerSend();
+      if(B.run || !runId || !dev)throw new Error(s4On?(!runId?"No run is open in the cloud, so there is no sheet to put it on yet. Start the run (Start on the run banner), then press Send to Sheet again.":"This computer has no name for the cloud yet. Reload the page, then press Send to Sheet again."):"No run is open on another computer to place it.");
+      let c=null;try{c=await api("charmNestLibrary",{op:"runCarrier",runId,dev,check:true},{quiet:true});}catch(err){if(!s4On)throw err;}
+      if(!s4On && (!c?.alive || c.mine))throw new Error("The computer that carries the run is not open right now.");
+      const cloud=s4On || String(c?.carrier?.dev || "")==="cloud",name=cloud?"The cloud":c?.carrier?.by || "the computer that carries the run",whose=cloud?"The cloud":`${name}'s computer`;   // (CUSTOMSEND: the cloud carries the run in mode "on")
       /* CARRIERRETRY (Paul, 17 Nov 2026): asked again, a send is asked ONCE: this computer's own request for this card that still waits, is being done, or was done (this send's) is the one waited for, not another put beside it
          (the carrier's exchange is also a no-op on pieces that already are these designs). */
       let put=null;try{const L0=await api("charmNestLibrary",{op:"runCmdList",runId},{quiet:true}),now0=Date.now(),since=(+e.carrierPending?.at || 0)-30000;put=(L0?.cmds || []).find(x=>x && x.type==="customsend" && x.args?.ck===e.ck && x.dev===dev && ((x.state==="waiting" && now0-(+x.at || 0)<600000) || (x.state==="running" && now0-(+x.stepAt || +x.at || 0)<180000) || (x.state==="done" && (+x.at || 0)>=since))) || null;}catch(_){put=null;}
       if(!put)put=await api("charmNestLibrary",{op:"runCmdPut",runId,dev,by:employeeName() || "",cmd:{type:"customsend",ck:e.ck,ids:Object.keys(decisionLines(e)),label:`Place the designs sent for order ${e.rid}`.slice(0,150)}},{quiet:true});
       if(!put?.id)throw new Error(put?.error || "The request was not sent.");
-      say(`Waiting for ${name}'s computer…`);
+      say(`Waiting for ${cloud?"the cloud":whose}…`);
       for(const t0=Date.now();Date.now()-t0<11*60000;){
         await new Promise(r=>setTimeout(r,Date.now()-t0<60000?3000:6000));
         let list=null;try{list=await api("charmNestLibrary",{op:"runCmdList",runId},{quiet:true});}catch(_){continue;}
         const k=(list?.cmds || []).find(x=>x && x.id===put.id);if(!k)continue;
-        if(k.state==="cancelled" || (k.state==="failed" && /^too old$|^Not done: asked /i.test(String(k.text || ""))))throw new Error(`${name}'s computer did not get to it in time.`);
+        if(k.state==="cancelled" || (k.state==="failed" && /^too old$|^Not done: asked /i.test(String(k.text || ""))))throw new Error(`${whose} did not get to it in time.`);
         if(k.state==="done" || k.state==="failed"){if(all()[e.ck]===e){delete e.carrierPending;ver++;Session.schedule();}return {ok:k.state==="done",text:String(k.text || (k.state==="done"?"its new piece is on the sheet":"It could not be placed.")),name};}
-        if(k.state==="running" && k.step)say(`${name}'s computer: ${k.step}`);
+        if(k.state==="running" && k.step)say(`${whose}: ${k.step}`);
         /* CARRIERGONE (Paul, 17 Nov 2026): a computer closed less than 90 s ago still counts as open (runCarrier FRESH), so a send pressed then waited 11 minutes. While the request has not started, the carrier is
            looked at again at each look: not open, or 25 s without the request starting, and it is asked again later (the card keeps carrierPending; the request stays queued and the carrier does it when it is open and free). */
-        else if(k.state==="waiting"){
+        else if(k.state==="waiting" && !s4On){   // (S4: in mode "on" the cloud does it at its next pass, whatever its beat: the send waits for its answer)
           let gone=false;try{const c2=await api("charmNestLibrary",{op:"runCarrier",runId,dev,check:true},{quiet:true});gone=!!c2 && (!c2.alive || !!c2.mine);}catch(_){/* not told: not gone */}
-          if(gone)throw new Error("The computer that carries the run is not open right now.");
-          if(Date.now()-t0>=25000)throw new Error(`${name}'s computer has not started it yet.`);
+          if(gone)throw new Error(cloud || viewerSend()?"The cloud is not carrying the run right now.":"The computer that carries the run is not open right now.");
+          if(!cloud &&Date.now()-t0>=25000)throw new Error(`${whose} has not started it yet.`);
         }
       }
-      throw new Error(`${name}'s computer did not answer.`);
+      throw new Error(`${whose} did not answer.`);
     })();
     carrierAsks.set(e.ck,task);try{return await task;}finally{if(carrierAsks.get(e.ck)===task)carrierAsks.delete(e.ck);}
   }
@@ -18713,6 +18859,7 @@ const CustomSheet = window.CustomSheet = (() => {
       keeper = lib.durable({
         get etsyWrite() { return !!(S.settings && S.settings.keepEtsyWrite === "on"); },   // (ETSYALIAS: off unless a person turns the Etsy SKU write back on in the settings file: Etsy refuses it, the listing's saved answer matches instead)
         store: { get: k => { try { return localStorage.getItem(k); } catch (_) { return null; } }, set: (k, v) => localStorage.setItem(k, v) },
+        skip: rec => !!(window.CNViewer && CNViewer.on() && (rec.etsyOnly || !keepV.checked)),   // (item 14: a viewer runs its own saves only, once the cloud was asked what it finished; an Etsy step is the cloud's)
         online: () => S.cloud.ok === true && navigator.onLine !== false, lock: RLock(), locks: navigator.locks && typeof navigator.locks.request === "function" ? { request: (name, fn) => navigator.locks.request(name, fn) } : null,
         saveBuilt: (rec, b) => KeepBytes.put("built|" + rec.hash, { ai: b.ai, png: b.png, sku: b.sku, at: Date.now() }),
         loadBuilt: rec => KeepBytes.get("built|" + rec.hash).then(x => (x && x.ai && x.png && x.sku ? { ai: x.ai, png: x.png, sku: x.sku } : null)),
@@ -18727,6 +18874,7 @@ const CustomSheet = window.CustomSheet = (() => {
   }
   /** On a page load: saves in the repository whose Etsy step is not done (the browser that made them is gone or was closed) are finished by this page; the cloud is the memory. */
   async function keepPending() {
+    if (window.CNViewer && CNViewer.on()) return 0;   // (G9: in mode "on" the pending Etsy steps are the cloud's repair's; a viewer resumes only its own saves, keepViewerResume)
     try {
       const kp = keeperOf(); if (!kp || WORKSPACE_SANDBOX || S.cloud.ok !== true) return 0;
       const r = await api("charmNestLibrary", { op: "customSavePending" }, { quiet: true });
@@ -18744,7 +18892,45 @@ const CustomSheet = window.CustomSheet = (() => {
   }
   // COST (Oct 2026): not in a hidden tab (the next beat after it is looked at again does it; a load and online still do)
   setInterval(() => { try { if (!document.hidden) keepRepair("beat"); } catch (_) { /* quiet */ } }, 10 * 60 * 1000);
-  const keepKick = reason => { if (window.CNViewer && CNViewer.on()) return;/* (CLOUDDRIVE build step 14: no save keeper here) */ try { const kp = keeperOf(); if (kp) { kp.resume(reason || "kick"); keepPaintLater(); if (reason === "load" || reason === "online") setTimeout(() => keepRepair(reason), 3000); } } catch (err) { console.warn("Save keeper", err); } };
+  const keepKick = reason => { if (window.CNViewer && CNViewer.on()) { keepViewerKick(reason); return; }/* (CLOUDDRIVE build step 14: no repair pass and no adopted Etsy step here; item 14: a viewer's own saves, below) */ try { const kp = keeperOf(); if (kp) { kp.resume(reason || "kick"); keepPaintLater(); if (reason === "load" || reason === "online") setTimeout(() => keepRepair(reason), 3000); } } catch (err) { console.warn("Save keeper", err); } };
+  /* ITEM 14 (Paul 21 Nov 2026: "staff keep FULL use of their own inputs from any computer"): a design save begun on a viewer (cloud mode "on") was finished only while its tab stayed open;
+     after a reload nothing resumed it, and its design is only in this browser (cn.keep.v1), so the cloud's repair cannot finish it. A viewer now resumes its OWN unfinished saves (the same
+     keeper, PRESS ops only), once it has asked the cloud what is already done: a save the cloud holds (customSaveGet: in the repository; its Etsy step is the cloud repair's) ends here as done
+     ("by the cloud"), never run twice; an adopted Etsy step is the cloud's. It says in words what it finishes, and each save says when it is done (keepIntentToast). No repair pass, no
+     adoption here (keepRepair, keepPending stay the cloud's). Mode off: nothing here runs. */
+  const keepV = { checked: false, busy: null, t: 0 };
+  const keepLiveRec = r => !!r && (r.state === "wanted" || r.state === "running" || r.state === "waiting");
+  function keepViewerKick(reason) {
+    try { const kp = keeperOf(); if (!kp) return; if (!keepV.checked) { keepViewerResume().catch(() => {}); return; } kp.resume(reason || "kick"); keepPaintLater(); } catch (err) { console.warn("Save keeper", err); }
+  }
+  function keepViewerResume() {
+    if (keepV.busy) return keepV.busy;
+    const again = () => { clearTimeout(keepV.t); keepV.t = setTimeout(() => keepViewerKick("again"), 30000); return 0; };
+    keepV.busy = (async () => {
+      const kp = keeperOf(); if (!kp) return 0;
+      const open = kp.list().filter(r => mine(r) && keepLiveRec(r));
+      if (!open.length) { keepV.checked = true; kp.resume("viewer"); return 0; }
+      if (S.cloud.ok !== true) return again();   // (asked at the next wake-up: online, focus, the cloud back, or in 30 s)
+      const going = [];
+      for (const r of open) {
+        if (r.etsyOnly) { kp.cloudDone(r.key, { sku: r.sku, etsy: false }); continue; }
+        let g = null; try { g = await api("charmNestLibrary", { op: "customSaveGet", rid: String(r.rid), listingId: String(r.listingId), ...(r.sandbox ? { sandbox: true } : {}) }, { quiet: true }); } catch (_) { g = null; }
+        if (!g || g.error) return again();
+        const sv = g.save;
+        if (sv && sv.sku && (sv.phase || "repo") === "repo" && !sv.repair && !sv.superseded) kp.cloudDone(r.key, { sku: String(sv.sku).toUpperCase(), etsy: !!(sv.etsy && sv.etsy.state === "linked") });
+        else going.push(r);
+      }
+      keepV.checked = true; clearTimeout(keepV.t);
+      kp.resume("viewer"); keepPaintLater();   // ("viewer", not "load": a needs-attention Etsy step is not tried again here; the cloud's repair does it)
+      if (going.length) {
+        const L = RLock(), pw = going.some(r => !r.sandbox) && !(L && typeof L.unlocked === "function" && L.unlocked("upload"));
+        const names = going.slice(0, 4).map(r => `order ${r.rid}${r.name ? ` (${txt(r.name)})` : ""}`).join(", ") + (going.length > 4 ? ` and ${going.length - 4} more` : "");
+        toast(`Finishing ${going.length} design save${going.length === 1 ? "" : "s"} begun on this computer: ${names}. ${going.length === 1 ? "It goes" : "They go"} on by ${going.length === 1 ? "itself" : "themselves"} on this page, and you are told when each is done${pw ? ". The repository password is needed first: open the order's Designs window and enter it" : ""}`, "ok", 12000);
+      }
+      return going.length;
+    })().finally(() => { keepV.busy = null; });
+    return keepV.busy;
+  }
   /** This workspace's intents only (a sandbox page never runs a real save, and a real page never runs a rehearsal). */
   const mine = rec => !!rec && !!rec.sandbox === !!WORKSPACE_SANDBOX;
   /** The intent of one card (the newest that is not switched off), or null. (An Etsy step adopted from the cloud has no card: it is the order's.) */
@@ -18815,7 +19001,7 @@ const CustomSheet = window.CustomSheet = (() => {
       const K = keeps.get(rec.ck) || [...keeps.values()].find(k => ownsK(k, rec));
       if (K && ownsK(K, rec) && (K.intentKey === rec.key || !K.intentKey || rec.etsyOnly)) { K.intentKey = rec.key; keepApplyIntent(K, rec, ev.view); }
       // the design is in the repository: the page reads the listings' answers again, so the other open orders of this listing are associated with it now, not at the next pull (P5)
-      if (rec.repo && !rec.sandbox && rec.outcome !== "rehearsed" && !keepMapsFor.has(rec.key)) { keepMapsFor.add(rec.key); if (!keepFlowStart(rec)) setTimeout(() => { try { Orders.loadMaps(true).catch(() => {}); } catch (_) { /* the next pull reads them */ } }, 400); }
+      if (rec.repo && !rec.sandbox && rec.outcome !== "rehearsed" && !keepMapsFor.has(rec.key)) { keepMapsFor.add(rec.key); if (rec.outcome === "cloud" || !keepFlowStart(rec)) setTimeout(() => { try { Orders.loadMaps(true).catch(() => {}); } catch (_) { /* the next pull reads them */ } }, 400); }
       // (WRONGCHARM2: a rehearsal says what the save WOULD have changed, in the same panel, and writes nothing)
       if (rec.sandbox && rec.state === "done" && rec.outcome === "rehearsed" && !keepMapsFor.has(rec.key) && (rec.upd || 0) > Date.now() - 20000) { keepMapsFor.add(rec.key); keepRehearse(rec); }
       keepFlowEtsy(rec);
@@ -18900,7 +19086,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const witnessed = !!(K.seen && (K.seen.repo || K.seen.etsy));
     if (rec.state === "done") {
       K.phase = rec.outcome === "rehearsed" ? "rehearsed" : "linked"; K.final = { done: K.phase, sku: K.sku, text: rec.outcome === "already" ? view.line : "" }; K.fromRecord = !witnessed;
-      if (!witnessed) K.rows = { sku: { state: "done", text: K.sku }, repo: { state: "done", text: rec.outcome === "already" ? "Already in the repository" : "Saved to the repository" }, etsy: { state: "done", text: "Linked on Etsy" } };
+      if (!witnessed) K.rows = { sku: { state: "done", text: K.sku }, repo: { state: "done", text: rec.outcome === "already" ? "Already in the repository" : rec.outcome === "cloud" ? "Saved to the repository by the cloud" : "Saved to the repository" }, etsy: rec.outcome === "cloud" && !rec.etsy ? { state: "work", text: "The cloud links it on Etsy" } : { state: "done", text: "Linked on Etsy" } };
       if ((was === "running" || was === "waiting") && witnessed && !K.foldP) K.foldP = new Promise(r => { K.foldDone = r; });
       return;
     }
@@ -18917,6 +19103,7 @@ const CustomSheet = window.CustomSheet = (() => {
     if (keepToasted.has(tag) || (rec.state !== "done" && rec.state !== "attention")) return; keepToasted.add(tag);
     if (rec.state === "done" && !rec.etsyOnly && (rec.upd || 0) < Date.now() - 20000) return;   // (a record read from storage after a reload is shown, not announced)
     if (D.dlg && D.dlg.open && D.ck === rec.ck) return;
+    if (rec.state === "done" && rec.outcome === "cloud") { toast(`Order ${rec.rid}: ${view.line}. Already done by the cloud: not saved again on this computer`, "ok", 8000); return; }   // (item 14)
     if (rec.state === "done") { if (rec.outcome === "rehearsed") toast("Rehearsal complete. Nothing was saved.", "ok", 4000); else toast(rec.outcome === "already" ? `Order ${rec.rid}: ${view.line}` : `Order ${rec.rid}: ${rec.sku} saved to the repository and linked on Etsy`, "ok", 6000); }
     else toast(`Order ${rec.rid}: ${rec.repo ? rec.sku + " saved to the repository. " : "Not saved to the repository. "}Needs attention: ${rec.why || "something went wrong"}. Open the order to try again.`, "bad", 9000);
   }
@@ -19648,7 +19835,7 @@ const CustomSheet = window.CustomSheet = (() => {
     }, delay || 0);
     return true;
   }
-  return { touched: () => { ver++; redraw(); }, add, remove, send, prepare, heldCharm, sentOf, decisionOf, sending, recover, load, hydrate, applyRemote, askCarrier, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, sheetStamps, sheetSealsHtml, sentButtonHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
+  return { touched: () => { ver++; redraw(); }, add, remove, send, prepare, heldCharm, sentOf, decisionOf, sending, recover, load, hydrate, applyRemote, askCarrier, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, sheetStamps, sheetSealsHtml, sentButtonHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepResumes: () => true, keepViewerResume, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════
@@ -19909,6 +20096,9 @@ const Review = window.Review = (() => {
   function redraw() { render(); LiveStrip.render(); if (window.CNFrame) CNFrame.later("banner", RunCtl.renderBanner); else RunCtl.renderBanner(); }
   function add(it) { put(it); redraw(); }
   const settled = [];                                                     // what this shift has answered, newest first
+  // (S2, Paul 21 Nov 2026) a viewer: cloud mode "on" and no run carried here (Review's answers go to the cloud: Accept the new order, Resolved)
+  const rvViewer = () => !B.run && !!(window.CNViewer && typeof CNViewer.on === "function" && CNViewer.on());
+  const changeAsked = new Map();                                          // (S2) line key → when "Accept the new order" was sent to the cloud from here: its card waits for the cloud's answer
   /* The order timeline: a question a line raises (needsDecision, once per line and kind) and a person's answer to it here
      (decided, skipped, held). A card notes its answer as it acts (answered); the event is recorded when the question
      leaves the line (tlSettle): at remove() for a card taken away, or at the sync for one its answer re-read away, which
@@ -19963,11 +20153,16 @@ const Review = window.Review = (() => {
   function remove(key, how) {
     const n = items().length;
     const gone = items().find(x => x.key === key);
+    // (S2: the answer in words, read before tlSettle lets it go: the cloud's Resolved record keeps it)
+    const viewerNow = rvViewer(), said = viewerNow && gone ? (((gone.rows || [gone.row]).filter(Boolean).map(r2 => answers.get(r2.key + "\u0000" + gone.kind)).find(Boolean)) || null) : null;
     B.review.items = items().filter(x => x.key !== key);
     tlSettle(false);
     if (n === items().length) return;
     if (gone && !/^(eng|held):/.test(String(key))) {
       settled.unshift({ key, row:gone.row || gone.rows?.[0] || null, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, pieces: groupPieces((gone.rows || [gone.row]).filter(Boolean)), orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
+      /* (S2, Paul 21 Nov 2026: Resolved was this computer's own list, lost at every reload of a viewer and different on each computer): on a viewer (cloud mode "on") the answer is
+         kept in the cloud (CNViewer.settledPut → reviewSettledPut), with its words and its line, and Resolved draws the cloud's list on every computer. Mode "off": as before. */
+      if (viewerNow) { try { const d = settled[0]; d.answer = (said && said.say) || ""; d.rowKey = (d.row && d.row.key) || ""; CNViewer.settledPut(d); } catch (e) { console.warn("[review] settled to the cloud", e && e.message); } }
       const d0 = settled[0], rid = d0.orders[0] || "", who = d0.orders.length > 1 ? `${d0.orders.length} orders` : rid ? "Order " + rid : "The decision";
       // held: the order is on hold, shown in Review (NOHOLDPILE; its decision is kept under Resolved); answered: under Resolved
       const held = (gone.rows || [gone.row]).filter(Boolean).every(r2 => r2.hold);
@@ -20018,6 +20213,21 @@ const Review = window.Review = (() => {
     B.review.items = items().filter(x => !x.key.startsWith("ord:") || keep.has(x.key));
     // a changed-order notice goes with its line: one whose line left Etsy, was cut and committed, or left the list was kept for good
     B.review.items = items().filter(x => { if (!String(x.key).startsWith("chg:")) return true; const cur = x.row && B.orders.byKey?.get(x.row.key); return !!cur && !["gone", "committed"].includes(cur.state); });
+    /* (S2, Paul 21 Nov 2026: an order Etsy changed could not be accepted from a staff computer): an Order changed card was made only by this page's own Etsy intake, which never runs on a
+       viewer. On a viewer the card is the cloud's: one for each line the cloud says waits on a change (changePending, as the cloud's Review builds it, charm-nest-review-core.js), with the
+       cloud's words and time; it goes when the cloud's line stops waiting, and while an Accept sent from here waits for the cloud (changeAsked: 20 minutes at most) it is not drawn again. */
+    if (rvViewer()) {
+      const CW = window.CloudWorld, rv = CW && typeof CW.review === "function" ? CW.review() : null, cardOf = new Map(((rv && rv.cards) || []).filter(c => c && /^chg:/.test(String(c.key || ""))).map(c => [String(c.key), c]));
+      const waits = r => !!(r && r.order && r.changePending && !["gone", "committed"].includes(r.state));
+      for (const [k, at] of changeAsked) { const r = B.orders.byKey?.get(k); if (!waits(r) || Date.now() - at > 20 * 60000) changeAsked.delete(k); }
+      for (const r of Orders.rows()) {
+        if (!waits(r) || changeAsked.has(r.key) || r.parentRow) continue;
+        const key = "chg:" + r.key, c = cardOf.get(key), had = items().find(x => x.key === key);
+        const why = (c && c.why) || r.changedWhy || `Etsy updated order ${r.order.receiptId} after the pull`;
+        if (had) Object.assign(had, { row: r, rows: [r], why }); else items().push({ kind: "orderChanged", key, row: r, rows: [r], old: null, why, t: (c && +c.t) || +r.changedAt || Date.now(), cloud: true });
+      }
+      B.review.items = items().filter(x => !String(x.key).startsWith("chg:") || (waits(x.row && B.orders.byKey?.get(x.row.key)) && !changeAsked.has(x.row.key)));
+    }
     // a held notice is a notice, not a decision: it goes when the order it names is committed, gone, or no longer held
     const byRid = new Map();
     for (const r of Orders.rows()) { const k = r.order.receiptId; if (!byRid.has(k)) byRid.set(k, []); byRid.get(k).push(r); }
@@ -20683,7 +20893,7 @@ const Review = window.Review = (() => {
     const no = (why, tone) => { if (onceWas && !started && !row.skuOverride) { row.skuOverride = onceWas; try { Orders.interpretAll(); } catch (_) { /* read at the next pass */ } } if (why) toast(why, tone || "bad", 7000); return { ok: false, why }; };
     if (row && row.fromRecord) await ensureBought(row);   // (ANYWHERE: a computer that follows the run needs the SKU Etsy sold the line under, or the answer is saved under no SKU)
     const off = editSkuOffer(row); if (!off.ok) return no(off.why);
-    if (row.fromRecord && typeof row.line.etsySku !== "string") return no("This computer does not know the SKU Etsy sold this piece under yet (the computer that carries the run sends it with its next save). Press Change SKU again in a minute: nothing was changed");
+    if (row.fromRecord && typeof row.line.etsySku !== "string") return no(window.CNViewer && CNViewer.on && CNViewer.on() ? "This computer does not know the SKU Etsy sold this piece under yet (it comes with the cloud's next save of the run). Press Change SKU again in a minute: nothing was changed" : "This computer does not know the SKU Etsy sold this piece under yet (the computer that carries the run sends it with its next save). Press Change SKU again in a minute: nothing was changed");
     if (!sku) return no("Pick a charm from the repo first");
     const e = Master.entryFor(sku); if (!e || !B.master.entries.has(sku)) return no(`${sku} is not in the charm repo`);
     if (O.entryBlock(e)) return no(`${sku} is blocked in the master, so it cannot be cut`);
@@ -20737,6 +20947,18 @@ const Review = window.Review = (() => {
       toast(`${off.from || "This SKU"} → ${sku} saved for listing ${off.lid}`, "ok");
       // (SKUFOLLOW): on a computer that follows the run nothing more is done here: no piece is made, no sheet is touched. The saved link reaches the computer that carries the run through the cloud's feed (a:aliases),
       //  which makes each piece again with the new charm and puts it on its sheet (its own LISTPICK sweep); this computer sees it as it follows the run
+      // (ITEM 16, Paul 21 Nov 2026: in cloud mode "on" no computer carries the run: the cloud is ASKED to make the listing's open lines again (remakeline: old pieces off, new ones made,
+      //  placed, nested, files written), and the panel says what the cloud answers, never "the computer that carries the run")
+      if (!B.run && window.CNViewer && CNViewer.on && CNViewer.on() && typeof window.CNRelayAsk === "function") {
+        const keys = rows.filter(r => r && r.key && !r.hold && !["gone", "committed", "skipped"].includes(r.state)).map(r => r.key);
+        Orders.interpretAll(); syncOrderItems(); Orders.render();
+        if (!keys.length) { try { flow.line("carrier", `No open piece of listing ${off.lid} needs making again: the cloud reads ${sku} at its next reading of the orders`, "done"); } catch (_) { /* a word only */ } later(flow, null, true); return { ok: true, sku, via: "alias", follower: true, cloud: true, orders: [], done }; }
+        try { flow.line("carrier", `Asking the cloud to make ${keys.length === 1 ? "the piece" : `${keys.length} pieces`} again as ${sku}…`, "work"); } catch (_) { /* a word only */ }
+        const asked = window.CNRelayAsk({ type: "remakeline", ids: keys.slice(0, 80), label: `Change SKU: ${off.from || "no SKU"} → ${sku}`.slice(0, 150) }, t => { try { flow.line("carrier", `The cloud: ${t}`.slice(0, 260), "work"); } catch (_) { /* a word only */ } }, 300000, { always: true })
+          .then(ans => { try { flow.line("carrier", ans && ans.ok ? `The cloud: ${ans.text || "made again"}`.slice(0, 260) : ans && ans.queued ? `Asked of the cloud: ${ans.text}`.slice(0, 260) : `The cloud did not make it again: ${(ans && ans.text) || "no answer"}`.slice(0, 260), ans && ans.ok ? "done" : ans && ans.queued ? "warn" : "failed"); } catch (_) { /* a word only */ } return ans; });
+        later(flow, asked, true);
+        return { ok: true, sku, via: "alias", follower: true, cloud: true, orders: [...new Set(rows.map(r => String(r.order.receiptId)))], done };
+      }
       if (!B.run) {
         try { flow.line("carrier", `The computer that carries the run makes the piece${rows.length === 1 ? "" : "s"} again as ${sku} and puts ${rows.length === 1 ? "it" : "them"} on the sheet: it shows here as soon as that is saved`, "done"); } catch (_) { /* a word only */ }
         Orders.interpretAll(); syncOrderItems(); Orders.render();
@@ -20770,12 +20992,12 @@ const Review = window.Review = (() => {
     //  its piece is swapped on its sheet, which the computer that carries the run writes. From any other computer the request is put in the cloud (runCmdPut skuonce) and that computer does it, in this person's name; asked even when it is not
     //  answering at this moment: the request stays in the cloud and is done as soon as it is (hours, not ten minutes), so the person is never told no
     if (!B.run) {
-      const rid0 = String(row.order.receiptId);
-      if (typeof window.CNRelayAsk !== "function") return no("The run's computer cannot be asked from this page: reload it and try again");
+      const rid0 = String(row.order.receiptId), cloudOn = !!(window.CNViewer && CNViewer.on && CNViewer.on());   // (G9: in mode "on" the words name the cloud)
+      if (typeof window.CNRelayAsk !== "function") return no(cloudOn ? "The cloud cannot be asked from this page: reload it and try again" : "The run's computer cannot be asked from this page: reload it and try again");
       const ans = await window.CNRelayAsk({ type: "skuonce", ids: [row.key], sku, label: `Just this order: ${sku}` }, t => { try { if (opts && typeof opts.onStep === "function") opts.onStep(t); } catch (_) { /* a word only */ } }, 240000, { always: true });
       if (ans && ans.ok) return { ok: true, sku, via: "once", rid: rid0, follower: true, text: ans.text };
       if (ans && ans.queued) return { ok: true, queued: true, sku, via: "once", rid: rid0, follower: true, text: ans.text };
-      return no((ans && ans.text) || "The computer that carries the run did not change it");
+      return no((ans && ans.text) || (cloudOn ? "The cloud did not change it" : "The computer that carries the run did not change it"));
     }
     const rid = String(row.order.receiptId), was = off.cur || off.from || "", at = Date.now();
     // (an order this line sent to Review is answered by the choice first: REVHOLD would keep the old charm on its sheet)
@@ -20845,6 +21067,16 @@ const Review = window.Review = (() => {
    *  and the button on the item's row in the Review tab. */
   async function acceptChange(it) {
     const r = it && it.row, sp = r && r.spec; if (!r || !sp) return;
+    /* (S2, Paul 21 Nov 2026): on a viewer (cloud mode "on") the line is made up again by the cloud: "Accept the new order" is a press the cloud acts on (CNViewer.acceptChange:
+       takeOffAsk { kind: changed, lineKeys }), nothing is repooled here. Refused (in words, by CNViewer): the card stays and nothing is recorded. Taken: the answer is recorded and the
+       card goes to Resolved (Review.remove: kept in the cloud), and it is not drawn again while the cloud makes the line up. */
+    if (rvViewer() && typeof CNViewer.acceptChange === "function") {
+      const ans = await CNViewer.acceptChange({ rid: String(r.order.receiptId), lineKeys: [r.key], name: employeeName() || "" });
+      if (!ans || !ans.ok) return ans || { ok: false };
+      changeAsked.set(r.key, Date.now());
+      answered(it, "decided", "Accept the change", { accepted: true }); remove(it.key);
+      return ans;
+    }
     answered(it, "decided", "Accept the change", { accepted: true }); remove(it.key); r.changePending = false;
     if (r.repoolChanged) { await repool(r); RunCtl.poke(); return; }
     if (r.state === "written" || r.state === "pooled") { if (sp.engraveCandidate) await Engrave.classify(r); else r.engrave = { needed: false, state: "none", approved: true, seals: CNEngravingSeals.merge(r.engrave) }; } else await repool(r);
@@ -21095,11 +21327,11 @@ const Review = window.Review = (() => {
              sheet of its own, and a carrier that is busy or closed never holds the panel: the line says the orders follow as soon as it is free. */
           const remote = !B.run && typeof window.CNRelayAsk === "function";
           if (remote) {
-            const skus = [...new Set([to, also].filter(Boolean))];
-            line("carrier", `Other open orders of ${skus.join(", ")}: asking the computer that carries the run…`, "work");
+            const skus = [...new Set([to, also].filter(Boolean))], cloudOn = !!(window.CNViewer && CNViewer.on && CNViewer.on());   // (G9: in mode "on" the words name the cloud)
+            line("carrier", `Other open orders of ${skus.join(", ")}: asking ${cloudOn ? "the cloud" : "the computer that carries the run"}…`, "work");
             const ans = await window.CNRelayAsk({ type: "keepsync", ids: skus, label: `Make the open orders of ${skus.join(", ")} again from the new design`.slice(0, 150) }, t => line("carrier", `Other open orders: ${t}`, "work"), 420000);
             if (ans && ans.ok) { line("carrier", `Other open orders: ${ans.text}`.slice(0, 260), "done"); tally.orders.add("carrier"); }
-            else line("carrier", `Other open orders of this charm are updated by ${(ans && ans.name ? ans.name + "'s computer" : "the computer that carries the run")} as soon as it is free`, "warn", (ans && ans.text) || "");
+            else line("carrier", `Other open orders of this charm are updated by ${(ans && ans.cloud) || cloudOn ? "the cloud" : (ans && ans.name ? ans.name + "'s computer" : "the computer that carries the run")} as soon as it is free`, "warn", (ans && ans.text) || "");
             for (const e of [...relinkWait.values()]) if (e.row && mine(e.row)) relinkWait.delete(e.key);   // (they are the carrying computer's to make: not waited for, not warned about, here)
           }
           // the lines still waiting for their sheet (one being arranged) are made up by the next sweeps: followed until each is settled (a line in Review waits for its Review: told above)
@@ -21590,6 +21822,31 @@ const Review = window.Review = (() => {
     try { const S = window.Session; if (S) { if (S.schedule) S.schedule(); if (S.flushNow) await S.flushNow(); } } catch (_) { /* the page's own checkpoint carries it */ }
     try { const run = B.run; if (run && Orders.lineRecord && RunCtl.save) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); await RunCtl.save(run); } } catch (_) { /* saved again at the next update */ }
   }
+  /* ITEM 8 (Paul 21 Nov 2026: Release Hold with things set aside, "release anyway" or a blocked SKU cut anyway, pressed on a staff computer while the cloud carries every run). On a viewer
+     (mode "on": the workspace frozen, no run held here) the order with no line on hold went down liftOrder's own way: its lines made up here (nothing is), saveLinesNow (writes nothing),
+     and "released to the nesting queue: first in line" said over a press that reached nowhere. Now the press goes to the cloud, as Release Hold does: releaseAsk { queue: true } with the
+     lines' keys, what the press set aside on each (releaseAnyway, blockOverride, as setAside / blockAside left them on the rows), the seal and the note, the same body the page's own
+     release sends (charm-nest-order-release.js askCloud). The cloud keeps them on the run's lines, first in line, and its intake makes the pieces up and places them. Its lines come back
+     onto the rows (read again with what was set aside), and the person is told what the cloud did, or why nothing was changed. */
+  const viewerOn = () => { try { return !!(window.CNViewer && CNViewer.on && CNViewer.on()); } catch (_) { return false; } };
+  async function liftViaCloud(rid, who, lines, seal, out) {
+    const RF = window.CharmNestRunFollow, runId = (() => { try { return (RF && RF.state && RF.state().runId) || null; } catch (_) { return null; } })(), dev = (() => { try { return String((RF && RF.dev && RF.dev()) || ""); } catch (_) { return ""; } })();
+    const a = out && out.aside && out.aside.get(String(rid)), notes = (a && a.notes) || [], note = notes.slice(0, 4).map(t => String(t).slice(0, 80)).join("; ");
+    const asides = {}; for (const x of lines) { const y = {}; if (x.releaseAnyway) y.releaseAnyway = x.releaseAnyway; if (x.blockOverride) y.blockOverride = x.blockOverride; if (Object.keys(y).length) asides[x.key] = y; }
+    let r = null;
+    try { r = await api("charmNestLibrary", Object.assign({ op: "releaseAsk", orderId: String(rid), by: who, dev, runId: runId || undefined, keys: lines.map(x => x.key), lines: asides, queue: true }, seal ? { seal } : {}, note ? { note: "released anyway: " + note } : {}), { quiet: true, timeoutMs: 45000 }); }
+    catch (e) { r = { error: (e && e.data && e.data.error) || (e && e.message) || String(e) }; }
+    if (!r || !r.ok) { toast(`Order ${rid} was not released: the cloud did not take it (${String((r && r.error) || "no answer").replace(/[.\s]+$/, "").slice(0, 200)}). Nothing was changed: press Release Hold again.`, "bad", 9000); return false; }
+    const got = lines.filter(x => { const l = (r.lines || {})[x.key]; return l && +l.releasedAt > 0 && +l.releasedAt === +r.frontAt; });
+    if (!got.length) { toast(`Order ${rid} was not released: ${r.runId ? "the cloud's run has nothing of it on hold or set aside" : "no run is open in the cloud"}, so nothing was changed.`, "bad", 9000); return false; }
+    for (const x of got) { const l = r.lines[x.key]; for (const f of ["state", "hold", "heldAt", "holdSeen", "reason", "frontAt", "releaseHold", "releaseAnyway", "blockOverride", "_lp"]) if (l[f] !== undefined) x[f] = l[f] && typeof l[f] === "object" ? JSON.parse(JSON.stringify(l[f])) : l[f]; delete x.poolTry; x.holdFromCloud = false; }
+    try { if (Orders.interpretAll) Orders.interpretAll(); } catch (_) { /* read again at the next look */ }   // (what was set aside is read into the lines' questions, as the cloud's world reads it)
+    try { if (RF && RF.now) RF.now("released"); } catch (_) { /* the next feed */ }
+    if (out) out.lifted.add(String(rid));
+    const say = notes.length ? ` Released anyway: ${notes.join("; ").slice(0, 300)}.` : "";
+    toast(`Order ${rid} released in the cloud: first in line; the cloud makes its pieces up and places them.${say}`, "ok", say ? 9000 : 6000);
+    return true;
+  }
   /** One order back in line, at the front, on the next sheet: OrderHold.release (front of the queue, made up again, placed at once, its QR label) when a line of it is held; else its lines are made up again in line, first.
    *  → true when nothing is left to look at. Says how it went on the page. */
   async function liftOrder(rid, who, rows, seal, out) {
@@ -21601,7 +21858,9 @@ const Review = window.Review = (() => {
       if (res && res.ok) {
         const where = (res.sheets || []).map(s => s.label).filter(Boolean).join(", "), say = res.anyway && res.anyway.length ? ` Released anyway: ${res.anyway.join("; ").slice(0, 300)}.` : "";   // (RELEASE: what the press set aside)
         if (out && res.nothing) out.nothing.add(String(rid));
-        toast(res.nothing ? `Order ${rid} released: nothing to place (${res.nothing}), so it is released without a sheet and carries on.${say}` : res.placed ? `Order ${rid} released to the nesting queue: first in line, placed on ${where || "the next sheet"}.${say}` : `Order ${rid} released to the nesting queue: first in line, placed when the next run starts.${say}`, "ok", say ? 9000 : 6000);
+        // (ITEM 8, Paul 21 Nov 2026: on a viewer the release is the cloud's, and the cloud places the pieces: said so, never "placed when the next run starts")
+        if (res.via === "cloud" && viewerOn()) toast(res.nothing ? `Order ${rid} released in the cloud: nothing to place (${res.nothing}).${say}` : `Order ${rid} ${String(res.text || "released in the cloud: the cloud places its pieces at the front of the queue").replace(/[.\s]+$/, "")}.${say}`, "ok", say ? 9000 : 6000);
+        else toast(res.nothing ? `Order ${rid} released: nothing to place (${res.nothing}), so it is released without a sheet and carries on.${say}` : res.placed ? `Order ${rid} released to the nesting queue: first in line, placed on ${where || "the next sheet"}.${say}` : `Order ${rid} released to the nesting queue: first in line, placed when the next run starts.${say}`, "ok", say ? 9000 : 6000);
         return true;
       }
       const msg = String((res && res.error) || "something went wrong");
@@ -21610,6 +21869,7 @@ const Review = window.Review = (() => {
       return false;
     }
     const t = Date.now(), lines = (rows && rows.length ? rows : mine).filter(x => x && x.state !== "gone");
+    if (viewerOn()) return liftViaCloud(rid, who, lines, seal, out);   // (ITEM 8: a viewer makes nothing up and saves nothing: the press is the cloud's)
     for (const x of lines) { x.frontAt = t; delete x.poolTry; await repool(x); }
     const left = lines.find(x => (x.problems || []).length);
     if (left) { toast(`Order ${rid} is back in line, but it still needs a look: ${problemText(left.problems[0])}`, "bad", 9000); return false; }
@@ -21830,7 +22090,10 @@ const Review = window.Review = (() => {
       c.innerHTML = head("Needs material", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Station read", esc(p.metalLabel || "nothing"))}${evRow("Options", optQs(r.line))}${evRow("Title", esc(r.line.title))}</div><div class="why">${esc(it.why)}</div>
         <div class="fixes"><select data-f="mat"><option value="">pick a material…</option>${METALS.map(m => `<option value="${m.key}">${esc(m.label)}</option>`).join("")}</select><button class="btn gold sm" data-a="mat">Use it (writes a staff note)</button><button class="btn ghost sm" data-a="skip">Skip piece</button></div>`;
       bindNeeds(c, "mat", "mat");
-      c.querySelector("[data-a=mat]").onclick = async () => { const m = c.querySelector("[data-f=mat]").value; if (!m) return; const who = by(); if (!who) return; answered(it, "decided", `material ${labelOf(m)}`, { material: m }, who); row_material(it, m, who); };
+      c.querySelector("[data-a=mat]").onclick = async () => { const m = c.querySelector("[data-f=mat]").value; if (!m) return; const who = by(); if (!who) return;
+        // (S1: on a viewer the material is saved in the cloud on the run's lines, with its "Decided" step; the staff note is written as before)
+        if (viewerAnswers()) return saving(c, async () => { const a = await cloudOverride(it, "materialOverride", m, `material ${labelOf(m)}`, { material: m }, who); if (a.ok) for (const r of a.rows) { try { await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text: `${r.spec && r.spec.staffNote ? r.spec.staffNote + "\n" : ""}Material: ${labelOf(m)} (${who}, sorter)` }); } catch (e) { toast("Staff note not written: " + e.message, "bad"); } } })();
+        answered(it, "decided", `material ${labelOf(m)}`, { material: m }, who); row_material(it, m, who); };
     } else if (it.kind === "needsMapping" && p.pairSecond) {
       /* A line that says two different designs (a "Mismatched ..." title, "Silver • 2 symbols", Left and Right options) but names ONE is not guessed (Paul, 9 Oct 2026:
          never guess, ambiguous waits). One press: the same design on both ears (the Right is the mirror of the Left), or the second design's SKU for the Right earring.
@@ -22001,10 +22264,14 @@ const Review = window.Review = (() => {
       };
     } else if (it.kind === "missingSize") {
       c.innerHTML = head("Missing size", `${p.sku} · size ${p.size || "(none)"}`, orderSub) + `<div class="ev">${evRow("Sizes available", (p.available || []).join(", "))}${evRow("Options", optQs(r.line))}</div><div class="fixes"><select data-f="size">${(p.available || []).map(s => `<option>${esc(s)}</option>`).join("")}</select><button class="btn gold sm" data-a="size">Use this size (staff decision)</button></div>`;
-      c.querySelector("[data-a=size]").onclick = async () => { const s = c.querySelector("[data-f=size]").value; const who = by(); if (!who) return; r.sizeOverride = s; answered(it, "decided", `size ${s}`, { size: s }, who); try { await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text: `${sp.staffNote ? sp.staffNote + "\n" : ""}Size ${s} chosen by ${who} (sorter)` }); } catch (_) {} await repool(r); };
+      c.querySelector("[data-a=size]").onclick = async () => { const s = c.querySelector("[data-f=size]").value; const who = by(); if (!who) return;
+        // (S1: on a viewer the size is saved in the cloud on the run's line, with its "Decided" step; the staff note is written as before)
+        if (viewerAnswers()) return saving(c, async () => { const a = await cloudOverride(it, "sizeOverride", s, `size ${s}`, { size: s }, who); if (a.ok) { try { await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text: `${sp.staffNote ? sp.staffNote + "\n" : ""}Size ${s} chosen by ${who} (sorter)` }); } catch (_) {} } })();
+        r.sizeOverride = s; answered(it, "decided", `size ${s}`, { size: s }, who); try { await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text: `${sp.staffNote ? sp.staffNote + "\n" : ""}Size ${s} chosen by ${who} (sorter)` }); } catch (_) {} await repool(r); };
     } else if (it.kind === "oversize") {
       c.innerHTML = head("Oversize", `${p.sku} · ${p.widthMm.toFixed(1)} × ${p.heightMm.toFixed(1)} mm`, orderSub) + `<div class="ev">${evRow("Plate", `${labelOf(p.material)} ${fmt.mm(stockFor(p.material).wPt)} × ${fmt.mm(stockFor(p.material).hPt)} under the ${fmt.pct(S.settings.maxFill)} ceiling`)}</div><div class="fixes"><button class="btn ghost sm" data-a="stock">Different stock (Settings)</button><button class="btn ghost sm" data-a="retry">Try again</button></div>`;
-      c.querySelector("[data-a=stock]").onclick = () => openSettings(); c.querySelector("[data-a=retry]").onclick = () => repool(r);
+      // (S1: on a viewer Try again is the cloud's remake of the line, its answer said; it was repool, which a viewer does not do: nothing happened, in silence)
+      c.querySelector("[data-a=stock]").onclick = () => openSettings(); c.querySelector("[data-a=retry]").onclick = () => (viewerAnswers() ? saving(c, () => cloudRemake(rowsOf(it).filter(x => x && x.key && !x.hold && !["gone", "committed", "skipped"].includes(x.state)).map(x => x.key), `Try again: ${p.sku || "the piece"} too big for the plate`))() : repool(r));
     } else if (it.kind === "engraveWords" || it.kind === "notRepresentable" || it.kind === "fontMissing") {
       const j = it.job; const miss = j.missing || [];
       // (a line engraved on the front and the back: the card names its face in its title; a line with one face says nothing new)
@@ -22041,7 +22308,8 @@ const Review = window.Review = (() => {
       c.querySelector("[data-a=jump]").onclick = () => { remove(it.key); focus(it.line); };
     } else { c.innerHTML = head(it.kind, it.why || "", orderSub); }
     if (typeof decorateRelease === "function") decorateRelease(c, it, c.querySelector(".fixes") || c);   // (RELTOQ / RELHOLD: the one Release Hold, first among the card's buttons)
-    const skipB = c.querySelector("[data-a=skip]"); if (skipB) skipB.onclick = () => { const who = by(); if (!who) return; for (const rr of rowsOf(it)) { rr.state = "skipped"; rr.reason = `piece skipped by ${who}`; rr.problems = []; rr.hold = `piece skipped by ${who}`; } answered(it, "skipped", "Skip piece", null, who); syncOrderItems(); Orders.render(); RunCtl.poke(); };
+    const skipB = c.querySelector("[data-a=skip]"); if (skipB) skipB.onclick = () => { const who = by(); if (!who) return; if (viewerAnswers()) return saving(c, () => cloudSkip(it, who))();   // (S1: on a viewer the skip is saved in the cloud)
+      for (const rr of rowsOf(it)) { rr.state = "skipped"; rr.reason = `piece skipped by ${who}`; rr.problems = []; rr.hold = `piece skipped by ${who}`; } answered(it, "skipped", "Skip piece", null, who); syncOrderItems(); Orders.render(); RunCtl.poke(); };
     // (NOHOLDREV, Paul 17 Oct 2026: "Remove the 'Hold' button from all listings inside the Review tab": none of these cards has a Hold order button now, as no Review row has the orange Hold; an order is held from its order window's piece row)
     return c;
   }
@@ -22051,6 +22319,79 @@ const Review = window.Review = (() => {
       try { await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text: `${r.spec.staffNote ? r.spec.staffNote + "\n" : ""}Material: ${labelOf(m)} (${who}, sorter)` }); } catch (e) { toast("Staff note not written: " + e.message, "bad"); }
     }
     await repoolAll(it);
+  }
+  /* ── S1 (Paul, 21 Nov 2026: Review answers made on a staff computer in cloud mode "on" stayed only in that page's memory; the cloud never saw them) ──
+     On a viewer (no run held here; the cloud carries every run) a person's answer is saved in the cloud on the run's lines (CharmNestRunFollow.decideRows: runLinesPatch with
+     decision: true), with its "Decided" / "Skipped" step on each order's timeline, written by the cloud once. The cloud then acts on it:
+       · Skip piece: the line is "skipped" in the run (never made, never placed); a line that has pieces has them taken off by the cloud's take-off (takeOffAsk hold, its lines only);
+       · Use this size / a material: the override is on the run's line, the cloud's world reads the line again with it and the intake makes it; a line that has pieces is made again
+         by the cloud (runCmdPut remakeline);
+       · Try again (Too big): the cloud's remake (remakeline), its answer said.
+     The card closes from the cloud's answer (the line as the cloud now has it), and every computer reads the same at the world's next build. Mode "off": none of this runs. */
+  const viewerAnswers = () => !B.run && !!(window.CNViewer && typeof CNViewer.on === "function" && CNViewer.on());
+  /** The cloud's answer on a page row: what the run's line now says, and the questions it settles (as the cloud's world reads it: _charmNestWorld.js afterRead). */
+  function cloudRow(r, l) {
+    for (const f of ["state", "reason", "hold", "heldAt", "poolIds"]) if (f in l) r[f] = Array.isArray(l[f]) ? l[f].slice() : l[f];
+    for (const f of ["materialOverride", "sizeOverride"]) { if (l[f] == null) delete r[f]; else r[f] = l[f]; }
+    if (r.state === "skipped") r.problems = [];
+    if (r.materialOverride) { r.spec = Object.assign({}, r.spec, { material: r.materialOverride }); r.material = r.materialOverride; r.problems = (r.problems || []).filter(p => p.kind !== "needsMaterial"); }
+    if (r.sizeOverride) { r.spec = Object.assign({}, r.spec, { size: r.sizeOverride }); r.problems = (r.problems || []).filter(p => p.kind !== "missingSize"); }
+  }
+  /** One answer of card it on a viewer: fieldsOf(row) is what each line takes; saved in the cloud with its timeline step. → { ok, rows } (the lines the cloud took), said in words either way. */
+  async function cloudAnswer(it, type, say, detail, who, fieldsOf) {
+    const rows = rowsOf(it).filter(r => r && r.key && !r.parentRow && !["gone", "committed"].includes(r.state)), F = window.CharmNestRunFollow;
+    if (!rows.length) { toast("Nothing was saved: the piece is no longer in the run", "bad", 7000); return { ok: false, rows: [] }; }
+    if (!F || typeof F.decideRows !== "function") { toast("Not saved: this page cannot reach the cloud's run. Nothing was changed", "bad", 8000); return { ok: false, rows: [] }; }
+    const at = Date.now(), patches = {};
+    for (const r of rows) patches[r.key] = Object.assign({}, fieldsOf(r), { decided: { type, id: `${r.key}.${it.kind}.${at}`, at, by: who, text: `${TYPE_WORDS[type]} by ${who || "?"} · ${KIND_WORDS[it.kind] || it.kind}${say ? ": " + say : ""}`.slice(0, 200), data: Object.assign({ kind: it.kind, answer: say || null, from: "review" }, detail || {}) } });
+    let res = null; try { res = await F.decideRows(patches); } catch (e) { res = { error: (e && e.message) || String(e) }; }
+    const took = rows.filter(r => res && res.lines && res.lines[r.key]);
+    if (!res || res.error || !took.length) { toast(`Not saved in the cloud: ${(res && res.error) || "the cloud's run no longer holds this piece"}. Nothing was changed`, "bad", 9000); return { ok: false, rows: [] }; }
+    try { humanAct(type === "decided" ? "note" : "reject", { orderId: String(took[0].order.receiptId), detail: `${type}: ${it.kind}`.slice(0, 120) }); } catch (_) {}
+    for (const r of took) { cloudRow(r, res.lines[r.key]); try { CNListActivity.touch(r, at); } catch (_) {} if (r.state === "skipped") skipSeen.set(r.key, true); }   // (skipSeen: the timeline's step is the cloud's, never written again here)
+    syncOrderItems(); Orders.render();
+    try { F.now && F.now("decided"); } catch (_) { /* the feed tells it */ }
+    return { ok: true, rows: took };
+  }
+  /** The cloud makes these lines again (remakeline), its answer said in a toast. lead: what was saved, said first. */
+  async function cloudRemake(keys, label, lead) {
+    keys = [...new Set((keys || []).map(String))].slice(0, 80);
+    if (!keys.length) { toast(`${lead ? lead + " " : ""}Nothing to make again: the piece is on hold or no longer open in the run`, lead ? "ok" : "bad", 7000); return { ok: !!lead, none: true }; }
+    if (!(window.CNViewer && CNViewer.lane && CNViewer.lane("cmd:remakeline")) || typeof window.CNRelayAsk !== "function") {
+      toast(`${lead ? lead + " " : ""}Making the pieces again is not the cloud's yet in this build: the pieces already made stay as they are`, "bad", 10000); return { ok: false };
+    }
+    toast(`${lead ? lead + " " : ""}The cloud makes ${keys.length === 1 ? "the piece" : keys.length + " pieces"} again…`, "ok", 6000);
+    const ans = await window.CNRelayAsk({ type: "remakeline", ids: keys, label: String(label || "Made again from Review").slice(0, 150) }, null, 600000, { always: true });
+    if (ans && ans.ok) toast(`The cloud: ${ans.text || "made again"}`.slice(0, 300), "ok", 8000);
+    else if (ans && ans.queued) toast(`Asked of the cloud: ${ans.text}`.slice(0, 300), "ok", 9000);
+    else toast(`The cloud did not make it again: ${(ans && ans.text) || "no answer"}`.slice(0, 300), "bad", 10000);
+    return ans || { ok: false };
+  }
+  /** Skip piece on a viewer: the lines are skipped in the cloud; pieces already made come off their sheets by the cloud's take-off. */
+  async function cloudSkip(it, who) {
+    const why = `piece skipped by ${who}`;
+    const a = await cloudAnswer(it, "skipped", "Skip piece", null, who, () => ({ state: "skipped", reason: why, hold: why, heldAt: Date.now() }));
+    if (!a.ok) return a;
+    const withPieces = a.rows.filter(r => (r.poolIds || []).length), byOrder = new Map();
+    for (const r of withPieces) { const rid = String(r.order.receiptId); if (!byOrder.has(rid)) byOrder.set(rid, []); byOrder.get(rid).push(r.key); }
+    if (!byOrder.size) { toast(`Skipped in the cloud: ${a.rows.length === 1 ? "this piece is" : a.rows.length + " pieces are"} never made`, "ok", 6000); return a; }
+    if (!(CNViewer.lane && CNViewer.lane("takeoff"))) { toast(`Skipped in the cloud. Its pieces already made stay on their sheets: the cloud does not take pieces off in this build`, "bad", 10000); return a; }
+    const failed = [];
+    for (const [rid, keys] of byOrder) {
+      let r = null; try { r = await api("charmNestLibrary", { op: "takeOffAsk", orderId: rid, kind: "hold", lineKeys: keys, note: "Skip piece (Review)", by: who, dev: (window.CharmNestRunFollow && CharmNestRunFollow.dev && CharmNestRunFollow.dev()) || "" }, { quiet: true }); } catch (e) { r = { error: (e && e.message) || String(e) }; }
+      if (!r || r.error) failed.push(`${rid}: ${(r && r.error) || "no answer"}`);
+    }
+    toast(failed.length ? `Skipped in the cloud, but its pieces were not asked off their sheets (${failed.join("; ")})`.slice(0, 300) : `Skipped in the cloud: the cloud takes ${withPieces.length === 1 ? "its pieces" : "their pieces"} off the sheet`, failed.length ? "bad" : "ok", failed.length ? 10000 : 6000);
+    return a;
+  }
+  /** Use this size / a material on a viewer: the override saved in the cloud; a line with pieces made again by the cloud, one with none made by its intake. */
+  async function cloudOverride(it, field, value, say, detail, who) {
+    const a = await cloudAnswer(it, "decided", say, detail, who, () => ({ [field]: value }));
+    if (!a.ok) return a;
+    const made = a.rows.filter(r => (r.poolIds || []).length && !r.hold).map(r => r.key), lead = `${say[0].toUpperCase()}${say.slice(1)}: saved in the cloud.`;
+    if (!made.length) { toast(`${lead} The cloud reads the order again with it and makes its pieces`, "ok", 7000); return a; }
+    cloudRemake(made, `Review: ${say}`, lead).catch(() => {});
+    return a;
   }
   /** The face a Review card is about, in a word: "Front" for a front job, "Back" for a back job of a line that also has a front, "" for every other line (their cards say nothing new). */
   const faceWordOf = j => { const F = window.CharmNestEngraveFaces; if (!F || !j) return ""; if (F.isFront(j)) return "Front"; try { return Engrave.jobsOf(j.row).some(x => F.isFront(x)) ? "Back" : ""; } catch (_) { return ""; } };
@@ -22487,7 +22828,7 @@ const Review = window.Review = (() => {
     const was=node;
     node=el('div','doneRow workRow reviewListRow rvSettled'+(ax?' rvCu':''));node.dataset.rid=String(d.orders?.[0] || '');node.dataset.mkey='settled:'+d.key+':'+d.t;node.dataset.row=row?.key || '';node._stamp=stamp;
     const cs=ax?CustomSheet.cardOf(ax):null,busy=ax?CustomPrint.statusHtml(ax,'sm'):'';
-    const acts=busy||`<span class="ost ok">Resolved</span><span class="by">${esc(d.by)}${d.t?' · '+whenOf(d.t):''}</span>`+(relSt?Orders.releaseSealHtml(relSt):'')+(ax?CustomPrint.failNote(ax)
+    const acts=busy||`<span class="ost ok">Resolved</span><span class="by">${d.answer?esc(d.answer)+' · ':''}${esc(d.by)}${d.t?' · '+whenOf(d.t):''}</span>`+(relSt?Orders.releaseSealHtml(relSt):'')+(ax?CustomPrint.failNote(ax)
       +(printable(ax)&&!cs?.busy?CustomPrint.keptButtonHtml(ax,'print','ghost','Print QR label',`print order ${ax.rid}'s 1 × 1 in QR sticker for the sorting station; its piece is then completed by hand`,'sm'):'')   // (RELHOLD: no Complete Order here; Release Hold is the open card's)
       +(cs?CustomSheet.buttonsHtml(ax,true,false):''):'');
     node.innerHTML=(d.row?ListMedia.pair(d.row):'<div class="compareUnavailable">Decision recorded</div>')+`<div class="engravingIdentity"><span class="queueLabel">Review · resolved</span><div class="engravingOrder"><b class="mono">${esc((d.orders || []).slice(0,2).join(' · '))}</b></div><span class="purchaseLabel">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="rowExcerpt" title="${esc(d.why)}">${esc(d.why)}</span>${d.lines>1?`<span class="groupScope">${d.pieces || d.lines} pieces</span>`:''}${d.row && earPairRow(d.row)?`<span class="groupScope">Left + Right</span>`:''}</div><div class="purchaseSummary">${d.row?purchaseMarkup(d.row):''}</div><div class="rowActions">${acts}</div>${cs?CustomSheet.stripHtml(ax):''}`;
@@ -22565,7 +22906,8 @@ const Review = window.Review = (() => {
     const releasedNow = releasedCards(inOpen, answeredCards).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }));
     let finished = cl.done.concat(cl.sent.filter(it => !it.foldedInto), clLaid, answeredCards, releasedNow).sort((a, b) => doneAt(b) - doneAt(a));
     // (CLOUDWORLD: Resolved is the cloud's Resolved: a card shows here only when the cloud's Review holds it)
-    if (cloudRv && Array.isArray(cloudRv.resolvedKeys)) { const rk = new Set(cloudRv.resolvedKeys); finished = finished.filter(it => rk.has(it.key)); }
+    // (S2: on a viewer, an answer given since the cloud last built its Review is listed at once: the cloud's next build lists it too)
+    if (cloudRv && Array.isArray(cloudRv.resolvedKeys)) { const rk = new Set(cloudRv.resolvedKeys), fresh = rvViewer() ? +cloudRv.at || 0 : Infinity; finished = finished.filter(it => rk.has(it.key) || (!!it.settled && it.kind !== "released" && +it.settled.t > fresh)); }
     /* (CLOUDWORLD, Paul 20 Nov 2026: "The sorting of these orders doesn't match under the review tab"): every card is timed by the cloud's own card (charm-nest-review-core.js `at`: its latest activity, from the shared data), so Newest first,
        Oldest first and the date chips list the same cards in the same order on every computer; a computer's own touches no longer move a card. Without the cloud's Review each card is timed here, as before. */
     { const atMap = cloudRv && Array.isArray(cloudRv.cards) ? (cloudRv._atMap || (cloudRv._atMap = new Map(cloudRv.cards.filter(c => c && c.key).map(c => [String(c.key), +c.at || 0])))) : null;
@@ -24660,7 +25002,7 @@ const OrderWin = window.OrderWin = (() => {
         if (!res || !res.ok) { back(); if (res && res.why) say("bad", esc(res.why)); return; }
         try { d.close(); } catch (_) { d.removeAttribute("open"); }
         if (W.dlg && W.dlg.open && rowOf(W.key)) tryDo(paint);
-        toast(res.queued ? `Order ${rid}: ${k} for this order is asked of the run's computer · ${res.text || "it is done as soon as that computer is free"}` : `Order ${rid}: ${k} for this order only · the listing and Etsy are not changed`, "ok", res.queued ? 10000 : 7000);
+        toast(res.queued ? (window.CNViewer && CNViewer.on && CNViewer.on() ? `Order ${rid}: ${k} for this order is asked of the cloud · ${res.text || "the cloud does it at its next pass"}` : `Order ${rid}: ${k} for this order is asked of the run's computer · ${res.text || "it is done as soon as that computer is free"}`) :`Order ${rid}: ${k} for this order only · the listing and Etsy are not changed`, "ok", res.queued ? 10000 : 7000);
         return;
       }
       d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Changing…"; input.disabled = true; once.disabled = true; cancel.textContent = "Close";
@@ -27942,11 +28284,26 @@ const Recall = window.Recall = (() => {
         const charm = typeof CharmNestArtEdit !== "undefined" ? await CharmNestArtEdit.piece(Pool.cloneCharm(base, `${src.id}:${rc.poolId}`), rc.poolId, pool) : Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); /* (ART EDIT: the piece's own artwork edit, when its pool row names one: charm-nest-art-edit.js) */ charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (piece) Object.assign(charm, CharmNestPoolPieces.fieldsOf(piece));
         // (Manual Control: a piece a person moved, turned or resized by hand keeps that, its pin and its size, from its record)
         if (own) charm.custom = true;   // (TAKEOVERSAFE2, Paul 14 Nov 2026: "Yes, fix resume first")
+        if (rc.hand === true) charm.hand = true;   // (S3: artwork a person added by hand, sent to the cloud from a staff computer: its card offers Exclude / Include and Move to <metal>)
         const man = window.CNManual && CNManual.fromRecord ? CNManual.fromRecord(rc) : null; if (man) { charm.manual = man; if (man.size) charm.pinned.size = man.size; }
         // (OWNSCALE 2, Paul 15 Nov 2026: "6 charms overlap" on the computer that follows the run): a piece saved a little smaller than the standard (shrunk to go back into its old spot) and whose record carries no size mark takes its size from its placement, so the overlap check measures it as it lies
         { const std = typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971, ratio = Number.isFinite(+p.scale) && +p.scale > 0 ? +(+p.scale / std).toFixed(5) : 1; if (!(man && man.size) && Math.abs(ratio - 1) > 0.0005 && ratio >= 0.8 && ratio <= 1.2) { charm.manual = Object.assign({ by: "", at: 0 }, charm.manual || {}, { size: ratio, fit: "inplace" }); charm.pinned.size = ratio; } }
         pg.charms.push(charm);
         pg.placements.push({ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: Number.isFinite(+p.scale) && +p.scale > 0 ? +p.scale : man && man.size ? +((typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) * man.size).toFixed(5) : (typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) });   // (OWNSCALE, Paul 15 Nov 2026: a 14K sheet read "6 charms overlap" on the computer that follows the run): the piece is drawn at the scale ITS PLACEMENT was saved with (six pieces of that sheet were saved a little smaller); it was drawn at the standard scale, larger than it lies on the sheet
+      }
+      // (S3, Paul 21 Nov 2026: a piece added by hand that a person left out of the nest (Exclude, saved on the sheet's record from any computer) has no place on the sheet: it is shown in the
+      //  card's queue, marked excluded, so "Include in nest" can be pressed on every computer; it is made from its own file, as a placed one is)
+      for (const rc of (opts && opts.detached ? [] : (d.charms || []).filter(x => x && x.excluded === true && x.hand === true && x.poolId && !pg.charms.some(c => c.poolId === x.poolId)))) {
+        try {
+          await breath();
+          const pool = B.pool.rows.get(rc.poolId) || ((await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools || {})[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
+          const own = (d.sources || []).find(s => s && (s.id === rc.sourceId || s.name === rc.sourceName)); if (!own || !(own.path || own.url)) continue;
+          const src = await Pool.masterCharm({ sku: rc.sku || pool.sku, aiPath: own.path || own.url, aiUrl: own.url }, null), base = await Pool.ensureBase(src, null, rc.hash ? rc : pool).catch(() => null); if (!base) continue;
+          const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`);
+          Object.assign(charm, { name: rc.name, order: pool.orderId, orderDate: pool.orderDate || 0, arrivedAt: pool.arrivedAt || 0, poolId: rc.poolId, metal: d.metal, lineKey: pool.lineKey, custom: true, hand: true, excluded: true, pinned: null,
+            orderInfo: { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, custom: true, orderless: true } });
+          pg.charms.push(charm);
+        } catch (e) { console.warn("[rebuild] a piece left out of the nest was not shown:", rc.poolId, e && e.message); }
       }
       if (opts && opts.detached) return;   // (ARTUNCUT: only the sheet's pieces, made again from its record: the page's own card is not touched)
       pg.recalled = null; pg.status = "complete"; pg.dirty = false;
@@ -27979,6 +28336,8 @@ const Recall = window.Recall = (() => {
     const inSet = !!rec.setId && !rec.draft;
     pg.setId = inSet ? rec.setId : null; pg.seq = inSet ? rec.setSeq || null : null; pg.setSeq = pg.seq; pg.setDay = inSet ? setDayOfRec(rec) : rec.day || setDayOfRec(rec); pg.sheetIndex = inSet ? rec.sheetIndex || null : null; pg.fileBase = rec.fileBase || pg.fileBase || null;
     pg.draft = !!rec.draft; pg.releaseFull = !!rec.releaseFull; if (rec.solidIncluded === false) pg.solidIncluded = false; else if (pg.solidIncluded === false) delete pg.solidIncluded;
+    // (VIEWINCLUDE, item 7, Paul 21 Nov 2026: on a viewer the In current set switch of a Rose Gold, 10K or 14K sheet shows the sheet's own yes as the cloud's record holds it; mode off: as before)
+    if (["gold10k", "gold14k", "rose"].includes(rec.metal) && window.CNViewer && typeof CNViewer.on === "function" && CNViewer.on()) { if (rec.solidIncluded === true) pg.solidPick = true; else if (rec.solidIncluded === false) pg.solidPick = false; }
     if (Number.isFinite(+rec.page) && +rec.page > 0) pg.page = +rec.page;
     if (rec.draftOrder != null && Number.isFinite(+rec.draftOrder)) { pg.draftOrder = +rec.draftOrder; pg._savedDO = pg.draftOrder; }
     if (+rec.laserDoneAt > 0) pg.laserDoneAt = +rec.laserDoneAt; if (rec.roseCutAt) pg.roseCutAt = rec.roseCutAt;
@@ -28523,7 +28882,7 @@ const Session = window.Session = (() => {
       B.carry = d.carry;
       B.run = d.run; B.orders = d.orders; B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
       // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"): the run this computer carried before it closed, carried meanwhile by another computer that is alive, is not taken back: this page follows it from the cloud
-      try { if (B.run && B.run.runId && S.cloud && S.cloud.ok && window.RunCtl && RunCtl.carrier) { const c = await RunCtl.carrier(B.run.runId, { check: true }); if (window.CharmNestDrive && CharmNestDrive.staleCheckpoint(c, d)) cloudGone = B.run.runId; if (c && c.ok && !c.mine && (c.alive || (c.carrier && c.carrier.dev)) || cloudGone) { agent({ bridge: true }, "cloud", c.alive ? `${B.run.runId} is carried by ${(c.carrier && c.carrier.by) || "another computer"} on another computer: this computer follows it` : `${B.run.runId} was last carried on another computer: this computer's saved copy of it is older than the cloud's and is not used; the run is followed from the cloud (Resume takes it up here, from the cloud)`); B.run = null; } } } catch (_) { /* the heartbeat looks again in 20 s */ }   // (CACHEONLY, Paul 15 Nov 2026: "Computers are only fed the truth"): and a run another computer carried LAST, though that computer is gone now, is not carried on from this computer's older copy either (it was, and its next save put the older copy over the cloud's)
+      try { if (B.run && B.run.runId && S.cloud && S.cloud.ok && window.RunCtl && RunCtl.carrier) { const c = await RunCtl.carrier(B.run.runId, { check: true }); if (window.CharmNestDrive && CharmNestDrive.staleCheckpoint(c, d)) cloudGone = B.run.runId; if (c && c.ok && !c.mine && (c.alive || (c.carrier && c.carrier.dev)) || cloudGone) { agent({ bridge: true }, "cloud", c.alive ? (c.carrier && c.carrier.dev === "cloud" ? `${B.run.runId} is carried by the cloud: this computer follows it` : `${B.run.runId} is carried by ${(c.carrier && c.carrier.by) || "another computer"} on another computer: this computer follows it`) :`${B.run.runId} was last carried on another computer: this computer's saved copy of it is older than the cloud's and is not used; the run is followed from the cloud (Resume takes it up here, from the cloud)`); B.run = null; } } } catch (_) { /* the heartbeat looks again in 20 s */ }   // (CACHEONLY, Paul 15 Nov 2026: "Computers are only fed the truth"): and a run another computer carried LAST, though that computer is gone now, is not carried on from this computer's older copy either (it was, and its next save put the older copy over the cloud's)
       // (CLOUDWORLD stage B, Paul 20 Nov 2026: "the computers are never allowed to store their own information"): a computer that carries no run shows no order line of its own copy: the cloud's come in as soon as it is read (charm-nest-cloud-world.js)
       if (!B.run && !WORKSPACE_SANDBOX && window.CloudWorld && CloudWorld.firstRead) { try { await Promise.race([CloudWorld.firstRead(), new Promise(r => setTimeout(r, 8000))]); } catch (_) {} }   // (the cloud world's first read decides: at most 8 s)
       if (!B.run && window.CloudWorld && CloudWorld.wanted && CloudWorld.wanted() && !WORKSPACE_SANDBOX) { B.orders.rows = []; B.orders.byKey = new Map(); d.review = []; d.jobs = (d.jobs || []).filter(j => j.editingBack && j.editRow); }
@@ -29708,13 +30067,18 @@ function artSheetWrite(sh) {
   const cur = ART_SHEET_WRITES.get(sh); if (cur) { cur.again = true; return cur.run; }
   const st = { again: false };
   st.run = (async () => {
-    let ok = false;
+    let ok = false; const t0 = Date.now();
     do {
       st.again = false;
       if (cutHeld(sh)) return false;   // (SHAREDSHAPE: a changed cut line that does not fit where its piece stands is never written)
       ok = await Promise.resolve(window.writeAsPlaced(sh)).catch(e => { console.warn("artwork edit: sheet write", e); return false; });
     } while (st.again && !sh.roseCutAt && !sh.laserDoneAt && allSheets().includes(sh));
-    if (ok && sh.sheetId) api("charmNestLibrary", { op: "putSheet", sheet: Object.assign({ id: sh.sheetId, filesOwed: null }, cutHeld(sh) ? {} : { cutCheck: null }) }, { quiet: true }).catch(() => {});   // (its record no longer owes its files; its cut lines were checked again)
+    /* S4 (Paul 21 Nov 2026): when the cloud writes the files (a viewer in mode "on", or the files gate handed them to the cloud: CNViewer.filesAsk marks _filesCloudSaid), the cloud's
+       writer clears filesOwed itself once they are written (_charmNestFinish.js, its final putSheet: compare-and-clear). The page's own clear was refused there every time
+       (PAGE_SHEET_REFUSED), silently: it is not sent. The cut lines' check, made here, is still told (cutCheck alone is a page's to send). */
+    const cloudFiles = !!(window.CNViewer && typeof CNViewer.mode === "function" && CNViewer.mode() !== "off" && (CNViewer.on() || +sh._filesCloudSaid >= t0));
+    if (ok && sh.sheetId && cloudFiles) { if (!cutHeld(sh)) api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, cutCheck: null } }, { quiet: true }).catch(e => console.warn("artwork edit: cut check not told", e && e.message)); }
+    else if (ok && sh.sheetId) api("charmNestLibrary", { op: "putSheet", sheet: Object.assign({ id: sh.sheetId, filesOwed: null }, cutHeld(sh) ? {} : { cutCheck: null }) }, { quiet: true }).catch(() => {});   // (its record no longer owes its files; its cut lines were checked again)
     return ok;
   })().finally(() => ART_SHEET_WRITES.delete(sh));
   ART_SHEET_WRITES.set(sh, st);
@@ -30013,10 +30377,12 @@ window.CNPairNow = async function (keys) {
 window.CNRelayAsk = async function (cmd, onStep, maxMs, o) {   // (o.always, ANYWHERE 19 Nov 2026: a request of a person is put in the cloud even when the computer that carries the run is not answering at this moment: it is done as soon as it is, never refused)
   try {
     const F = window.CharmNestRunFollow, runId = F && F.state && F.state().runId, dev = F && typeof F.dev === "function" ? F.dev() : "";
-    if (B.run || !runId || !dev) return { ok: false, none: true, text: "No other computer carries the run." };
+    if (B.run || !runId || !dev) return { ok: false, none: true, text: !B.run && window.CNViewer && CNViewer.on && CNViewer.on() ? "No run is open in the cloud." : "No other computer carries the run." };
     const c = await api("charmNestLibrary", { op: "runCarrier", runId, dev, check: true }, { quiet: true });
-    if (!(o && o.always) && (!c || !c.alive || c.mine)) return { ok: false, none: true, text: "The computer that carries the run is not open right now." };
-    const name = (c && c.carrier && c.carrier.by) || "", nm = name ? `${name}'s computer` : "the computer that carries the run";   // (nm: how the carrying computer is called in a sentence)
+    // (ITEM 16, Paul 21 Nov 2026: in cloud mode "on" the cloud carries every run: a request is always put in the cloud, and the words name the cloud, never a computer)
+    const cloudOn = !!(window.CNViewer && CNViewer.on && CNViewer.on()) || !!(c && c.carrier && c.carrier.dev === "cloud");
+    if (!(o && o.always) && !cloudOn && (!c || !c.alive || c.mine)) return { ok: false, none: true, text: "The computer that carries the run is not open right now." };
+    const name = cloudOn ? "" : (c && c.carrier && c.carrier.by) || "", nm = cloudOn ? "the cloud" : name ? `${name}'s computer` : "the computer that carries the run";   // (nm: how the carrying computer is called in a sentence)
     const put = await api("charmNestLibrary", { op: "runCmdPut", runId, dev, by: (typeof employeeName === "function" && employeeName()) || "", cmd }, { quiet: true });
     if (!put || !put.id) return { ok: false, text: (put && put.error) || "The request was not sent.", name };
     if (typeof onStep === "function") onStep(`Waiting for ${nm}…`, name);
@@ -30029,12 +30395,14 @@ window.CNRelayAsk = async function (cmd, onStep, maxMs, o) {   // (o.always, ANY
       /* CARRIERGONE (Paul, 17 Nov 2026: "This process has caused me a lot of grief"): a computer counts as carrying the run for 90 s after its last beat (runCarrier FRESH), so a page closed a minute ago still read as open and
          the panel waited for it for the whole 7 minutes. While the request has not been started, the carrier is looked at again at each look: once it is not open, or after 25 s without the request starting,
          the answer is plain. The request stays queued: the carrier does it as soon as it is open (and free) again. */
+      else if (k.state === "waiting" && cloudOn) { if (Date.now() - t0 >= 25000) return { ok: false, queued: true, cloud: true, text: "The cloud has not started it yet: it does it at its next pass (every minute or so). Nothing more is needed here.", name }; }
       else if (k.state === "waiting") {
         let gone = false; try { const c2 = await api("charmNestLibrary", { op: "runCarrier", runId, dev, check: true }, { quiet: true }); gone = !!c2 && (!c2.alive || !!c2.mine); } catch (_) { /* not told: not gone */ }
         if (gone) return { ok: false, queued: true, text: `${nm} is not open right now. Nothing more is needed here: the request stays queued and is done as soon as that computer is open again.`, name };
         if (Date.now() - t0 >= 25000) return { ok: false, queued: true, text: `${nm} has not started it yet. Nothing more is needed here: the request stays queued and is done as soon as that computer is free.`, name };
       }
     }
+    if (cloudOn) return { ok: false, queued: true, cloud: true, text: "The cloud is still working on it: it carries on by itself. Nothing more is needed here.", name };
     return { ok: false, text: `${nm} did not answer.`, name };
   } catch (e) { return { ok: false, text: String((e && e.message) || e) }; }
 };
@@ -30236,7 +30604,7 @@ async function bootBridge() {
   if (recovered) await Cleanups.check({ wait: 8000 }).catch(() => {});
   // Never overwrite a checkpoint with a partially restored workspace or start
   // an automatic run over it. Navigation and the saved Library remain usable.
-  if (viewer) { ListMedia.start(); try { Review.redrawLater(1000); } catch (_) {} CustomSheet.load().catch(e => console.warn("Custom design recovery", e)); }   // (a viewer: what is shown, read from the cloud; nothing is kept, pulled, swept or saved here)
+  if (viewer) { ListMedia.start(); try { Review.redrawLater(1000); } catch (_) {} CustomSheet.load().catch(e => console.warn("Custom design recovery", e)).then(() => CustomSheet.keepKick("load")); }   // (item 14: its own unfinished design saves go on; a viewer: what is shown, read from the cloud; nothing is kept, pulled, swept or saved here)
   if (!recoveryFailed && !viewer) {
     Session.listen(); Arrivals.start(); ListMedia.start(); Upkeep.start(); window.AutoCancel?.start();
     try { Review.redrawLater(1000); } catch (_) {}   // (REDRAW: a SKU re-pointed while the workspace was being restored is looked at now that it holds its sheets)

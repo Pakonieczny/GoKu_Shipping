@@ -649,6 +649,8 @@
     //  they were let go, red where they overlap (MCFREE), for the person to resize and move clear; the sheet joins no set until they are)
     let free = false;
     if (!spots && K.moveNow) { spots = asDropped(target, u, pt); free = spots.length > 0; }
+    // ITEM 13 (Paul 21 Nov 2026): on a viewer (the cloud carries every run) the move is ONE request to the cloud, nothing is written or nested here
+    if (spots && spots.length && window.CNViewer && CNViewer.on()) return hopCloud(d, dk, u, spots, who, from, L, refuse, free);
     // (GOLDEDIT, Paul 27 Oct 2026: the move lands: a green line drawn on either sheet, or its cut recorded, is given up now (the window's goldOpen, here and on the server), so the move is saved
     //  and the line drawn again for the new layout after it (the room was looked for on the sheet as its metal was before a recorded cut: the window's preCut). Refused only by the laser's mark)
     if (spots && spots.length && K.goldOpen) {   // (nothing drawn or recorded on either: nothing is asked of the cloud)
@@ -725,6 +727,42 @@
     setTimeout(() => { if (!H.drag && !H.busy && H.docks[dk.side] && H.docks[dk.side].el.classList.contains("open")) { setOpen(false); refresh(true); } }, FLY_NOW + 600);
     const anchor = (H.docks[dk.side] && H.docks[dk.side].el) || K.W.el.plateBox, one = u.pieces.length === 1;
     K.note(anchor, { text: free ? `Order ${u.rid}: ${one ? "the charm" : u.pieces.length + " pieces"} moved to ${word(target)}. ${one ? "It does" : "They do"} not fit there yet: red until you resize or move ${one ? "it" : "them"} clear.` : `Order ${u.rid}: ${one ? "the charm" : u.pieces.length + " pieces"} moved to ${word(target)}`, tone: free ? "warn" : "ok", ...(free ? { ms: 12000 } : {}), actions: [{ label: "Show it", fn: () => K.switchSheet(target.sheetId, { select: spots[0].c.poolId }) }] });
+    return true;
+  }
+  /* ITEM 13 (Paul 21 Nov 2026: a hop on a staff computer in mode "on" said "Order X was not moved to …: The cloud carries every run now…" and the charm went back; its fallback
+     re-nested both sheets). A viewer sends ONE request (runCmdPut hop: the pieces, the target, where each was put); the cloud moves exactly those pieces there, keeps every other
+     piece where it is, and both sheets owe their files. Said in words: asked, then moved or refused (the request's answer). Nothing is saved, nested or written on this page. */
+  const CLOUD_ASKED = new Set();
+  async function hopCloud(d, dk, u, spots, who, from, L, refuse, free) {
+    const K = kit(), src = d.pg, target = dk.sh, sName = word(src), tName = word(target), one = u.pieces.length === 1, stay = `${one ? "The charm" : `The ${u.pieces.length} pieces`} stayed on ${sName}. Nothing was changed.`;
+    // (GAP G2, Paul 21 Nov 2026: no owner step: CNViewer.lane("cmd:hop") is on while the cloud's sheet commands are, "cmd:seat" or "cmd:renest", or "cmd:hop" itself)
+    if (!CNViewer.lane("cmd:hop")) return refuse("Not moved: the cloud's sheet commands are not on (Settings, Cloud carries: “cmd:seat” or “cmd:renest”).", stay);
+    if (CLOUD_ASKED.has(src.sheetId) || CLOUD_ASKED.has(target.sheetId)) return refuse("Not moved yet: the cloud is still making the last move on one of these sheets; drop it again once it says so.", stay);
+    const F = window.CharmNestRunFollow, runId = target.runId || tryDo(() => F.state().runId), dev = tryDo(() => F.dev()) || "";
+    const poses = spots.map(s => ({ poolId: String(s.c.poolId), cxPt: +s.cxPt, cyPt: +s.cyPt, angle: +s.angle || 0 }));
+    const cmd = { type: "hop", sourceId: src.sheetId, targetId: target.sheetId, ids: poses.map(p => p.poolId), poses, label: `Move order ${u.rid} to ${tName}`, ...(free ? { free: true } : {}), ...(Number.isFinite(target.layoutRev) ? { layoutBase: target.layoutRev } : {}) };
+    let r = null; try { r = await api("charmNestLibrary", { op: "runCmdPut", runId, dev, by: who, cmd }, { quiet: true, timeoutMs: 15000 }); } catch (e) { r = { error: (e && e.message) || String(e) }; }
+    if (!r || r.error || !r.id) return refuse(`Not moved: ${String((r && r.error) || "the cloud did not answer").replace(/\.$/, "")}.`, stay);
+    CLOUD_ASKED.add(src.sheetId); CLOUD_ASKED.add(target.sheetId);
+    H.busy = null; dk.ghost = null; H.landing.set(target.sheetId, { ids: new Set(poses.map(p => p.poolId)), spots, saving: true }); fillDock(dk);
+    if (L) { await flyInto(L, from, dockAtPose(dk, spots[0]), spots[0].angle, 0, 420); if (d.lift === L) d.lift = null; }
+    setOpen(false); endHold(); paintPlateFx(); refresh(true);
+    const anchor = () => (H.docks[dk.side] && H.docks[dk.side].el) || K.W.el.plateBox;
+    K.note(anchor(), { text: `Order ${u.rid}: asked — the cloud moves ${one ? "the charm" : u.pieces.length + " pieces"} to ${tName}, where ${one ? "it was" : "they were"} put.`, tone: "ok" });
+    const end = (ok, text) => {
+      CLOUD_ASKED.delete(src.sheetId); CLOUD_ASKED.delete(target.sheetId); H.landing.delete(target.sheetId); refresh(true);
+      tryDo(() => F.now("hop"));
+      tryDo(() => toast(ok ? text : `Order ${u.rid} was not moved to ${tName}: ${String(text || "the cloud refused it").replace(/\.$/, "")}. ${stay}`, ok ? (free ? "warn" : "ok") : "bad", 9000));
+    };
+    (async () => {
+      for (const t0 = Date.now(); Date.now() - t0 < 600000;) {
+        await wait(Date.now() - t0 < 60000 ? 2500 : 6000);
+        let list = null; try { list = await api("charmNestLibrary", { op: "runCmdList", runId }, { quiet: true }); } catch (_) { continue; }
+        const c = ((list && list.cmds) || []).find(x => x && x.id === r.id); if (!c) continue;
+        if (c.state === "done" || c.state === "failed" || c.state === "cancelled") return end(c.state === "done", String(c.text || ""));
+      }
+      end(false, "the cloud has not answered in 10 minutes; the request stays queued and is done when the cloud gets to it");
+    })().catch(() => {});
     return true;
   }
   /** The two saved records and the pieces' records, read now: "" when they still say what this screen holds, else what changed. */

@@ -89,6 +89,8 @@
  *       each computer. Here: `settled`, a cloud list written where Review.remove writes settled.unshift (one record per answer, its shape above).
  *       (Today only Review.remove writes it, and of the Review's own buttons only "Accept the new order" (acceptChange 21810) calls remove with a
  *       decision's key: most answers re-read the line, and syncOrderItems drops the card with no settled record.)
+ *       (S2, Paul 21 Nov 2026: built. In drive mode "on" a viewer's Review.remove sends each answer to reviewSettledPut (Charm_Nest_Review_Settled/list, the newest 500 of 14 days,
+ *       netlify/functions/_charmNestReviewSettled.js); the cloud world reads it into this snapshot, and every viewer draws that same list (charm-nest-viewer.js settled*).)
  *    6  A send under way. CustomSheet.sending reads B.customDesigns (this computer's send intent). Here: a Charm_Custom_Sheet record with phase
  *       "pending" (customSheetPut writes it before the send is through; hydrate reads it back the same way, 19180).
  *    7  A send kept on a custom record. B.maps.customSent / row._customSentDecision are filled only by the order window of the computer that opened

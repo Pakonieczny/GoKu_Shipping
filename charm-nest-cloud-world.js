@@ -78,10 +78,13 @@
     return row;
   }
   let applying = false;
+  const viewerStarted = () => safe(() => !!(root.CNViewer && typeof root.CNViewer.on === "function" && root.CNViewer.on() && root.Session && typeof root.Session.frozen === "function" && root.Session.frozen()), false);   // (ITEM 2)
   function applyToRows(why) {
     if (applying || !drives() || !W.loadedAt || !W.lines.size) return null;
     // (the page's own start first: its restore empties the order lines of a computer the cloud drives, so the cloud's are put on after it, never before)
-    if (root.Session && typeof root.Session.ready === "function" && !root.Session.ready()) { clearTimeout(W.retry); W.retry = setTimeout(() => applyToRows(why), 800); return null; }
+    // (ITEM 2, Paul 21 Nov 2026: no new orders on the staff computers since the cloud took every run): a viewer (mode "on") restores nothing and never listens, so Session.ready()
+    //  stays false there for good and this waited every 800 ms for ever, putting none of the cloud's lines on. Its boot froze its workspace (CNViewer.boot): that is its start
+    if (root.Session && typeof root.Session.ready === "function" && !root.Session.ready() && !viewerStarted()) { clearTimeout(W.retry); W.retry = setTimeout(() => applyToRows(why), 800); return null; }
     const O = root.Orders, B = root.B; if (!O || !B || !B.orders || !Array.isArray(B.orders.rows)) return null;
     applying = true;
     try {
@@ -94,12 +97,14 @@
         if (!row) { B.orders.rows.push(next); B.orders.byKey.set(k, next); added++; fresh.add(k.split("_")[0]); continue; }
         const eng = row.engrave && typeof row.engrave === "object" ? row.engrave : null, cloudEng = l.run && l.run.engrave;
         for (const f of RUNF) if (!(f in next)) delete row[f];
+        delete row.runOnly;   // (ITEM 2: a line a viewer took from the run's record is the world's from now on)
         Object.assign(row, next);
         if (eng) { row.engrave = eng; if (cloudEng && typeof cloudEng === "object") for (const x of ["state", "approved", "approvedAt", "approvedBy", "decidedAt", "seals", "text", "needed"]) if (cloudEng[x] !== undefined) eng[x] = cloudEng[x]; }
         else if (cloudEng) row.engrave = JSON.parse(JSON.stringify(cloudEng));
         changed++;
       }
-      for (const row of O.rows()) if (row && row.key && !row.parentRow && row.state !== "gone" && !W.lines.has(row.key)) { row.state = "gone"; row.reason = row.reason || "not in the cloud"; row.poolIds = []; row.wait = null; gone++; }
+      // (ITEM 2: a line a viewer took from the cloud's run before the world read it (row.runOnly, charm-nest-run-follow.js) is the run's: it goes when the run lets it go)
+      for (const row of O.rows()) if (row && row.key && !row.parentRow && row.state !== "gone" && !row.runOnly && !W.lines.has(row.key)) { row.state = "gone"; row.reason = row.reason || "not in the cloud"; row.poolIds = []; row.wait = null; gone++; }
       if (added || changed || gone) {
         safe(() => O.interpretAll());
         safe(() => root.Review && root.Review.syncOrderItems()); safe(() => O.render()); safe(() => root.Review && root.Review.render());

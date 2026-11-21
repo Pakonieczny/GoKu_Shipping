@@ -169,6 +169,7 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
   const ago = at => { const m = Math.floor((Date.now() - at) / 60000); return m < 1 ? 'just now' : m === 1 ? '1 min ago' : m + ' min ago'; };
   const relWords = r => {
     if (!r.sent) return r.text;
+    if (r.cloud) return `${r.label || 'A request'} — sent to the cloud ${ago(r.at)}, waiting for the cloud` + (r.warn ? '. ' + r.warn : '') + (Date.now() - r.at > 60000 ? '. The cloud has not finished it yet: it carries on by itself (every minute or so). Nothing more is needed here' : '');   // (G9: in mode "on" the cloud does the request: no computer is named)
     return `${r.label || 'A request'} — sent to ${r.name} ${ago(r.at)}, waiting for that computer` + (r.warn ? '. ' + r.warn : '') + (Date.now() - r.at > 60000 ? '. That computer has not answered: check Brites Manager is open on it (reload it once if it was open since before today\'s update)' : '');
   };
 
@@ -223,38 +224,40 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     if (S.rel !== rel) return;
     const mv = S.move && S.move.rid === rel.id ? S.move : null;   // (MOVESHOW: the move this request belongs to)
     if (c && (c.state === 'done' || c.state === 'failed')) {
-      const bad = c.state === 'failed', text = c.text || (bad ? 'The computer that carries the run could not do that.' : 'Done');
+      const bad = c.state === 'failed', text = c.text || (bad ? (rel.cloud ? 'The cloud could not do that.' : 'The computer that carries the run could not do that.') : 'Done');
       if (mv) { stopRel(S); S.rel = null; return void finishMove(M, mv, { text, bad, freed: !bad && /back in the repository as Available/.test(text) ? (c.freed || true) : false }); }
       endRel(M, { text, bad, spin: false });
       if (rel.kind === 'seat' && !bad) { try { root.OptionsStudio && OptionsStudio.reload && OptionsStudio.reload(); } catch (_) {} }
     } else if (c && c.state === 'cancelled') { if (mv) endMove(M, mv); endRel(M, { text: `Cancelled: ${rel.label || 'the request'}. Nothing was done.`, bad: false, spin: false }); }
-    else if (Date.now() - rel.at > 11 * 60000) { if (mv) endMove(M, mv); endRel(M, { text: 'The computer that carries the run did not answer. Look at the sheets again, then try once more.', bad: true, spin: false }); }
+    else if (Date.now() - rel.at > 11 * 60000) { if (mv) endMove(M, mv); endRel(M, { text: rel.cloud ? 'The cloud did not answer. Look at the sheets again, then try once more.' : 'The computer that carries the run did not answer. Look at the sheets again, then try once more.', bad: true, spin: false }); }
     else {
-      if (mv && c && c.state === 'running') { rel.running = true; if (c.step) { mv.step = { text: `${rel.name}'s computer: ${c.step}`, pct: Number.isFinite(+c.stepPct) ? +c.stepPct : null }; updateOv(M); if (!mv.relayPic || mv.relayPic !== c.step) { mv.relayPic = c.step; livePic(M, mv); } } }
+      if (mv && c && c.state === 'running') { rel.running = true; if (c.step) { mv.step = { text: `${rel.cloud ? 'The cloud' : rel.name + "'s computer"}: ${c.step}`, pct: Number.isFinite(+c.stepPct) ? +c.stepPct : null }; updateOv(M); if (!mv.relayPic || mv.relayPic !== c.step) { mv.relayPic = c.step; livePic(M, mv); } } }
       paint(M, !!mv);
     }
   }
   async function cancelRel(M) {
     const S = M.sheetsUI, r = S && S.rel; if (!r || !r.sent || !r.spin) return;
-    if (r.running) { r.warn = 'It has already started on that computer, so it cannot be cancelled'; return paint(M, true); }
+    const started = r.cloud ? 'It has already started in the cloud, so it cannot be cancelled' : 'It has already started on that computer, so it cannot be cancelled';
+    if (r.running) { r.warn = started; return paint(M, true); }
     let res = null; try { res = await api({ op: 'runCmdCancel', runId: r.runId, id: r.id, dev: devId() }); } catch (e) { r.warn = 'It could not be cancelled (' + ((e && e.message) || e) + ')'; return paint(M, true); }
     if (S.rel !== r) return;
     if (res && res.cancelled) endRel(M, { text: `Cancelled: ${r.label || 'the request'}. Nothing was done.`, bad: false, spin: false });
-    else { r.warn = 'It has already started on that computer, so it cannot be cancelled'; paint(M, true); readRel(M); }
+    else { r.warn = started; paint(M, true); readRel(M); }
   }
   async function send(M, cmd, label, mv) {
     const S = M.sheetsUI; if (!S) return false;
     if (S.rel && S.rel.spin) { S.rel.warn = 'Cancel it first (or wait for it to finish) before asking for something else'; paint(M, true); return false; }
     const rows = rowsOf(M), runId = (rows[0] && rows[0].runId) || (RF() && RF().state().runId), dev = devId();
     if (!runId || !dev) { S.rel = { text: 'There is no open run to send this to.', bad: true, spin: false }; paint(M, true); return false; }
-    S.rel = { text: 'Finding the computer that carries the run…', spin: true, runId, at: Date.now() }; paint(M, true);
+    const onMode = !!(root.CNViewer && root.CNViewer.on());
+    S.rel = { text: onMode ? 'Asking the cloud…' : 'Finding the computer that carries the run…', spin: true, runId, at: Date.now() }; paint(M, true);
     try {
       const c = await api({ op: 'runCarrier', runId, dev, check: true });
-      if (!(root.CNViewer && root.CNViewer.on()) && (!c || !c.alive || c.mine)) { S.rel = { text: NO_CARRIER, bad: true, spin: false }; paint(M, true); return false; }   // (CLOUDDRIVE build step 14: in mode "on" the cloud carries every run and does the request: it is always sent)
-      const name = (c.carrier && c.carrier.by) || 'the computer that carries the run';
+      if (!onMode && (!c || !c.alive || c.mine)) { S.rel = { text: NO_CARRIER, bad: true, spin: false }; paint(M, true); return false; }   // (CLOUDDRIVE build step 14: in mode "on" the cloud carries every run and does the request: it is always sent)
+      const cloud = onMode || !!(c && c.carrier && c.carrier.dev === 'cloud'), name = cloud ? 'the cloud' : (c && c.carrier && c.carrier.by) || 'the computer that carries the run';   // (G9: the cloud is named as the cloud, never "Cloud's computer")
       const put = await api({ op: 'runCmdPut', runId, cmd: Object.assign({ metal: M.m, label }, cmd), by: who(), dev });
       if (!put || put.error || !put.id) throw new Error((put && put.error) || 'not sent');
-      S.rel = { id: put.id, runId, name, at: Date.now(), spin: true, sent: true, label, kind: cmd.type }; if (mv) { mv.rid = put.id; mv.step = { text: `Waiting for ${name}'s computer…` }; updateOv(M); } paint(M, true);
+      S.rel = { id: put.id, runId, name, cloud, at: Date.now(), spin: true, sent: true, label, kind: cmd.type }; if (mv) { mv.rid = put.id; mv.step = { text: cloud ? 'Waiting for the cloud…' : `Waiting for ${name}'s computer…` }; updateOv(M); } paint(M, true);
       if (root.CNSync && typeof root.CNSync.follow === 'function' && !S.sub) { try { S.sub = root.CNSync.follow({ name: 'run-cmds', kinds: 'r', wants: k => k === 'r:' + runId, read: () => readRel(M) }); } catch (_) { S.sub = null; } }
       if (!S.poll) S.poll = setInterval(() => readRel(M), mv ? 4000 : 8000);   // (MOVESHOW: a move is looked at every 4 s as well as when the feed names the run)
       readRel(M); return true;
@@ -530,7 +533,7 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     if (mode === 'onto') {
       const tgt = st.rows.find(r => r.id === overId);
       S.ask = { src, tgt };
-      return ask(M, `Combine ${plural(src.pieces)} from ${esc(src.name)} onto ${esc(tgt.name)}? What does not fit goes on to the next sheets, then stays on ${esc(src.name)}. ${esc(src.name)} is kept, empty, until you delete it.${src.relay ? ' The computer that carries the run does it.' : ''}`, a => doCombine(M, a.src.id, a.tgt.id, `Combine ${src.name} onto ${tgt.name}`), 'Combine');
+      return ask(M, `Combine ${plural(src.pieces)} from ${esc(src.name)} onto ${esc(tgt.name)}? What does not fit goes on to the next sheets, then stays on ${esc(src.name)}. ${esc(src.name)} is kept, empty, until you delete it.${src.relay ? (root.CNViewer && root.CNViewer.on() ? ' The cloud does it.' : ' The computer that carries the run does it.') : ''}`, a => doCombine(M, a.src.id, a.tgt.id, `Combine ${src.name} onto ${tgt.name}`), 'Combine');
     }
     const ids = [...S.wrap.querySelectorAll('.osSh')].map(x => x.dataset.id).filter(id => id !== st.id), at = ids.indexOf(overId);
     ids.splice(mode === 'before' ? at : at + 1, 0, st.id);
@@ -542,7 +545,7 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
   function emptyAsk(M, id) {
     const row = rowsOf(M).find(r => r.id === id); if (!row || row.locked || !row.canSource) return;
     M.sheetsUI.ask = { empty: id };
-    ask(M, `Empty ${esc(row.name)}? Its ${plural(row.pieces)} move onto the other sheets in your order (the sheets before it first, then the ones after). What fits nowhere stays on ${esc(row.name)}.${row.relay ? ' The computer that carries the run does it.' : ''}`, a => doEmpty(M, a.empty, `Empty ${row.name}`), 'Empty it');
+    ask(M, `Empty ${esc(row.name)}? Its ${plural(row.pieces)} move onto the other sheets in your order (the sheets before it first, then the ones after). What fits nowhere stays on ${esc(row.name)}.${row.relay ? (root.CNViewer && root.CNViewer.on() ? ' The cloud does it.' : ' The computer that carries the run does it.') : ''}`, a => doEmpty(M, a.empty, `Empty ${row.name}`), 'Empty it');
   }
   function del(M, id) {
     const row = rowsOf(M).find(r => r.id === id); if (!row || !row.canDelete) return;

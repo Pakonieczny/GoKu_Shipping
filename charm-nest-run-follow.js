@@ -29,6 +29,34 @@
     const runs = ((res && res.runs) || []).filter(r => r && r.runId && !["abandoned", "complete", "archived"].includes(r.status));
     return runs.length ? runs[0].runId : null;
   }
+  /* (ITEM 2, Paul 21 Nov 2026: no new orders in Orders / Nest / Library on the staff computers, though the cloud's run held 31 new lines "pulled"): once the cloud world drives a page,
+     its lines come from the world only (applyToRows), and a line the cloud's run holds that the world has not put on the page (not read yet, its receipt not read) was shown nowhere.
+     On a viewer (mode "on") such a line is added from the run's record, read here as before the world (Orders.rowFromRecord, interpretAll), marked runOnly: it follows the run's
+     state, the world takes it over once it reads it, and it goes when the run lets it go. Mode off: never (the page goes as it went). */
+  const viewer = () => safe(() => !!(root.CNViewer && typeof root.CNViewer.on === "function" && root.CNViewer.on()), false);
+  function runOnly(lines, O, B) {
+    if (typeof O.rowFromRecord !== "function" || !B.orders || !Array.isArray(B.orders.rows)) return;
+    if (!(B.orders.byKey instanceof Map)) B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
+    let added = 0, moved = 0, gone = 0; const fresh = new Set();
+    for (const [k, l] of Object.entries(lines)) {
+      if (!l || l.state === "gone" || B.orders.byKey.has(k)) continue;
+      const row = safe(() => O.rowFromRecord(k, l), null); if (!row) continue;
+      row.runOnly = true; B.orders.rows.push(row); B.orders.byKey.set(k, row); added++; fresh.add(k.split("_")[0]);
+    }
+    for (const row of O.rows()) {
+      if (!row || !row.runOnly || row.parentRow) continue;
+      const l = lines[row.key];
+      if (!l || l.state === "gone") { if (row.state !== "gone") { row.state = "gone"; row.reason = row.reason || "taken out of the run"; row.poolIds = []; row.wait = null; gone++; } continue; }
+      let m = false;
+      for (const f of FIELDS) { const v = l[f] === undefined ? (f === "poolIds" ? [] : null) : l[f]; if (JSON.stringify(row[f] == null ? (f === "poolIds" ? [] : null) : row[f]) !== JSON.stringify(v)) { row[f] = Array.isArray(v) ? v.slice() : v; m = true; } }
+      if (m) moved++;
+    }
+    st.added += added; st.changed += moved; st.gone += gone; st.runOnly = { at: Date.now(), added, moved, gone };
+    if (!added && !moved && !gone) return;
+    if (added) safe(() => O.interpretAll());
+    safe(() => root.Review && root.Review.syncOrderItems()); safe(() => O.render());
+    if (fresh.size) safe(() => root.CharmNestEngraveSync && root.CharmNestEngraveSync.pull([...fresh], "keys"));
+  }
   async function now(why) {
     if (holdsRun()) safe(() => { const G = root.Gate; if (G && typeof G.ensureOrder === "function") ["gold10k", "gold14k"].forEach(m => G.ensureOrder(m)); });   // (ORDERCLOUD: the carrier writes its draft order once, without the Options window having to be opened, so every computer numbers the drafts alike)
     if (holdsRun()) runCommands().catch(() => {});   // (SHEETSANYWHERE: the commands of the computers that follow, apart from the 15 s throttle of applyOthers)
@@ -49,6 +77,7 @@
       const CW = root.CloudWorld;
       if (CW && typeof CW.drives === "function" && CW.drives()) {
         safe(() => CW.applyToRows("follow"));
+        if (viewer()) runOnly(lines, O, B);
         st.retired = ((run.intakeRecovery && run.intakeRecovery.retire) || []).map(String);
         { const sk = Object.keys(run.sheets || {}).sort().join("|") + "#" + st.retired.slice().sort().join("|"), force = st.sheetSig !== undefined && st.sheetSig !== sk; st.sheetSig = sk;
           safe(() => { const f = root.Recall && root.Recall.follow; if (typeof f === "function") Promise.resolve(f(id, force ? { force: true } : undefined)).catch(() => {}); }); }
@@ -74,7 +103,7 @@
         if (moved) changed++;
       }
       const newOrders = new Set();
-      if (typeof O.rowFromRecord === "function") for (const [k, l] of Object.entries(lines)) { if (B.orders.byKey.has(k)) continue; const row = safe(() => O.rowFromRecord(k, l), null); if (row) { B.orders.rows.push(row); B.orders.byKey.set(k, row); added++; newOrders.add(k.split("_")[0]); } }
+      if (typeof O.rowFromRecord === "function") for (const [k, l] of Object.entries(lines)) { if (B.orders.byKey.has(k)) continue; const row = safe(() => O.rowFromRecord(k, l), null); if (row) { if (viewer()) row.runOnly = true; B.orders.rows.push(row); B.orders.byKey.set(k, row); added++; newOrders.add(k.split("_")[0]); } }
       // (NEWLINES, Paul 13 Nov 2026: "What about future orders?"): a line that arrives here takes its engraving work from the cloud at once (it may have been written before the line reached this computer)
       // (FOLLOWSPEC, Paul 15 Nov 2026: "Cannot read properties of null (reading 'fontText')"): a line added here from the run's record is READ at once (its charm, its words, its font: Orders.interpretAll), as the lines another computer added to the run's own page are; it was left unread, and the engraving view of such an order could not open
       if (added || needRead || O.rows().some(r => r && !r.spec && !r.parentRow)) safe(() => O.interpretAll());
@@ -380,6 +409,27 @@
     st.patched = (st.patched || 0) + ((res && res.applied) || []).length;
     return res;
   }
+  /** (S1, Paul 21 Nov 2026: Review answers made on a staff computer in cloud mode "on" stayed in that page's memory): a person's answer (Skip piece, Use this size, a material) is
+   *  written to the cloud run's lines as a person's press: runLinesPatch with decision: true, each line's own fields (state, reason, hold, heldAt, materialOverride, sizeOverride) and
+   *  `decided`, its step on the order's timeline (the cloud writes it, once). patches: { lineKey: fields }. → the cloud's answer { ok, applied, lines: { key: what the line now says }, at }.
+   *  A refusal throws at once with the cloud's words; a passing failure is tried four times. Only on a page that holds no run (the run's own page saves its lines with the run). */
+  async function decideRows(patches) {
+    const keys = Object.keys(patches || {}).filter(k => k && patches[k] && typeof patches[k] === "object").slice(0, 300); if (!keys.length) return null;
+    if (holdsRun()) throw new Error("this computer carries the run: its answer is saved with the run");
+    const runId = st.runId || await openRunId(); if (!runId) throw new Error("no run is open in the cloud");
+    const lines = {}; for (const k of keys) lines[k] = patches[k];
+    let res = null, err = null;
+    for (let t = 0; t < 4; t++) {
+      try { res = await api({ op: "runLinesPatch", runId, lines, decision: true, dev: dev(), by: who() }); err = null; break; }
+      catch (e) { err = e; if (e && e.status && e.status < 500 && e.status !== 408 && e.status !== 429) break; await new Promise(r => setTimeout(r, 1500 * (t + 1))); }
+    }
+    if (err) throw err;
+    if (res && res.error) throw new Error(res.error);
+    const O = root.Orders;
+    if (res && res.at && O) for (const k of res.applied || []) { const r = safe(() => O.rows().find(x => x && x.key === k), null); if (r) r._lp = { at: res.at, dev: dev(), by: who() }; }
+    st.patched = (st.patched || 0) + ((res && res.applied) || []).length;
+    return res;
+  }
   /** (CLOUDALL S3, Paul 13 Nov 2026: "New orders. They join the run only on that computer" -> any computer that reads new orders writes them into the cloud run): this computer took in these new order lines; they are written into the cloud run (runLinesAdd) so the run places them whichever computer works it */
   async function addRows(rows) {
     rows = (rows || []).filter(r => r && r.key && !r.parentRow); if (!rows.length) return null;
@@ -410,6 +460,6 @@
     };
     go();
   }
-  root.CharmNestRunFollow = { state: () => Object.assign({}, st), now, patchRows, applyOthers, othersSaid, addRows, dev };
+  root.CharmNestRunFollow = { state: () => Object.assign({}, st), now, patchRows, decideRows, applyOthers, othersSaid, addRows, dev };
   if (root.document) { if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", boot); else boot(); }
 })(typeof self !== "undefined" ? self : this);

@@ -540,12 +540,27 @@ dialog.setRepairDlg{width:min(540px,94vw)}
       // taken back (Gate.undoGoldJoin): it waits greyed as before. Throws the plain reason; called only after the person's yes in the window
       join: async pg => {
         const G = root.Gate, inSet = () => !!pg.setId && !pg.draft, was = { inSet: inSet(), pick: pg.solidPick };
+        // (ITEM 4, Paul 21 Nov 2026: Approve on a staff computer in mode "on": the include is the cloud's, so it is ONE ask (roseCutAsk "joinFull", RoseStock.record) followed to the cloud's
+        //  answer: in its set as the cloud put it, or the cloud's own words. This page's include was refused there: it carries no run)
+        const RS = root.RoseStock;
+        if (typeof root.CharmNestCloudLanes === 'function' && root.CharmNestCloudLanes('rosecut', pg) && RS && typeof RS.record === 'function') {
+          try { await RS.record(pg, { by: (root.CNEmployee && root.CNEmployee.name ? root.CNEmployee.name() : '') || undefined, joinFull: true }); } catch (e) { throw new Error(String((e && e.message) || e).replace(/^Not cut: /, '')); }
+          return true;   // (the cloud answered done: it put the sheet in its set; the sheet was read again from its record)
+        }
         if (!G || typeof G.cutInclude !== 'function') throw new Error('Sets are not loaded yet: try again in a moment');
         try { await G.cutInclude(pg); } catch (e) { throw new Error(String((e && e.message) || e).replace(/^Not cut: /, '')); }
         if (inSet()) return true;
         const pol = typeof G.policy === 'function' ? G.policy(pg) : null, why = pol && !pol.include && pol.reason ? pol.reason : '';
         if (typeof G.undoGoldJoin === 'function') { try { await G.undoGoldJoin(pg, was); } catch (_) { /* it says why on its card */ } }
         throw new Error(`it is not in a set yet${why ? ` (${why})` : ''}`);
+      },
+      // (G4, Paul 21 Nov 2026) a sheet whose green line is cut already: whether its join is the cloud's here (mode "on", a viewer: RoseStock.cloudJoins), and that join (RoseStock.join, roseCutAsk "join"),
+      // followed to the cloud's answer { why }; throws the cloud's own words. Mode "off": cloudJoins is false and nothing here is used
+      cloudJoins: pg => { const RS = root.RoseStock; try { return !!(pg && RS && typeof RS.cloudJoins === 'function' && RS.cloudJoins(pg)); } catch (_) { return false; } },
+      joinCut: async (pg, by, setId) => {
+        const RS = root.RoseStock; if (!RS || typeof RS.join !== 'function') throw new Error('The cloud cannot be asked from this page: reload it. Nothing was changed');
+        try { return await RS.join(pg, { by: by || undefined, setId: setId || undefined }); }
+        finally { try { if (C && C.loadLibrary) C.loadLibrary(); } catch (_) { /* refreshed at its next read */ } }
       },
       note: () => {}
     };
@@ -750,6 +765,10 @@ dialog.setRepairDlg{width:min(540px,94vw)}
     if (!by) return refuse('who', 'Sign in first: the cut is recorded with your name');
     if (!env.cloud()) return refuse('offline', 'The page is offline: reconnect, then press it again. Nothing was changed');
     const pages = env.pages(), page = list(pages).find(p => p && p.sheetId === id && !p.recalled);
+    // (G4, Paul 21 Nov 2026) a sheet whose green line is cut already (on this page's copy or the Library's record): its Approve only joins it. On a staff computer in mode "on" that is ONE ask the cloud
+    // acts on (env.joinCut: RoseStock.join, roseCutAsk "join"), joined by the set rules, never cut again, said in the cloud's words; it needs no page of the sheet here
+    { const cutOne = page && page.roseCutAt ? page : row.roseCutAt ? Object.assign({ sheetId: id }, row) : null;
+      if (cutOne && typeof env.cloudJoins === 'function' && env.cloudJoins(cutOne)) return approveCut(st, env, cutOne, { id, name, set, by }, o); }
     if (!page) return refuse('away', `${name} is not open on this page, so its green line cannot be cut from here. Open it on the Nest tab and press Cut Sheet there; it then joins ${set}`);
     { const why = busyOf(page, env); if (why) return refuse('busy', `${name} is ${why}: try again when it is done. Nothing was changed`); }
     // (Paul, 27 Oct 2026: "Only partially completed 10K / 14K Gold sheets need to have a Green Cut line. Completed 10K / 14K Gold Sheets only need an user approval") a full sheet is approved into the set:
@@ -791,6 +810,28 @@ dialog.setRepairDlg{width:min(540px,94vw)}
       return { ok: true, joined: true, cut: [], words: `Approved: ${name} is in ${set}.` };
     } catch (e) {
       const reason = `${(e && e.message) || e}`; env.say(`${name} was not approved: ${reason}`); return { ok: false, error: reason };
+    } finally { running.delete('cut:' + id); env.refresh(id); }
+  }
+  /** (G4) cutPending's press for a sheet whose green line is cut already, on a staff computer in mode "on": a small window (it joins the set; its line is cut already, so nothing is cut again;
+   *  Cancel changes nothing), then the cloud's join (env.joinCut), its answer said: the set it is in now, or the set rules' words. */
+  async function approveCut(st, env, pg, x, o) {
+    const { id, name, set } = x;
+    const words = {
+      title: `Approve ${name}?`, intro: `${name} shares orders with the sheets of ${set}. Its green line is cut already:`,
+      lines: [{ kind: 'set', text: `${name} joins its set by your set rules (${set} is the one its orders tie it to)` }, { kind: 'set', text: 'Nothing is cut again: its recorded cut stays as it is' }],
+      what: 'The cloud carries the run, so it is asked to add the sheet and says which set it is in.', numbering: '',
+      nothing: 'Nothing changes until you press Approve.', confirm: 'Approve', cancel: 'Cancel'
+    };
+    if (!(o && o.skipConfirm) && !(await env.confirmCut(words))) return { ok: false, cancelled: true };
+    running.add('cut:' + id);
+    try {
+      if (o && typeof o.onState === 'function') { try { o.onState('joining', `Asking the cloud to add ${name} to its set…`); } catch (_) { /* a line of text only */ } }
+      const r = await env.joinCut(pg, x.by, st && st.setId);
+      const said = String((r && r.why) || `${name} is in its set now`).replace(/\.$/, '');
+      env.say(`${said}.`, 'ok');
+      return { ok: true, joined: true, cut: [], words: `${said}.` };
+    } catch (e) {
+      const reason = `${(e && e.message) || e}`; env.say(`${name} was not added: ${reason}`); return { ok: false, error: reason };
     } finally { running.delete('cut:' + id); env.refresh(id); }
   }
   /** Wires the "Approve & cut green line" press of every 10K / 14K sheet drawn greyed in a set card (the Library's goldPendingTile), and the "Approve" of a full one. */

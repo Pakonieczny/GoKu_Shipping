@@ -280,7 +280,21 @@
       const said = bodyOf(rec, true);
       if (said) { if (!said.oneBody) return null; const bodies = await soloBodies(src); return (bodies && bodies[said.bodyIndex]) || null; }
       const h = rec ? String(rec.charmHash || rec.hash || "").replace(/~ae[0-9a-z]+$/, "") : ""; if (!h || h === String(src.charms[0].hash || "")) return null;   // (ART EDIT: a piece whose own artwork was edited has "~ae…" after the hash it was cut from, charm-nest-art-edit.js)
-      if (H.cloud) throw Object.assign(new Error(`${src.sku || "a design"}${rec && rec.poolId ? " · " + rec.poolId : ""}: which body of the design this piece is cut from cannot be told in the cloud (its record says no body, and a silhouette's hash is never read as one): a person checks it`), { bodyUnknown: true });
+      if (H.cloud) {
+        /* (NESTBODY, Paul 21 Nov 2026, every cloud nest since the switch refused: "N placed piece(s) could not be made again in the cloud (its design has no such body)"): a piece a computer made
+           says no body, and the cloud's own drawing of the design differs from the page's by an edge pixel, so its hash never matches. A design of ONE body has nothing to tell: it is the
+           design whole. A design of several bodies: the piece's own size, as its record keeps it, names the body (within 3 %, the whole design among the candidates); refused in words only
+           when no size reads or two candidates fit. */
+        const bodies = await soloBodies(src).catch(() => null);
+        if (!bodies || bodies.length <= 1) return null;
+        const w = +(rec && (rec.widthPt || rec.wPt)) || 0, hh = +(rec && (rec.heightPt || rec.hPt)) || 0;
+        if (w > 0 && hh > 0) {
+          const fit = c => c ? Math.max(Math.abs((+c.widthPt || 0) - w) / w, Math.abs((+c.heightPt || 0) - hh) / hh) : Infinity;
+          const cands = [{ c: null, e: fit(src.charms[0]) }].concat(bodies.map(c => ({ c, e: fit(c) }))).filter(x => x.e <= 0.03).sort((a, b) => a.e - b.e);
+          if (cands.length === 1 || (cands.length > 1 && cands[1].e - cands[0].e > 0.01)) return cands[0].c;
+        }
+        throw Object.assign(new Error(`${src.sku || "a design"}${rec && rec.poolId ? " · " + rec.poolId : ""}: which body of the design this piece is cut from cannot be told in the cloud (its record says no body, and a silhouette's hash is never read as one): a person checks it`), { bodyUnknown: true });
+      }
       const bodies = await soloBodies(src); return bodies && bodies.find(c => String(c.hash) === h) || null;
     }
     /** BODYID: which body of its design a stored piece (a pool row, a sheet record's charm, or a charm) is cut from, from what it says, never from a hash: { oneBody: true, bodyIndex } (one body

@@ -13,6 +13,12 @@
   const fingerprint=s=>JSON.stringify((s.placements||[]).map(p=>[p.id,+p.cxPt.toFixed(3),+p.cyPt.toFixed(3),p.angle,p.scale||1,p.hash||s.charms?.find(c=>c.id===p.id)?.hash||null]));
   const refresh=sh=>{window.Session?.schedule();if(sh.el){C.renderCard(sh);C.drawPreview(sh);}};
   const parse=s=>s?JSON.parse(s):null;
+  /* (ITEM 4, Paul 21 Nov 2026: Cut Sheet pressed on a staff computer while the cloud carries every run, mode "on") viewer(): this page is a viewer (the server refuses its rosePlan, roseClaim,
+     roseRecordCut and roseReopen, and the cloud does the automatic contour, the claim and the redraw); cloudCuts(sh): the green line of this sheet's run is the cloud's (lane "rosecut"), so a
+     person's press is ONE ask (roseCutAsk) the cloud acts on. In mode "off" both are false and nothing below changes what this page does. */
+  const viewer=()=>{try{return !!(window.CNViewer&&typeof window.CNViewer.on==='function'&&window.CNViewer.on());}catch(_){return false;}};
+  const cloudCuts=sh=>{try{return typeof window.CharmNestCloudLanes==='function'&&!!window.CharmNestCloudLanes('rosecut',sh);}catch(_){return false;}};
+  const ASK={pollMs:3000,waitMs:180000,followMs:900000};   // (the card follows the cloud's answer every 3 s; a press waits 3 min for it, the card 15 min)
   /* (SUPERSEDED, Paul 12 Nov 2026: "the greys are overlapping with the real ones") a sheet has ONE cut on its physical sheet: the newest. An older cut by the same sheet (cut, reopened, cut again) is no part of the sheet's history and draws nothing grey */
   const current=h=>{const seen=new Set();return [...h].sort((x,y)=>(+y.revision||0)-(+x.revision||0)).filter(c=>{if(!c||c.setAsideAt)return false;const k=c.sheetId;if(!k)return true;if(seen.has(k))return false;seen.add(k);return true;});};
   /* (Paul, 12 Nov 2026) a sheet already cut shows the physical sheet as it was when IT was cut: the cuts made after its own (further along the sheet) are no part of its picture */
@@ -166,6 +172,7 @@
     return !!(+sh.laserDoneAt>0||sh.laserSetPending||sh.processReady||sets.some(s=>(s.sheetIds||[]).includes(sh.sheetId)&&(s.committedAt||s.processReady||+s.laserDoneAt>0||s.laserSetPending)));
   };
   async function claimLate(sh){
+    if(viewer())return;   // (ITEM 4: a claim made by itself is the cloud's in mode "on": the server refuses it from a page, and the card said that refusal as its error)
     if(isRose(sh)||!hasLine(sh)||sh.roseStock||sh.roseCutAt||sh.recalled||!inSet(sh)||approved(sh)||sh._roseClaiming||!sh.sheetId||!sh.persistedDone||!sh.verification?.ok||sh.dirty||!sh.placements.length||['nesting','finishing','queued'].includes(sh.status)||!S.cloud.ok)return;
     sh._roseClaiming=true;sh._roseStep='claim';sh._roseError=null;refresh(sh);
     try{await prepare(sh,{fresh:true});}catch(e){sh._roseError=e.message;}
@@ -193,7 +200,10 @@
     if(!(sh.rosePlan||sh.roseProtected||sh.rosePlanHash||sh.roseCutAt||o.force))return {changed:false};
     let who='';try{who=String(o.by||window.CNEmployee?.name?.()||window.B?.employee||'').trim();}catch(_){who=String(o.by||'').trim();}
     let r=null;
-    if(sh.sheetId){
+    // (ITEM 4, Paul 21 Nov 2026: Manual Control's save on a staff computer in mode "on" was refused here, "roseReopen is the cloud's work", and the charms went back. o.patch: the save that
+    //  follows is ONE sheetLayoutPatch, and in mode "on" the server sets the line aside itself in it (charmNestLibrary op_sheetLayoutPatch) and the cloud draws it again (roseRedraw): only
+    //  this page's copy is given up here)
+    if(sh.sheetId&&!(o.patch&&viewer())){
       if(!S.cloud.ok)throw new Error(`Reconnect to change the charms of this ${word(sh)} sheet`);
       r=await C.api('charmNestLibrary',{op:'roseReopen',sheetId:sh.sheetId,by:who||undefined,...(o.replace?{replace:true}:{})},{quiet:true});
       if(r&&r.error)throw new Error(r.error);
@@ -217,6 +227,7 @@
   async function redraw(sh){
     const w=sh&&sh.roseRedraw;if(!w||!hasLine(sh)||sh.roseCutAt||+sh.laserDoneAt>0)return null;
     w.written=true;
+    if(viewer())return null;   // (ITEM 4: in mode "on" the cloud draws it again from the record's roseRedraw, _charmNestGreenLine.js askUnit; a page's rosePlan is refused)
     if(!w.line){delete sh.roseRedraw;return null;}
     if(sh._rosePlanning||!sh.persistedDone||!sh.verification?.ok||sh.dirty||!sh.placements.length||['nesting','finishing','queued'].includes(sh.status))return null;
     try{await plan(sh,{cut:true});delete sh.roseRedraw;return true;}
@@ -226,6 +237,10 @@
   // made again when a sheet joins a set, is saved, is nested or its allowance changes: that may redraw the lines it has
   // or take a full sheet whole, never add one. Charms past the last line stay uncut until the next press.
   async function plan(sh,opts={}){
+    // (ITEM 4, Paul 21 Nov 2026) in mode "on" the contour made by itself is the cloud's (a page's rosePlan is refused: the card said that refusal as its error); a person's press for the line
+    // alone (the Library's "Add the green dash line", LibraryFlowRose.calculate) is ONE ask the cloud acts on (roseCutAsk "line": drawn and dated, no cut recorded), followed to its answer
+    if(!opts.cut&&viewer())return;
+    if(opts.cut&&cloudCuts(sh))return cloudAsk(sh,'line',opts);
     if(!opts.cut&&addsLine(sh))return claimLate(sh);
     if(!opts.cut&&!isRose(sh)&&!sh.roseStock)return;   // (10K, 14K: a sheet nobody asked a line for holds no physical sheet and saves no contour)
     if(sh._rosePlanning)return sh._rosePlanning;
@@ -244,20 +259,86 @@
     sh._rosePlanning=task;refresh(sh);
     try{await task;}catch(e){sh._roseError=e.message;throw e;}finally{sh._rosePlanning=null;refresh(sh);C.flushManualIntake?.(sh.metal);}
   }
+  /* (ITEM 4, Paul 21 Nov 2026: "Cut Sheet (Rose Gold, 10K, 14K) pressed on a staff computer"; the owner's rule: a person's press is done or sent to the cloud as a request it acts on, never refused,
+     silent, or "done" when nothing happened). A press whose green line is the cloud's: ONE ask, roseCutAsk { sheetId, kind, by } (kind "cut": Cut Sheet / Approve & cut green line; "joinFull": a
+     full 10K / 14K sheet's approval; "line": the line alone, the Library's Add the green dash line), then followed (roseCutAskGet every ASK.pollMs) to the cloud's answer, said on the card:
+       asked / working  the card says the cloud was asked, by whom and when (Cut Sheet waits);
+       done             the sheet is read again from its record (its cut, line, stock and set, restore) and the card shows it as the computer that cut it would; resolves;
+       refused          the cloud's own words, under the button; rejects with them.
+     No answer within ASK.waitMs: rejects in plain words (asked, not answered yet) and the card goes on following to ASK.followMs, then says the answer when it comes. */
+  async function reread(sh){
+    const rec=(await C.api('charmNestLibrary',{op:'getSheet',id:sh.sheetId},{quiet:true})||{}).sheet;if(!rec)return null;
+    if(rec.roseStockId)await restore(sh,rec);else{sh.roseCutAt=rec.roseCutAt||null;sh.rosePlan=parse(rec.rosePlanJson);sh.rosePlanHash=rec.rosePlanHash||null;sh.roseProtected=parse(rec.roseProtectedJson);}
+    // (the set the cloud put it in, as its record has it: the run's follow redraws the rest)
+    if(rec.setId!==undefined)sh.setId=rec.setId||null;if(typeof rec.draft==='boolean')sh.draft=rec.draft;if(rec.setSeq!=null&&Number.isFinite(+rec.setSeq))sh.seq=+rec.setSeq;
+    if(rec.sheetIndex!=null)sh.sheetIndex=rec.sheetIndex;if(rec.fileBase)sh.fileBase=rec.fileBase;if(typeof rec.solidIncluded==='boolean')sh.solidPick=rec.solidIncluded;
+    if(rec.roseCutAt){delete sh.roseReopened;delete sh.roseRedraw;}
+    sh.rosePlanKey=sh.rosePlanHash?fingerprint(sh):null;
+    return rec;
+  }
+  const askWhat=k=>k==='line'?'draw its green line':k==='joinFull'||k==='join'?'add it to its set':'cut it';
+  /* (G4, Paul 21 Nov 2026: an already-cut Rose Gold, 10K or 14K sheet in no set could not be put into its set from a staff computer in mode "on": the Library's drag, Approve, the card's Include
+     and Gate.rejoin ran here, where nothing is written, or asked the cloud for a cut it refused as recorded already). kind "join": ONE ask (roseCutAsk "join", o.setId the set it was dropped on),
+     the cloud joins it by the set rules and never cuts it again (_charmNestGreenLine.js joinCut); followed like every ask, its answer (the set it is in now, or the rules' words) said here.
+     A Cut Sheet / Approve ask the cloud answers "cut already" for a sheet in no set becomes that join (a copy of the sheet that had not seen its cut yet). Mode "off": never asked. */
+  const page_=sh=>!!sh&&Array.isArray(sh.placements);   // (G4: a Library record handed in, not a page's sheet: nothing of a card to read again)
+  async function cloudAsk(sh,kind,o={}){
+    let who='';try{who=String(o.by||window.CNEmployee?.name?.()||window.B?.employee||'').trim();}catch(_){who=String(o.by||'').trim();}
+    if(!who)throw new Error(kind==='line'?'Sign in first: the green line is dated with your name':kind==='join'?'Sign in first: the change to its set is kept with your name':'Sign in first: the cut is recorded with your name');
+    if(!sh.sheetId)throw new Error(`This ${word(sh)} sheet is not saved in the cloud yet: the cloud can ${askWhat(kind)} once it is. Nothing was changed`);
+    const was=sh._roseAsk;if(was&&/^(asked|working)$/.test(was.state)&&was.kind===kind&&was.p)return was.p;   // (pressed again while the cloud works on it: the same answer)
+    const body={op:'roseCutAsk',sheetId:sh.sheetId,kind,by:who};if(kind==='join'&&o.setId)body.setId=String(o.setId);
+    const r=await C.api('charmNestLibrary',body,{label:'Asking the cloud to '+askWhat(kind)+' ('+word(sh)+')'});
+    if(!r||r.error){
+      if(r&&r.cut){try{if(page_(sh))await reread(sh);else sh.roseCutAt=sh.roseCutAt||Date.now();}catch(_){}refresh(sh);}   // (its cut is recorded already: the card shows it)
+      if(r&&r.cut&&(kind==='cut'||kind==='joinFull')&&!inSet(sh))return cloudAsk(sh,'join',o);   // (G4: cut already and in no set: it only joins)
+      throw new Error((r&&r.error)||'The cloud did not answer: nothing was changed. Press it again');
+    }
+    const ask=r.ask||{},a={kind:ask.kind||kind,by:String(ask.by||who),at:+ask.at||Date.now(),seq:+ask.seq||0,state:ask.state||'asked',p:null};
+    sh._roseAsk=a;sh._roseError=null;refresh(sh);
+    C.toast(`${word(sh)}: asked — the cloud ${a.kind==='line'?'draws its green line':a.kind==='join'?'adds it to its set (its green line is cut already: no second cut)':a.kind==='joinFull'?'adds it to its set':'draws its green line and records the cut'}`,'ok');
+    return follow(sh,a);
+  }
+  function follow(sh,a){
+    if(a.p)return a.p;
+    a.p=new Promise((resolve,reject)=>{
+      const t0=Date.now();let told=false;
+      const tell=(fn,v)=>{if(told)return;told=true;fn(v);};
+      const late=setTimeout(()=>tell(reject,new Error(`Asked: the cloud has not answered in ${Math.round(ASK.waitMs/60000)||1} minute${ASK.waitMs>=120000?'s':''}. Nothing is cut yet; this card says the cloud's answer when it comes`)),ASK.waitMs);
+      const end=()=>{clearTimeout(late);if(sh._roseAsk===a)delete sh._roseAsk;};
+      const look=async()=>{
+        let x=null;try{const g=await C.api('charmNestLibrary',{op:'roseCutAskGet',sheetIds:[sh.sheetId]},{quiet:true});x=g&&Array.isArray(g.asks)?g.asks.find(q=>q&&q.sheetId===sh.sheetId):null;}catch(_){x=null;}
+        if(x&&(+x.seq||0)>=a.seq&&x.state!==a.state){a.state=x.state;refresh(sh);}
+        if(x&&(+x.seq||0)>=a.seq&&x.state==='done'){
+          try{if(a.kind!=='join'||page_(sh))await reread(sh);}catch(e){console.warn('[RoseStock] the cut is recorded; the sheet is read again at the next follow',e&&e.message);}
+          end();if(told)sh._roseError=null;refresh(sh);
+          C.toast(a.kind==='line'?`${word(sh)}: the cloud drew its green line`:a.kind==='join'?`${word(sh)}: ${String(x.why||'the cloud added it to its set').replace(/\.$/,'')}`:a.kind==='joinFull'?`${word(sh)}: the cloud added it to its set`:`Sheet cut by the cloud · the next ${word(sh)} charms nest past this green line`,'ok');
+          if(a.kind==='cut'){try{window.CNLaserAct&&window.CNLaserAct.rose(sh);}catch(_){}try{window.PartialSheetsUI&&window.PartialSheetsUI.changed();}catch(_){}}
+          if(a.kind==='join'){try{window.CharmNestRunFollow&&typeof window.CharmNestRunFollow.now==='function'&&window.CharmNestRunFollow.now('include');}catch(_){}}   // (G4: the run's next look draws its set on every card)
+          tell(resolve,{ok:true,cloud:true,ask:x,...(a.kind==='join'?{why:String(x.why||'')}:{})});return;
+        }
+        if(x&&(+x.seq||0)>=a.seq&&x.state==='refused'){
+          const e=new Error(String(x.why||`The cloud did not ${askWhat(a.kind)}`).replace(/\.$/,''));
+          end();if(told)sh._roseError=e.message;refresh(sh);tell(reject,e);return;
+        }
+        if(Date.now()-t0>ASK.followMs){end();if(told)sh._roseError=`Asked at ${when(a.at)||'the press'}: the cloud has not answered in ${Math.round(ASK.followMs/60000)} minutes. Nothing is cut yet: press it again`;refresh(sh);tell(reject,new Error(sh._roseError||'No answer from the cloud'));return;}
+        setTimeout(()=>{look().catch(()=>setTimeout(look,ASK.pollMs));},ASK.pollMs);
+      };
+      setTimeout(()=>{look().catch(()=>setTimeout(look,ASK.pollMs));},ASK.pollMs);
+    });
+    a.p.catch(()=>{});   // (a caller that stopped waiting is told on the card)
+    return a.p;
+  }
   // Cut Sheet: one press draws this layout's green line with today's date and
   // records the cut. Its charms turn grey, and the next charms nest past the
   // line on the same physical sheet until it is full.
   async function record(sh,o={}){   // o.by: the person who pressed (charm-nest-flow-rose.js passes it); else the signed-in one
-    // (CLOUD STEP 10b, hard-parts §4.3; DORMANT: window.CharmNestCloudLanes is defined only by the page build that follows a run the cloud carries, build step 14; absent, the press runs here
-    //  as before): when the cloud cuts the green lines, a person's Cut Sheet is ONE ask (roseCutAsk) and the cloud includes, draws, records or refuses it in words on the card
-    if(typeof window.CharmNestCloudLanes==='function'&&window.CharmNestCloudLanes('rosecut',sh)&&o.via!=='auto'){
-      let who='';try{who=String(o.by||window.CNEmployee?.name?.()||window.B?.employee||'').trim();}catch(_){who=String(o.by||'').trim();}
-      if(!who)throw new Error('Sign in first: the cut is recorded with your name');
-      const r=await C.api('charmNestLibrary',{op:'roseCutAsk',sheetId:sh.sheetId,kind:o.joinFull?'joinFull':'cut',by:who},{label:'Asking the cloud to cut '+word(sh)});
-      if(r&&r.error)throw new Error(r.error);
-      C.toast(`${word(sh)} Cut Sheet asked: the cloud draws its green line and records the cut`,'ok');
-      return r;
-    }
+    // (CLOUD STEP 10b, hard-parts §4.3; window.CharmNestCloudLanes is the viewer's, charm-nest-viewer.js; absent or in mode "off", the press runs here as before): when the cloud cuts the
+    //  green lines, a person's Cut Sheet is ONE ask (roseCutAsk) and the cloud includes, draws, records or refuses it in words on the card
+    // (ITEM 4, Paul 21 Nov 2026) the press is followed to the cloud's answer (cloudAsk): the card says it was asked, then the cut as recorded or the cloud's own words; the callers (the Library's
+    //  Cut Sheet, Approve & cut green line) see the cut on the sheet as on the computer that cut it
+    // (G4) a sheet whose cut is recorded already and that is in no set (Gate.rejoin's case, a cut sheet taken out): its press is the cloud's join, never a second cut
+    if(cloudCuts(sh)&&o.via!=='auto')return cloudAsk(sh,sh.roseCutAt&&!inSet(sh)?'join':o.joinFull?'joinFull':'cut',o);
     // (Paul, 26 Oct 2026: a 10K / 14K sheet is never cut automatically: its cut is a person's press. A page that still asks for one is refused before anything changes; the server refuses it too)
     if(o.via==='auto'&&!isRose(sh))throw new Error(`Not cut: a ${word(sh)} sheet is never cut automatically. It waits in its set for a person to approve it and cut its green line`);
     // (Paul, 26 Oct 2026: "the 10k and 14k sheets should stay greyed-out inside the Set of Sheets until a user approves and adds a Green Cut line") the include this press makes for a 10K / 14K sheet
@@ -312,7 +393,8 @@
   function render(sh){
     if(!hasLine(sh)||!sh.el)return;
     let host=sh.el.querySelector('.roseHistory');if(!host){host=document.createElement('div');host.className='roseHistory';sh.el.querySelector('.shPreviewWrap').before(host);}
-    const stock=sh.roseStock,history=before(sh.roseHistory||[],sh).sort((a,b)=>a.revision-b.revision),busy=!!(sh._rosePlanning||sh._roseLoading||sh._roseAction);
+    const asking=!!(sh._roseAsk&&/^(asked|working)$/.test(sh._roseAsk.state));   // (ITEM 4: a press the cloud was asked for and has not answered yet)
+    const stock=sh.roseStock,history=before(sh.roseHistory||[],sh).sort((a,b)=>a.revision-b.revision),busy=!!(sh._rosePlanning||sh._roseLoading||sh._roseAction||asking);
     const stockId=stock?.id||sh.recalled?.roseStockId;
     const ready=!sh.roseCutAt&&!sh.recalled&&sh.persistedDone&&sh.verification?.ok&&!sh.dirty&&sh.placements.length&&!['nesting','finishing','queued'].includes(sh.status);
     const included=!!sh.setId&&!sh.draft;
@@ -323,11 +405,11 @@
     // green line, so it offers nothing.
     const cuttable=!sh.roseCutAt&&(ready?!full:!!(sh.recalled?.roseStockId&&sh.rosePlan&&!sh.rosePlan.full));
     const marks=timeline(sh,history);
-    host.hidden=!stockId&&!ready;
+    host.hidden=!stockId&&!ready&&!asking;   // (ITEM 4: an ask the cloud has not answered is said even on a sheet that holds no physical sheet yet)
     host.classList.toggle('roseHasTimeline',!!marks);
     // The timeline comes last so it sits directly on the sheet's ruler.
     // the busy line names the step under way (it read "Loading sheet geometry…" while a cut was being recorded)
-    const busyWord=sh._roseStep==='include'?'Adding the sheet to the set…':sh._roseStep==='claim'?'Reserving the physical sheet…':sh._rosePlanning?'Planning the green line…':sh._roseAction?'Recording the cut…':'Loading sheet geometry…';
+    const busyWord=asking?`Asked the cloud to ${askWhat(sh._roseAsk.kind)}${sh._roseAsk.by?` (${esc(sh._roseAsk.by)}${when(sh._roseAsk.at)?', '+esc(when(sh._roseAsk.at)):''})`:''}: ${sh._roseAsk.state==='working'?'the cloud is working on it':'waiting for the cloud'}…`:sh._roseStep==='include'?'Adding the sheet to the set…':sh._roseStep==='claim'?'Reserving the physical sheet…':sh._rosePlanning?'Planning the green line…':sh._roseAction?'Recording the cut…':'Loading sheet geometry…';
     // Cut Sheet sits in the card's control row, beside the sheet tabs and Options: on a line of its own it pushed the
     // Rose Gold sheet a row below the sheets beside it (audit, 25 Sep). This panel keeps the step under way, a failure
     // and the dated green lines, and takes no room when it has none of them.
@@ -501,7 +583,8 @@
     if(sh.sheetId&&S.cloud.ok)C.api('charmNestLibrary',{op:'roseReopen',sheetId:sh.sheetId,replace:true,by:'Brites Manager (automatic: uncut lines set aside)'},{quiet:true}).catch(e=>console.warn('[RoseStock.dropUncut]',e&&e.message));
     return true;
   }
-  window.RoseStock=window.CutLine={dropUncut,protect,prepare,nestClaim,claimLate,letGo,takeOff,seatOn,approved,plan,reopen,redraw,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut,addsLine,unlined,full:sheetFull};   // addsLine/unlined: read-only questions for LibraryFlowRose.check
+  window.RoseStock=window.CutLine={dropUncut,protect,prepare,nestClaim,claimLate,letGo,takeOff,seatOn,approved,plan,reopen,redraw,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut,addsLine,unlined,full:sheetFull,ASK,
+    join:(sh,o)=>cloudAsk(sh,'join',o||{}),cloudJoins:sh=>!!sh&&hasLine(sh)&&!!sh.roseCutAt&&!(+sh.laserDoneAt>0)&&!inSet(sh)&&cloudCuts(sh)};   // (G4: a cut sheet in no set joins its set by the cloud, on a viewer: cloudJoins says when, join asks)   // (ASK: ITEM 4, how often and how long a press the cloud was asked for is followed)   // addsLine/unlined: read-only questions for LibraryFlowRose.check
   C.allSheets().forEach(render);
 })();
 

@@ -127,7 +127,9 @@
     }
     try {
       if (cfg.mode === "station") await post("firebaseOrders", { timeline: batch }, sb);
-      else await post("charmNestLibrary", { op: "timelineAdd", events: batch, sandbox: sb }, sb);
+      // (Paul 21 Nov 2026, item 3: in mode "on" the cloud refuses a timelineAdd with no cv (the reload words), so an event in this outbox was retried for ever: it carries the page's
+      //  cv, as api() sends it; a page with no CNViewer sends exactly what it sent before)
+      else { let cv = null; try { cv = window.CNViewer && typeof window.CNViewer.cv === "function" ? window.CNViewer.cv() : null; } catch (_) {} await post("charmNestLibrary", Object.assign({ op: "timelineAdd", events: batch, sandbox: sb }, cv ? { cv } : {}), sb); }
       const done = new Set(batch); box = box.filter(ev => !done.has(ev)); batch.forEach(ev => sent.add(keyOf(ev))); saveIdle(); backoff = 1000;
       // (only the newest delivered keys can still be on the disk, which keeps 500: a long session's memory stays bounded)
       if (sent.size > 3000) { let n = sent.size - 2000; for (const k of sent) { if (n-- <= 0) break; sent.delete(k); } }

@@ -128,6 +128,8 @@
     return out;
   }
 
+  /* (G3, Paul 21 Nov 2026) inp.cloud: the cloud carries every run (mode "on"): a set it is still making changes only by its own request, which the Library's move sends it (charm-nest-flow.js) */
+  const CLOUD_SET = 'The cloud takes sheets in and out of a set it is still making: drop the sheet again in the Library (after a reload) and the cloud is asked, and answers in words. Nothing was changed.';
   /** The one rule. See the head of this file. */
   function verifyMoves(inp) {
     const reasons = [], moves = {}, recs = inp.recs || {}, sets = inp.sets || {}, real = [];
@@ -155,7 +157,7 @@
         if (!F || !F.doc) add('noSet', `The set of ${w} could not be found`, 'Refresh the Library and try again.', { sheetId: id });
         else {
           // a set that is not committed is made by its run: while that run is open on another screen only that screen changes it (two screens would undo each other)
-          if (!committedSet(F.doc) && runOpen(F.doc) && !ownsRun(F.doc)) add('setOpen', `${setWord(F.doc)} is still being made by its run`, 'Its run is open on another screen: change its sheets there.', { sheetId: id });
+          if (!committedSet(F.doc) && runOpen(F.doc) && !ownsRun(F.doc)) add('setOpen', `${setWord(F.doc)} is still being made by ${inp.cloud ? 'the cloud' : 'its run'}`, inp.cloud ? CLOUD_SET : 'Its run is open on another screen: change its sheets there.', { sheetId: id });
           else if (finished(F.doc, F.members || [])) add('setCompleted', `${setWord(F.doc)} is completed`, 'A completed set keeps its sheets.', { sheetId: id });
           if (!(F.members || []).some(x => idOf(x) === id) && !(F.doc.sheetIds || []).includes(id)) add('notInSet', `${w} is not in ${setWord(F.doc)}`, 'The set changed since this was planned. Refresh the Library.', { sheetId: id });
         }
@@ -164,7 +166,7 @@
       if (to) {
         const T = sets[to];
         if (!T || !T.doc) add('noSet', 'That set could not be found', 'Refresh the Library and try again.', { sheetId: id });
-        else if (!committedSet(T.doc)) add('setOpen', `${setWord(T.doc)} is still being made by its run`, 'A sheet joins it from that run, by its Include.', { sheetId: id });
+        else if (!committedSet(T.doc)) add('setOpen', `${setWord(T.doc)} is still being made by ${inp.cloud ? 'the cloud' : 'its run'}`, inp.cloud ? CLOUD_SET : 'A sheet joins it from that run, by its Include.', { sheetId: id });
         else if (finished(T.doc, T.members || [])) add('setCompleted', `${setWord(T.doc)} is completed`, 'A completed set takes no more sheets.', { sheetId: id });
         else if (/superseded/.test(str(T.doc.status))) add('setClosed', `${setWord(T.doc)} was replaced`, 'Drop it on a current set.', { sheetId: id });
         (joining.get(to) || joining.set(to, []).get(to)).push(id);
@@ -270,8 +272,52 @@
    * Each throws (relabel, remakeFiles) with the reason in words; LibraryFlow reports it as a warning and keeps the saved membership. */
   const cloud = (body, label) => { const C = root.CN; if (!C || typeof C.api !== 'function') return Promise.reject(new Error('The Library is not connected to the cloud')); return C.api('charmNestLibrary', body, { label: label || undefined, quiet: !label }); };
   const sound = r => { if (r && r.error) throw Object.assign(new Error(r.error), { status: r.status }); return r; };
+  /* (Paul 21 Nov 2026, item 5: a sheet moved into or out of a committed set on a staff computer, the cloud carrying every run: the membership was saved, and the QR label and the set's
+   *  files stayed stale with a warning, because a page's label and set-file writes are the cloud's work in mode "on"). When the cloud draws the labels (window.CharmNestCloudLanes('labels'),
+   *  charm-nest-viewer.js), nothing of a label or a set's files is made or uploaded here: the press is an ask of the cloud's labels unit (op labelsAsk, CLOUD STEP 10a), said as asked, and
+   *  the cloud's answer (made, waiting and why, refused and why) is said when it comes (followAsks). A relabel asks for each sheet it names (kind relabel by sheetId: that sheet's label,
+   *  as relabel() below makes it): an ask of the whole set would share its key with the set's setFiles ask that follows, which would take its place before the cloud read it.
+   *    SetEdit.cloudDraws(step)                 the cloud draws the labels for this step's run (false on the server, and in mode "off": every page as before)
+   *    SetEdit.askCloud(step, {by, api, what})  step {type: relabel, sheetIds} | {type: setFiles, setId} | {type: qrLabel, sheetId, inSet | complete} → { asks, label } */
+  const cloudDraws = step => { try { return typeof root.CharmNestCloudLanes === 'function' && !!root.CharmNestCloudLanes('labels', step || {}); } catch (_) { return false; } };
+  async function askCloud(step, o) {
+    o = o || {}; step = step || {};
+    const by = str(o.by || (root.CNEmployee && typeof root.CNEmployee.name === 'function' && root.CNEmployee.name()) || (root.B && root.B.employee)).trim();
+    if (!by) throw new Error('Sign in first: the cloud is asked in your name');
+    const api = o.api || (b => cloud(b, 'Asking the cloud'));
+    const kinds = step.type === 'setFiles' ? [{ kind: 'setFiles', setId: str(step.setId) }]
+      : step.type === 'relabel' ? [...new Set((step.sheetIds || []).map(str))].map(id => ({ kind: 'relabel', sheetId: id }))
+      : step.type === 'qrLabel' && (step.inSet || step.complete) ? [{ kind: step.inSet ? 'relabel' : 'complete', sheetId: str(step.sheetId) }] : [];
+    if (!kinds.length) throw new Error('The QR label cannot be made from here: open the sheet and press Make QR label');
+    const what = str(o.what) || (step.type === 'setFiles' ? "The set's labels PDF and manifest" : 'The QR label'), asks = [];
+    for (const k of kinds) { const r = sound(await api(Object.assign({ op: 'labelsAsk', by }, k))); if (r && r.ask) asks.push(Object.assign({ what }, r.ask)); }
+    const label = `${what}: asked of the cloud, which makes ${step.type === 'setFiles' ? 'them' : 'it'} (this computer only shows the cloud's work)`;
+    try { if (o.follow !== false && typeof document !== 'undefined') followAsks(asks, { api: o.api }).catch(() => {}); } catch (_) { /* the card shows it at its next read */ }
+    try { if (o.toast !== false && typeof root.toast === 'function') root.toast(label, 'ok', 7000); } catch (_) { /* said in the move's own lines */ }
+    return { asks, label };
+  }
+  /** The cloud's answer to these asks, said once each when it comes (made; refused and why; waiting and why, once a reason). → { key: the ask as it ended } */
+  async function followAsks(asks, o) {
+    o = o || {};
+    const api = o.api || (b => cloud(b)), wait = o.wait || (ms => new Promise(r => setTimeout(r, ms))), say = o.say || ((t, tone) => { try { if (typeof root.toast === 'function') root.toast(t, tone, 10000); } catch (_) { /* not shown */ } });
+    const left = new Map((asks || []).filter(a => a && a.key).map(a => [a.key, a])), out = {}, told = new Map(), t0 = Date.now();
+    while (left.size && Date.now() - t0 < (o.ms || 900000)) {
+      await wait(o.every || 5000);
+      for (const a of [...left.values()]) {
+        let got = null; try { const r = await api(Object.assign({ op: 'labelsAskGet' }, a.setId ? { setId: a.setId } : { sheetId: a.sheetId })); got = ((r && r.asks) || []).find(x => x && x.key === a.key) || null; } catch (_) { continue; }
+        if (!got) continue;
+        if (+got.seq > +a.seq) { out[a.key] = got; left.delete(a.key); continue; }       // (a newer press since: its own follow says it)
+        if (got.state === 'done') { say(`${a.what}: made by the cloud`, 'ok'); out[a.key] = got; left.delete(a.key); }
+        else if (got.state === 'refused') { say(`${a.what} was not made by the cloud: ${got.why || 'no reason given'}`, 'bad'); out[a.key] = got; left.delete(a.key); }
+        else if (got.why && told.get(a.key) !== got.why) { told.set(a.key, got.why); say(`${a.what} waits in the cloud: ${got.why}`, ''); }
+      }
+    }
+    for (const [k, a] of left) out[k] = Object.assign({}, a, { state: 'asked' });
+    return out;
+  }
   const labelsMade = new Map();       // sheetId -> the label files relabel made (remakeFiles puts them in the set's list)
   async function relabel(step, o) {
+    if (cloudDraws(step)) return askCloud(step, o);      // (item 5: the cloud's labels unit draws it)
     const C = root.CN, O = root.CharmNestOrders, Sx = root.Sets; if (!C || !O || !Sx || !Sx.renderLabelPng) throw new Error('the page is not ready');
     const set = sound(await cloud({ op: 'setGet', setId: str(step.setId) })).set; if (!set) throw new Error('the set could not be read');
     // (the sheets of this step are read first: sheets put in together say where each other's pieces are on their labels)
@@ -302,6 +348,7 @@
   }
   /** The set's files, the way Sets.finalize makes them, from the records instead of the open run's pages. */
   async function remakeFiles(step, o) {
+    if (cloudDraws(step)) return askCloud(Object.assign({}, step, { type: 'setFiles' }), o);      // (item 5: the cloud's labels unit makes them)
     const C = root.CN, PL = root.PDFLib, A = root.CharmNestAssets; if (!C || !PL || !A || !A.bytes) throw new Error('the page is not ready');
     const set = sound(await cloud({ op: 'setGet', setId: str(step.setId) })).set; if (!set) throw new Error('the set could not be read');
     const own = new Set((set.sheetIds || []).map(str)), sheets = (sound(await cloud({ op: 'listSheets', setId: set.setId, limit: 300 }, 'Reading the set')).sheets || []).filter(s => own.has(s.id) && !s.archived);
@@ -388,5 +435,5 @@
     try { if (sheets.length && C && C.loadLibrary) Promise.resolve(C.loadLibrary()).catch(() => {}); } catch (_) { /* refreshed at its next read */ }
   }
 
-  return { relabel, remakeFiles, applyMembership, verifyMoves, principleReasons, sayWhy, spanLines, sideTag, splitOrders, sharedWords, cutReason, engravingGap, partialGap, indexFor, setAfter, wordOf, setWord, committedSet, inSetOf, finished, orderIdsOf, isDone };
+  return { relabel, remakeFiles, applyMembership, cloudDraws, askCloud, followAsks, verifyMoves, principleReasons, sayWhy, spanLines, sideTag, splitOrders, sharedWords, cutReason, engravingGap, partialGap, indexFor, setAfter, wordOf, setWord, committedSet, inSetOf, finished, orderIdsOf, isDone };
 });

@@ -378,11 +378,26 @@
     // the design's file, kept once per design and version (a sheet holding the piece writes its files from it on any computer)
     if (!made.src.cloud && CN.uploadBytes) { try { made.src.cloud = await CN.uploadBytes(`charmnest/custom/designs/${safe(design.id)}/v${version}-${made.geomHash.slice(3, 15)}.pdf`, made.src.bytes, "application/pdf", "Saving the custom design"); } catch (e) { console.warn("[custom piece] design file not kept", e); } }
     const cloud = made.src.cloud;
-    const run = liveRun(), req = "cp" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    /* CESEND (21 Nov 2026): on a staff computer in mode "on" (a viewer) this page puts nothing on a sheet (it can save none): the rows are written for the run the cloud carries, saying the
+       cloud places them (cloudPlace, with the piece's size and its design file), and the caller asks the cloud to place them (charm-nest-custom-piece.js send: runCmdPut placewaiting). */
+    const V = root.CNViewer, viewer = !!(V && typeof V.on === "function" && V.on());
+    let vRun = null;
+    if (viewer) {
+      vRun = (() => { try { return root.CharmNestRunFollow.state().runId || null; } catch (_) { return null; } })();
+      if (!vRun) throw new Error("no run is open in the cloud: start the run, then send it again");
+      if (!(typeof V.lane === "function" && V.lane("cmd:placewaiting") && V.lane("nest"))) throw new Error("the cloud does not place sent pieces yet (the owner turns on \u201ccmd:placewaiting\u201d in Settings, Cloud carries): nothing was sent");
+      if (!(cloud && cloud.path)) throw new Error("the design's file could not be kept in the cloud, so the cloud cannot cut it: nothing was sent. Send it again");
+    }
+    const run = viewer ? null : liveRun(), req = "cp" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     const ask = () => CN.api("charmNestLibrary", { op: "customPiecePut", requestId: req, by, piece: { designId: String(design.id), version, designHash, geomHash: made.geomHash, customName: name, metal, quantity: qty, orderId: rid || null,
-      widthMm: made.widthMm, heightMm: made.heightMm, aiPath: (cloud && cloud.path) || null, charmHash: c0.hash || null, runId: run ? run.runId : null, setId: run ? run.setId || null : null, day: CN.today ? CN.today() : null, fixes: o.fixes || null } }, { label: "Numbering the custom piece" });
+      widthMm: made.widthMm, heightMm: made.heightMm, aiPath: (cloud && cloud.path) || null, charmHash: c0.hash || null, runId: viewer ? vRun : run ? run.runId : null, setId: run ? run.setId || null : null, day: CN.today ? CN.today() : null, fixes: o.fixes || null,
+      ...(viewer ? { cloudPlace: true, widthPt: c0.widthPt, heightPt: c0.heightPt, areaPt2: c0.areaPt2, penHash: made.penHash || null } : {}) } }, { label: "Numbering the custom piece" });
     let rep; try { rep = await ask(); } catch (e) { if (!e || !(e.transient || +e.status >= 500)) throw e; rep = await ask(); }   // (the same request again: the server gives it the same number)
     if (!rep || !rep.ok || !Array.isArray(rep.pools) || !rep.pools.length) throw new Error((rep && rep.error) || "the piece was not recorded");
+    if (viewer) {   // (CESEND: recorded; the cloud places it once asked. Nothing here is put on a sheet, nested or saved)
+      try { root.CNDesignLog && root.CNDesignLog.event("customPiecePooled", { designId: String(design.id), version, orderId: rep.orderId, customId: rep.customId, orderless: !!rep.orderless, name, metal, quantity: rep.pools.length, poolIds: rep.poolIds, sheet: null, cloud: true, by, ...(o.fixes ? { fixes: o.fixes } : {}) }); } catch (_) {}
+      return { poolIds: rep.poolIds.slice(), cloud: true, runId: vRun, orderId: rep.orderId, customId: rep.customId };
+    }
     const at = Date.now(), n = rep.pools.length, list = [];
     for (const r of rep.pools) {
       const c = Object.assign({}, c0, { id: `${made.src.id}:${r.poolId}`, pinned: null }); delete c.frontAt; delete c.manual;

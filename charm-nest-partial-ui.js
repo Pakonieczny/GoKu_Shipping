@@ -351,8 +351,43 @@
     return Promise.resolve();
   }
   const STEP_WORDS = { check: 'Checking the sheet…', release: "Giving the sheet's old metal back…", claim: 'Reserving the partial sheet…', nest: 'Nesting the pieces on the partial sheet…', continue: 'Moving the rest to the next partial sheet…', save: 'Saving the layout…' };
+  /* Paul 21 Nov 2026, item 11: a viewer (the cloud carries every run, drive mode "on") reserves no partial sheet itself (roseClaim is the cloud's, and refused from a page):
+     "Use this one" sends the SAME seat request the Sheets grid sends when a run sheet is dropped on an Available sheet (runCmdPut { type: 'seat', sheetId, partialId,
+     partialIds }, charm-nest-options-sheets.js doSeat); the cloud reserves the partial sheet and nests the pieces on it (_charmNestCmdExec.js seat), and its steps and its
+     answer are shown here, as the grid shows them. Nothing is said done until the cloud says so. In every other mode the page seats as before. */
+  const viewer = () => { try { return !!(root.CNViewer && typeof root.CNViewer.on === 'function' && root.CNViewer.on()); } catch (_) { return false; } };
+  const cmdApi = body => root.CN && typeof root.CN.api === 'function' ? root.CN.api('charmNestLibrary', body, { quiet: true }) : Promise.reject(new Error('no connection'));
+  async function cloudSeat(m, a, sh, ids, answer) {
+    const s = stOf(m), F = root.CharmNestRunFollow;
+    const runId = (F && typeof F.state === 'function' && F.state().runId) || sh.runId || '', dev = (() => { try { return F.dev(); } catch (_) { return ''; } })(), by = (() => { try { return String((root.B && root.B.employee) || '').trim(); } catch (_) { return ''; } })();
+    const say = t => { if (s.ask === a) { a.text = t; paintView(m); } };
+    const fail = text => { if (s.ask === a) { s.ask = { phase: 'bad', seq: s.seq, text }; paintView(m); } root.CN && root.CN.toast && root.CN.toast('Partial sheet not used: ' + text, 'bad'); };
+    if (!sh.sheetId) return fail('This sheet is not saved in the cloud yet. Wait a moment, then choose the partial sheet again.');
+    if (!runId || !dev) return fail('There is no open run to send this to.');
+    const l0 = answer.links[0], label = `Move ${sheetWord(sh)}'s ${plural(answer.pieces, 'piece')} onto the partial sheet${l0 && l0.wMm && l0.hMm ? ' ' + mmWord(l0.wMm, l0.hMm) : ''}`;
+    a.phase = 'seating'; say('Sending the request to the cloud…');
+    let put = null; try { put = await cmdApi({ op: 'runCmdPut', runId, cmd: { metal: m, label, type: 'seat', sheetId: sh.sheetId, partialId: ids[0], partialIds: ids }, by, dev }); } catch (e) { return fail('Not sent: ' + ((e && e.message) || e)); }
+    if (!put || put.error || !put.id) return fail('Not sent: ' + ((put && put.error) || 'no answer'));
+    say('Sent to the cloud: waiting for it to start…');
+    for (const t0 = Date.now(); ;) {
+      await sleep(4000);
+      let c = null; try { const res = await cmdApi({ op: 'runCmdList', runId }); c = ((res && res.cmds) || []).find(x => x && x.id === put.id) || null; } catch (_) { /* looked at again in 4 s */ }
+      if (c && (c.state === 'done' || c.state === 'failed')) {
+        if (c.state === 'failed') return fail(c.text || 'The cloud could not do that.');
+        try { PS() && PS().changed && PS().changed(); } catch (_) {}
+        if (s.ask === a) { s.ask = null; s.chain = []; }
+        setOpen(m, false); Promise.resolve(closeOptions(m)).catch(() => {});
+        root.CN && root.CN.toast && root.CN.toast(c.text || `${plural(answer.pieces, 'piece')} seated on the partial sheet`, 'ok');
+        return;
+      }
+      if (c && c.state === 'cancelled') return fail('The request was cancelled. Nothing was done.');
+      if (Date.now() - t0 > 11 * 60000) return fail('The cloud did not answer. Look at the sheet again, then try once more.');
+      if (c && c.state === 'running') say(c.step ? `The cloud: ${c.step}` : 'The cloud is moving the pieces onto the partial sheet…');
+    }
+  }
   async function commit(m) {
     const s = stOf(m), a = s.ask, sh = s.sh, E = ENG(); if (!a || a.phase !== 'answer' || !sh) return;
+    if (viewer()) return cloudSeat(m, a, sh, s.chain.slice(), a.answer);   // (item 11: the cloud seats it)
     if (!E || !E.seat) { a.noEngine = true; paintView(m); return; }
     const ids = s.chain.slice(), answer = a.answer; a.phase = 'seating'; a.text = STEP_WORDS.check; paintView(m);
     let cap = null; try { cap = capture(sh, answer); } catch (e) { cap = null; }   // (the card as it is now: the scene is made of it, and plays at once, whatever the work then takes)

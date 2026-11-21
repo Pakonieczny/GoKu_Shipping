@@ -517,8 +517,20 @@
       return pagesOf(metal).find(p => p !== x.except && (!rid || !p.runId || p.runId === rid) && stillFilling(p) && !held(p)) || null;
     }
     /* PAIRFIX: the sheet still filling only when it keeps the rule the caller needs (x.ok); else x.wait → null (the caller's pieces wait for it), and without x.wait a new draft */
+    /* ONEDRAFTFILL (Paul, 21 Nov 2026: "these draft sheets only have one or two pieces and they're going onto a next draft sheet … this breaks my rules"): every draft still filling is
+       tried, oldest first, before a new draft is opened. Only the first was offered: when it could not take the pieces (full in fact, never marked full while the cloud's nests failed), a
+       new draft was made, and the second draft, with its room, was passed over. */
+    function fillingPages(metal, x = {}) {
+      if (!FAST.includes(metal) || settings.onesheet === "off") return [];
+      const rid = run.runId || null, held = p => !!p._manualHold || !!p._inplaceHold || closedV(p);
+      return pagesOf(metal).filter(p => p !== x.except && (!rid || !p.runId || p.runId === rid) && stillFilling(p) && !held(p)).sort((a, b) => num(a.page) - num(b.page));
+    }
     function addPage(metal, x = {}) {
-      if (!x.fresh) { const f = fillingPage(metal, x); if (f && (!x.ok || x.ok(f))) return f; if (f && x.wait) return null; }
+      if (!x.fresh) {
+        const fs = fillingPages(metal, x);
+        for (const f of fs) if (!x.ok || x.ok(f)) return f;
+        if (fs.length && x.wait) return null;
+      }
       return newDraft(metal);
     }
     /* RGC1: the next sheet of a green-line metal continues on the leftover its newest cut made (the nest claims it), unless Options → Partial Sheet says always a new sheet */

@@ -79,6 +79,41 @@
   const count = (n, one, more) => `${n} ${n === 1 ? one : (more || one + 's')}`;
   const laserOf = s => (s.laser && typeof s.laser === 'object' && s.laser.stages) ? s.laser : RD().laserSheet(s);
   const committedSet = d => !!(d && (+d.committedAt > 0 || /^complete/.test(String(d.status || ''))));
+  /* (G3, Paul 21 Nov 2026: on a staff computer in mode "on", moving a draft sheet of the open run into or out of a set, or between sets, was refused with "Its run is open on another
+     screen": that rule meant another COMPUTER carried the run, and since the cloud carries every run the press could never work.) When the cloud carries the sheet's run (env.cloud:
+     this page is a viewer, CNViewer.on(), and holds no run) the move is the cloud's own request for the sheet's set: ONE ask (roseCutAsk kind "include" / "exclude", lane "rosecut",
+     _charmNestGreenLine.js member), which the cloud applies by the set rules (charm-nest-assembly-core.js) and answers in words; the person sees that answer. Mode off: env.cloud is
+     false and every plan is exactly as before. A committed set keeps the Library's own path (its records), as the In current set switch does (item 7). */
+  const cloudRuns = (env, run) => !!(env && env.cloud && run && run.open);
+  const goldFamily = m => m === 'rose' || m === 'gold10k' || m === 'gold14k';
+  const takenOutHold = s => held(s) && /^Taken out of /.test(String(s.laserHold.note || ''));
+  /** The lane the cloud's answer comes from: when it is off, the plan says so (nothing is asked, nothing is changed) instead of an ask nobody answers. */
+  function cloudLaneNeed(env, need) {
+    if (env.cloudLane !== false) return false;
+    need('cloudLane', 'The cloud does not take set moves yet', 'The cloud carries this run, but its set step (rosecut) is not switched on in Settings. Nothing was changed.');
+    return true;
+  }
+  /** The plan's lines for a move the cloud makes: what is asked of it, the yes it needs, the steps (a "taken out" hold lifted first, then the ask). kind: include | exclude. */
+  function cloudPlan(plan, v, o) {
+    const name = v.label, s = v.sheet, toName = o.toName, fromName = o.fromName;
+    plan.cloud = true;
+    const what = o.kind === 'exclude' ? `${name} taken out of ${fromName}` : o.from ? `${name} moved from ${fromName} to ${toName}` : `${name} put in ${toName}`;
+    plan.auto.push({ key: 'membership', label: `Asked of the cloud: ${what}`, detail: 'The cloud carries this run, so it makes the move by the set rules and answers here in words. If the rules keep the sheet where it is, or let it wait, its answer says why.' });
+    for (const m of o.mates || []) plan.auto.push({ key: 'membership:' + m.sheetId, label: `Asked of the cloud: ${m.label} put in ${toName}`, detail: 'It was dropped on with the first sheet: the cloud puts it in by the same rules.' });
+    if (o.kind === 'exclude') {
+      plan.auto.push({ key: 'leftOut', label: `${name} waits as a draft`, detail: `It is marked as taken out, so the cloud does not put it in a set by itself. Drop it on a set to put it in again.` });
+      plan.confirm.push({ key: 'leaveSet', label: `Take ${name} out of ${fromName}?`, detail: `The cloud takes it out. ${fromName} goes on with its other sheets, and the cloud makes its labels again without it.` });
+    } else if (o.from) plan.confirm.push({ key: 'leaveSet', label: `Take ${name} out of ${fromName}?`, detail: `The cloud takes it out of ${fromName}, then puts it in ${toName} by the set rules.` });
+    if (o.kind === 'include' && goldFamily(s.metal) && !o.from) plan.confirm.push({ key: 'roseSet', label: `Add ${name} to ${toName}?`, detail: s.metal === 'rose' ? 'This is its yes to join a set: the cloud puts it in its ONE set by the set rules and cuts its green line there. A recorded cut is permanent.' : 'This is its yes (its In current set switch): the cloud puts it in its ONE set by the set rules. Its green line is cut only by its own Cut Sheet press.' });
+    const sheets = [{ sheetId: v.id, label: name, rec: s, key: 'membership' }].concat((o.mates || []).map(m => ({ sheetId: m.sheetId, label: m.label, rec: m.rec, key: 'membership:' + m.sheetId })));
+    if (o.kind === 'include') for (const x of sheets) if (takenOutHold(x.rec)) {
+      plan.auto.push({ key: 'release:' + x.sheetId, label: `${x.label} released from its hold`, detail: 'The hold that taking it out made is lifted, so the cloud can put it in; it is put back if the cloud does not.' });
+      plan.steps.push({ type: 'release', sheetIds: [x.sheetId], joined: true, key: 'release:' + x.sheetId });
+    }
+    for (const x of sheets) plan.steps.push({ type: 'cloudSet', sheetId: x.sheetId, kind: o.kind, setId: o.kind === 'include' && o.T ? o.T.setId : null, newSet: o.kind === 'include' && !!o.newSet, what: x.key === 'membership' ? what : `${x.label} put in ${toName}`, key: x.key });
+    plan.notes.push('Nothing changes on this computer until the cloud answers: the Library then shows the sheet where the cloud put it.');
+    return finish(plan);
+  }
   /* The ONE test for "this metal gets a green dash line": charm-nest-rose.js CharmNestRose.cuts (Rose Gold, 10K, 14K once that
      file says so; Rose Gold alone before it). A partial sheet of such a metal that is not cut and has no line yet needs one. */
   const cuts = m => { try { if (hooks.cuts) return !!hooks.cuts(m); const R = root.CharmNestRose; return R && typeof R.cuts === 'function' ? !!R.cuts(m) : m === 'rose'; } catch (_) { return m === 'rose'; } };
@@ -176,7 +211,7 @@
       const orders = (rec.orders || (rec.label && rec.label.orders) || []).length, rose = rec.metal === 'rose' && !rec.roseCutAt, can = !rose && orders > 0 && rec.verification?.ok === true && !!(rec.outputs && (rec.outputs.ai || rec.outputs.preview)) && env.canRelabel !== false;
       if (can) {
         g.auto.push({ key: 'qrLabel:' + id, label: `${label}: QR label made`, detail: `A QR label for ${count(orders, 'order')} is made and saved with the sheet.`, stamp: true });
-        g.steps.push({ type: 'qrLabel', sheetId: id, key: 'qrLabel:' + id });
+        g.steps.push({ type: 'qrLabel', sheetId: id, key: 'qrLabel:' + id, ...(joined(rec) ? { inSet: true } : {}) });   // (inSet: the cloud draws it in its set, item 5)
       } else need('qrLabel', () => 'QR label not made yet', rose ? 'A Rose Gold sheet gets its QR label when Cut Sheet is pressed: open it on the Nest tab and press Cut Sheet there.' : orders ? 'The QR label cannot be made from here: open the sheet and press Make QR label.' : 'There is no order on this sheet to put on a label.', ex.orders && ex.orders.items ? ex.orders.items.filter(i => i.part === 'qr') : []);
     }
     // an order waits for every piece of it. A piece on this sheet, or on a sheet of the same move, is no wait of its own:
@@ -382,6 +417,14 @@
     if (line) plan.confirm.push(roseLineConfirm([s], env));
     plan.steps.push({ type: 'roseJoin', sheetId: v.id, setId: T ? T.setId : null, newSet: !!to.newSet, line, full, ...(cutDone ? { joinOnly: true } : {}), key: 'membership' });
   }
+  /* (G4) a cut green-line sheet into a set, asked of the cloud: its own yes (`roseSet`, as a Rose Gold join), one step `cloudJoin` (hooks.cloudJoin: RoseStock.join, followed to the answer) */
+  function cloudJoinPlan(plan, v, T, to) {
+    const name = v.label, target = to.newSet ? 'a new set' : setName(T);
+    plan.cloudJoin = true;
+    plan.auto.push({ key: 'membership', label: `${name} added to ${target}`, detail: 'Its green line is already cut: the cloud only joins it, by your set rules (the set its orders tie it to), and no second cut is recorded. The cloud says which set it is in.' });
+    plan.confirm.push({ key: 'roseSet', label: `Add ${name} to ${target}?`, detail: 'Its green line is already cut, so no line is added and no cut is recorded. The cloud puts it in its set by your set rules.' });
+    plan.steps.push({ type: 'cloudJoin', sheetId: v.id, setId: T ? T.setId : null, newSet: !!to.newSet, key: 'membership' });
+  }
   function addMark(plan, v, env) {
     plan.auto.push({ key: 'mark', label: `Marked completed by ${nameOf(env)}`, detail: 'The completed seal is stamped with your name and the time, and its orders get their milestone.', stamp: true, seal: { how: 'laserDone' }, ...(env.by ? { by: env.by } : {}) });
     plan.steps.push({ type: 'mark', kind: v.kind, id: v.id, done: true, key: 'mark' });
@@ -418,6 +461,7 @@
      (the one dropped, the ones dropped on, the partners that come with it) hold a completed GF and a completed SS sheet. charm-nest-set-rules.js is the one definition. */
   function setPrinciple(state, v, to, plan, env) {
     const R = RL();
+    if (plan.cloud && (env.also || []).length) return plan;      // (G3: two sheets combined on a viewer: the cloud's rules choose the open set or a new one, and say which)
     if (!R || hooks.setPrinciple === false || !to.newSet || v.kind !== 'sheet' || plan.noop || plan.needs.length) return plan;   // (hooks.setPrinciple false: only the suites of moves that predate the principle say it)
     const ids = [v.id].concat((env.also || []).map(String), ...plan.steps.filter(x => x.type === 'include' || x.type === 'roseJoin').map(x => [x.sheetId].concat(x.with || [])));
     const sheets = [...new Set(ids)].map(i => state.sheets[i]).filter(Boolean);
@@ -446,6 +490,16 @@
     if (T && +T.laserDoneAt > 0) need('setCompleted', `${setName(T)} is completed`, 'A completed set takes no more sheets.');
     else if (T && /superseded/.test(String(T.status || ''))) need('setClosed', `${setName(T)} was replaced`, 'Drop it on a current set.');
     if (plan.needs.length) return finish(plan);
+    // (G4, Paul 21 Nov 2026) a Rose Gold, 10K or 14K sheet whose green line is cut already, dropped on a set on a staff computer while the cloud carries its run (mode "on": no page holds the
+    //  run, so the checks below could only refuse it): ONE ask the cloud acts on (roseCutAsk "join"), joined by the set rules, never cut again; the move says the cloud's answer
+    if ((env.also || []).length === 0 && s.roseCutAt && cuts(s.metal) && typeof hooks.cloudJoins === 'function' && hooks.cloudJoins(s)) { cloudJoinPlan(plan, v, T, to); return finish(plan); }
+    if (run && run.open && !(live && live.runHere) && cloudRuns(env, run)) {   // (G3: the cloud carries the run: the move is its request, answered in words)
+      if (cloudLaneNeed(env, need)) return finish(plan);
+      if ((env.also || []).length && s.metal === 'rose') { need('roseCombine', `${v.label} is a Rose Gold sheet`, 'Rose Gold joins a set by its own yes: drop it on the set, then add the other sheet.'); return finish(plan); }
+      const mates = alsoCheck(state, v, T, plan, env, need);
+      if (plan.needs.length) return finish(plan);
+      return cloudPlan(plan, v, { kind: 'include', T, newSet: !!to.newSet, toName: (env.also || []).length && !T ? 'the open set, or a new one' : to.newSet ? 'a new set' : setName(T), mates: mates.map(m => ({ sheetId: m.sheetId, label: m.label, rec: state.sheets[m.sheetId] })) });
+    }
     if (run && run.open && !(live && live.runHere)) { need('runElsewhere', 'Its run is open on another screen', 'Move it from that screen, so the two do not undo each other.'); return finish(plan); }
     if (!live) { need('fixedSet', `${v.label} is closed`, 'Its run is finished, so it stays as it is.'); return finish(plan); }
     const open = live.dispatchSetId || null, openName = open && state.sets[open] ? setName(state.sets[open]) : 'the open set';
@@ -512,7 +566,9 @@
     plan.to = { area: 'progress', setId: null, label: AREA.progress }; plan.leave = true; plan.committed = true; plan.exit = how.kind;
     const cut = SEd && SEd.cutReason(s);
     if (cut) { need(cut.key, cut.label, cut.detail); return finish(plan); }
-    if (how.kind === 'elsewhere') { need('runElsewhere', `${tn}'s run is open on another screen`, `Take ${name} out of ${tn} from that screen, so the two do not undo each other.`); return finish(plan); }
+    const viaCloud = how.kind === 'elsewhere' && cloudRuns(env, { open: true });   // (G3: the cloud carries the run that makes the set: the take-out is its request)
+    if (viaCloud && cloudLaneNeed(env, need)) return finish(plan);
+    if (how.kind === 'elsewhere' && !viaCloud) { need('runElsewhere', `${tn}'s run is open on another screen`, `Take ${name} out of ${tn} from that screen, so the two do not undo each other.`); return finish(plan); }
     const rest = v.members.filter(m => sid(m) !== v.id);
     if (!rest.length) { need('lastSheet', `${name} is all that is in ${tn}`, committed ? `A set keeps at least one sheet: press Undo set on ${tn}'s card to take it apart.` : 'A set keeps at least one sheet: put another sheet in first, or leave it where it is.'); return finish(plan); }
     // (Paul, 10 Oct) taking out the last completed GF or SS sheet a set has would leave it without the sheets a set needs: refused, with the reason
@@ -531,6 +587,7 @@
     }
     principleNeeds(v, T, plan);
     if (plan.needs.length) return finish(plan);
+    if (viaCloud) { plan.exit = 'cloud'; return cloudPlan(plan, v, { kind: 'exclude', fromName: tn }); }
     const left = rest.every(m => +m.laserDoneAt > 0), nlab = count(rest.length, 'sheet');
     plan.auto.push({ key: 'membership', label: `${name} taken out of ${tn}`, detail: committed ? `${tn} stays committed with its other ${nlab}, keeping its seals, its approvals and its place. This sheet keeps every seal and cut record it has.` : `${tn} goes on with its other ${nlab}. This sheet keeps every seal, approval and cut record it has.` });
     plan.auto.push({ key: 'hold', label: `${name} held back from Laser cutting`, detail: 'It goes back to In progress so the open run does not put it in another set by itself. Drop it on Laser cutting to release it.' });
@@ -556,14 +613,19 @@
     if (inSet(s) && !from) { need('set', `The set of ${name} could not be read`, 'Refresh the Library and try again.'); return finish(plan); }
     const how = from ? exitHow(state, v) : null;
     if (from && +from.laserDoneAt > 0) need('setCompleted', `${fromName} is completed`, 'A completed set keeps its sheets.');
-    if (how && how.kind === 'elsewhere') need('runElsewhere', `${fromName}'s run is open on another screen`, `Move ${name} from that screen, so the two do not undo each other.`);
+    // (G3: the cloud carries the run that makes the set it leaves: the cloud takes it out first (its request, answered in words), then the Library puts it in the committed set)
+    const fromCloud = !!how && how.kind === 'elsewhere' && cloudRuns(env, { open: true });
+    if (fromCloud && cloudLaneNeed(env, need)) return finish(plan);
+    if (how && how.kind === 'elsewhere' && !fromCloud) need('runElsewhere', `${fromName}'s run is open on another screen`, `Move ${name} from that screen, so the two do not undo each other.`);
     if (!T) { need('noSet', 'That set could not be found', 'Refresh the Library and try again.'); return finish(plan); }
     if (+T.laserDoneAt > 0) need('setCompleted', `${toName} is completed`, 'A completed set takes no more sheets.');
     else if (/superseded/.test(String(T.status || ''))) need('setClosed', `${toName} was replaced`, 'Drop it on a current set.');
     // (a Rose Gold sheet joins a committed set like any sheet, Paul 12 Oct: no `roseSet` refusal; its green line is the Cut Sheet press below, asked for with its own yes)
     if (plan.needs.length) return finish(plan);
     const run = (state.runs || {})[s.runId] || null, live = (state.live || {})[v.id] || null;
-    if (!from && run && run.open && !(live && live.runHere)) { need('runElsewhere', 'Its run is open on another screen', 'Move it from that screen, so the two do not undo each other.'); return finish(plan); }
+    // (G3: a draft of the run the cloud carries goes into a COMMITTED set by the Library's own path, its records, as on the In current set switch (item 7): no computer holds the run, so
+    //  no copy of it can undo the move, and the cloud's set rules never take a sheet out of a set by themselves)
+    if (!from && run && run.open && !(live && live.runHere) && !cloudRuns(env, run)) { need('runElsewhere', 'Its run is open on another screen', 'Move it from that screen, so the two do not undo each other.'); return finish(plan); }
     // the other end: a sheet that leaves a set keeps no mate behind (A), the sheets that share an order with it come along (the cardinal rule)
     const items = env.sharedItems || [], group = env.group || null, members = group && Array.isArray(group.members) ? group.members : [], by = new Map(members.map(m => [m.id, m]));
     const tied = new Map();
@@ -611,12 +673,17 @@
     plan.notes.push(`The orders on ${name} are not marked design-complete at the Design Station: ${toName} was committed before this sheet joined it.`);
     const moves = [{ sheetId: v.id, to: T.setId }].concat(mates.map(m => ({ sheetId: m.id, to: T.setId, pulled: true })));
     const fromRun = !!how && how.kind === 'run';
+    if (fromCloud) {
+      plan.cloud = true;
+      plan.auto.unshift({ key: 'leave', label: `Asked of the cloud: ${name} taken out of ${fromName}`, detail: 'The cloud carries the run that makes it, so it takes the sheet out by the set rules first; nothing else is done if it does not.' });
+      plan.steps.push({ type: 'cloudSet', sheetId: v.id, kind: 'exclude', setId: null, newSet: false, what: `${name} taken out of ${fromName}`, key: 'leave' });
+    }
     if (fromRun) {
       // out of the set the run on this screen is making first (rules checked by the server, then the run lets the sheet go), then into the committed set
       plan.steps.push({ type: 'setMember', moves: [{ sheetId: v.id, to: null, run: true }], owned: [how.runId].filter(Boolean), expect: { [v.id]: { setId: from.setId } }, key: 'leave' });
       plan.steps.push({ type: 'runLeave', sheetId: v.id, setId: from.setId, key: 'runLeave', label: `${fromName} made again by the run without ${name}` });
     }
-    plan.steps.push({ type: 'setMember', moves, expect: Object.fromEntries(moves.map(m => [m.sheetId, { setId: m.sheetId === v.id && from && !fromRun ? from.setId : null }])), key: 'membership' });
+    plan.steps.push({ type: 'setMember', moves, expect: Object.fromEntries(moves.map(m => [m.sheetId, { setId: m.sheetId === v.id && from && !fromRun && !fromCloud ? from.setId : null }])), key: 'membership' });
     plan.steps.push({ type: 'relabel', sheetIds: moves.map(m => m.sheetId), setId: T.setId, key: 'qrLabel' });
     // (a) a sheet that owes its green line (and the ones that come with it): the person's yes at the drop IS the Cut Sheet press, which follows the membership (the press puts a sheet in
     // the OPEN run's set when it is in none, so a committed set takes the sheet first) and nothing is drawn before that yes
@@ -639,8 +706,22 @@
     if (T && +T.laserDoneAt > 0) need('setCompleted', `${toName} is completed`, 'A completed set takes no more sheets.');
     else if (T && /superseded/.test(String(T.status || ''))) need('setClosed', `${toName} was replaced`, 'Drop it on a current set.');
     if (+from.laserDoneAt > 0) need('setCompleted', `${fromName} is completed`, 'A completed set keeps its sheets.');
-    if (how.kind === 'elsewhere') need('runElsewhere', `${fromName}'s run is open on another screen`, `Move ${name} from that screen, so the two do not undo each other.`);
+    const viaCloud = how.kind === 'elsewhere' && cloudRuns(env, { open: true });   // (G3: the cloud carries the run: out of its set and into the other, by the cloud, answered in words)
+    if (viaCloud && cloudLaneNeed(env, need)) return finish(plan);
+    if (how.kind === 'elsewhere' && !viaCloud) need('runElsewhere', `${fromName}'s run is open on another screen`, `Move ${name} from that screen, so the two do not undo each other.`);
     if (plan.needs.length) return finish(plan);
+    if (viaCloud) {
+      if (s.metal === 'rose') need('roseSet', `${name} is a Rose Gold sheet`, 'Rose Gold is in ONE set, joined by its own yes: take it out first, then drop it on the set it goes to.');
+      if (v.members.filter(m => sid(m) !== v.id).length === 0) need('lastSheet', `${name} is all that is in ${fromName}`, 'A set keeps at least one sheet: put another sheet in first, or leave it where it is.');
+      if (items.length) {
+        plan.shared = items; plan.group = [name].concat(items.flatMap(i => i.there || []));
+        need('sharedOrders', 'Orders shared with another sheet', SEd ? SEd.sharedWords(items, 'they stay in one set') : 'Sheets that share an order stay in one set.', items.map(i => ({ ...i, why: `on ${[i.here].concat(i.there || []).filter(Boolean).join(' and ')}` })));
+      }
+      principleNeeds(v, from, plan);
+      if (plan.needs.length) { plan.needs.sort((a, b) => (b.key === 'sharedOrders') - (a.key === 'sharedOrders')); return finish(plan); }
+      plan.to = { area: null, setId: T ? T.setId : null, label: toName };
+      return cloudPlan(plan, v, { kind: 'include', from, T, newSet: !!to.newSet, toName, fromName });
+    }
     const open = live ? live.dispatchSetId || null : null, openName = open && state.sets[open] ? setName(state.sets[open]) : 'the open set';
     // the set the run is making IS the set it is in: there is no other open set to go to
     if (how.kind === 'run' && (to.newSet || (T && T.setId === from.setId))) { plan.noop = true; plan.notes.push(`${name} is already in ${fromName}, the set the run is making.`); return finish(plan); }
@@ -693,6 +774,7 @@
       if (b.metal === 'rose' || (bl && bl.rose)) { need('roseCombine', `${B} is a Rose Gold sheet`, 'Rose Gold joins a set by its own Cut Sheet press and its own yes: drop it on the set, not the other way round.'); continue; }
       { const g = backsGap(b); if (g) { need(g.key, g.label, g.detail); continue; } }       // (b) for the sheet dropped on, as for the one moved
       { const g = partialGap(b); if (g) { need(g.key, g.label, g.detail); continue; } }       // a partial sheet never joins a set (Paul, 13 Oct), whichever of the two it is
+      if (brun && brun.open && !(bl && bl.runHere) && cloudRuns(env, brun)) { out.push({ sheetId: bv.id, label: B, live: null }); continue; }   // (G3: the cloud carries its run: it is asked to put it in too)
       if (brun && brun.open && !(bl && bl.runHere)) { need('runElsewhere', `${B}: its run is open on another screen`, 'Move it from that screen, so the two do not undo each other.'); continue; }
       if (!bl) { need('fixedSet', `${B} is closed`, 'Its run is finished, so it stays as it is.'); continue; }
       if (bl.can && bl.can.ok === false) { need('include', `${B} is not ready to join a set`, bl.can.reason || 'Nest and verify it first.'); continue; }
@@ -749,7 +831,8 @@
     press.push({ type: 'roseJoin', sheetId: m.id, setId: null, newSet: false, line, full, ...(cutDone ? { joinOnly: true } : {}), mate: true, key: 'membership:' + m.id });
   }
   function withCardinal(state, v, to, plan, env) {
-    if (v.kind !== 'sheet' || plan.noop || plan.committed) return plan;       // (a committed set's edit carries its own rule: planLeave, committedMembership)
+    if (v.kind !== 'sheet' || plan.noop || plan.committed || plan.cloudJoin) return plan;       // (a committed set's edit carries its own rule: planLeave, committedMembership; G4: the cloud's join keeps the order rule itself)
+    if (plan.cloud) return plan;      // (G3: the cloud's set rules bring the sheets that share an order with it (the cardinal pull), and its answer says so)
     const items = env.sharedItems || [], group = env.group || null, id = v.id, dest = to.set ? String(to.set) : 'new', T = to.set ? state.sets[to.set] : null;
     const members = group && Array.isArray(group.members) ? group.members : (group && Array.isArray(group.ids) ? group.ids.map((x, i) => ({ id: x, label: (group.labels || [])[i] || x, setId: null })) : []);
     const explicit = new Set((env.also || []).map(String));     // (the sheets dropped on: they travel by the drop itself, they are not "mates" to ask a yes about)
@@ -828,6 +911,8 @@
       if (leaving && (committedSet(mine) || cur === 'progress')) { const z = zoneOf('progress'); z.leaveSet = true; z.sub = `out of ${setName(mine)}`; z.ok = !exit; z.reason = exit; }
       const live = page.live ? page.live(it.id) : null;
       const joinable = !!live && (live.runHere !== false || !!live.sent);
+      // (G3: on a viewer in mode "on" no page holds the run, so no sheet is "live" here: a sheet of the run the cloud carries may be dropped on any set or New set, and the plan asks the cloud)
+      let cloudOn = false; try { cloudOn = !live && typeof page.cloud === 'function' && !!page.cloud(it); } catch (_) { cloudOn = false; }
       // (b) Paul, 12 Oct: a 10K, 14K or Rose Gold sheet in no set joins one once its back engraving is approved: the one plain line, at every place a set can be made or joined
       let engWhy = ''; try { const rec = !own && page.rec ? page.rec(it.id) : null, g = rec ? backsGap(rec) : null; engWhy = g ? g.label : ''; } catch (_) { engWhy = ''; }
       // (Paul, 13 Oct) a partial GF or SS sheet joins no set: every place a set can be made or joined says so in one plain line
@@ -841,7 +926,7 @@
         if (!why && leaving && exit) why = exit;
         // a set that is still being made takes a sheet only as the open run's one open set: a draft sheet of the open run, or a sheet that left its set to join it
         if (!why && !committedSet(st) && (leaving || (live && live.draft))) {
-          if (leaving && !live) why = `Only a sheet of the open run can join ${setName(st)}, which is still being made.`;
+          if (leaving && !live) why = cloudOn && !committedSet(mine) ? '' : `Only a sheet of the open run can join ${setName(st)}, which is still being made.`;
           else if (live && !isOpenSet(live, st.setId)) { const open = live.dispatchSetId ? all.find(x => x && x.setId === live.dispatchSetId) : null; why = `${setName(st)} is not the open set. ${live.dispatchSetId ? `Drop it on ${open ? setName(open) : 'the open set'}.` : 'Drop it on New set.'}`; }
           else if (leaving && live && !joinable) why = (live.can && live.can.reason) || 'It cannot join a set from here.';
         }
@@ -854,7 +939,7 @@
       else if (partWhy) nreason = partWhy;
       else if (leaving && exit) nreason = exit;
       else if (ownSet) nreason = `It is already in ${setName(mine)}, the set the run is making.`;
-      else if (!live) nreason = 'Only a sheet of the open run can start a new set.';
+      else if (!live) nreason = cloudOn && !(leaving && committedSet(mine)) ? '' : 'Only a sheet of the open run can start a new set.';
       else if (!live.draft && !leaving) nreason = 'It is already in a set.';
       else if (live.dispatchSetId) nreason = 'The open set takes it: drop it there.';
       else if (leaving && !joinable) nreason = (live.can && live.can.reason) || 'It cannot join a set from here.';
@@ -873,6 +958,20 @@
     const cur = (item && (item.area || item.from)) || (page.area ? page.area(it) : null);
     if (cur === 'completed') return no('Move it back to Laser cutting first.');
     const la = page.live ? page.live(it.id) : null, lb = page.live ? page.live(oid) : null;
+    // (G3: on a viewer in mode "on" no page holds the run, so neither sheet is live here: the records say what each is, and the cloud is asked to put both in a set by the set rules)
+    let cloudOn = false; try { cloudOn = (!la || !lb) && typeof page.cloud === 'function' && !!page.cloud(it); } catch (_) { cloudOn = false; }
+    if (cloudOn) {
+      let ra = null, rb = null; try { ra = page.rec ? page.rec(it.id) : null; rb = page.rec ? page.rec(oid) : null; } catch (_) { /* nothing known */ }
+      if (!ra || !rb) return no('Refresh the Library: one of the two sheets is not shown here.');
+      if (inSet(ra)) return no(`${a} is already in a set: drop ${b} on that set to add it.`);
+      if (inSet(rb)) return no(`${b} is already in a set: drop ${a} on that set to add it.`);
+      if (+ra.laserDoneAt > 0 || +rb.laserDoneAt > 0) return no(`${+ra.laserDoneAt > 0 ? a : b} is completed.`);
+      { const g = backsGap(ra) || backsGap(rb); if (g) return no(g.label + '.'); }
+      { const g = partialGap(ra) || partialGap(rb); if (g) return no(g.why + '.'); }
+      if (ra.metal === 'rose') return no(`${a} is Rose Gold: it joins a set by its own yes, so drop it on the set.`);
+      if (rb.metal === 'rose') return no(`${b} is Rose Gold: it joins a set by its own yes, so drop it on the set.`);
+      return { sheet: oid, name: `Combine with ${b}`, sub: 'the cloud puts both in a set by the set rules', ok: true, reason: '' };
+    }
     if (!la) return no(`Only sheets of the open run can be combined: ${a} is not on this page.`);
     if (!la.draft) return no(`${a} is already in a set: drop ${b} on that set to add it.`);
     if (!lb) return no(`Only sheets of the open run can be combined: ${b} is not on this page.`);
@@ -908,12 +1007,17 @@
     notReady: null,            // ({kind,id}) -> '' | the plain reason the card cannot be approved for Laser cutting now (the Approve button's grey line)
     include: null,             // (sheetId, {setId, newSet, split}) -> Promise: the sheet window's own Include / release
     roseJoin: null,            // (sheetId, {by, line, full, onStep}) -> Promise<{ok, sheets, warnings}>: a Rose Gold sheet's Cut Sheet press
-    shared: null,              // a SharedOrders-shaped object ({between, groupOf, enrich}); the page's window.SharedOrders when null
+    cloudJoins: null,          // (G4) (record) -> boolean: a cut Rose Gold / 10K / 14K sheet in no set whose join is the cloud's on this computer (mode "on", a viewer)
+    cloudJoin: null,           // (G4) (sheetId, {by, setId, newSet}) -> Promise<{ok, why} | {ok:false, error}>: that join asked of the cloud and followed to its answer
+    shared: null,             // a SharedOrders-shaped object ({between, groupOf, enrich}); the page's window.SharedOrders when null
     live: null,                // (sheetId) -> null | {runHere, draft, dispatchSetId, can:{ok,reason,byHand}, split:[{label,orders}], rose?:{full}}
     areaOf: null, sets: null, setOf: null,
     sync: null,                // (process) -> void: the page's own records and cards follow what the cloud now says
     rose: () => root.LibraryFlowRose || null,
     cuts: null,                // (metal) -> boolean: which metals get a green dash line (default CharmNestRose.cuts; tests set it)
+    cloud: null,               // () -> boolean: the cloud carries the runs and this page is a viewer (G3; default: CNViewer.on() with no run held here)
+    cloudLane: null,           // (sheet record) -> boolean: the cloud answers a set move of this sheet's run (G3; default: CharmNestCloudLanes('rosecut', record))
+    askMs: 4 * 60000,          // (G3) how long a move waits for the cloud's answer before it says it was asked and the Library shows the rest
     wait: ms => new Promise(r => setTimeout(r, ms))
   };
   const cloud = body => {
@@ -922,6 +1026,36 @@
     return Promise.reject(new Error('The Library is not connected to the cloud'));
   };
   const answer = r => { if (r && r.error) throw Object.assign(new Error(r.error), { status: r.status }); return r; };
+  /* (G3) whether the cloud carries the runs and this page only follows them (a viewer in mode "on"), and whether the cloud's set lane answers for this sheet's run */
+  function cloudCarries() {
+    try { if (typeof hooks.cloud === 'function') return !!hooks.cloud(); const V = root.CNViewer; return !!(V && typeof V.on === 'function' && V.on() && !(root.B && root.B.run)); } catch (_) { return false; }
+  }
+  function cloudLaneOf(rec) {
+    try { if (typeof hooks.cloudLane === 'function') return !!hooks.cloudLane(rec); return typeof root.CharmNestCloudLanes === 'function' && !!root.CharmNestCloudLanes('rosecut', rec || {}); } catch (_) { return false; }
+  }
+  const short = (t, n) => { const x = String(t || '').replace(/\s+/g, ' ').trim().replace(/^Error: /, ''); return x.length > n ? x.slice(0, n - 1).trimEnd() + '…' : x; };
+  /* (G3) A set move the cloud makes: ONE ask (roseCutAsk include / exclude, the cloud's own request for a sheet's set, _charmNestGreenLine.js member), then its answer, read every few
+     seconds. Resolves { label: the cloud's words } when it is done; throws the cloud's words when it refuses (the move's earlier steps are put back, nothing else is changed); after
+     hooks.askMs without an answer resolves { label, warning }: asked, and the Library shows the sheet where the cloud puts it (never "done" when nothing happened). */
+  async function askCloudSet(s, by) {
+    const F = root.CharmNestRunFollow, dev = (() => { try { return F && typeof F.dev === 'function' ? String(F.dev() || '') : ''; } catch (_) { return ''; } })();
+    const body = { op: 'roseCutAsk', sheetId: s.sheetId, kind: s.kind, by, dev, via: 'library', ...(s.setId ? { setId: s.setId } : {}), ...(s.newSet ? { newSet: true } : {}) };
+    let r = null; try { r = await cloud(body); } catch (e) { r = { error: (e && e.data && e.data.error) || (e && e.message) || String(e) }; }
+    if (!r || r.error || !r.ask) throw new Error(`Not sent to the cloud: ${short((r && r.error) || 'it did not answer', 160)}. Nothing was changed`);
+    if (r.again && (r.ask.kind !== s.kind || String(r.ask.setId || '') !== String(s.setId || ''))) throw new Error('The cloud is still working on another change of this sheet. Nothing new was asked: try again in a moment');
+    const seq = +r.ask.seq;
+    for (const t0 = Date.now(); Date.now() - t0 < (+hooks.askMs || 240000);) {
+      await hooks.wait(Date.now() - t0 < 60000 ? 3000 : 6000);
+      let g = null; try { g = await cloud({ op: 'roseCutAskGet', sheetId: s.sheetId }); } catch (_) { continue; }
+      const a = ((g && g.asks) || []).find(x => x && x.sheetId === s.sheetId); if (!a || +a.seq !== seq) continue;
+      if (a.state === 'refused') throw Object.assign(new Error(`The cloud did not do it: ${short(a.why, 300) || 'no reason was given'}. Nothing was changed`), { cloudRefused: true });
+      if (a.state !== 'done') continue;
+      try { if (F && typeof F.now === 'function') F.now('library move'); } catch (_) { /* the next look brings it */ }
+      try { if (root.CN && typeof root.CN.loadLibrary === 'function') root.CN.loadLibrary(); } catch (_) { /* refreshed at its next read */ }
+      return { label: `The cloud: ${short(a.why, 300) || (s.kind === 'exclude' ? 'taken out' : 'done')}` };
+    }
+    return { label: `Asked of the cloud: ${s.what || 'the move'}`, warning: 'The cloud has not answered yet: the Library shows the sheet where the cloud puts it.' };
+  }
   /* An order sent to Review that sits on a sheet holds that sheet until it is resolved there (charm-nest-review-hold.js, derived from the review record every time; the cloud's record cannot know it).
      The record the plan reads is told so: its Order check is not done, so Approve, the move to Laser cutting and the set's gate refuse in the plan's own words. A sheet cut before is returned as it came. */
   const reviewed = rec => { try { const H = root.CharmNestReviewHold; return H && typeof H.overlayFlow === 'function' ? H.overlayFlow(rec) : rec; } catch (_) { return rec; } };
@@ -954,6 +1088,7 @@
     let leaving = false;
     if (item.kind === 'sheet' && to.area === 'progress') { const lv = view(state, 'sheet', item.id); if (!lv.error && leavesOnProgress(lv)) { const r = answer(await cloud({ op: 'sharedOrders', kind: 'sheet', id: item.id, to: { leave: true } })); state.shared = r.shared || []; state.group = r.group || null; leaving = true; } }
     let env = { by: req.by || hooks.employee(), rows: hooks.rows(), canRelabel: typeof hooks.remakeLabel === 'function', canJoin: typeof hooks.include === 'function', canRose: typeof hooks.roseJoin === 'function', together, ...(also.length ? { dest } : {}) };
+    if (cloudCarries()) env = { ...env, cloud: true, cloudLane: cloudLaneOf(state.sheets[item.id] || null) };   // (G3: the cloud carries the run; this page is a viewer)
     if (joining || leaving) env = { ...env, ...sharedEnv(item, leaving ? { leave: true } : dest, state, together) };
     if (also.length) env = alsoEnv(env, also, dest, together);
     // the partners that come with the sheet (the cardinal rule): one with a green line (10K, 14K, Rose Gold) is read too, for its own line and its back engraving (Paul, 12 Oct)
@@ -993,6 +1128,7 @@
     const tell = (s, label, state) => { try { o.onStep && o.onStep({ key: s.key, label, state }); } catch (_) { /* a listener never stops the move */ } };
     const lineOf = s => s.label || (p.auto.find(a => a.key === s.key) || {}).label || s.key;
     // an applied line carries what its plan line said (detail, stamp), so a screen draws both alike
+    const askedWhat = s => { const l = (p.auto.find(a => a.key === s.key) || {}).label || ''; return l ? l.replace(/ made( again)?( with (it|them))?/, '') : s.type === 'setFiles' ? "The set's labels PDF and manifest" : 'The QR label'; };   // (item 5: what an ask of the cloud is for)
     const doneLine = (key, label) => { const a = p.auto.find(x => x.key === key) || {}; return { key, label, ...(a.detail ? { detail: a.detail } : {}), ...(a.stamp ? { stamp: true } : {}), ...(a.seal ? { seal: a.seal } : {}), ...(a.by ? { by: a.by } : {}) }; };
     const todo = p.steps.filter(s => !o.only || o.only.has(s.type));
     if (todo.some(s => s.type !== 'qrLabel' && s.type !== 'roseLine' && s.type !== 'include') && !by) throw new Error('Say who is making this change');
@@ -1008,6 +1144,10 @@
       if (!yes('roseSet')) throw new Error('A Rose Gold sheet is only added to a set when you press its button');
       if (typeof hooks.roseJoin !== 'function') throw new Error('A Rose Gold sheet cannot be added to a set from here: open it on the Nest tab and press Cut Sheet there');
     }
+    if (todo.some(s => s.type === 'cloudJoin')) {   // (G4)
+      if (!yes('roseSet')) throw new Error('A cut sheet is only added to a set when you press its button');
+      if (typeof hooks.cloudJoin !== 'function') throw new Error('The cloud cannot be asked from this page: reload it, then drop the sheet again. Nothing was changed');
+    }
     const warnings = [], kept = [];     // (kept: the steps this run did that stay; o.acts, when given, receives them for one record of the press)
     for (const s of todo) {
       let label = lineOf(s); const extra = [];
@@ -1020,6 +1160,8 @@
           await flow([{ type: 'hold', sheetIds: s.sheetIds, note: s.note }], by, { expect: Object.fromEntries(s.sheetIds.map(i => [i, { held: false }])) });
           undo.push({ key: s.key, fn: () => flow([{ type: 'release', sheetIds: s.sheetIds, restore: true }], by) });
         } else if (s.type === 'qrLabel') {
+          // (Paul 21 Nov 2026, item 5: when the cloud draws the labels, the sheet's QR label is asked of it, and said as asked, never as made)
+          if (SE() && typeof SE().cloudDraws === 'function' && SE().cloudDraws(s)) { const r = await SE().askCloud(s, { by, api: cloud, what: askedWhat(s), toast: false }); applied.push({ key: s.key, label: r.label }); kept.push(s); tell(s, r.label, 'done'); continue; }
           if (typeof hooks.remakeLabel !== 'function') throw new Error('The QR label cannot be made from here: open the sheet and press Make QR label');
           await hooks.remakeLabel(s.sheetId);
         } else if (s.type === 'roseLine') {
@@ -1061,15 +1203,20 @@
           const runMoves = (s.moves || []).filter(m => m && m.run && !m.to).map(m => m.sheetId);
           if (runMoves.length) undo.push({ key: s.key, fn: () => flow([{ type: 'release', sheetIds: runMoves, restore: true }], by) });
           for (const a of p.auto.filter(x => x.key === 'hold' || /^membership:/.test(x.key))) extra.push(doneLine(a.key, a.label));
+        } else if (s.type === 'cloudSet') {
+          // (G3) the cloud's own request for the sheet's set: its answer is the line said (done), or the refusal said and the steps before it put back
+          const r = await askCloudSet(s, by);
+          label = r.label; if (r.warning) warnings.push(r.warning);
         } else if (s.type === 'runLeave') {
           // the set is made by the open run on this screen: its own assembly lets the sheet go and makes the set again (hook `leave`, the bridge's Gate.leaveSet)
           if (typeof hooks.leave !== 'function') throw new Error('The sheet cannot be taken out of a set that is still being made from here: use the In current set switch on its card');
           await hooks.leave(s.sheetId, { setId: s.setId, by });
         } else if (s.type === 'relabel' || s.type === 'setFiles') {
           // (CLOUD STEP 10a, DORMANT: window.CharmNestCloudLanes is defined only by the page build that follows a run the cloud carries, build step 14; absent, the step runs here as before):
-          //  when the cloud draws the labels, this press asks it to (labelsAsk), and the cloud's answer shows on the set's card
-          if (typeof root.CharmNestCloudLanes === 'function' && root.CharmNestCloudLanes('labels', s)) {
-            try { answer(await cloud({ op: 'labelsAsk', kind: s.type, setId: s.setId || undefined, sheetId: s.sheetId || undefined, by })); }
+          //  when the cloud draws the labels, this press asks it to (labelsAsk), and the cloud's answer is said when it comes. (Paul 21 Nov 2026, item 5: the ask is SetEdit.askCloud: a relabel
+          //  asks for each sheet it names, so the set's setFiles ask that follows no longer takes its place before the cloud reads it; and the step is said as asked, where it was said as nothing)
+          if (SE() && typeof SE().cloudDraws === 'function' && SE().cloudDraws(s)) {
+            try { const r = await SE().askCloud(s, { by, api: cloud, what: askedWhat(s), toast: false }); applied.push({ key: s.key, label: r.label }); kept.push(s); tell(s, r.label, 'done'); }
             catch (e) { warnings.push(`The cloud was not asked to make ${s.type === 'relabel' ? 'the QR label' : 'the set files'} again (${e.message || e}).`); tell(s, label, 'error'); }
             continue;
           }
@@ -1082,6 +1229,11 @@
             warnings.push(s.type === 'relabel' ? `The QR label could not be made (${e.message || e}). Open the sheet and press Make QR label.` : `The labels PDF and manifest of the set could not be made again (${e.message || e}).`);
             tell(s, label, 'error'); continue;
           }
+        } else if (s.type === 'cloudJoin') {
+          // (G4) the cut sheet's join, asked of the cloud and followed to its answer: the line says the set it is in now (its words), or the move stops with the cloud's own words
+          const r = await hooks.cloudJoin(s.sheetId, { by, setId: s.setId, newSet: !!s.newSet });
+          if (!r || r.ok === false) throw new Error((r && r.error) || 'The cloud did not add it to the set. Nothing was cut');
+          if (r.why) label = String(r.why).replace(/\.$/, '');
         } else if (s.type === 'include') {
           if (typeof hooks.include !== 'function') throw new Error('Joining a set is not available here: open the sheet and use Include');
           const all = s.with && s.with.length ? s.with : null;
@@ -1221,7 +1373,7 @@
   function targets(item) { return zones(item, pageAdapter()).filter(z => z.ok).map(keyOfZone); }
   function explainTargets(item) { return zones(item, pageAdapter()); }
   function onSheet(item, otherId, o) { return sheetZone(item, otherId, pageAdapter(), o); }
-  function pageAdapter() { return { area: hooks.areaOf, sets: hooks.sets, setOf: hooks.setOf, live: hooks.live, rec: hooks.rec, members: hooks.members, notReady: hooks.notReady }; }
+  function pageAdapter() { return { area: hooks.areaOf, sets: hooks.sets, setOf: hooks.setOf, live: hooks.live, rec: hooks.rec, members: hooks.members, notReady: hooks.notReady, cloud: () => cloudCarries() }; }
 
   /* ── the page: how the code that owns each thing is reached. Each falls back to nothing, and a move that needs one
      then says so in `needs` or in its error instead of working around it. ──────────────────────────────────────────── */
@@ -1243,14 +1395,21 @@
       }
       if (sh._roseAction) return { ok: false, error: `${name} is busy with another action: try again in a moment` };
       sh._roseAction = true; sh._roseError = null;
+      let joinWhy = null;   // (G4: the cloud's answer to a join, said as the move's line)
       try {
-        if (o.full || o.joinOnly) {          // (a full sheet has no cut to record; a sheet whose green line is already cut only joins: no second cut, Paul 12 Oct)
+        // (G4, Paul 21 Nov 2026: a sheet whose green line is cut already joins its set on a staff computer in mode "on" by ONE ask the cloud acts on, roseCutAsk "join", never a second cut;
+        //  this page's changeMembership writes nothing there, it holds no run)
+        if ((o.joinOnly || sh.roseCutAt) && RS.cloudJoins && RS.cloudJoins(sh)) { const r = await RS.join(sh, { by: o.by, setId: o.setId }); joinWhy = (r && r.why) || ''; }
+        // (ITEM 4, Paul 21 Nov 2026: a full sheet's approval on a staff computer in mode "on" is ONE ask the cloud acts on, roseCutAsk "joinFull", followed to its answer; this page's include is refused there)
+        else if (o.full && !o.joinOnly && typeof root.CharmNestCloudLanes === 'function' && root.CharmNestCloudLanes('rosecut', sh)) await RS.record(sh, { by: o.by, joinFull: true });
+        else if (o.full || o.joinOnly) {          // (a full sheet has no cut to record; a sheet whose green line is already cut only joins: no second cut, Paul 12 Oct)
           if (!G || !G.changeMembership) throw new Error('Sets are not loaded yet · try again in a moment');
           await G.changeMembership('rose', true, sh);   // (SETFIX: this sheet only; the run-wide Rose Gold tick is gone)
           if (!inSetNow()) throw new Error('Not added: ' + ((G.policy && G.policy(sh) && G.policy(sh).reason) || 'this sheet is not in a set yet'));
         } else await RS.record(sh, { by: o.by });
       } catch (e) { sh._roseError = e.message; return { ok: false, error: `${name}: ${e.message}` }; }
       finally { sh._roseAction = false; try { RS.render(sh); } catch (_) { /* drawn at its next refresh */ } }
+      if (joinWhy !== null) return { ok: true, cloud: true, why: joinWhy, sheets: [{ sheetId: id, label: name, lineAdded: false, lines: 0, cut: false }], warnings: [] };   // (G4: joined, nothing cut now)
       return { ok: true, sheets: [{ sheetId: id, label: name, lineAdded: false, lines: 0, cut: !!sh.roseCutAt }], warnings: [] };
     };
   }
@@ -1317,6 +1476,18 @@
       return r;
     };
     hooks.roseJoin = makeRoseJoin(() => root);
+    // (G4, Paul 21 Nov 2026) a cut Rose Gold / 10K / 14K sheet into its set on a staff computer in mode "on": RoseStock.join (charm-nest-rose-ui.js), the ask the cloud acts on. The Library's record says
+    // whether it is cut and in no set (a page's copy may not have seen its cut yet); the page's own copy, when it has one, is the one that follows the answer (its card says it)
+    const pageCopy = id => { try { return ((root.CN && root.CN.allSheets && root.CN.allSheets()) || []).find(p => p.sheetId === id && !p.recalled) || null; } catch (_) { return null; } };
+    const recFacts = rec => ({ sheetId: sid(rec), metal: rec.metal, runId: rec.runId, roseCutAt: rec.roseCutAt || null, laserDoneAt: rec.laserDoneAt || null, setId: inSet(rec) ? rec.setId : null, draft: !inSet(rec) });
+    hooks.cloudJoins = rec => { const RS = root.RoseStock; try { return !!(rec && RS && typeof RS.cloudJoins === 'function' && RS.cloudJoins(recFacts(rec))); } catch (_) { return false; } };
+    hooks.cloudJoin = async (id, o = {}) => {
+      const RS = root.RoseStock; if (!RS || typeof RS.join !== 'function') return { ok: false, error: 'The cloud cannot be asked from this page: reload it. Nothing was changed' };
+      const rec = hooks.rec ? hooks.rec(id) : null, target = pageCopy(id) || (rec ? recFacts(rec) : { sheetId: id });
+      try { const r = await RS.join(target, { by: o.by, setId: o.setId }); return { ok: true, why: (r && r.why) || '' }; }
+      catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
+      finally { try { if (root.CN && root.CN.loadLibrary) root.CN.loadLibrary(); } catch (_) { /* refreshed at its next read */ } }
+    };
     // a committed set's edit (charm-nest-set-edit.js, page side): the QR labels, the set's files, and the page's own copies
     const se = () => root.SetEdit || {};
     hooks.relabelSet = se().relabel ? (s, o) => se().relabel(s, o) : null;

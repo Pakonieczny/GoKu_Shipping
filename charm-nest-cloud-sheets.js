@@ -95,6 +95,7 @@
   async function reload(p, why, o) {   // (QUIETLIVE, Paul 19 Nov 2026: o.background = the page's own building of the followed sheets after a reload: no progress pill, the page is let answer, no thumbnail redraw per sheet)
     if (!p || !p.sheetId || !root.Recall || typeof root.Recall.rebuild !== "function") return p;
     const rec = await getRec(p.sheetId); if (!rec) return p;
+    safe(() => root.CNViewer && typeof root.CNViewer.sawSheet === "function" && root.CNViewer.sawSheet(p, rec));   // (S4: the cloud's nest of this sheet, as its record says)
     p.charms = (p.charms || []).filter(c => !c.poolId); p.placements = [];
     p.recalled = rec; p.recStockId = rec.roseStockId || "";   // (MOVESHOW, Paul 15 Nov 2026: the physical sheet the record names, kept for the tile that says what a sheet lies on; a rebuilt sheet no longer carries the record)
     p.outputs = null; p.verification = rec.verification || null; p.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
@@ -164,6 +165,7 @@
       let rec = null; try { rec = await getRec(id, probe); } catch (_) { PENDING.add(id); continue; }
       if (rec === SAME) { if (DIRTYN.has(id)) again(id, true); continue; }   // (not moved since this page read it; read half written, it is looked at again)
       if (!rec) continue;
+      safe(() => root.CNViewer && typeof root.CNViewer.sawSheet === "function" && root.CNViewer.sawSheet(p, rec));   // (S4: a viewer learns the cloud's nest of this sheet, nestJob, for its card's Stop)
       again(id, rec.dirty === true);
       // (ORDERCLOUD 2, Paul 15 Nov 2026: the carrier's new draft order never reached the computer that follows): a followed sheet whose order changed in the cloud has this computer list the run's sheets again
       if (p.followed && rec.draftOrder != null && Number.isFinite(+rec.draftOrder) && +rec.draftOrder !== +p.draftOrder) { clearTimeout(orderT); orderT = setTimeout(() => safe(() => { const R = root.Recall, F = root.CharmNestRunFollow, id = (F && F.state().runId) || p.runId; if (R && R.follow && id) Promise.resolve(R.follow(id, { force: true })).catch(() => {}); }), 1500); }

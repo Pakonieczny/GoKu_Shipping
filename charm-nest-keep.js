@@ -389,6 +389,7 @@
    *    keeper.resume(reason)    every wake-up (page load, online, tab visible, lock opened/closed, window closed, order or SKU data ready, a timer): continues every
    *                             intent from the first step not done; nothing runs twice (one flight per intent here, one save per listing across tabs through
    *                             deps.locks = navigator.locks, the server's create-only commit for the rest)
+   *    keeper.cloudDone(key, { sku, etsy })   (item 14) the cloud already holds this save: the intent ends as done (outcome "cloud"), nothing of it runs again here
    *    keeper.retry(key)        a person's "Try again" on a needs-attention line (the only thing a person is ever asked to press)
    *    keeper.get(key) / list() / forOrder(rid) / describe(rec) -> { phase, line, sku, wait, attention }   phase: off | saving | password | connection | data | retry | linked | attention
    *    keeper.on(fn)  fn({ type:"state", key, rec, view }) | fn({ type:"engine", key, ev })   ·  keeper.idle() -> Promise (tests)  ·  keeper.external()  (another tab wrote the record)
@@ -423,6 +424,8 @@
     const aliasEnough = rec => { try { if (deps.etsyWrite === true) return false; const K = deps.sku || (typeof self !== "undefined" ? self.CharmNestSku : null), old = rec && rec.line && rec.line.sku; return !!(K && typeof K.aliasWorks === "function" && old && K.aliasWorks(String(old), String(rec.sku))); } catch (_) { return false; } };
     const online = () => { try { return typeof deps.online === "function" ? deps.online() !== false : true; } catch (_) { return true; } };
     const lockHeld = () => { try { return !!(deps.lock && typeof deps.lock.find === "function" && deps.lock.find("upload")); } catch (_) { return false; } };
+    /* (Paul 21 Nov 2026, item 14) deps.skip(rec): an intent this page does not run now (a viewer: an Etsy step, the cloud's; any intent until the cloud was asked what it finished) */
+    const skipped = rec => { try { return typeof deps.skip === "function" && !!deps.skip(rec); } catch (_) { return false; } };
 
     /* ── the record: read and written whole every time (another tab may have written another intent meanwhile) ── */
     function readAll() {
@@ -451,6 +454,7 @@
       if (!rec) return { phase: "off", line: "", sku: "", wait: "", attention: false };
       const sku = rec.sku || "", V = (phase, line, extra) => Object.assign({ phase, line, sku, wait: rec.wait || "", attention: phase === "attention", repo: !!rec.repo }, extra || {});
       if (rec.state === "off") return V("off", "");
+      if (rec.state === "done" && rec.outcome === "cloud") return V("linked", (rec.etsy ? "Saved and linked by the cloud · " : "Saved to the repository by the cloud · ") + sku + (rec.etsy ? "" : ". The cloud links it on Etsy"), { linked: true });   // (item 14)
       if (rec.state === "done") return rec.outcome === "rehearsed" ? V("rehearsed", PHASE_LINE.rehearsed) : rec.outcome === "already" ? V("linked", "Already linked to " + sku, { linked: true }) : rec.outcome === "alias" ? V("linked", "Saved and matched here · " + sku, { linked: true }) : V("linked", "Saved and linked · " + sku, { linked: true });
       if (rec.state === "attention") return V("attention", "Needs attention: " + (rec.why || "something went wrong"), { auto: rec.auto || "" });
       if (rec.state === "waiting") {
@@ -499,6 +503,7 @@
       for (const rec of Object.values(all)) {
         if (!rec) continue;
         if ((rec.state === "done" || rec.state === "off") && t - (rec.upd || 0) > KEEP_DONE_MS) { const n = Object.assign({}, readAll()); delete n[rec.key]; writeAll(n); continue; }
+        if (skipped(rec)) continue;
         // (ETSYALIAS: a save that reached the repository and was left "needs attention" only because Etsy would not take its SKU is finished when the listing's answer here matches the SKU Etsy carries)
         if (rec.state === "attention" && rec.repo && rec.sku && !rec.etsy && !rec.sandbox && aliasEnough(rec)) { const n = patch(rec.key, { state: "done", wait: "", why: "", etsy: false, outcome: "alias", fails: 0, nextAt: 0, auto: "" }); if (n) remote(n); continue; }
         // (a needs-attention save that Etsy may take later, e.g. after Paul re-authorised it, is tried once more per page load; the person is never asked for it)
@@ -571,6 +576,12 @@
       if (timedOut) { patch(key, { state: "waiting", wait: "retry", why: "the cloud is slow", nextAt: now() + 15000 }); return; }
       settle(key, res || {}, (typeof eng.outcome === "function" && eng.outcome()) || {});
     }
+    /* (Paul 21 Nov 2026, item 14) the cloud already holds this save (its repair finished it, or does its Etsy step): the intent ends here as done, nothing of it runs again on this page */
+    function cloudDone(key, o) {
+      o = o || {}; const rec = read(key); if (!live(rec) || flights.has(key)) return null;
+      const n = patch(key, { state: "done", wait: "", why: "", sku: String(o.sku || rec.sku || ""), repo: true, etsy: o.etsy === true, outcome: "cloud", fails: 0, nextAt: 0, auto: "" }); remote(n); arm();
+      return n;
+    }
     /* a save that reached the repository (maybe on another computer) whose Etsy step is not done: any page that loads may do that step; the cloud is the memory, this page the actor */
     function adoptPending(list, sandbox, force) {
       let k = 0;
@@ -637,7 +648,7 @@
       try { clearT(timer); } catch (_) { /* none */ } timer = null;
       let at = Infinity; const t = now();
       for (const rec of Object.values(readAll())) {
-        if (!live(rec)) continue;
+        if (!live(rec) || skipped(rec)) continue;
         const when = rec.nextAt > t ? rec.nextAt : rec.wait === "data" ? t + Math.min(15000, 1000 * Math.pow(2, Math.min(4, polls.get(rec.key) || 0))) : rec.state === "waiting" || rec.state === "running" || rec.state === "wanted" ? t + BEAT : Infinity;
         at = Math.min(at, when);
       }
@@ -646,7 +657,7 @@
     if (deps.lock && typeof deps.lock.onChange === "function") { try { stopLock = deps.lock.onChange(() => resume("lock")); } catch (_) { stopLock = null; } }
 
     return {
-      begin, cancel, retry, resume, arm, describe, tab, adoptPending,
+      begin, cancel, retry, resume, arm, describe, tab, adoptPending, cloudDone,
       get: key => read(key), list: () => Object.values(readAll()).map(r => Object.assign({}, r)),
       forOrder: rid => Object.values(readAll()).filter(r => r && r.rid === String(rid)).map(r => Object.assign({}, r)),
       wanted: wantedNow, engineOf: key => engines.get(key) || null,
@@ -657,5 +668,6 @@
     };
   }
 
-  return { make, durable, TEXT: T, INTENTS_KEY };
+  // (Paul 21 Nov 2026, item 14) a viewer (cloud mode "on") resumes its own unfinished design saves after a reload (charm-nest-bridge.js keepViewerResume): the viewer's boot words read this
+  return { make, durable, TEXT: T, INTENTS_KEY, resumesOnViewer: true };
 });

@@ -48,6 +48,10 @@
   const B = () => root.B || null;
   const poolRow = id => tryDo(() => B().pool.rows.get(String(id)), null);
   const ordersRows = () => tryDo(() => root.Orders.rows(), []) || [];
+  // (ITEM 10, Paul 21 Nov 2026) this page is a viewer (the cloud carries every run: charm-nest-viewer.js), and its one press to the cloud, answered { error } on a refusal (never a throw)
+  const viewer = () => tryDo(() => !!(root.CNViewer && typeof root.CNViewer.on === 'function' && root.CNViewer.on()), false);
+  const cloud = body => (root.CN && typeof root.CN.api === 'function' ? Promise.resolve(root.CN.api('charmNestLibrary', body, { quiet: true })) : Promise.reject(new Error('the page is not ready: reload it')))
+    .catch(e => ({ error: String((e && e.data && e.data.error) || (e && e.message) || e) }));
 
   /* ── what the order still has open ── */
   /** The cover a piece carries (its pool rows' coveredBy, not undone), or null. x: a pool row, a CustomOrders row (its pool ids), a line key. */
@@ -138,7 +142,24 @@
     const token = 'cd' + (++seq) + '.' + at.toString(36), job = { rid, cover, by, lines: [], pieces: [], at, timer: 0 }, done = [];
     // 2 · the pieces: off their sheets by the sheet's own remove path, their records saying what covered them
     const patch = { removedBy: by, removedReason: REASON, removedAt: at, coveredBy: cover };
-    for (const i of items.filter(x => x.kind === 'piece')) {
+    /* (ITEM 10, Paul 21 Nov 2026: on a viewer the Done said "The Custom piece was not completed · The cloud carries every run now: poolUpdate…" and nothing happened): while the cloud
+       carries every run, the sheets are the cloud's, so every ticked piece goes in ONE press, customDone (charmNestLibrary, _charmNestCustomDone.js): off every sheet that lists it and
+       marked covered in one transaction, or refused whole with the reason before anything (the Etsy custom line included) is changed. In every other mode, as before. */
+    const pieces = items.filter(x => x.kind === 'piece');
+    if (pieces.length && viewer()) {
+      const ids = [...new Set(pieces.flatMap(i => i.poolIds || []).map(String))];
+      const r = await cloud({ op: 'customDone', orderId: rid, poolIds: ids, cover, by });
+      if (!r || r.error || !r.ok) return { ok: false, why: `The Custom ${pieces.length > 1 ? 'pieces stay' : `piece “${pieces[0].name}” stays`}: ${String((r && r.error) || 'the cloud did not answer').replace(/\.?\s*Nothing was changed\.?$/, '')}. Nothing was changed.`, done: [] };
+      if (r.cover && num(r.cover.at) > 0) { cover.at = num(r.cover.at); patch.removedAt = cover.at; }
+      for (const i of pieces) {
+        const before = i.poolIds.map(id => Object.assign({}, poolRow(id) || {}, { poolId: id })), now = before.map(b => Object.assign({}, b, { state: 'abandoned', sheetId: null, setId: null, updatedAt: at }, patch));
+        tryDo(() => { const b = B(); if (b && b.pool && b.pool.rows) for (const x of now) if (b.pool.rows.has(x.poolId)) b.pool.rows.set(x.poolId, x); });
+        tryDo(() => { if (root.CustomOrders && root.CustomOrders.note) root.CustomOrders.note(now); });
+        job.pieces.push({ ids: i.poolIds.slice(), charms: [], metal: i.metal, before, name: i.name, cloud: true });
+        done.push(i);
+      }
+    }
+    for (const i of (job.pieces.length ? [] : pieces)) {
       const before = new Map(i.poolIds.map(id => [id, Object.assign({}, poolRow(id) || {})])), charms = [];
       const O = root.Orders;
       let taken = [];
@@ -170,18 +191,56 @@
     refresh(rid);
     return { ok: true, done, token, cover };
   }
+  /* (G7, Paul 21 Nov 2026) what the cloud's Undo did with a piece, in words: back on its sheet where it was; being placed by the cloud (its request followed until it answers, and that
+     answer said: the sheet it went on, or why not); or live again on no sheet, and why. Never "done" when nothing happened. */
+  const FOLLOW_MS = 600000;
+  function follow(x, name) {
+    const CNx = root.CN; if (!x || !x.cmdId || !x.runId || !CNx || typeof CNx.api !== 'function') return;
+    const t0 = Date.now(), gap = num(root.__cdFollowGapMs) || 3000;
+    const tick = async () => {
+      let c = null; try { const l = await CNx.api('charmNestLibrary', { op: 'runCmdList', runId: x.runId }, { quiet: true }); c = ((l && l.cmds) || []).find(k => k && k.id === x.cmdId) || null; } catch (_) { c = null; }
+      if (c && c.state === 'done') return toastNow(`“${name}”: ${String(c.text || 'placed by the cloud')}`, '', 9000);
+      if (c && (c.state === 'failed' || c.state === 'cancelled')) return toastNow(`“${name}” was not placed: ${String(c.text || c.state).replace(/\.$/, '')}. It is live again: send it to a sheet from its order`, 'bad', 12000);
+      if (Date.now() - t0 > FOLLOW_MS) return toastNow(`“${name}”: the cloud has not placed it yet; its request stays queued and is done when the cloud gets to it`, '', 9000);
+      const t = setTimeout(tick, gap); if (t && typeof t.unref === 'function') t.unref();
+    };
+    const t = setTimeout(tick, gap); if (t && typeof t.unref === 'function') t.unref();
+  }
+  function cloudSaid(p, ans) {
+    const mine = x => (x.ids || [x.id]).some(id => p.ids.includes(String(id))), out = [];
+    for (const x of (ans.back || []).filter(mine)) out.push(`“${p.name}” is back on ${x.label}${x.placed ? ', where it was' : ' (the cloud nests it there)'}`);
+    for (const x of (ans.placing || []).filter(mine)) { out.push(`“${p.name}”${x.was ? ` cannot go back where it was (${x.was}):` : ''} the cloud places it on a sheet now`); follow(x, p.name); }
+    for (const x of (ans.loose || []).filter(mine)) out.push(`“${p.name}” is live again on no sheet (${x.why}): send it to a sheet from its order`);
+    if (!out.length) out.push(ans.already ? `“${p.name}” was undone already` : `“${p.name}” is live again`);
+    return out;
+  }
   /** Undo: the custom lines reopened, the pieces live again (back on the next open sheet of their metal when this page holds them; never on a cut sheet). */
   async function undo(token) {
     const job = typeof token === 'string' ? undos.get(token) : token; if (!job) return { ok: false, why: 'too late to undo here' };
-    undos.delete(typeof token === 'string' ? token : [...undos].find(([, v]) => v === job)?.[0]);
+    const tk = typeof token === 'string' ? token : [...undos].find(([, v]) => v === job)?.[0];
+    undos.delete(tk);
     clearTimeout(job.timer);
-    const back = Date.now(), said = [];
+    let back = Date.now(); const said = [];
+    // (ITEM 10, Paul 21 Nov 2026: a Done made through the cloud is undone through it, every piece in one press, before anything here changes; refused, the Undo stays offered)
+    const viaCloud = job.pieces.filter(p => p.cloud);
+    let ans = null;
+    if (viaCloud.length) {
+      // (G7, Paul 21 Nov 2026: the cloud puts the piece back where it was, or places it on a sheet of the run the cloud carries: the run this page follows is named for that)
+      const runId = tryDo(() => (root.CharmNestRunFollow && root.CharmNestRunFollow.state && root.CharmNestRunFollow.state().runId) || null, null);
+      const r = await cloud(Object.assign({ op: 'customDone', undo: true, orderId: job.rid, poolIds: [...new Set(viaCloud.flatMap(p => p.ids))], by: job.by }, runId ? { runId } : {}));
+      if (!r || r.error || !r.ok) { if (tk) undos.set(tk, job); return { ok: false, why: `${String((r && r.error) || 'the cloud did not answer').replace(/\.?\s*Nothing was changed\.?$/, '')}. Nothing was changed.` }; }
+      if (num(r.at) > 0) back = num(r.at);
+      ans = r;
+    }
     for (const p of job.pieces) {
       const patch = { state: 'ready', sheetId: null, setId: null, repooledAt: back, coveredBy: Object.assign({}, job.cover, { undoneAt: back, undoneBy: job.by }) };
-      if (root.Pool && typeof root.Pool.update === 'function') await root.Pool.update(p.ids, patch);
-      const rows = p.ids.map(id => Object.assign({}, (p.before.find(b => b.poolId === id) || {}), { poolId: id }, patch, { updatedAt: back }));
+      if (!p.cloud && root.Pool && typeof root.Pool.update === 'function') await root.Pool.update(p.ids, patch);
+      // (G7: a piece the cloud put back on its sheet is shown there at once: its rows say the sheet, as the cloud wrote them)
+      const home = p.cloud && ans ? (ans.back || []).find(x => (x.ids || []).some(id => p.ids.includes(id))) : null;
+      const rows = p.ids.map(id => Object.assign({}, (p.before.find(b => b.poolId === id) || {}), { poolId: id }, patch, home && (home.ids || []).includes(id) ? { state: (p.before.find(b => b.poolId === id) || {}).state || 'nested', sheetId: home.sheetId } : {}, { updatedAt: back }));
       tryDo(() => { const b = B(); if (b && b.pool && b.pool.rows) for (const r of rows) b.pool.rows.set(r.poolId, r); });
       tryDo(() => { if (root.CustomOrders && root.CustomOrders.note) root.CustomOrders.note(rows); });
+      if (p.cloud && ans) { said.push(...cloudSaid(p, ans)); continue; }
       const CP = root.CharmNestCustomPool;
       if (p.charms.length && CP && typeof CP.putBack === 'function') { const where = tryDo(() => CP.putBack(p.charms, p.metal, job.rid), null); said.push(`“${p.name}” is back${where ? ' on ' + where : ''}`); }
       else said.push(`“${p.name}” is live again: send it to a sheet from its order`);

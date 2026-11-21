@@ -2345,12 +2345,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      Rose Gold gets its label with Cut Sheet, and a sheet being changed or saved waits until it is done. */
   function labelPlan() { return W.rec && !W.flow ? labelPlanOf(W.rec, W.id) : null; }
   /** (STUCKSPIN 28 Oct 2026) why the last press of Make QR label on this sheet made none, said under the button for two minutes after it (the window drawn again keeps it) */
-  const qrWhyOf = id => (W.qrWhy && W.qrWhy.id === id && Date.now() - W.qrWhy.at < 120000 ? `No QR label made: ${W.qrWhy.why}` : "");
+  const qrWhyOf = id => (W.qrWhy && W.qrWhy.id === id && Date.now() - W.qrWhy.at < 120000 ? `No QR label made: ${W.qrWhy.why}` : W.qrAsk && W.qrAsk.id === id ? "Asked — the cloud is making its QR label" : "");   // (qrAsk: item 6, a viewer's press the cloud has not answered yet)
   function labelPlanOf(rec, id) {
     if (!rec) return null;
     const sh = allSheets().find(p => p.sheetId === id), run = window.B && B.run;
     if (sh && busy(sh)) return null;
-    const openRun = !!sh && !!run && sh.runId === run.runId && !!window.Gate && Gate.modern(run.runId) && !["complete", "abandoned"].includes(run.status) && !sh.recalled && !sentToStation(sh);
+    if (!run && cloudLabels(rec, sh)) return cloudPlanOf(rec, id, sh);   // (item 6: a viewer, mode "on": the cloud makes it)
+    const openRun =!!sh && !!run && sh.runId === run.runId && !!window.Gate && Gate.modern(run.runId) && !["complete", "abandoned"].includes(run.status) && !sh.recalled && !sentToStation(sh);
     if (openRun) {
       if (!sh.placements.length || !sh.verification?.ok || !sh.persistedDone || (sh.roseCutAt && sh.setId && !sh.draft) || sh.laserDoneAt || sh.metal === "rose") return null;   // (a cut sheet that is in a set stays in it; one in NO set may join one, Paul 12 Oct)
       if (sh.setId && !sh.draft) return { kind: "relabel", note: "Its set has no label for it yet", title: "Make this sheet's QR label for the orders on it again" };
@@ -2364,6 +2365,61 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     if ((rec.label?.files || []).length || !(rec.placements || []).length || !rec.verification?.ok) return null;
     return { kind: "own", note: "Not in an open set", title: "Make a QR label of the orders on this sheet, saved beside its files" };
+  }
+  /* (Paul 21 Nov 2026, item 6: Make QR label pressed on a staff computer said "No QR label made: The cloud carries every run now…"). In mode "on" no computer holds the run (B.run is
+     null on every page), so only a sheet's own label was offered, and its upload and its putSheet { label } are the cloud's work: refused. On a viewer the cloud draws every QR label
+     (lane "labels"): the press is a person's ask (labelsAsk), the choices are the carrying computer's ones the cloud can make, read from the sheet's record and the run this page
+     follows (CharmNestRunFollow), and the person sees the cloud's answer: made (the window drawn again with it), or why not, in the cloud's words.
+       · a sheet in its set with no label yet      → labelsAsk relabel { sheetId }
+       · a Gold / Silver sheet of the open run       → labelsAsk complete { sheetId }: the cloud releases it as it stands, joins it to its set and draws its label (or says why it cannot join)
+       · a sheet no open run takes into a set        → labelsAsk complete { sheetId }: a label of its own, saved beside its files
+     A 10K / 14K sheet joins its set by its Include switch (its card), not offered here. In mode "off" none of this is reached: everything is as before. */
+  const cloudLabels = (rec, sh) => { try { return typeof window.CharmNestCloudLanes === "function" && !!window.CharmNestCloudLanes("labels", { runId: (rec && rec.runId) || (sh && sh.runId) || undefined }); } catch (_) { return false; } };
+  function cloudPlanOf(rec, id, sh) {
+    const d = rec && rec.id ? rec : sh; if (!d) return null;
+    if ((+d.filesOwed > 0) || d.saving) return null;   // (its files are being written: its label comes with them, or the press is offered once they are)
+    const F = tryDo(() => window.CharmNestRunFollow.state()) || {}, runSt = (F.run && F.run.status) || "";
+    const openRun = !!F.runId && d.runId === F.runId && !["complete", "abandoned"].includes(runSt) && !d.archived && !tryDo(() => sentToStation({ runId: d.runId, sheetId: id }));
+    const inSet = !!d.setId && !d.draft, has = !!(d.label?.files || []).length;
+    if (!(d.placements || []).length || !d.verification?.ok) return null;
+    if (openRun) {
+      if ((d.roseCutAt && inSet) || d.laserDoneAt || d.metal === "rose") return null;
+      if (inSet) return has ? null : { kind: "relabel", cloud: "relabel", id, note: "Its set has no label for it yet", title: "Ask the cloud to make this sheet's QR label for the orders on it again" };
+      if (["gold", "silver"].includes(d.metal)) return { kind: "release", cloud: "complete", id, note: "Made when the sheet is full and joins a set",
+        title: `Release this sheet as it stands (${fmt.pct(d.density || 0)} full): the cloud joins it to its set now and makes its QR label, without waiting to fill` };
+      return null;
+    }
+    if (has) return null;
+    return { kind: "own", cloud: "complete", id, note: "Not in an open set", title: "Ask the cloud to make a QR label of the orders on this sheet, saved beside its files" };
+  }
+  /** The cloud's answer to this computer's ask (labelsAskGet), read until it is done or refused, or until ms: → the ask ({ state, why }) or null (not answered yet). */
+  async function askAnswer(id, seq, ms) {
+    const t0 = Date.now(), every = Math.max(20, 2500 * spinScale());
+    for (;;) {
+      let a = null; try { const r = await api("charmNestLibrary", { op: "labelsAskGet", sheetId: id }, { quiet: true }); a = ((r && r.asks) || []).find(x => x && x.key === "sheet-" + id) || null; } catch (_) { a = null; }
+      if (a && +a.seq >= +seq && (a.state === "done" || a.state === "refused")) return a;
+      if (Date.now() - t0 > ms) return null;
+      await new Promise(r => setTimeout(r, every));
+    }
+  }
+  /** The press on a viewer: asked, then the cloud's answer. → { done } | { asked } (still working: followed on, said when answered); throws the cloud's words when it refused. */
+  async function cloudLabel(plan, rec, sh) {
+    const id = plan.id, name = (rec && rec.id ? tryDo(() => nameOf(rec)) : null) || (sh ? tryDo(() => sheetName(sh)) : null) || "This sheet", by = whoAmI();
+    if (!by) throw new Error("sign in first: the cloud is asked in your name");
+    let r = null;
+    try { r = await api("charmNestLibrary", { op: "labelsAsk", kind: plan.cloud, sheetId: id, by, dev: tryDo(() => window.CharmNestRunFollow.dev()) || "" }, { quiet: true }); }
+    catch (e) { r = { error: (e && e.data && e.data.error) || (e && e.message) || String(e) }; }
+    if (!r || r.error || !r.ask) throw new Error(`the cloud was not asked (${String((r && r.error) || "no answer").replace(/\.$/, "")})`);
+    const seq = r.ask.seq; W.qrAsk = { id, at: Date.now(), seq };
+    toast(`${name}: asked — the cloud makes its QR label`, "ok", 5000);
+    const said = a => { if (W.qrAsk && W.qrAsk.id === id) W.qrAsk = null; if (a.state === "refused") { W.qrWhy = { id, why: String(a.why || "the cloud did not make it").replace(/\.$/, ""), at: Date.now() }; toast(`${name}: no QR label made: ${W.qrWhy.why}`, "bad", 9000); } else toast(`${name}: done — the cloud made its QR label`, "ok", 5000); };
+    const a = await askAnswer(id, seq, 90000 * spinScale());
+    if (a && a.state === "refused") { if (W.qrAsk && W.qrAsk.id === id) W.qrAsk = null; throw new Error(String(a.why || "the cloud did not make it")); }
+    if (a) { said(a); return { done: true }; }
+    // (not answered in 90 s: the cloud keeps its ask; followed on for ten minutes more, said when it is answered, and the window drawn again if it still shows this sheet)
+    askAnswer(id, seq, 600000 * spinScale()).then(b => { if (!b) { if (W.qrAsk && W.qrAsk.id === id) W.qrAsk = null; toast(`${name}: the cloud has not answered its QR label in ten minutes; its ask is kept and the cloud keeps at it`, "bad", 9000); return; }
+      said(b); if (W.id === id && W.dlg && W.dlg.open && !W.flow) open2(id); }).catch(() => {});
+    return { asked: true };
   }
   /** OUTBOX: a field patch of a sheet's record, kept in this computer's outbox (charm-nest-store.js mutate) with what it saw in those fields (base: the later change wins, and says whom it
       overwrote) and sent from there with its mutation id; → the cloud's answer (rejects with the refusal in the cloud's words). Without the outbox, the plain write. */
@@ -2401,6 +2457,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /* What Make QR label does, without the window: the button's own path, and the Library's moves' (SheetWin.remakeLabel,
      joinSet). It puts back what it changed, and throws, when no label was made. */
   async function doLabel(plan, rec, sh, sheets, run) {
+    if (plan.cloud) return cloudLabel(plan, rec, sh);   // (item 6: on a viewer the cloud makes it; nothing is changed here)
     // (the reason a sheet that did not join gives: its own, which is "Waits for a completed SS sheet..." for a full sheet no set can form with yet, Paul 12 Oct)
     const reason = () => { const set = Gate.newestOpenOf ? Gate.newestOpenOf(run.runId) : Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt); return Gate.policy(sh, set ? set.seq : 0).reason; };
     let undo = null;
@@ -3322,7 +3379,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   async function takeOff(plan, opt, who) {
     const list = plan.ok; if (!list.length) return;
-    if (window.CNViewer && CNViewer.on()) { await CNViewer.takeOff({ orderId: plan.rid, mode: opt && opt.then === "cancel" ? "cancel" : "hold", note: (opt && opt.note) || "", by: who, only: list.map(o => o.id) }); return; }   // (CLOUDDRIVE build step 14, C2: the cloud takes pieces off)
+    if (window.CNViewer && CNViewer.on()) {   // (CLOUDDRIVE build step 14, C2: the cloud takes pieces off)
+      const cx = !!(opt && opt.then === "cancel" && plan.rid);   // (ITEM 1, Paul 21 Nov 2026: a cancel sends its record as this page's own path keeps it; the cloud's take-off lane acts on it)
+      // (S5, Paul 21 Nov 2026: "Take off and hold" was refused on every staff computer: no sheet went with it. The sheet open here (else the first that holds a chosen piece) goes, and
+      //  scope "order" with only: the pieces chosen ("Only this charm" or "The whole order") come off wherever they are, and the rest of the order stays)
+      const onSheet = list.filter(o => o.sh && o.sh.sheetId), here = !(opt && opt.headless) && W.id && onSheet.some(o => String(o.sh.sheetId) === String(W.id)) ? String(W.id) : "";
+      const sheetId = here || (onSheet[0] ? String(onSheet[0].sh.sheetId) : "");
+      await CNViewer.takeOff({ orderId: plan.rid, mode: cx ? "cancel" : "hold", note: (opt && opt.note) || "", by: who, only: list.map(o => o.id), scope: "order", ...(sheetId ? { sheetId } : {}), ...(cx ? { cancelRec: cancelRecOf(plan.rid, { who, note: (opt && opt.note) || "", sheets: listWhere(list.filter(o => o.sh)), at: Date.now() }) } : {}) });   // (it says what happened, in words)
+      return;
+    }
     const pressedAt = Date.now();   // (a cancel's moment on its timeline: when it was pressed, not when the record was kept)
     const cancel = opt.then === "cancel" && !!plan.rid, note = opt.note || "";
     const ids = new Set(list.map(o => o.id)), rid = plan.rid;
@@ -3870,14 +3935,21 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return { load, has, history, put, restore, renderInto, count, isEtsy, fatesOf, absorb, restoredAt, ids: () => [...ids], reading: () => !!reading };   // (reading: a page of the cancelled list is being read: the Orders bar's busy state lasts as long as it does, FILTERBAR)
   })();
   // the order's record is kept first; only then does it leave every list, so an interruption leaves it on hold
-  async function cancelRecord(rid, o, keepSt, goneSt, paint) {
+  /** The cancel record a person's Cancel keeps (cancelPut): who, why, the moment pressed, and the order (buyer, its dates, the sheets, its lines). (ITEM 1, Paul 21 Nov 2026: one builder, so a
+   *  viewer in mode "on" sends exactly the record this page's own path keeps; CNViewer.takeOff sends it, and the cloud's take-off lane takes the pieces off from it.) */
+  function cancelRecOf(rid, o) {
     rid = String(rid);
     const rows = rowsOfOrder(rid), r0 = rows[0], ord = r0 ? r0.order : { receiptId: rid };
-    keepSt.state = "now"; paint();
-    const kept = await Cancelled.put({ orderId: rid, by: o.who, why: o.note || "", at: +o.at || Date.now(), record: {
+    return { orderId: rid, by: o.who, why: o.note || "", at: +o.at || Date.now(), record: {
       buyer: (ord.buyer && ord.buyer.name) || ord.buyerName || ord.name || "", placedAt: r0 && window.CharmNestOrders ? CharmNestOrders.orderPlacedAt(r0) : 0, shipBy: ord.shipBy ? ord.shipBy * 1000 : 0,
       sheets: o.sheets ? String(o.sheets).split(", ") : [],
-      lines: rows.map(r => Object.assign({ transactionId: String(r.line.transactionId || ""), sku: (r.spec && r.spec.designSku) || r.line.sku || "", title: r.line.title || "", quantity: (r.spec && r.spec.quantity) || r.line.quantity || 1, material: r.material || "" }, lineExtra(r, o.lineInfo))) } });
+      lines: rows.map(r => Object.assign({ transactionId: String(r.line.transactionId || ""), sku: (r.spec && r.spec.designSku) || r.line.sku || "", title: r.line.title || "", quantity: (r.spec && r.spec.quantity) || r.line.quantity || 1, material: r.material || "" }, lineExtra(r, o.lineInfo))) } };
+  }
+  async function cancelRecord(rid, o, keepSt, goneSt, paint) {
+    rid = String(rid);
+    const rows = rowsOfOrder(rid);
+    keepSt.state = "now"; paint();
+    const kept = await Cancelled.put(cancelRecOf(rid, o));
     AutoCancel.mine(rid, kept && kept.record && kept.record.at);   // (what stays of it was said here: no second notice)
     const cancelAt = +(kept && kept.record && kept.record.at) || +o.at || 0;
     if (o.fates && o.fates.length) api("charmNestLibrary", { op: "cancelFates", orderId: rid, fates: o.fates, cancelAt, by: o.who }, { quiet: true }).catch(e => console.warn("sheet window: cancel fates", e.message));
@@ -4322,6 +4394,20 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     /** Someone has set the pieces aside: the notice goes, and the timeline says who. */
     function ack(rid, node) {
       rid = String(rid);
+      /* (S5, Paul 21 Nov 2026: pressed on a staff computer in mode "on", the steps below are production writes the server refuses (cancelFates, the timeline), silently: nothing was
+         recorded.) There the press is takeOffAck: the cloud takes the notice out of every page's pill, records "set aside by <who>" on the cancel record and the order's timeline,
+         and marks its take-off job's notice seen. The notice leaves this page once the cloud says so; a refusal is said and the notice stays. */
+      if (window.CNViewer && CNViewer.on()) {
+        st = read(); const n = st.notices.find(x => x.rid === rid); if (!n) return RunCtl.renderBanner();
+        const b = node && node.querySelector && node.querySelector("[data-cxack]"); if (b) { if (b.disabled) return; b.disabled = true; }
+        return CNViewer.ack(rid, n.at, { by: whoAmI() || "" }).then(r => {
+          if (b) b.disabled = false;
+          if (!r || !r.ok) return r;
+          st = read(); st.notices = st.notices.filter(x => !(x.rid === rid && (+x.at || 0) === (+n.at || 0))); save();
+          for (const m of document.querySelectorAll(".mNote")) if (m.close && /^Order \d+ (was|is) cancelled/.test(m.textContent) && m.textContent.includes(rid)) m.close();
+          RunCtl.renderBanner(); return r;
+        });
+      }
       const go = () => {
         st = read(); const n = st.notices.find(x => x.rid === rid); if (!n) return RunCtl.renderBanner();
         st.notices = st.notices.filter(x => x.rid !== rid); save();
@@ -4564,6 +4650,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   // the planned orders go in one after another, each its own verified move; one that does not go through stops the rest
   // (they stay where they are, and what is still free is planned again)
   async function placeAll(list, target, who) {
+    // (GAP G1: on a viewer every planned order goes to the cloud at once, as one request (or a few: four sheets they come from, 60 pieces, each), never one fresh nest after another)
+    if (window.CNViewer && CNViewer.on()) return fillCloud(list.map(s => ({ k: s.k, spots: s.spots })), target, who).catch(e => { console.error("sheet window: fill (cloud)", e); toast("Not moved: " + e.message, "bad", 9000); return false; });
     let i = 0;
     try {
       for (; i < list.length; i++) {
@@ -4835,11 +4923,102 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function journal(rid, entry) {
     try { const j = JSON.parse(localStorage.getItem(JOURNAL()) || "{}"); if (entry) j[rid] = entry; else delete j[rid]; localStorage.setItem(JOURNAL(), JSON.stringify(j)); } catch (_) {}
   }
+  /* GAP G1 (Paul 21 Nov 2026): "Fill the freed room" / Place / Place all / by hand on a staff computer in mode "on" (a viewer) went through moveIn -> rewritePage -> startNest (_byHand):
+     a FRESH nest of both saved sheets, asked of the cloud, which arranged again sheets the person never asked to change. Now it is ONE request to the cloud (runCmdPut hop, fill: true;
+     the cloud's cmdHopPieces): the pieces go into the freed room exactly where this window planned them (pinned there), every other charm of every sheet stays where it is, the sheets owe
+     their files, and nothing is nested again. Nothing is saved, nested or written on this page. Said in words: asked (the steps panel), then the cloud's answer (moved, or why not).
+     groups: [{ k, spots: [{ c, src, cxPt, cyPt, angle }] }], one per order; at most four sheets they come from and 60 pieces in one request (more go as further requests). Mode "off": never called. */
+  const FILL_ASKED = new Set();
+  async function fillCloud(groups, target, who) {
+    groups = (groups || []).filter(g => g && g.k && Array.isArray(g.spots) && g.spots.length);
+    const rids = [...new Set(groups.map(g => String(g.k.rid)))], tName = sheetWord(target.sheetId, target.fileBase, target);
+    const what = rids.length === 1 ? `order ${rids[0]}` : `orders ${rids.join(", ")}`, stay = `Nothing was changed: ${what} ${rids.length === 1 ? "stays where it is" : "stay where they are"} and no sheet is nested again`;
+    const lost = why => { for (const r of rids) unland(r); return new Error(`${why}. ${stay}`); };
+    if (!groups.length) throw lost("nothing was planned for the freed room");
+    if (!CNViewer.lane("cmd:hop")) throw lost(`the cloud does not fill the freed room yet (the owner turns on “cmd:hop” in Settings, Cloud carries)`);
+    if (groups.some(g => g.spots.some(s => !s.c || !s.c.poolId || !s.src || !s.src.sheetId))) throw lost(`a piece of ${what} is not on a saved sheet yet`);
+    const touched = [...new Set([target.sheetId].concat(groups.flatMap(g => g.spots.map(s => s.src.sheetId))))];
+    if (touched.some(id => FILL_ASKED.has(id))) throw lost("the cloud is still making the last move on one of these sheets; press again once it says so");
+    // the requests: four sheets they come from and 60 pieces each at most, whole orders only
+    const chunks = [];
+    for (const g of groups) {
+      const from = new Set(g.spots.map(s => s.src.sheetId));
+      if (from.size > 4 || g.spots.length > 60) throw lost(`order ${g.k.rid} lies on more than four sheets or has more than 60 pieces: move it in parts`);
+      let c = chunks[chunks.length - 1];
+      if (!c || new Set([...c.from, ...from]).size > 4 || c.spots.length + g.spots.length > 60) chunks.push(c = { from: new Set(), spots: [], rids: [] });
+      for (const id of from) c.from.add(id);
+      c.spots.push(...g.spots); c.rids.push(String(g.k.rid));
+    }
+    const F = window.CharmNestRunFollow, runId = target.runId || tryDo(() => F.state().runId), dev = tryDo(() => F.dev()) || "";
+    if (!runId) throw lost("the run the cloud carries is not known on this computer yet");
+    const n = groups.reduce((m, g) => m + g.spots.length, 0);
+    const ask = stepOf(`Sending ${what} to the cloud`, "now"), cloud = stepOf(`The cloud puts ${n === 1 ? "the charm" : n + " pieces"} into the freed room on ${tName}`);
+    const work = beginFlow({ state: "working", title: `Asking the cloud: ${what} to ${tName}`, steps: [ask, cloud], note: "" });
+    if (!work) { for (const r of rids) unland(r); return false; }
+    W.fill = null; tryDo(renderFill); tryDo(renderWork);
+    const paint = () => { if (W.dlg && W.dlg.open && W.work === work) tryDo(renderWork); };
+    const sent = [];
+    for (let i = 0; i < chunks.length; i++) {
+      const c = chunks[i], from = [...c.from];
+      const poses = c.spots.map(s => ({ poolId: String(s.c.poolId), cxPt: +s.cxPt, cyPt: +s.cyPt, angle: +s.angle || 0 }));
+      const cmd = { type: "hop", fill: true, sourceId: from[0], ...(from.length > 1 ? { sourceIds: from } : {}), targetId: target.sheetId, ids: poses.map(p => p.poolId), poses, metal: target.metal,
+        label: `Fill the freed room on ${tName}: order${c.rids.length > 1 ? "s" : ""} ${c.rids.join(", ")}`, ...(i === 0 && target.layoutRev != null && Number.isFinite(+target.layoutRev) ? { layoutBase: +target.layoutRev } : {}) };
+      let r = null; try { r = await api("charmNestLibrary", { op: "runCmdPut", runId, dev, by: who, cmd }, { quiet: true, timeoutMs: 15000 }); } catch (e) { r = { error: (e && e.message) || String(e) }; }
+      if (!r || r.error || !r.id) {
+        const why = String((r && r.error) || "the cloud did not answer").replace(/\.$/, "");
+        if (!sent.length) { ask.state = "bad"; ask.detail = why; work.state = "failed"; work.title = `${what.charAt(0).toUpperCase() + what.slice(1)} not moved`; work.note = esc(`${why}. ${stay}.`); endFlow(work); paint(); throw lost(why); }
+        for (const rr of c.rids) unland(rr);
+        tryDo(() => toast(`Order${c.rids.length > 1 ? "s" : ""} ${c.rids.join(", ")} not sent to the cloud: ${why}. ${c.rids.length > 1 ? "They stay" : "It stays"} where ${c.rids.length > 1 ? "they are" : "it is"}.`, "bad", 9000));
+        continue;
+      }
+      sent.push({ id: r.id, rids: c.rids, spots: c.spots });
+    }
+    for (const id of touched) FILL_ASKED.add(id);
+    ask.state = "ok"; ask.detail = sent.length > 1 ? `${sent.length} requests` : "asked"; cloud.state = "now"; cloud.detail = "every other charm stays where it is; nothing is nested again";
+    work.note = esc(`Asked by ${who}. The cloud places ${n === 1 ? "it" : "them"} where shown; its answer shows here and in a note.`);
+    endFlow(work);   // (the window is free for the next change while the cloud works: this panel still follows the answer)
+    paint();
+    const finish = answers => {
+      for (const id of touched) FILL_ASKED.delete(id);
+      const good = answers.filter(a => a.ok), late = answers.filter(a => a.late), bad = answers.filter(a => !a.ok && !a.late);
+      if (good.length) {   // (the room the pieces took is no longer free)
+        const landed = good.flatMap(a => a.x.spots);
+        setFreed(target.sheetId, (FREED.get(target.sheetId) || []).filter(g => !landed.some(s => Math.hypot(s.cxPt - g.x.p.cxPt, s.cyPt - g.x.p.cyPt) < Math.max(g.x.p.wPt || 20, g.x.p.hPt || 20) / 2)));
+      }
+      for (const r of rids) unland(r);
+      const said = a => (a.ok ? a.text : `Order${a.x.rids.length > 1 ? "s" : ""} ${a.x.rids.join(", ")} ${a.late ? "not moved yet" : "not moved"}: ${String(a.text || "the cloud refused it").replace(/\.$/, "")}.${a.late ? "" : ` ${a.x.rids.length > 1 ? "They stay" : "It stays"} where ${a.x.rids.length > 1 ? "they are" : "it is"}; no sheet was nested again.`}`);
+      cloud.state = bad.length || late.length ? (good.length ? "ok" : "bad") : "ok";
+      cloud.detail = good.length && (bad.length || late.length) ? `${good.length} of ${answers.length} requests done` : good.length ? "done" : late.length ? "no answer yet" : "refused";
+      work.state = good.length ? "done" : "failed";
+      work.title = good.length ? `${what.charAt(0).toUpperCase() + what.slice(1)} moved to ${tName} by the cloud${bad.length || late.length ? " · not all" : ""}` : `${what.charAt(0).toUpperCase() + what.slice(1)} not moved`;
+      work.note = answers.map(a => esc(said(a))).join("<br>");
+      paint();
+      tryDo(() => F.now("fill"));
+      tryDo(() => toast(answers.map(said).join(" "), bad.length || late.length ? (good.length ? "warn" : "bad") : "ok", 10000));
+      if (W.dlg && W.dlg.open && touched.includes(W.id) && !W.flow) tryDo(() => open(W.id, { keepWork: true, keepSet: false, ...(good.length ? { glow: good.flatMap(a => a.x.spots.map(s => String(s.c.poolId))) } : {}) }));
+    };
+    (async () => {
+      const left = new Map(sent.map(x => [x.id, x])), answers = [];
+      for (const t0 = Date.now(); left.size && Date.now() - t0 < 600000;) {
+        await pause(Date.now() - t0 < 60000 ? 2500 : 6000);
+        let list = null; try { list = await api("charmNestLibrary", { op: "runCmdList", runId }, { quiet: true }); } catch (_) { continue; }
+        for (const c of (list && list.cmds) || []) {
+          const x = c && left.get(c.id); if (!x || !["done", "failed", "cancelled"].includes(c.state)) continue;
+          left.delete(c.id); answers.push({ x, ok: c.state === "done", text: String(c.text || "") });
+        }
+      }
+      for (const x of left.values()) answers.push({ x, ok: false, late: true, text: "the cloud has not answered in 10 minutes; the request stays queued and is done when the cloud gets to it" });
+      finish(answers);
+    })().catch(e => { console.warn("sheet window: fill (cloud) answer", e); for (const id of touched) FILL_ASKED.delete(id); });
+    return true;
+  }
   // o.free: the nest itself picks the spots (spots are only proof that there is room); otherwise each piece is pinned
   // o.headless: the Hold engine's fill (charm-nest-order-hold.js): the same move, nothing drawn, for the sheet it is given
   // o.hop: a person's drag of a charm onto the next or previous sheet of its metal (charm-nest-sheet-hop.js): o.guard(sheet) says why a sheet may not
   //   give or take it now ("" to go; it replaces the run's own movableFrom, so a full or released 10K/14K sheet can give a charm up by hand), no freed room is kept
   async function moveIn(k, spots, target, who, o = {}) {
+    // GAP G1 (Paul 21 Nov 2026): on a staff computer in mode "on" (a viewer) Fill the freed room / Place / by hand is ONE request to the cloud (fillCloud), never a fresh nest of both sheets
+    if (!o.hop && !o.headless && window.CNViewer && CNViewer.on()) return fillCloud([{ k, spots }], target, who);
     const rid = k.rid, ids = new Set(spots.map(s => s.c.poolId)), ui = !o.headless, sheetId = ui ? W.id : target.sheetId;
     const srcs = [...new Set(spots.map(s => s.src))], tName = sheetWord(target.sheetId, target.fileBase, target);
     const sName = sh => sheetWord(sh.sheetId, sh.fileBase, sh);
@@ -5203,7 +5382,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const cut = !!(sh.roseCutAt || (rec && rec.roseCutAt)), lined = cut || !!(sh.rosePlan || sh.roseProtected || sh.rosePlanHash || (rec && (rec.rosePlanJson || rec.roseProtectedJson || rec.rosePlanHash)));
       if (!(o.cutOnly ? cut : lined)) continue;
       if (!window.RoseStock || typeof RoseStock.reopen !== "function") return `${name}'s green line cannot be set aside in this page; reload it`;
-      try { await RoseStock.reopen(sh, { by: whoAmI() || undefined, force: true }); } catch (e) { return String((e && e.message) || e || "it could not be changed").replace(/\.$/, ""); }
+      // (ITEM 4, Paul 21 Nov 2026: o.patch, Manual Control's save: ONE sheetLayoutPatch follows, which in mode "on" sets the line aside on the server itself; a staff computer's roseReopen is refused there)
+      try { await RoseStock.reopen(sh, Object.assign({ by: whoAmI() || undefined, force: true }, o.patch ? { patch: true } : {})); } catch (e) { return String((e && e.message) || e || "it could not be changed").replace(/\.$/, ""); }
     }
     return "";
   }
@@ -6752,7 +6932,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const rec = W.id === sh.sheetId && W.rec && W.rec.id === sh.sheetId ? W.rec : null;
       const why = mcBlock(sh, rec, { saving: true }); if (why) throw new Error(why.replace(/\.$/, ""));
       // (GOLDEDIT: its green line drawn or recorded is given up first, here and on the server, so the new layout is saved; it is drawn again after, goldAfter)
-      { const gw = await goldOpen([sh], { recs: new Map([[sh, rec]]) }); if (gw) throw new Error(gw); }
+      { const gw = await goldOpen([sh], { recs: new Map([[sh, rec]]), patch: true }); if (gw) throw new Error(gw); }
       for (const [id, q] of edits) {
         const c = sh.charms.find(z => z.id === id), p = sh.placements.find(z => z.id === id);
         if (!c || !p) throw new Error("a charm moved by hand left the sheet meanwhile");
@@ -7627,7 +7807,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   async function takeOffOrder(o) {
     o = o || {};
-    if (window.CNViewer && CNViewer.on()) return CNViewer.takeOff(o);   // (CLOUDDRIVE build step 14, C2: in mode "on" a take-off is a press the cloud acts on: takeOffAsk)
+    if (window.CNViewer && CNViewer.on()) {   // (CLOUDDRIVE build step 14, C2: in mode "on" a take-off is a press the cloud acts on: takeOffAsk)
+      // (ITEM 1, Paul 21 Nov 2026: Cancel Order on a staff computer said "its cancel is recorded" and recorded nothing: the record this page's own path keeps goes with it; CNViewer sends it)
+      if (o.mode !== "cancel" || o.cancelRec) return CNViewer.takeOff(o);
+      const rid = String(o.orderId || "").replace(/\D/g, ""), who = String(o.by || whoAmI() || "").trim();
+      let sheets = ""; try { sheets = listWhere(offPlan({ rid }, true, null, "cancel").ok.filter(x => x.sh)); } catch (_) { sheets = ""; }
+      return CNViewer.takeOff(Object.assign({}, o, { by: who, cancelRec: rid && who ? cancelRecOf(rid, { who, note: String(o.note || "").trim(), sheets, at: Date.now() }) : null }));
+    }
     const rid = String(o.orderId || ""), sheetId = String(o.sheetId || ""), mode = o.mode === "cancel" ? "cancel" : "hold", scope = o.scope === "sheet" ? "sheet" : "order";
     const who = String(o.by || whoAmI() || "").trim(), note = String(o.note || "").trim();
     const no = error => ({ ok: false, error, mode, scope, removed: [], stayed: [] });

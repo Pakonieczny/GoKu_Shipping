@@ -70,6 +70,7 @@
   // (the signed-in person: charm-nest-bridge.js CNEmployee, its one sign-in; nobody signed in: its bar asks under the button pressed, and the press goes on once signed in)
   const who = () => { try { const E = root.CNEmployee; return E && typeof E.name === 'function' ? String(E.name() || '').trim() : ''; } catch (_) { return ''; } };
   const askWho = (why, action) => { try { const E = root.CNEmployee; if (E && typeof E.need === 'function') return Promise.resolve(E.need(why, { action })).then(n => String(n || '').trim(), () => ''); } catch (_) {} return Promise.resolve(who()); };
+  const viewerOn = () => { try { return !!(root.CNViewer && root.CNViewer.on()); } catch (_) { return false; } };   // (CESEND: a staff computer in mode "on")
   const say = (text, kind, ms) => { try { if (typeof toast === 'function') toast(text, kind || '', ms || 5000); } catch (_) {} };   // eslint-disable-line no-undef
   const pagesFor = metal => { try { return typeof pagesOf === 'function' ? (pagesOf(metal) || []) : []; } catch (_) { return []; } };   // eslint-disable-line no-undef
   const colourOf = k => { try { const L = root.CN && Array.isArray(root.CN.METALS) ? root.CN.METALS : null, m = L && L.find(x => x.key === k); if (m && m.color) return m.color; } catch (_) {} return (metalOf(k) || {}).color || ''; };
@@ -323,12 +324,35 @@
     const res = await P.addCustomPiece({ design, designId: design.id, version: design.version, hash: design.hash || null, metal, orderId, customName: customName || null, quantity, by,
       reason: o.reason || null, fixes: fx, handmade: true, sendId });
     const poolIds = (Array.isArray(res) ? res : res && Array.isArray(res.poolIds) ? res.poolIds : []).map(String);
+    const cloudSaid = res && !Array.isArray(res) && res.cloud ? await cloudPlace(res, poolIds, by, o) : '';   // (CESEND: a viewer's piece, placed by the cloud: its answer, or it throws why not)
     const madeId = (res && !Array.isArray(res) && (res.orderId || res.customId)) || orderId || customIdOf(poolIds[0]) || null;
     // ONE event for the send (charm-nest-design-log.js: the order's timeline, the efficiency count, the Design_Log record; a fix's mistake is put on the order it fixes)
     log('customPieceSent', { orderId: madeId || '', customName: customName || undefined, designId: design.id, version: design.version, name: design.name, metal, quantity, poolIds, sendId,
       reason: o.reason ? (REASONS.find(r => r[0] === o.reason) || [0, o.reason])[1] : undefined, fixes: fx || undefined, by });
     if (orderId) { const s = attach(orderId, design); if (s) { s.sends.push({ metal, quantity, sheet: o.sheet || '', at: Date.now(), by, poolIds }); repaint(orderId); } }
-    return { poolIds, orderId: madeId, sendId };
+    return { poolIds, orderId: madeId, sendId, ...(cloudSaid ? { cloud: true, cloudText: cloudSaid } : {}) };
+  }
+  /* CESEND (21 Nov 2026): on a staff computer in mode "on" the rows are written (Pool.addCustomPiece, cloudPlace) and the cloud is asked to place them: ONE request, runCmdPut placewaiting
+     { ids: the pool ids, and "off:<pool id>" for the piece "Replace on the order…" replaces }, followed until the cloud answers (its steps shown through o.onStep). → the cloud's words when
+     it placed the piece; throws its words when it did not (the pop-up then stays open and says them). */
+  const CLOUD_FOLLOW_MS = 600000;
+  async function cloudPlace(res, poolIds, by, o) {
+    const CNx = root.CN, F = root.CharmNestRunFollow, runId = res.runId, dev = (() => { try { return F.dev() || ''; } catch (_) { return ''; } })();
+    const step = t => { try { if (typeof o.onStep === 'function') o.onStep(t); } catch (_) {} };
+    const ids = poolIds.concat(o.replaces ? ['off:' + String(o.replaces)] : []);
+    let put = null; try { put = await CNx.api('charmNestLibrary', { op: 'runCmdPut', runId, dev, by, cmd: { type: 'placewaiting', ids, label: `Place the custom piece ${poolIds[0] || ''}`.slice(0, 150) } }, { quiet: true, timeoutMs: 15000 }); } catch (e) { put = { error: (e && e.message) || String(e) }; }
+    if (!put || put.error || !put.id) throw new Error(`the piece is recorded (${poolIds[0]}) but the cloud was not asked to place it: ${(put && put.error) || 'no answer'}`);
+    step('Asked: the cloud places it…');
+    const nap = ms => new Promise(r => setTimeout(r, ms)), t0 = Date.now(), gap = o.followMs || 2500;
+    while (Date.now() - t0 < CLOUD_FOLLOW_MS) {
+      await nap(gap);
+      let list = null; try { list = await CNx.api('charmNestLibrary', { op: 'runCmdList', runId }, { quiet: true }); } catch (_) { continue; }
+      const c = ((list && list.cmds) || []).find(x => x && x.id === put.id); if (!c) continue;
+      if (c.state === 'done') { try { F.now && F.now('cesend'); } catch (_) {} return String(c.text || 'Placed by the cloud'); }
+      if (c.state === 'failed' || c.state === 'cancelled') throw new Error(`the cloud did not place it: ${String(c.text || c.state).replace(/\.$/, '')}`);
+      if (c.step) step(`The cloud: ${c.step}`);
+    }
+    throw new Error('the cloud has not answered in 10 minutes; the request stays queued and is done when the cloud gets to it');
   }
 
   /* ═══ 7 · the pop-up ═══ */
@@ -464,6 +488,7 @@
        metal and the count are not asked, and the press says it is kept on that piece. A custom line (needsDesign), another order, no order, and the card's explicit "Replace on the order…"
        (the piece made again, a fix: fromEditor without after) send a piece as before. */
     const pcPid = (/^pc-(.+)$/.exec(st.designId) || [])[1] || (o.design ? piecePool(o.design) : ''), pcRow = ctx && pcPid && ownPool(ctx.rid, pcPid) ? pieceLineOf(null, null, ctx.rid, pcPid) : null;
+    st.replaces = o.fromEditor && !o.after && ctx && pcPid && ownPool(ctx.rid, pcPid) ? pcPid : null;   // (CESEND: "Replace on the order…": the piece it is made again for)
     st.piece = pcRow && !needsDesign(pcRow) && !(o.fromEditor && !o.after) ? { poolId: pcPid, row: pcRow, sku: (pcRow.spec && pcRow.spec.designSku) || (pcRow.line && pcRow.line.sku) || 'piece' } : null;
     const ord = ctx ? `<button type="button" class="cpOpt" data-cp-attach="this" role="radio"><span class="cpDot"></span><span class="cpOptT"><b>This ${ctx.custom ? 'custom ' : ''}order${st.piece ? ' · its own piece' : ''}</b><span><span class="mono">${esc(ctx.rid)}</span>${ctx.buyer ? ' · ' + esc(ctx.buyer) : ''}${ctx.label ? ' · ' + esc(ctx.label) : ''}${ctx.sku ? ' · ' + esc(ctx.sku) : ''}</span>${st.piece ? `<span data-cp-this-piece>Kept on this order's own ${esc(st.piece.sku)}, as you saved it: no piece is added</span>` : ''}</span></button>` : '';
     dlg.innerHTML = `<div class="dlg">
@@ -576,7 +601,9 @@
       const why = st.err || whyNot(), b = q('[data-cp-send]'), w = q('[data-cp-why]'), g = st.metal ? st.goes || (st.goes = goesNow()) : null;
       w.textContent = st.busy ? '' : why; w.classList.toggle('bad', !!st.err);
       b.setAttribute('aria-disabled', String(!!whyNot() || st.busy)); b.disabled = st.busy;
-      b.innerHTML = st.busy ? '<span class="cpSpin"></span>Sending…' : updating() ? esc(`Keep on order ${st.ctx.rid}'s piece`) : esc(`Send ${st.qty > 1 ? st.qty + ' ' : ''}to ${g ? g.name : 'sheet'}`);
+      const vw = viewerOn();   // (CESEND: on a viewer the cloud chooses the sheet: the button never names this page's guess, and while sending it shows the cloud's own steps)
+      if (st.busy && vw && st.step) w.textContent = st.step;
+      b.innerHTML = st.busy ? `<span class="cpSpin"></span>${vw ? 'The cloud places it…' : 'Sending…'}` : updating() ? esc(`Keep on order ${st.ctx.rid}'s piece`) : vw ? esc(`Send ${st.qty > 1 ? st.qty + ' ' : ''}to the cloud to place`) : esc(`Send ${st.qty > 1 ? st.qty + ' ' : ''}to ${g ? g.name : 'sheet'}`);
       q('[data-cp-n]').textContent = String(st.qty);
       for (const x of dlg.querySelectorAll('[data-cp-qty]')) x.disabled = st.busy || (+x.dataset.cpQty < 0 ? st.qty <= 1 : st.qty >= 99);
       const by = who(); q('[data-cp-who]').innerHTML = updating() ? (by ? `Saved by <b>${esc(by)}</b> · on the order's own piece` : '') : by ? `Sent by <b>${esc(by)}</b> · handmade custom` : 'You sign in when you send';
@@ -605,15 +632,17 @@
       if (!by || !M || M.st !== st) return;
       // (THISORDER: the Save already put the drawing on this order's own piece (its artwork record, the pool id it has or will have): nothing is sent, no piece is added)
       if (updating()) { const pc = st.piece; say(`Order ${st.ctx.rid}: the drawing is on its own ${pc.sku} (no piece added)`, 'ok', 6000); done({ poolIds: [pc.poolId], orderId: st.ctx.rid, sendId: null, updated: true }); return; }
-      st.busy = true; st.err = ''; sync();
-      const g = st.goes = goesNow(), orderId = orderNow(), none = st.attach === 'none';
+      st.busy = true; st.err = ''; st.step = ''; sync();
+      const g = st.goes = goesNow(), orderId = orderNow(), none = st.attach === 'none', vw = viewerOn();
       try {
         const out = await send({ designId: st.designId, version: st.version, design: st.design, metal: st.metal, quantity: st.qty, orderId, customName: none ? st.name.trim() : '', reason: none ? st.reason || null : null,
-          fixes: none && st.reason === 'fix' && st.fix ? { orderId: st.fix.rid, poolId: st.fix.poolId, lineKey: st.fix.lineKey, causedBy: st.causedBy.trim(), suggested: st.cause ? st.cause.suggested : '' } : null, by, sheet: g.name });
+          fixes: none && st.reason === 'fix' && st.fix ? { orderId: st.fix.rid, poolId: st.fix.poolId, lineKey: st.fix.lineKey, causedBy: st.causedBy.trim(), suggested: st.cause ? st.cause.suggested : '' } : null, by, sheet: vw ? '' : g.name,
+          ...(vw ? { replaces: st.attach === 'this' ? st.replaces : null, onStep: t => { if (M && M.st === st) { st.step = t; sync(); } } } : {}) });
         // (the custom order this was designed for: its line is released from Review once its piece is on, as the card's own Release Hold does it: CustomPrint, its record, its seal, its step
         //  on the timeline; custompool's piece is an extra piece of the order and settles nothing by itself)
         const rel = q('[data-cp-release]');
         if (st.attach === 'this' && st.ctx && st.ctx.item && rel && rel.checked) release(st.ctx.item).then(v => { out.released = v; });
+        if (out.cloud) { say(`${orderId ? `Order ${orderId}` : out.orderId ? out.orderId : `“${st.name.trim()}”`}: ${out.cloudText}`, 'ok', 9000); done(out); return; }   // (CESEND: the cloud's own words)
         say(`${plural(st.qty, 'handmade custom piece')} → ${g.name}${orderId ? ` · order ${orderId}` : out.orderId ? ` · ${out.orderId}` : ` · “${st.name.trim()}”`}`, 'ok', 6000);
         done(out);
       } catch (e) { if (!M || M.st !== st) return; st.busy = false; st.err = `Not sent: ${String((e && e.message) || e).slice(0, 160)}`; sync(); }
