@@ -59,6 +59,11 @@ async function partS() {
     ok('S8 ... an old page (no cv) still gets the reload words, even for a flag', r.http === 409 && r.reload === true, r);
     r = await P({ op: 'putSheet', sheet: { id: SH, runId: R, metal: 'gold', placements: [] }, dev: PAGE, cv: CV });
     ok('S9 ... a sheet\'s pieces stay the cloud\'s (putSheet refused as before)', carries(r), r);
+    r = await P({ op: 'timelineAdd', events: [{ id: 'va-note-1', orderId: '4241400132', type: 'note', at: T0, by: 'Michelle', station: 'sorter', text: 'Back engraving approved' }], dev: PAGE, cv: CV });
+    const tl = await P({ op: 'timelineGet', orderId: '4241400132' });
+    ok('S11 mode on: a person\'s step on an order\'s timeline (from a viewer) is taken and kept', r.http === 200 && !r.cloudCarries && (tl.events || []).some(e => e.id === 'va-note-1' || (e.by === 'Michelle' && e.at === T0)), { r, events: (tl.events || []).map(e => [e.id, e.type, e.by]) });
+    r = await P({ op: 'timelineAdd', events: [{ id: 'va-note-2', orderId: '4241400132', type: 'note', at: T0, by: 'Michelle' }], dev: PAGE });
+    ok('S12 ... from an old page (no cv) it still gets the reload words', r.http === 409 && r.reload === true, r);
     seed('off');
     r = await P({ op: 'poolUpdate', poolIds: [P1], patch: { engrave: false, state: 'abandoned', sheetId: null }, dev: PAGE, cv: CV });
     ok('S10 drive off: nothing is refused (every page works as before the cloud)', r.http === 200 && F.doc('Charm_Pool/' + P1).state === 'abandoned', r);
@@ -99,7 +104,7 @@ async function partP() {
   { const { w } = page({ held: R });
     ok('P5 the computer that holds the run (B.run) finds it as before', (await w.CharmNestEngraveCloud.lane()) === true); }
   const html = fs.readFileSync(path.join(ROOT, 'charm-nest-1.html'), 'utf8');
-  ok('P6 charm-nest-1.html loads the changed lane and bridge under new tokens', /charm-nest-engrave-cloud\.js\?v=1121-cloud11-va1"/.test(html) && /charm-nest-bridge\.js\?v=[^"]*-va1"/.test(html));
+  ok('P6 charm-nest-1.html loads the changed lane and bridge under new tokens', /charm-nest-engrave-cloud\.js\?v=1121-cloud11-va1[-\w]*"/.test(html) && /charm-nest-bridge\.js\?v=[^"]*-va1[-\w]*"/.test(html));
 }
 
 async function partE() {
