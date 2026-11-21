@@ -204,6 +204,7 @@ const assets = [
   "charm-nest-engrave-sync.js",
   "charm-nest-run-follow.js",
   "charm-nest-viewer.js",
+  "charm-nest-cmd-now.js",
   "charm-nest-cloud-sheets.js",
   "charm-nest-drift.js",
   "charm-nest-cloud-world.js",

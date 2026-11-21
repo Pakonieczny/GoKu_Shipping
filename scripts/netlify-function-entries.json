@@ -185,7 +185,7 @@
     "_charmEngraveFonts.js",
     "_charmEngraveOps.js",
     "_charmEngravePiece.js",
-    "_charmEngraveStep.js", "_charmNestCustomDone.js", "_charmNestCustomMake.js", "_charmNestReviewSettled.js",
+    "_charmEngraveStep.js", "_charmNestCustomDone.js", "_charmNestCustomMake.js", "_charmNestCombine.js", "_charmNestReviewSettled.js",
     "_charmNestAgent.js",
     "_charmNestArchiveRecord.js",
     "_charmNestAssembly.js",
