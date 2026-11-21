@@ -3833,6 +3833,15 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
     <div class="field" id="stEtsyField"><label>Etsy for the whole shop (every computer and station)</label>
       <div class="fieldRow" style="align-items:center;gap:10px"><span class="pill neutral" id="stEtsyState" role="status">Checking…</span><button class="btn xs" type="button" id="btnEtsyResume" hidden>Resume Etsy</button><button class="btn xs danger" type="button" id="btnEtsyStop" hidden>Stop Etsy</button></div>
       <div class="help" id="stEtsyHelp">When Etsy answers 429 (its limit is reached), every computer and station stops calling Etsy at once and stays stopped until Resume Etsy is pressed here. The press reaches every computer through the cloud.</div></div>
+    <!-- (CLOUDDRIVE build steps 8 and 15, charm-nest-drive.js): who carries the runs, the owner's control beside Etsy's (admin-locked: driveSet) -->
+    <div class="section">Cloud</div>
+    <div class="field" id="stDriveField"><label>Who carries the runs (every computer and station)</label>
+      <div class="fieldRow" style="align-items:center;gap:10px;flex-wrap:wrap"><span class="pill neutral" id="stDriveState" role="status">Checking…</span>
+        <div class="seg" id="stDriveSeg" role="group" aria-label="Who carries the runs"><button type="button" data-drive="off">Off</button><button type="button" data-drive="standby">Standby</button><button type="button" data-drive="on">Cloud carries</button></div>
+        <select id="stDriveRunMode" aria-label="What the cloud does when a run ends"><option value="manual">The cloud opens no run by itself</option><option value="auto">Auto: the cloud opens the next run</option></select></div>
+      <div class="help" id="stDriveHelp">Off: the computers carry every run, as before. The cloud does nothing.</div>
+      <div class="help" id="stDriveMore"></div>
+      <div class="help" id="stDriveNote" role="status"></div></div>
     <div class="section">Display</div>
     <div class="field"><label>Rail density</label><div class="seg" id="railSeg"><button type="button" data-v="sm">Compact</button><button type="button" data-v="md">Normal</button><button type="button" data-v="lg">Large</button></div></div>
     <div class="section">Stock (per metal, millimetres)</div>
@@ -3959,7 +3968,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-rose.js?v=20261007-edges-gc1-gf1-sh29"></script>
 <script src="charm-nest-partial.js?v=20261007-ps4-fit75-pp1-cg1"></script>
 <script src="charm-nest-solver.js?v=20261009-unjam1-pair2-ln1-cg1-nestfront-nq1-ovf1-mi1-crn1-str1-lf1-go1-tt4"></script>
-<script src="charm-nest-nest-plan.js?v=20261120-np1"></script><!-- charm-nest-nest-plan.js: the nest's pure helpers (buildJob, handLocks, feedTurn, orderRank, keepOrdersWhole, CHARM_SCALE, CAREFUL_ANGLES, the side-by-side searches and the KEEPSEARCH pick), one copy for this page and the cloud (cloud architecture v2, step 6) -->
+<script src="charm-nest-nest-plan.js?v=20261120-np1-all1"></script><!-- charm-nest-nest-plan.js: the nest's pure helpers (buildJob, handLocks, feedTurn, orderRank, keepOrdersWhole, CHARM_SCALE, CAREFUL_ANGLES, the side-by-side searches and the KEEPSEARCH pick), one copy for this page and the cloud (cloud architecture v2, step 6) -->
 <script src="vendor/clipper-6.4.2.js?v=20261028-sw1"></script>
 <script src="charm-nest-vector.js?v=20261028-ops1-sw1"></script>
 <script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1-bd1-ovf1-ae1-im1-bm1-crn1-clp1-bb1-sf1"></script>
@@ -3975,9 +3984,10 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-monogram-ui.js?v=20261016-muw1-pol2-pcm1-ms1-ms3-mono1-mh2-ma1-tw1"></script>
 <script src="charm-nest-pair.js?v=20261009-pr1-mi3-mi4-mi5-mi6-mi7-pm8-pm9-cg1-nk1-lm1-ko1-wo1-m2-m3-mc1-bd1"></script>
 <script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi2-rlp1-rlp3-lm1-mw1"></script>
-<script src="charm-nest-pool-pieces.js?v=20261009-pp1-adv2-cg1-oos1"></script>
-<script src="charm-nest-pool-make.js?v=1120-pmake1"></script><!-- charm-nest-pool-make.js: the piece maker (a line's design read and traced, its pieces made), the one copy this page and the cloud both run; the bridge's Pool is its host (PMAKE, cloud plan v2 step 3) -->
+<script src="charm-nest-pool-pieces.js?v=20261009-pp1-adv2-cg1-oos1-all1"></script>
+<script src="charm-nest-pool-make.js?v=1120-pmake1-all1"></script><!-- charm-nest-pool-make.js: the piece maker (a line's design read and traced, its pieces made), the one copy this page and the cloud both run; the bridge's Pool is its host (PMAKE, cloud plan v2 step 3) -->
 <script src="charm-nest-engrave-fit.js?v=20261019-wd1-rf1"></script>
+<script src="charm-nest-back-file.js?v=1120-cloud11"></script><!-- charm-nest-back-file.js: one piece's engraving file (the spec, the re-read check, the record), the one copy this page and the cloud both run (cloud plan v2 step 11) -->
 <script src="charm-nest-assets.js?v=20261007-imgcache-perf1-nv2"></script>
 <script src="charm-nest-thumbs.js?v=20261009-th1-pb1"></script>
 <script src="charm-nest-pic-busy.js?v=20261028-pb1"></script><!-- charm-nest-pic-busy.js: one quiet "Updating…" ring on every picture that is being drawn again (PICBUSY, Paul 28 Oct 2026) -->
@@ -3986,7 +3996,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-store.js?v=20261028-ls1-ob1-fd2"></script><!-- charm-nest-store.js: the records kept on this computer, one database per world, reads keyed by revision (LOCAL, Paul 28 Oct 2026) -->
 <script src="charm-nest-sync-worker.js?v=1120-world1"></script><script src="charm-nest-order-days.js?v=20261109-sal1"></script><!-- charm-nest-order-days.js: the Orders head's Today / Yesterday / Last 7 days, counted in Toronto days (SAL1, Paul 9 Nov 2026) --><!-- charm-nest-sync-worker.js: one changes feed per computer and world, asked by one tab, heard by all (FEED, Paul 28 Oct 2026) -->
 <script src="charm-nest-push.js?v=20261028-ps1"></script><!-- charm-nest-push.js: the leader tab listens to the cloud's one counter document and asks the feed the moment it moves; its library (vendor/firebase-*-compat-10.14.1.js) loads when the page is idle, never at boot (PUSH, Paul 28 Oct 2026) -->
-<script src="charm-nest-engrave-faces.js?v=20261011-fb1-fb2-sd1-nb1-el1-pc1"></script>
+<script src="charm-nest-engrave-faces.js?v=20261011-fb1-fb2-sd1-nb1-el1-pc1-eng2"></script>
 <script src="charm-nest-engrave-bar-front.js?v=20261028-bfw1-bfw2"></script>
 <script src="charm-nest-engrave-position.js?v=20261012-ep1-rb1-nd1"></script>
 <script src="charm-nest-engrave-sides.js?v=20261009-pe1-nk1-dr1-ko1-fb1-fb2-el1-sb1-pc1-br1-ms1-bh1"></script>
@@ -3998,8 +4008,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
 <script src="charm-nest-activity.js?v=1120-world9"></script>
 <script src="charm-nest-zoompan.js?v=20261005-zp1"></script>
-<script src="charm-nest-engrave-setup.js?v=20261011-su1-bf1-nb1-ud1-pv1-el1-au1-au2-au3-wy1-od1-sb2-pc1-nd1-br1-edw1-np1-np2-pn1-es1"></script>
-<script src="charm-nest-engrave-panel.js?v=20261012-ep1-ep2-hl1-hl2-sm1-r2wk1-wy1-r2th1-fr1-rb1-ag1-nd1-edw1-apx1-af1-fv1-cl1-cl2-np1-np2-np3-pn1-fs1-oa1-es1-mo1-nn1-ng1-ng2-b2"></script>
+<script src="charm-nest-engrave-setup.js?v=20261011-su1-bf1-nb1-ud1-pv1-el1-au1-au2-au3-wy1-od1-sb2-pc1-nd1-br1-edw1-np1-np2-pn1-es1-eng2"></script>
+<script src="charm-nest-engrave-panel.js?v=20261012-ep1-ep2-hl1-hl2-sm1-r2wk1-wy1-r2th1-fr1-rb1-ag1-nd1-edw1-apx1-af1-fv1-cl1-cl2-np1-np2-np3-pn1-fs1-oa1-es1-mo1-nn1-ng1-ng2-b2-apc1-eng2"></script>
 <script src="charm-nest-engrave-why.js?v=20261012-wy1-pc1"></script>
 <script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1-dm1-vf1-fb1-ui2-sd1-el1-wy1-pl1-wal1-br1-hsi1-tab1-ed1-pb1-np2"></script>
 <script src="charm-nest-monogram-seals.js?v=20261017-mseal1-tab1"></script>
@@ -4034,16 +4044,20 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1-sl1-pm1-zs1-dm1-nb1-ch1-ns1-lk1-nr1-au1-rlk2-rs1-en1-kp1-wo1-sb1-od1-nk2-rvd1-add1-szf1-szr1-mono1-monoui1-mono7-pin1-meg1-setfix1-hp1-rv1-br1-hsym1-bh1-num1-bl1-so1-fh1-co1-fd1-once1-skp1-oos1-bf1-tab1-bfw1-ltr1-fh3-fh4-fh5-fh2-bfh1-od1-fhd1-on1-l16-oc1"></script>
 <script src="charm-nest-engrave-said.js?v=merge-1115q"></script>
 <script src="charm-nest-engrave-read.js?v=20261013-sbc1-fh5-sk2"></script>
+<script src="charm-nest-engrave-classify.js?v=1120-classify1-eng1-eng2"></script>
 <script src="charm-nest-engrave-asks.js?v=merge-1115q"></script>
 <script src="charm-nest-engrave-piece-words.js?v=20261016-pw1-br1-ms1-bh1"></script>
 <script src="charm-nest-engrave-preview.js?v=20261012-pv1-r2th1-th2-bg1-sb2-cb1-rf2-mg1-up1-es1-bb1-fa2"></script>
-<script src="charm-nest-run-follow.js?v=1120-world2"></script>
+<script src="charm-nest-run-follow.js?v=1120-world2-rlh1-v14"></script>
+<script src="charm-nest-drive.js?v=1120-drive1"></script><!-- charm-nest-drive.js: the cloud drive on this page (CLOUDDRIVE build steps 8 and 15): Settings → Cloud, the hand-over to the cloud, taking a run back from the cloud on Resume; dormant while the drive is off -->
+<script src="charm-nest-viewer.js?v=1120-v14"></script>   <!-- CLOUDDRIVE build step 14: pages become viewers when the cloud carries every run (Charm_Nest_Open/drive mode "on"); dormant in every other mode -->
 <script src="charm-nest-cloud-sheets.js?v=1117-dfdd13cc"></script>
-<script src="charm-nest-drift.js?v=1120-world14"></script><script src="charm-nest-cloud-world.js?v=1120-world8"></script><!-- charm-nest-cloud-world.js: the cloud world on this page, in memory only; a computer that carries no run takes its order lines from it (CLOUDWORLD stage B, Paul 20 Nov 2026) -->
+<script src="charm-nest-drift.js?v=1120-world14-all1"></script><script src="charm-nest-cloud-world.js?v=1120-world8-v14"></script><!-- charm-nest-cloud-world.js: the cloud world on this page, in memory only; a computer that carries no run takes its order lines from it (CLOUDWORLD stage B, Paul 20 Nov 2026) -->
 <script src="charm-nest-cloud-activity.js?v=20261113-ca1"></script>   <!-- CLOUDALL S4 (Paul 13 Nov 2026): every computer's activity log lines shared through the cloud -->   <!-- CLOUDALL (Paul 13 Nov 2026): every sheet is one cloud document, changed from any computer, followed by every computer -->   <!-- RUNFOLLOW (Paul 13 Nov 2026): a computer without the run follows the cloud run's lines (held, pooled, taken out) -->
 <script src="charm-nest-cloud-tray.js?v=20261114-ct1-cs1"></script>   <!-- (CLOUDTRAY, Paul 14 Nov 2026: "You must put all this in the cloud" -> "Yes, build it"): the Nest rail's dropped files shared by every computer through the cloud -->
 <script src="charm-nest-cloud-share.js?v=20261114-cs1-cs2"></script>   <!-- (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): what every computer keeps the same (Settings, the stock preset, set-aside notices, unsent drafts, the learned lists, Manual Control drafts), shared through the cloud and the changes feed -->
-<script src="charm-nest-engrave-sync.js?v=1120-world9"></script>   <!-- ENGRSYNC (Paul 13 Nov 2026): every line's engraving work and every Charm Editor Save shared by every computer, live -->
+<script src="charm-nest-engrave-sync.js?v=1120-world9-apc1"></script>   <!-- ENGRSYNC (Paul 13 Nov 2026): every line's engraving work and every Charm Editor Save shared by every computer, live -->
+<script src="charm-nest-engrave-cloud.js?v=1120-cloud11"></script>   <!-- the engrave lane (cloud plan v2 step 11, DORMANT while the drive is off): when the cloud carries the run, Approve is sent to it and this page writes no back file -->
 <script src="charm-nest-made-thumb.js?v=20261028-ts1-fb1-tb2-mv1-bx1-pb1-np1-gn1-bb1-fa1-fj1-fs1-fa2"></script><!-- charm-nest-made-thumb.js: every list box shows its pieces as they will be made (cut, art, Charm Editor changes, fitted words; front and back), live here and kept on the pool row for the other computers (THUMBSYNC, Paul 28 Oct 2026) -->
 <script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1-dm1-ko1-pv1"></script>
 <script src="qr-piece-label.js?v=20261014-ql1-noord1"></script><!-- qr-piece-label.js: the sticker of ONE piece of a multi-piece order, printed by hand: its note, fitted (Paul, 14 Oct 2026) -->
@@ -4057,8 +4071,10 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2-sn1-setfix1-sets9-gl1-gss1-nv2"></script>
 <script src="charm-nest-nospread.js?v=20261017-ns1"></script><!-- charm-nest-nospread.js: keep the pieces of a multi-piece or earring order on one sheet of its colour; a sheet near completion takes such an order only if all of it fits (NOSPREAD, Paul 17 Oct 2026) -->
 <script src="charm-nest-set-rules.js?v=20261010-sf2-sp1-setr1-setfix1-sets9-sa25-dc26-gk1-ga1-gfp1-kis1-minfloor1"></script>
+<script src="charm-nest-place.js?v=20261120-place1"></script><!-- charm-nest-place.js: the sheet each piece goes on (attachPool's choice, intakePage, pairFits, greenFits, orderHome, R2 / R16, NOSPREAD, topupRoom / topupTakes, the green-line wait, SETSHUT, PAIR2, SPLITWAIT), the one copy this page and the cloud both run (SHEETCHOICE, cloud plan v2 step 5) -->
 <script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1-cg1-ld1-sn1-dm1-sp1-sa25-gl1-ga1-gfp1"></script>
 <script src="charm-nest-set-invariants.js?v=20261017-setrepair1-setfix1-rv1-cost18-sets9-bk26-gl1-ga1-gfp1-rga1-gw1"></script><!-- the owner's set rules as one checker (docs/charm-nest/set-rules.md) -->
+<script src="charm-nest-assembly-core.js?v=1120-gate2"></script><!-- charm-nest-assembly-core.js: the set assembly's decisions (policy, the cardinal marks, the green homes, SPLITWAIT, which sheets form a set and when, the joins and a person's take-outs), the one copy this page's Gate and the cloud's assembly both run (GATECORE); after the set rules, the shared orders, the sheet names, the sheet choice and the checker it reads, before charm-nest-bridge.js -->
 <script src="charm-nest-set-repair.js?v=20261017-setrepair1-rv1-cost18-sa25-dc26-gl1-gk1-vis1-ga1-tab1-rga1"></script><!-- the explicit one-press repair of a set that breaks them (SETREPAIR, Paul 17 Oct 2026) -->
 <script src="charm-nest-background.js?v=1117-17148c77"></script>
 <script>
@@ -4303,7 +4319,7 @@ const PLACEMENT_WRITE = /^(pool|putSheet|deleteSheet|restoreSheet|archiveEmptySh
 // the writes that change where a sheet or a set stands in the Library, or what it still waits for (its backs, label, set, green
 // line, cut mark, hold and seals, and the orders' own answers): the Library's cards read the cloud again at once after any of them
 const LIBRARY_WRITE = /^(poolPut|poolUpdate|backPut|backInvalidate|setAllocate|setUpdate|runPut|runArchive|laserDone|putSheet|deleteSheet|restoreSheet|archiveEmptySheet|roseRecordCut|roseTakeOff|roseClaim|roseRelease|partialClaim|partialRelease|flowApply|customDecide|customPut|customReopen|customDelete|customSheetPut|cancelPut|cancelRestore|noDesignPut|noDesignDelete)$/;
-const SETTINGS_LOCKED_OPS = { purgeHistory: "Purging the real run history.", sandboxReset: "Clearing the sandbox.", sandboxPullOrders: "Pulling the newest Etsy orders for the sandbox.", sandboxPullLimitSet: "Changing how many newest orders the sandbox pulls." };
+const SETTINGS_LOCKED_OPS = { purgeHistory: "Purging the real run history.", sandboxReset: "Clearing the sandbox.", sandboxPullOrders: "Pulling the newest Etsy orders for the sandbox.", sandboxPullLimitSet: "Changing how many newest orders the sandbox pulls.", driveSet: "Changing who carries the runs (the cloud or a computer)." };
 async function api(fn, body, opts = {}) {
   if (opts.all) return apiAll(fn, body, opts);
   // LOCAL (28 Oct 2026): the very same read already on its way is not asked again (the sheet window, the order view and the Library open the same sheet at once): the
@@ -4326,6 +4342,9 @@ async function apiOnce(fn, body, opts) {
   }
   // (CARRIERONLY, Paul 15 Nov 2026: "Computers are only fed the truth"): every request says which computer it comes from, so the cloud can hold a save to the one computer that carries the run
   if (fn === "charmNestLibrary" && body && typeof body === "object" && body.dev == null) { try { const dv = window.CharmNestRunFollow && typeof CharmNestRunFollow.dev === "function" ? CharmNestRunFollow.dev() : ""; if (dv) body = Object.assign({}, body, { dev: dv }); } catch (_) {} }
+  // (CLOUDDRIVE C1, build step 14: this page's build, beside its computer's name, so the cloud can tell it from a page older than the viewers; the cloud reads it only in mode "on",
+  //  and a request that carries it costs the cloud no read of the switch in any other mode)
+  if ((fn === "charmNestLibrary" || fn === "charmNestOutput") && body && typeof body === "object" && body.cv == null && window.CNViewer) body = Object.assign({}, body, { cv: CNViewer.cv() });
   const headers = { "Content-Type": "application/json" };
   if (S.passcode) headers["X-Edit-Passcode"] = S.passcode;
   const bar = (opts.quiet || opts.silent || !window.CNProgress) ? null : CNProgress.start(opts.label || "Talking to the cloud", { quiet: !!opts.background });
@@ -5433,18 +5452,20 @@ function releasedBelowTarget(sh, pct) {
   const t = sh.topup, why = (t && t.closedAt && t.why) || sh.releaseWhy || "";
   return why ? `released at ${fmt.pct(pct)} · ${why}` : "";
 }
+/* SHEETCHOICE (cloud plan v2, build step 5, 20 Nov 2026): the gap fill's room (topupRoom), NOSPREAD's admission of a whole order (topupTakes, nospreadSheet, nospreadOrder) and the cut of an order
+   bigger than a sheet (nospreadChunk) are charm-nest-place.js, the one copy this page and the cloud both run. This page hands it its fill model and its words, each read when it is used. */
+function placeEnv() {
+  return { settings: () => S.settings, NS: () => nospread(), cfg: () => nospreadCfg(), topup: () => TOPUP, gapPack: () => GAP_PACK,
+    inflatedArea: c => inflatedArea(c), usableArea: sh => usableArea(sh), activeCharms: sh => activeCharms(sh), orderKey: c => orderKey(c), gapFilling: sh => gapFilling(sh),
+    groupOf: c => (typeof groupOf === "function" ? groupOf(c) : null), say: (sh, pieces, o, a) => nospreadSay(sh, pieces, o, a), passed: (sh, a) => nospreadPassed(sh, a),
+    chunked: (metal, pieces, order, capacity, units) => agent({ metal }, "nest", `Order ${String(pieces[0].order || pieces[0].id).split("/")[0]} is bigger than one sheet (${pieces.length} pieces, ${(order.footprint / capacity).toFixed(1)} sheets of room at the fill ceiling): cut into ${units.length} units of ${units.map(u => u.length).join(" + ")} pieces, each seated whole on its own sheet in turn; its sheets share the order, so they are one unit for a set`) };
+}
 /** The orders a sheet filling its gaps can still take for a try: 35 less those that have tried it and (waiting) less
     those already on it waiting for their try; any other sheet has no such limit. A big batch used to wait on the full
     sheet, all of it, and try its gaps three orders at a time, the count of charms on a sheet shown as full growing while
     the next sheet waited (Paul, 27 Sep: "the charms were continuously being added to a full sheet"). The rest of a
     batch now goes on to the next sheet at once (LiveNest.intakePage, feedOn), and the few owed a try try it together. */
-function topupRoom(sh, waiting = true) {
-  const t = sh.topup; if (!t || t.closedAt || !["gold", "silver"].includes(sh.metal)) return Infinity;
-  const tried = new Set((t.tried || []).map(String));
-  let room = TOPUP.orders - tried.size;
-  if (waiting) { const placed = new Set(sh.placements.map(p => p.id)); room -= new Set(activeCharms(sh).filter(c => !placed.has(c.id)).map(orderKey).filter(o => !tried.has(o))).size; }
-  return room;
-}
+function topupRoom(sh, waiting = true) { return CharmNestPlace.topupRoom(sh, waiting, placeEnv()); }   // (SHEETCHOICE: charm-nest-place.js)
 /* A multi-piece order that cannot fit a nearly finished sheet whole waits for the next sheet; the small gaps are for single-charm
    orders (Paul, 13 Oct 2026: "If her sheet is close to being full and you want to add a multipiece order that has to spill over to
    the next sheet, then keep that in queue and then add it to the next sheet and wait for an order that has a single charm orders
@@ -5460,24 +5481,7 @@ const GAP_PACK = .5;
 /** Whether an order (its `pieces`, charms with areaPt2) should try the gaps of `sh`: always, but a multi-piece order that asks for more than
     GAP_PACK of the room a gap-filling sheet showed last time (the free area, or what is left under the fill ceiling if that is less) cannot
     fit whole, so it goes on to the next sheet without costing the sheet a try. */
-function topupTakes(sh, pieces, order) {
-  // (NOSPREAD, Paul 17 Oct 2026: the owner's rules A and B in charm-nest-nospread.js decide, for every Gold and Silver sheet, over the WHOLE order)
-  const NS = typeof nospread === "function" ? nospread() : null;
-  if (NS && ["gold", "silver"].includes(sh.metal)) {
-    if (!pieces || !pieces.length) return true;
-    // (ONEATATIME, Paul 11 Nov 2026: a production pull hands the intake every order at once (491 on 11 Nov; the sandbox's stream hands it a few at a time), and the room left was read
-    //  with every waiting piece counted as placed, so the batch was split over six Gold Filled drafts by estimate before one was nested, and the drafts were nested three orders at a time
-    //  in turn. Paul: one sheet at a time. A sheet still filling is judged by what is nested on it; its nest then passes on, whole, what does not fit (feedOn, overflowToNextSheet).
-    //  A sheet filling its gaps keeps the waiting pieces counted, as before.)
-    const o = nospreadOrder(pieces, order), a = NS.admits(nospreadSheet(sh, new Set(pieces.map(c => c.id)), { nestedOnly: !gapFilling(sh) }), o, nospreadCfg());
-    if (!a.take) { nospreadSay(sh, pieces, o, a); nospreadPassed(sh, a); }
-    return a.take;
-  }
-  if (!gapFilling(sh) || !pieces || pieces.length < 2) return true;
-  const info = sh.liveInfo; if (!info || !(+info.usablePt2 > 0)) return true;
-  const room = Math.min(+info.freePt2 || 0, (+S.settings.maxFill || .8) * info.usablePt2 - (+info.placedPt2 || 0));
-  return pieces.reduce((n, c) => n + inflatedArea(c), 0) <= Math.max(0, room) * GAP_PACK;
-}
+function topupTakes(sh, pieces, order) { return CharmNestPlace.topupTakes(sh, pieces, order, placeEnv()); }   // (SHEETCHOICE: charm-nest-place.js; NOSPREAD's rules A and B over the WHOLE order on every Gold and Silver sheet, ONEATATIME: a sheet still filling judged by what is nested on it)
 /* NOSPREAD (Paul, 17 Oct 2026). A Set of Sheets holds every sheet that shares a multi-piece order (the cardinal rule), so an order spread over two sheets of one colour ties them
    into one unit and the units chain (one set held 14 sheets). The owner's remedy: "A. When practicable try to avoid spreading multi-piece and earring orders of the same colour
    between sheets ... most important at the transition point between sheets. B. When a sheet of a given colour is near completion the system should avoid adding orders of earrings
@@ -5488,11 +5492,7 @@ function topupTakes(sh, pieces, order) {
 function nospread() { return typeof CharmNestNoSpread !== "undefined" && S.settings.nospread !== "off" ? CharmNestNoSpread : null; }
 const nospreadCfg = () => ({ target: TOPUP.target, fitAtTarget: GAP_PACK, ...(S.settings.nospreadMargin != null && S.settings.nospreadMargin !== "" && Number.isFinite(+S.settings.nospreadMargin) ? { nearMargin: +S.settings.nospreadMargin } : {}) });
 /** The sheet as the policy reads it: what is seated, what is attached and waiting (reserved: it will take room), `skip` (a Set of charm ids) not counted: the order being asked about. */
-function nospreadSheet(sh, skip, o = {}) {
-  const placed = new Set((sh.placements || []).map(p => p.id)); let placedPt2 = 0, pendingPt2 = 0;
-  for (const c of activeCharms(sh)) { if (skip && skip.has(c.id)) continue; const a = inflatedArea(c); if (placed.has(c.id)) placedPt2 += a; else if (!o.nestedOnly) pendingPt2 += a; }   // (ONEATATIME: nestedOnly, see topupTakes)
-  return { usablePt2: usableArea(sh), placedPt2, pendingPt2, maxFill: +S.settings.maxFill || .8, gapFilling: gapFilling(sh) };
-}
+function nospreadSheet(sh, skip, o = {}) { return CharmNestPlace.nospreadSheet(sh, skip, o, placeEnv()); }   // (SHEETCHOICE: charm-nest-place.js; ONEATATIME: nestedOnly, see topupTakes)
 /** Says once per order and sheet, in the sheet's log, why an order was not put on it (the owner asks "why did this order go to the next sheet?"). */
 function nospreadSay(sh, pieces, o, a) {
   const k = String(pieces[0].order || pieces[0].id).split("/")[0], said = sh._nospreadSaid || (sh._nospreadSaid = new Set()); if (said.has(k)) return; said.add(k);
@@ -5531,26 +5531,12 @@ function nospreadSettle() {
   }
 }
 /** The order as the policy reads it. `info` (what the intake knows of the order): { pieces (its pieces of this metal in hand, all its lines), expected (the pieces the order will have in all, CharmNestOrders.pieceCountOf of its lines of this metal, lines not pooled yet included), placed (already on a sheet) }. */
-function nospreadOrder(pieces, info) {
-  const ps = info && info.pieces && info.pieces.length ? info.pieces : pieces || [], placed = Math.max(0, Math.floor(+info?.placed || 0)), expected = Math.max(0, Math.floor(+info?.expected || 0));
-  return nospread().orderOf({ pieces: ps, placed, more: Math.max(0, expected - ps.length - placed) }, inflatedArea);
-}
+function nospreadOrder(pieces, info) { return CharmNestPlace.nospreadOrder(pieces, info, placeEnv()); }   // (SHEETCHOICE: charm-nest-place.js)
 /** An order bigger than one sheet, cut into units for the nest (NOSPREAD, Paul 17 Oct 2026: "a given order so big that it fills several sheets ... smart enough and robust enough"). The solver and this page seat
     a whole order or none of it, so such an order -- more than the sheet takes under the fill ceiling -- could never be seated: "The oldest order cannot fit on an empty sheet", the run waiting for a person.
     Its pieces (`pieces`, this metal's, all its lines in hand; `info`: see nospreadOrder) get `chunk` 1, 2, ...: consecutive units of at most chunkShare of what one sheet takes, a pair or a necklace's discs
     kept in one unit, each seated whole on a sheet in its turn, the fewest sheets possible. The pieces keep `order` (what the sets share): the sheets that hold them are one unit for a set. Returns the units. */
-function nospreadChunk(metal, pieces, info) {
-  // (every metal: Rose Gold, 10K and 14K sheets cannot seat an order bigger than a sheet either -- it stopped the run on "cannot fit on an empty sheet")
-  const NS = nospread(); if (!NS || !pieces || pieces.length < 2) return [];
-  const capacity = usableArea({ metal }) * (+S.settings.maxFill || .8), order = nospreadOrder(pieces, info), cfg = nospreadCfg();   // (a big order starts a fresh sheet, which has the metal's own stock)
-  if (!NS.isBig(order, capacity, cfg)) return [];
-  const units = NS.chunksOf(pieces, inflatedArea, typeof groupOf === "function" ? groupOf : null, capacity, cfg);
-  if (units.length > 1) {
-    units.forEach((u, i) => u.forEach(c => { c.chunk = i + 1; }));
-    agent({ metal }, "nest", `Order ${String(pieces[0].order || pieces[0].id).split("/")[0]} is bigger than one sheet (${pieces.length} pieces, ${(order.footprint / capacity).toFixed(1)} sheets of room at the fill ceiling): cut into ${units.length} units of ${units.map(u => u.length).join(" + ")} pieces, each seated whole on its own sheet in turn; its sheets share the order, so they are one unit for a set`);
-  }
-  return units;
-}
+function nospreadChunk(metal, pieces, info) { return CharmNestPlace.nospreadChunk(metal, pieces, info, placeEnv()); }   // (SHEETCHOICE: charm-nest-place.js; every metal: Rose Gold, 10K and 14K sheets cannot seat an order bigger than a sheet either)
 /** The oldest unit turned away from an EMPTY sheet is cut in two (NS.halve) and the sheet nests again: true when it could be cut (a unit of one piece is a real problem, left to the stop that says so). */
 function rechunkStalled(sh, moving) {
   const NS = nospread(); if (!NS || sh._mergeNext) return false;   // (every metal; a Rose Gold, 10K or 14K sheet halves against its own stock, usableArea)
@@ -5848,6 +5834,7 @@ async function checkLearnedRunner(token = localStorage.getItem("cn.learnedKey") 
   finally { clearTimeout(timeout); }
 }
 function startNest(sh) {
+  if (window.CNViewer && CNViewer.holdNew()) { if (CNViewer.on()) CNViewer.nest(sh, !!sh._byHand); else toast("The cloud is taking the run over: no new nest starts on this computer", "bad", 6000); return; }   // (CLOUDDRIVE build step 14: in mode "on" the cloud nests; during the drain nothing new starts here)
   if (sh._inplaceHold) { sh._inplaceAsked = true; return; }   // (INPLACE, Paul 20 Oct 2026: a replaced piece is being put back into its old spot on this sheet: no nest meanwhile; it is asked for once that is settled, Pool's inPlaceSettle)
   if (sh._manualHold) { sh._manualAsked = true; return; }   // a person is moving its charms by hand in the sheet window (Manual Control): its nest waits until they are done, and is asked for then
   if (window.NestHold && NestHold.block(sh)) return;   // a piece of it is still flying (Send to Sheet): its nest starts once the last has landed
@@ -6825,6 +6812,7 @@ function membershipOf(sh) {
   });
 }
 async function persistSheet(sh, items, context) {
+  if (window.CNViewer && CNViewer.on()) return false;   // (CLOUDDRIVE build step 14: in mode "on" a sheet is saved by the cloud's sheet writer, never by a page)
   const ops = window.CharmNestOperations;
   if (ops && !context) return ops.run({key:'sheet-save:'+sh.sheetId, label:'Saving sheet', resources:['production:'+(sh.runId || sh.sheetId)]}, token=>persistSheet(sh,items,token));
   if (!S.cloud.ok) throw new Error("Cloud offline — sheet is kept in this browser, but has not been saved online");
@@ -8712,6 +8700,7 @@ const EtsyStopUI = window.EtsyStopUI = (() => {
 })();
 function openSettingsNow(home) {
   try { EtsyStopUI.refresh(); } catch (_) { /* drawn at the next open */ }
+  try { if (window.CharmNestDrive) CharmNestDrive.refresh(); } catch (_) { /* (CLOUDDRIVE: who carries the runs) drawn at the next open */ }
   const L = window.CharmNestRepoLock;
   if (L && L.onChange && !settingsWatch) {
     settingsWatch = true;
@@ -9018,11 +9007,11 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=1120-pair2-pmake1"></script>
+<script src="charm-nest-bridge.js?v=1120-pair2-pmake1-apc1-place1-v14-dr1-dr2-sd1-sl1-or1-fa1-br1-sbc1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1-sy1-sy2"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1-ob1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
-<script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1-rl1-ns2-rh1-oh1-hb1-hp1"></script>
+<script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1-rl1-ns2-rh1-oh1-hb1-hp1-rlh1"></script>
 <!-- CUSTOMPOOL (Paul, 28 Oct 2026, items 27 and 28): a design sent to a sheet becomes a real piece, its size frozen (Pool.addCustomPiece, the nest's and Manual Control's rules, the written file checked against its hash); a piece of no order is named CUSTOM-<yyyymmdd>-<n> -->
 <script src="charm-nest-custom-pool.js?v=20261028-cp1-hc1-hc2-cpx1-bm1-pf1"></script>
 <script src="charm-nest-custom-orders.js?v=20261028-co1-cpx1-ol1"></script>
@@ -9098,7 +9087,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=1117-c7a0840c"></script>
+<script src="charm-nest-sheetwin.js?v=1117-c7a0840c-v14-all1"></script>
 <!-- 10K / 14K: a charm dragged onto the next or previous sheet of its metal, in the sheet window's Manual Control (SheetHop; Paul, 18 Oct 2026) -->
 <script src="charm-nest-sheet-hop.js?v=20261018-hop1-hp2-mv1-mc9-mi9b-gk1-fr1-ged1-hm1-b3"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
@@ -9107,19 +9096,19 @@ try {
 <script src="charm-nest-engrave-link.js?v=20261005-el2-fb2-ui2-crash1-an1-pn1-nd1-tab1-apv1-nk1"></script>
 <script src="charm-nest-engrave-return.js?v=20261012-bk1-nd1-tab1"></script>
 <script src="charm-nest-tour.js?v=20260929-m11-sn1-vis1"></script>
-<script src="charm-nest-order-release.js?v=20261005-rel5-pf1-pairflow2-pr1-cg1-sn1-rh1-rl1"></script>
+<script src="charm-nest-order-release.js?v=20261005-rel5-pf1-pairflow2-pr1-cg1-sn1-rh1-rl1-rlh1"></script>
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3-fx1-oh1"></script>
 <!-- the send animation, the very same file the inbox runs (SendFlight): a sent customer message flies from its box into the thread -->
 <script src="send-flight.js?v=20261010-sf1"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1-mr2-mq2-sf1-sm1-md1-ml1-ma1-cost18-wal1-ru2-nv3-nv6-bm1-ml2-pa2-gn1-gn2-cs1-mo1"></script>
-<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1-pf1-pp1-pn1-sn1-nestfront-setfix1-gk1-rl1-ged1-nv6-rgc1-ipl4-crn1-str1-lf1-go1-nl1-as1-sc2-lp1-bf1-own1-fo1"></script>
+<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1-pf1-pp1-pn1-sn1-nestfront-setfix1-gk1-rl1-ged1-nv6-rgc1-ipl4-crn1-str1-lf1-go1-nl1-as1-sc2-lp1-bf1-own1-fo1-all1"></script>
 <script src="charm-nest-partial-data.js?v=20261007-opt1-sheets"></script>
 <script src="charm-nest-partial-nest.js?v=20261007-ps2c-fit75-pso1-psc1-pp1-cg1-crn1-of1"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1-pp1-sn1"></script>
 <script src="charm-nest-export-ui.js?v=1117-59375914"></script>
 <script src="charm-nest-library.js?v=20261007-cutseal1-nm1-psw2-lo1-sn1-tz1-nv6-lbf1-ln1-lw1-on1"></script>
-<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5-ls1-ls2-gc2-gf1-ps1-sf2-lf1-sn1-eu3-rh1-rh2-sp1-setfix1-cost18-sa25-tab1-lw1-gfp1"></script>
+<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5-ls1-ls2-gc2-gf1-ps1-sf2-lf1-sn1-eu3-rh1-rh2-sp1-setfix1-cost18-sa25-tab1-lw1-gfp1-all1"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261005-so2"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261005-so2-mm1-ls1-ls2-gc2-gf1-lf1"></script>
@@ -9129,7 +9118,7 @@ try {
 <!-- the Options window (Paul, 7 Oct): one large window for a sheet card's Options: This sheet, Partial sheets, Sheet history, All partial sheets (OptionsStudio) -->
 <script src="charm-nest-options-history.js?v=20261007-oh1-cards"></script>
 <script src="charm-nest-options-modal.js?v=onegrid-1115b"></script>
-<script src="charm-nest-options-sheets.js?v=moveshow-1115l"></script>
+<script src="charm-nest-options-sheets.js?v=moveshow-1115l-v14"></script>
 <script src="charm-nest-library-engraving.js?v=20261005-egl1-eu3"></script>
 <script src="charm-nest-piece-dots.js?v=20261005-pd1-pow2-sl1"></script>
 <!-- a sheet an order in the Review tab holds back: the one line that says which order and piece, where the app tells what holds a sheet (Library Approve line and rails, sheet window, Nest card; LibraryReviewHold) -->

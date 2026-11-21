@@ -109,10 +109,12 @@
     try {
       const res = await api({ op: "runGet", runId: run.runId }); const cr = res && (res.run || res); if (!cr || !cr.lines) return st;
       if (!cr.lineEditAt || (st.appliedAt && +cr.lineEditAt <= +st.appliedAt)) return st;
-      const O = root.Orders, B = root.B, me = dev(), takenOff = []; let n = 0;
+      const O = root.Orders, B = root.B, me = dev(), takenOff = [], released = []; let n = 0;
       for (const row of O.rows()) {
         const l = cr.lines[row.key], lp = l && l._lp; if (!lp || lp.dev === me) continue;
         if (row._lp && +row._lp.at >= +lp.at) continue;
+        // (RELEASEHOLD, Paul 20 Nov 2026: a line the cloud released from hold (op releaseAsk, pressed on any computer) is made up here, by this run's intake, once)
+        if (lp.dev === "cloud" && +l.releasedAt > 0 && !l.hold && !(+row._releasedTaken >= +l.releasedAt)) { row._releasedTaken = +l.releasedAt; released.push(row); }
         const was = (row.poolIds || []).slice();
         for (const f of ["state", "poolIds", "reason", "hold", "wait", "heldAt"]) { const v = l[f] === undefined ? (f === "poolIds" ? [] : null) : l[f]; row[f] = Array.isArray(v) ? v.slice() : v; }
         // (CLOUDDRIVE P3, cloud plan v2 §2.2; DORMANT: only the cloud stamps a line with dev "cloud", and it writes no line while the drive is off): a line the cloud changed last
@@ -133,9 +135,27 @@
       if (added) { run.orders = [...new Set((run.orders || []).map(String).concat([...newRids]))]; safe(() => O.interpretAll()); safe(() => { const a = root.Arrivals && root.Arrivals.state && root.Arrivals.state(); if (a) a.pending = true; }); safe(() => root.Arrivals.processPending().catch(() => {})); n += added; st.addedFromOthers = (st.addedFromOthers || 0) + added; }
       st.appliedAt = +cr.lineEditAt; st.applied = (st.applied || 0) + n; st.last = { at: Date.now(), why, fromOthers: n };
       if (n) { safe(() => root.Review && root.Review.syncOrderItems()); safe(() => O.render()); safe(() => root.Engrave && root.Engrave.render()); safe(() => root.Session && root.Session.schedule()); }
+      if (released.length) repoolReleased(released);
       return st;
     } catch (e) { st.last = { at: Date.now(), why, error: String((e && e.message) || e) }; return st; }
     finally { st.busy = false; }
+  }
+  /* RELEASEHOLD (Paul, 20 Nov 2026: "a Release Hold press on ANY computer releases the hold in the cloud at once ... placing the pieces is the intake's normal work; no more waiting on the computer
+     that carries the run"): the release itself is the cloud's (op releaseAsk). On the computer that carries the run, its lines come back here as the cloud left them ("pulled", no hold, the front of
+     the queue) and are made up by the intake now, the way a released line always was (Review.repool: its home sheet first, else the intake's sheet), one after the other. Never a line this page is
+     releasing itself, nor while the run is before its pool step (that step makes every "pulled" line up). */
+  let relChain = Promise.resolve();
+  function repoolReleased(rows) {
+    const run = root.B && root.B.run, O = root.CharmNestOrders, R = root.Review;
+    if (!run || !R || typeof R.repool !== "function") return;
+    if (O && typeof O.stepIndex === "function" && !(O.stepIndex(run.step) >= O.stepIndex("pool"))) return;
+    for (const row of rows) relChain = relChain.then(async () => {
+      const rid = String((row.order && row.order.receiptId) || "");
+      if (safe(() => !!(root.OrderHold && root.OrderHold.releaseStatus && root.OrderHold.releaseStatus(rid).running), false)) return;
+      if (!root.B || root.B.run !== run || row.state === "gone" || row.hold || !["pulled", "pooled"].includes(row.state)) return;
+      try { await R.repool(row); safe(() => root.agent && root.agent({ run: run.runId, pool: true }, "info", `${rid}: released from hold in the cloud; its pieces are made up and placed by this run`)); }
+      catch (e) { safe(() => console.warn("[run-follow] a released line was not made up:", row.key, e && e.message)); }
+    }).catch(() => {});
   }
   /* (SHEETSANYWHERE, Paul 15 Nov 2026: "I need that full capability ... drag the sheets from one sheet to another and amalgamate sheets as needed"): the computer that CARRIES the run does what a following computer asked for in the Sheets card
      (runCmdPut on the cloud): one at a time, in the order asked, through the Gate, then answers (runCmdDone) with the result line. Looked at when the feed names the run, at most every 3 s; a command older than 10 minutes is answered "too old". */
@@ -331,9 +351,14 @@
         const res = await api({ op: "runCmdList", runId: run.runId }), me = dev();
         // (CLOUDWORLD stage E, Paul 20 Nov 2026: nothing waits or hangs unseen): a request a computer began and never finished (it closed or stopped answering: no step for 10 minutes) is answered as failed, with why, for every computer to see; never run twice
         for (const c of ((res && res.cmds) || []).filter(c => c && c.id && c.state === "running" && !cmdSeen.has(c.id) && Date.now() - (+c.stepAt || +c.at || 0) > 600000)) { cmdSeen.add(c.id); safe(() => api({ op: "runCmdDone", runId: run.runId, id: c.id, ok: false, text: `Stopped before it finished: the computer doing it (${c.stepBy || "another computer"}) stopped answering at "${String(c.step || "").slice(0, 80)}". Ask again.`, dev: me })); }
-        const next = ((res && res.cmds) || []).filter(c => c && c.id && c.state === "waiting" && c.dev !== me && !cmdSeen.has(c.id)).sort((x, y) => (+x.at || 0) - (+y.at || 0))[0];
+        // (CLOUDDRIVE P9, build step 13, DORMANT while the drive is off: a request whose lane "cmd:<type>" is the cloud's, while the cloud carries the run, is the cloud's to do)
+        if (root.CNViewer && typeof root.CNViewer.holdNew === "function" && root.CNViewer.holdNew()) break;   // (build step 14: a viewer does no request; a page handing its run to the cloud starts none: the cloud does them)
+        const cloudLane = c => !!(root.CNViewer && typeof root.CNViewer.lane === "function" && root.CNViewer.lane("cmd:" + c.type, run.runId));
+        const next = ((res && res.cmds) || []).filter(c => c && c.id && c.state === "waiting" && c.dev !== me && !cmdSeen.has(c.id) && !cloudLane(c)).sort((x, y) => (+x.at || 0) - (+y.at || 0))[0];
         if (!next) break;
         cmdSeen.add(next.id); let out;
+        // (and whenever the drive is not off, a request is claimed before it is done: one carrier does it, whoever else looks, P9)
+        if (root.CNViewer && root.CNViewer.known() && root.CNViewer.mode() !== "off") { let cl = null; try { cl = await api({ op: "runCmdClaim", runId: run.runId, id: next.id, dev: me, by: who() }); } catch (_) { cl = null; } if (!cl || !cl.claimed) continue; }
         if (Date.now() - (+next.at || 0) > (LONG_CMDS.has(next.type) ? 6 * 3600000 : 600000)) out = { ok: false, text: `Not done: asked ${Math.round((Date.now() - (+next.at || 0)) / 60000)} min ago by ${next.by || "another computer"}, while no computer carried the run. Ask again if it is still wanted.` };   // (stage E: said, never a bare "too old")   // (ANYWHERE: a person's release or one-order charm waits for this computer for hours, as it is asked of the cloud, not of a computer)
         else { try { out = await execCmd(next); } catch (e) { out = { ok: false, text: String((e && e.message) || e) }; } }
         for (let k = 0; k < 3; k++) { try { await api({ op: "runCmdDone", runId: run.runId, id: next.id, ok: !!out.ok, text: String(out.text || "").slice(0, 400), ...(out.freed ? { freed: out.freed } : {}), dev: me }); break; } catch (_) { await new Promise(r => setTimeout(r, 1500)); } }

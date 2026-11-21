@@ -250,7 +250,7 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     S.rel = { text: 'Finding the computer that carries the run…', spin: true, runId, at: Date.now() }; paint(M, true);
     try {
       const c = await api({ op: 'runCarrier', runId, dev, check: true });
-      if (!c || !c.alive || c.mine) { S.rel = { text: NO_CARRIER, bad: true, spin: false }; paint(M, true); return false; }
+      if (!(root.CNViewer && root.CNViewer.on()) && (!c || !c.alive || c.mine)) { S.rel = { text: NO_CARRIER, bad: true, spin: false }; paint(M, true); return false; }   // (CLOUDDRIVE build step 14: in mode "on" the cloud carries every run and does the request: it is always sent)
       const name = (c.carrier && c.carrier.by) || 'the computer that carries the run';
       const put = await api({ op: 'runCmdPut', runId, cmd: Object.assign({ metal: M.m, label }, cmd), by: who(), dev });
       if (!put || put.error || !put.id) throw new Error((put && put.error) || 'not sent');

@@ -483,6 +483,7 @@
       else if (out.failed) say(`Order ${rid} was not fully released: ${msgOf(out.res.error).replace(/[.\s]+$/, '')}. What was done is kept, and Release hold can be pressed again.`);   // (a reason that ends in a full stop made "..")
       // (RELEASE, Paul 19 Oct 2026: the press overrides the hold; what it set aside, and a line with nothing to place, are said, never refused)
       else if (out.res && (out.res.nothing || arr(out.res.anyway).length)) say(`Order ${rid} released${out.res.nothing ? `: nothing to place (${str(out.res.nothing)}), so it is released without a sheet and carries on` : ''}.${arr(out.res.anyway).length ? ` Released anyway: ${arr(out.res.anyway).join('; ')}.` : ''}`, 'ok');
+      else if (out.res && out.res.via === 'cloud') say(`Order ${rid} is ${str(out.res.text) || 'released in the cloud'}.`, 'ok');   // (RELEASEHOLD, Paul 20 Nov 2026: released in the cloud at once, on every computer; the run's intake places the pieces)
       await goHome(rid, from);
       return { ok: !out.failed && !out.queued, used: true, queued: out.queued || undefined, steps: out.steps, error: out.failed || out.queued ? msgOf(out.res.error) : undefined };
     } catch (e) {

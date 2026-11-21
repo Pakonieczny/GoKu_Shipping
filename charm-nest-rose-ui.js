@@ -248,6 +248,16 @@
   // records the cut. Its charms turn grey, and the next charms nest past the
   // line on the same physical sheet until it is full.
   async function record(sh,o={}){   // o.by: the person who pressed (charm-nest-flow-rose.js passes it); else the signed-in one
+    // (CLOUD STEP 10b, hard-parts §4.3; DORMANT: window.CharmNestCloudLanes is defined only by the page build that follows a run the cloud carries, build step 14; absent, the press runs here
+    //  as before): when the cloud cuts the green lines, a person's Cut Sheet is ONE ask (roseCutAsk) and the cloud includes, draws, records or refuses it in words on the card
+    if(typeof window.CharmNestCloudLanes==='function'&&window.CharmNestCloudLanes('rosecut',sh)&&o.via!=='auto'){
+      let who='';try{who=String(o.by||window.CNEmployee?.name?.()||window.B?.employee||'').trim();}catch(_){who=String(o.by||'').trim();}
+      if(!who)throw new Error('Sign in first: the cut is recorded with your name');
+      const r=await C.api('charmNestLibrary',{op:'roseCutAsk',sheetId:sh.sheetId,kind:o.joinFull?'joinFull':'cut',by:who},{label:'Asking the cloud to cut '+word(sh)});
+      if(r&&r.error)throw new Error(r.error);
+      C.toast(`${word(sh)} Cut Sheet asked: the cloud draws its green line and records the cut`,'ok');
+      return r;
+    }
     // (Paul, 26 Oct 2026: a 10K / 14K sheet is never cut automatically: its cut is a person's press. A page that still asks for one is refused before anything changes; the server refuses it too)
     if(o.via==='auto'&&!isRose(sh))throw new Error(`Not cut: a ${word(sh)} sheet is never cut automatically. It waits in its set for a person to approve it and cut its green line`);
     // (Paul, 26 Oct 2026: "the 10k and 14k sheets should stay greyed-out inside the Set of Sheets until a user approves and adds a Green Cut line") the include this press makes for a 10K / 14K sheet

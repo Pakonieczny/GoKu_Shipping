@@ -153,8 +153,42 @@
      reads (cn.takeover.*, cn.baseline.*, cn.before.*, cn.restore.*, cn.sets.before.*, cn.tmp.*) and the copies the cloud now holds for every computer (Claude's readings, the listings'
      SKU tables). Once per computer (BACKUP_V); a failure leaves everything where it is and is tried again at the next load. Display settings and sign-in stay. */
   const BACKUP_V = "f1", CLEAR = /^(cn\.takeover\.|cn\.baseline\.|cn\.before\.|cn\.restore\.|cn\.sets\.before\.|cn\.tmp\.|cn\.customRead\.|cn\.listingSkus\.v1$)/;
+  /* (CLOUDDRIVE build step 14, m:E6; only in drive mode "on", when this page is a viewer): this browser's saved workspace (IndexedDB charm-nest-workspace: its run, sheets and
+     orders) and its outbox (presses not answered yet) are copied to the cloud too (browserBackupPut, the same backup), then the workspace is removed: no production copy is kept here.
+     The outbox is copied and KEPT: it sends its presses as it always does (a production write is refused in words by the cloud, a person's press goes through), so nothing a
+     person pressed is lost. The keep intents (cn.keepIntents.v1) are not moved to any cloud worker. Once per computer (BACKUP_W); a failure removes nothing and is tried again. */
+  const BACKUP_W = "w1";
+  const idb = (name, store, how) => new Promise(resolve => {
+    try {
+      const q = root.indexedDB.open(name); q.onerror = () => resolve(null);
+      q.onupgradeneeded = () => { try { q.transaction.abort(); } catch (_) { /* a database that did not exist is not made here */ } resolve(how === "clear" ? true : []); };
+      q.onsuccess = () => {
+        const db = q.result; if (!db.objectStoreNames.contains(store)) { db.close(); return resolve(how === "clear" ? true : []); }
+        const t = db.transaction(store, how === "clear" ? "readwrite" : "readonly"), s = t.objectStore(store), out = [];
+        if (how === "clear") { s.clear(); t.oncomplete = () => { db.close(); resolve(true); }; t.onerror = t.onabort = () => { db.close(); resolve(false); }; return; }
+        const c = s.openCursor(); c.onsuccess = () => { const k = c.result; if (k) { out.push({ key: String(k.key), value: k.value }); k.continue(); } else { db.close(); resolve(out); } }; c.onerror = () => { db.close(); resolve(null); };
+      };
+    } catch (_) { resolve(null); }
+  });
+  async function backupWorkspace() {
+    const LS = root.localStorage; if (!LS || sandbox() || !(root.CNViewer && root.CNViewer.on())) return null;
+    if (safe(() => LS.getItem("cn.backup.w"), "") === BACKUP_W) return { done: true };
+    const dev = safe(() => root.CharmNestRunFollow.dev(), "") || safe(() => LS.getItem("cn.dev"), ""); if (!/^d[0-9a-z]{4,14}$/.test(dev || "")) return null;
+    const ws = await idb("charm-nest-workspace", "workspaces"); if (!ws) throw new Error("the workspace could not be read");
+    const box = root.CharmNestStore && typeof root.CharmNestStore.outbox === "function" ? await root.CharmNestStore.outbox().catch(() => null) : [];
+    if (!box) throw new Error("the outbox could not be read");
+    const text = JSON.stringify({ v: 1, kind: "workspace", at: Date.now(), origin: root.location && root.location.origin, workspaces: ws, outbox: box }), size = 800000, of = Math.max(1, Math.ceil(text.length / size)), stamp = String(Date.now());
+    if (of > 60) throw new Error("the workspace is too large to copy to the cloud in one backup");
+    const by = safe(() => String(root.B && root.B.employee || ""), "");
+    for (let part = 0; part < of; part++) { const r = await api({ op: "browserBackupPut", dev, by, stamp, part, of, json: text.slice(part * size, (part + 1) * size) }); if (!r || !r.ok) throw new Error((r && r.error) || "backup part not kept"); }
+    if (!(await idb("charm-nest-workspace", "workspaces", "clear"))) throw new Error("the workspace was copied but could not be removed");
+    safe(() => LS.setItem("cn.backup.w", BACKUP_W));
+    W.backupWorkspace = { at: Date.now(), parts: of, bytes: text.length, workspaces: ws.length, outbox: box.length };
+    return W.backupWorkspace;
+  }
   async function backupAndClear() {
     const LS = root.localStorage; if (!LS || sandbox()) return null;
+    if (root.CNViewer && root.CNViewer.on()) await backupWorkspace().catch(e => console.warn("[cloud world] workspace backup", e && e.message));
     if (safe(() => LS.getItem("cn.backup.v"), "") === BACKUP_V) return { done: true };
     const dev = safe(() => root.CharmNestRunFollow.dev(), "") || safe(() => LS.getItem("cn.dev"), ""); if (!/^d[0-9a-z]{4,14}$/.test(dev || "")) return null;
     const all = {}; for (let i = 0; i < LS.length; i++) { const k = LS.key(i); if (k) all[k] = LS.getItem(k); }

@@ -125,6 +125,15 @@
   /** A system job: its words came from the reader or the intake, not from a person (seedWords marks source "person" and a decision; decideWords and a person's "no engraving" a decision). */
   const systemJob = j => !!j && !j.decision && j.source !== 'person' && !j.editingBack;
   /** The words ONE face has from the reader (the jobs of that face and piece nobody edited), as lines; null when there are none or they differ from piece to piece. */
+  /* ENGNOTE (Paul, 20 Nov 2026, "Yes, use ENG: notes"): words a staff note "ENG: …" gave a job (source "staffNote"): the name of the note's writer, from the order's staff messages (the note is the job's
+     quote), else from the job's reason line; '' for a job whose words did not come from a staff note, or that a person decided. */
+  function staffNoteBy(j, line) {
+    if (!j || j.source !== 'staffNote' || !/^staffNote:/.test(str(j.wordsSource)) || (j.decision && j.decision.by)) return '';
+    const sp = line && line.spec, msgs = (sp && sp.messages) || (line && line.order && line.order.messages) || [];
+    const m = (Array.isArray(msgs) ? msgs : []).find(x => x && str(x.text) === str(j.quote));
+    const by = str(m && (m.senderName || m.by)).trim() || (/staff note by (.+?) \(/.exec(str(j.reason)) || [])[1] || '';
+    return by || 'a staff member';
+  }
   function readerLines(face, slot, jobs) {
     const mine = (jobs || []).filter(j => j && faceOfJob(j) === face && (!slot || slotOfJob(j) === slot) && systemJob(j)), words = [...new Set(mine.map(wordsOfJob).filter(Boolean))];
     return words.length === 1 ? words[0].split('\n') : null;
@@ -158,17 +167,18 @@
     // the reader found nothing to engrave (a job it put away as "no engraving", nobody decided otherwise): the system's choice is none
     const mineJobs = jobs.filter(j => j && (!sl || slotOfJob(j) === sl));
     if (!rd && setup.mode !== 'none' && mineJobs.length && mineJobs.every(j => j.state === 'none' && !j.decision)) { out.mode = 'none'; out.faces = []; out.source = 'reader'; out.why = str(mineJobs[0].reason) || 'The reader found no engraving'; return out; }
+    const staffBy = {};
     for (const face of out.faces) {
       const w = setup[face]; let lines = w && w.lines && w.lines.length ? w.lines.slice() : null, provisional = false, from = lines ? 'intake' : '';
       if (!lines && !setup.needsPerson && face === 'back') {
-        lines = readerLines(face, sl, jobs); if (lines) from = 'reader';
+        lines = readerLines(face, sl, jobs); if (lines) { const sj = mineJobs.find(j => faceOfJob(j) === face && staffNoteBy(j, line)); from = sj ? 'staffNote' : 'reader'; if (sj) staffBy[face] = staffNoteBy(sj, line); }
         else if (setup.mode === 'back') {
           const lab = labelled(rawOf(line)); lines = lab.back && lab.back.length ? lab.back.slice() : plainOwnWords(line);   // ("back: 21": the label is no part of the words)
           if (lines) { provisional = true; from = 'personalization'; }
         }
       }
       const fontWord = (w && w.fontWord) || null, id = fontIdOf(line, face, fontWord, sl);
-      out[face] = { text: lines ? lines.join('\n') : '', lines: lines || [], fontWord, fontId: id, fontName: fontNameOf(id), ...(provisional ? { provisional: true } : {}), from };
+      out[face] = { text: lines ? lines.join('\n') : '', lines: lines || [], fontWord, fontId: id, fontName: fontNameOf(id), ...(provisional ? { provisional: true } : {}), from, ...(staffBy[face] ? { by: staffBy[face] } : {}) };
       if (from && !out.textFrom) out.textFrom = from;
     }
     return out;
@@ -242,9 +252,15 @@
       if (!perPiece && (!locked || !mine.some(j => j.lineMode === 'preserve')) && distinct.length && w && w.lines && w.lines.length) { const fid = fontIdOf(line, face, w.fontWord, slot); if (runOf(lines, fid) === runOf(w.lines, fid)) lines = w.lines.slice(); }
       const by = locked ? str(locked.approvedBy || locked.decidedBy || (locked.decision && locked.decision.by)) : '';
       const ft = faceFont(line, w && w.fontWord);
-      return { face, label: cap1(face), key: mine.length === 1 ? mine[0].key : (slot || !mine.length ? F.keyOf(line, face, slot) : ''), lines, text: lines.join('\n'), fontWord: (w && w.fontWord) || '', font: ft, perPiece, locked: false, decided: !!locked, lockState: locked ? locked.state : '', lockBy: by, state: mine.length ? mine.map(j => j.state)[0] : '', jobs: mine };
+      return { face, label: cap1(face), key: mine.length === 1 ? mine[0].key : (slot || !mine.length ? F.keyOf(line, face, slot) : ''), lines, text: lines.join('\n'), fontWord: (w && w.fontWord) || '', font: ft, perPiece, locked: false, decided: !!locked, lockState: locked ? locked.state : '', lockBy: by, state: mine.length ? mine.map(j => j.state)[0] : '', jobs: mine, staffBy: (() => { const sj = mine.find(j => staffNoteBy(j, line)); return sj ? staffNoteBy(sj, line) : ''; })() };
     });
     const e = readingOf(line) || {}, pct = Math.round((+setup.confidence || 0) * 100);
+    // ENGNOTE: the words came from a staff note ("from the staff note by <name>"), and a newer note that differs from what a person decided on this line (the decision is kept: said, never changed)
+    const staffRow = rows.find(r => r.staffBy), staffFrom = staffRow ? (staffRow.state === 'words' ? `suggested by the staff note by ${staffRow.staffBy}` : `from the staff note by ${staffRow.staffBy}`) : '';
+    const staffNotice = (() => { const C = root.CharmNestEngraveClassify || dep('CharmNestEngraveClassify', './charm-nest-engrave-classify.js'), O = Orders(), F2 = Faces(); if (!C || !C.engNotice) return '';
+      const rowsOf = (o && o.orderRows) || (root.Orders && typeof root.Orders.rows === 'function' ? () => root.Orders.rows().filter(r => r && r.order && line.order && String(r.order.receiptId) === String(line.order.receiptId)) : () => []);
+      const jobsOf = r => (lineOf(r) === line ? jobs : root.Engrave && root.Engrave.jobsOf ? root.Engrave.jobsOf(lineOf(r)) : []) || [];
+      try { return C.engNotice(line, { rows: rowsOf(line), jobsOf, READER: () => root.CharmNestEngraveRead || dep('CharmNestEngraveRead', './charm-nest-engrave-read.js'), neverEngraves: r => (F2 && F2.neverOf ? F2.neverOf(lineOf(r)) : null), finished: r => !!(O && O.FINISHED_LINE && O.FINISHED_LINE.has(r.state)), customSent: r => !!(root.CustomSheet && root.CustomSheet.sentOf && root.CustomSheet.sentOf(r)) }) || ''; } catch (_) { return ''; } })();
     const src = setup.edited ? 'person' : setup.source, srcText = (SRC[src] || (() => ''))(setup.option || e.option);
     // NONEPLAIN (Paul 29 Oct 2026: "When the user chooses "None" for engraving than the engraving must be completely removed ... It just becomes a regular order with no extra engraving required"): a face a PERSON took
     // away on this piece (cut plain: the card's "No back engraving", or set to no engraving by a person) is not engraved, whatever the line's setup still names: the faces engraved (vm.mode) say so, so the
@@ -255,7 +271,8 @@
     return { ok: true, line, key: line.key, slot, pieceKey: F.pieceKeyOf(F.keyOf(line, 'back', slot)), jobKeys: { front: F.keyOf(line, 'front', slot), back: F.keyOf(line, 'back', slot) },
       setup, base, mode, off, modeLabel: F.modeLabel(mode), rows, jobs, pieceJobs, lineFont, edited: setup.edited, pieceEdited: !!setup.pieceEdited, by: setup.by, at: setup.at,
       why: setup.edited ? `Set by ${setup.by || 'a person'}${setup.at ? ' on ' + new Date(setup.at).toLocaleDateString() : ''}` : shownWhy(setup.why),
-      reading: setup.edited ? F.describe(base) : '', from: setup.edited ? '' : srcText ? `from ${srcText}${pct > 0 && setup.source !== 'default' ? ` · ${pct}% sure` : ''}` : (setup.source === 'default' ? 'nothing in the listing or the note says otherwise' : ''),
+      staffFrom, staffNotice,
+      reading: setup.edited ? F.describe(base) : '', from: setup.edited ? '' : staffFrom ? staffFrom : srcText ? `from ${srcText}${pct > 0 && setup.source !== 'default' ? ` · ${pct}% sure` : ''}` : (setup.source === 'default' ? 'nothing in the listing or the note says otherwise' : ''),
       raw: rawOf(line), needsPerson: setup.needsPerson, textSource: setup.textSource,
       prompt: setup.needsPerson ? (setup.mode === 'both' ? 'Say which words go on the front and which on the back' : `Say which words go on the ${setup.faces[0] || 'charm'}`) : '',
       cut: CUT.includes(line.state), sig: JSON.stringify([slot, setup.mode, mode, rows.map(r => [r.text, r.fontWord, r.decided, r.lockState, r.perPiece]), setup.edited, setup.pieceEdited, setup.needsPerson, CUT.includes(line.state)]) };
@@ -512,8 +529,9 @@
     const faces = showFaces ? `<div class="egSuFaces">${vm.rows.map(r => `<div class="egSuFace" data-face="${r.face}"><span class="fl">${r.label}</span> ${r.perPiece ? '<span class="w none">differs per piece</span>' : r.lines.length ? `<span class="w">${esc(r.text)}</span>` : '<span class="w none">words to confirm</span>'} ${r.font.word || r.font.name ? `<span class="f" title="${esc(r.font.name ? 'engraved in ' + r.font.name : '')}">${esc(fontText(r.font))}</span>` : ''}</div>`).join('')}</div>` : '';
     const ask = vm.prompt ? `<div class="egSuAsk" role="status">${esc(vm.prompt)}</div>${vm.raw ? `<div class="egSuRaw" aria-label="The buyer's own words">${esc(vm.raw)}</div>` : ''}` : '';
     const whyBits = vm.edited ? `<div class="egSuWhy">${esc(vm.why)}${vm.reading ? ` <small>The system read: ${esc(vm.reading)}</small>` : ''}</div>` : (vm.why || vm.from) ? `<div class="egSuWhy">${esc(vm.why)}${vm.from ? ` <small>${vm.why ? '· ' : ''}${esc(vm.from)}</small>` : ''}</div>` : '';
+    const notice = vm.staffNotice ? `<div class="egSuNote warn" role="status">${esc(vm.staffNotice)}</div>` : '';
     const edit = vm.cut ? '' : `<button type="button" class="btn ghost xs" data-su="edit">${vm.needsPerson ? 'Say which' : 'Edit'}</button>`;
-    return `<div class="egSuTop"><span class="egSuLbl">Engraves</span> <b class="egSuMode">${esc(vm.modeLabel)}</b> ${edit} ${statusHtml(d)}</div>${faces}${ask}${whyBits}${confirmHtml(d)}${noteHtml(vm)}`;
+    return `<div class="egSuTop"><span class="egSuLbl">Engraves</span> <b class="egSuMode">${esc(vm.modeLabel)}</b> ${edit} ${statusHtml(d)}</div>${faces}${ask}${whyBits}${notice}${confirmHtml(d)}${noteHtml(vm)}`;
   }
   const statusHtml = d => (d && d.busy ? `<span class="egSuStat" role="status"><span class="owSpin" aria-hidden="true"></span>${esc(d.busy)}</span>` : '');
   const confirmHtml = d => (d && d.error ? `<div class="egSuErr" role="alert">${esc(d.error)}</div>` : '') + (d && d.confirmLines && d.confirmLines.length && d.confirm ? `<div class="egSuNote warn" role="status">${d.confirmLines.map(t => `<span>${esc(t)}</span>`).join('')}<span class="egSuActs"><button type="button" class="btn gold xs" data-su="saveYes"${d.busy ? ' disabled' : ''}>Cut it plain and save</button><button type="button" class="btn ghost xs" data-su="keep">Keep it as it is</button></span></div>` : '');

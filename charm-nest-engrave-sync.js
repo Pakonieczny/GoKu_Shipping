@@ -217,6 +217,33 @@
     finally { setTimeout(() => { TAKING.delete(l.key); SIGS.set(l.key, sigOf(all.get(l.key) || line)); }, 50); }
   }
 
+  /* ── APPROVECLOUD (Paul, 20 Nov 2026: "the button shows "Approved ✓" only when the cloud's engraving record is approved") ──
+     confirm(lineKey, wants): this page's record of the line is sent NOW (whatever the 20 s rule of a computer without the run says: it is a person's Approve), then the cloud's record is read back
+     and every wanted job checked: wants = [{ key, face, states: ['approved','written'] | ['none','skipped'], approvedAt }]. -> { ok, at, rev } | { ok: false, why, retry }
+     cloudJobs(lineKey): the jobs of a line as the cloud last said them to this page: Map(jobKey -> { state, approvedAt }), or null when this page never read or wrote the line. */
+  async function confirm(key, wants) {
+    key = String(key || ""); const line = linesNow().get(key);
+    if (!line) return { ok: false, why: "the order line is not on this computer any more", retry: false };
+    const rec = lineRec(line);
+    if (rec) { LOCAL_AT.set(key, Date.now()); await send([{ key, rec, sig: sigOf(line) }]); }   // (send says nothing when it fails: the read below tells)
+    let res; try { res = await api({ op: "engraveSyncGet", keys: [key] }); } catch (e) { return { ok: false, why: "the cloud did not answer (" + String((e && e.message) || e).slice(0, 80) + ")", retry: true }; }
+    const l = ((res && res.lines) || []).find(x => x && x.key === key);
+    if (!l || !l.rec) return { ok: false, why: "the cloud holds no engraving for this order line yet", retry: true };
+    CLOUD.set(key, l); noteRev(key, l.rev); st.lastAt = Math.max(st.lastAt, l.at || 0);
+    const jobs = (l.rec.jobs || []).filter(Boolean), bad = [];
+    for (const w of wants || []) {
+      const rj = jobs.find(x => x.key === w.key), face = w.face || "piece", states = Array.isArray(w.states) && w.states.length ? w.states : ["approved", "written"];
+      if (!rj) { bad.push(`has no ${face} engraving for it yet`); continue; }
+      if (!states.includes(String(rj.state || ""))) { bad.push(`has the ${face} as ${rj.state || "not decided"}`); continue; }
+      if (+w.approvedAt > 0 && +rj.approvedAt !== +w.approvedAt) bad.push(`holds an older approval of the ${face}`);
+    }
+    return bad.length ? { ok: false, why: "the cloud " + bad.join(" and "), retry: true } : { ok: true, at: l.at || 0, rev: l.rev || 0 };
+  }
+  function cloudJobs(key) {
+    const c = CLOUD.get(String(key || "")); if (!c || !c.rec || !Array.isArray(c.rec.jobs)) return null;
+    return new Map(c.rec.jobs.filter(j => j && j.key).map(j => [String(j.key), { state: String(j.state || ""), approvedAt: +j.approvedAt || 0 }]));
+  }
+
   /* ── START ── */
   async function start() {
     if (st.started) return; st.started = true;
@@ -358,6 +385,6 @@
     };
     go();
   }
-  root.CharmNestEngraveSync = { why: k => WHY.get(String(k)) || "", state: () => Object.assign({}, st, { lines: SIGS.size, cloud: CLOUD.size, raised: RAISED.size }), flush: sweep, pull, raisedPush, sigOf: l => sigOf(lineOf(l)), _take: take };
+  root.CharmNestEngraveSync = { why: k => WHY.get(String(k)) || "", state: () => Object.assign({}, st, { lines: SIGS.size, cloud: CLOUD.size, raised: RAISED.size }), flush: sweep, pull, raisedPush, sigOf: l => sigOf(lineOf(l)), confirm, cloudJobs, _take: take };
   if (root.document) { if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", boot); else boot(); }
 })(typeof self !== "undefined" ? self : this);

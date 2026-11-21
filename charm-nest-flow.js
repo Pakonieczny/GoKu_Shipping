@@ -1066,6 +1066,13 @@
           if (typeof hooks.leave !== 'function') throw new Error('The sheet cannot be taken out of a set that is still being made from here: use the In current set switch on its card');
           await hooks.leave(s.sheetId, { setId: s.setId, by });
         } else if (s.type === 'relabel' || s.type === 'setFiles') {
+          // (CLOUD STEP 10a, DORMANT: window.CharmNestCloudLanes is defined only by the page build that follows a run the cloud carries, build step 14; absent, the step runs here as before):
+          //  when the cloud draws the labels, this press asks it to (labelsAsk), and the cloud's answer shows on the set's card
+          if (typeof root.CharmNestCloudLanes === 'function' && root.CharmNestCloudLanes('labels', s)) {
+            try { answer(await cloud({ op: 'labelsAsk', kind: s.type, setId: s.setId || undefined, sheetId: s.sheetId || undefined, by })); }
+            catch (e) { warnings.push(`The cloud was not asked to make ${s.type === 'relabel' ? 'the QR label' : 'the set files'} again (${e.message || e}).`); tell(s, label, 'error'); }
+            continue;
+          }
           // after the membership is saved: a failure here is a warning, never an undo of the saved membership
           const fn = s.type === 'relabel' ? hooks.relabelSet : hooks.setFiles;
           try {

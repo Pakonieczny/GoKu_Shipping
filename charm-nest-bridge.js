@@ -213,6 +213,7 @@ const ListMedia = (() => {
     if (!CP.oneChoice(Object.assign({}, row.line, { spec: sp, form: sp.form }), e)) return -1;
     // (a line pooled before this, its pool rows holding the folded charm, is the whole charm it was cut as)
     const live = (row.poolIds || []).map(id => window.B && B.pool.rows.get(id)).filter(r => r && r.charmHash && !["abandoned", "superseded"].includes(r.state));
+    { const PP = window.CharmNestPoolPieces, said = PP && PP.cleanBody ? live.map(r => PP.cleanBody(r)).filter(x => typeof x.oneBody === "boolean") : []; if (said.length) return said.some(x => !x.oneBody) ? -1 : said[0].bodyIndex; }   // (BODYID, cloud plan v2 step 3: a piece the cloud made says which body it is cut from: that is believed, never a hash it may draw an edge pixel apart)
     if (live.length) { const PL = window.Pool, whole = PL && PL.wholeHashes ? PL.wholeHashes(e, sp.size) : new Set(); if (whole.size && live.some(r => whole.has(String(r.charmHash)))) return -1; if (CP.onlyBodyOf && CP.onlyBodyOf(e) && PL && PL.designLoaded && !PL.designLoaded(e, sp.size)) return -1; }   // (a design a person named as ONE body, charm-nest-pair.js 4d, whose file this page has not read: a pooled piece's hash cannot be told from the folded charm's here, so it is taken as made whole, as every piece pooled before the rule was)
     const ob = sp.pair && sp.pair.oneBody; if (ob && Number.isInteger(ob.index) && ob.index >= 0) return ob.index;
     return CP.alikeDesign(e) === true ? 0 : -1;
@@ -2034,6 +2035,7 @@ const Orders = window.Orders = (() => {
   /** Does this line wait on a SIGN named in its note (ZODIACTWO), whose charm is found by Etsy's own value names for the listing, which the table the page holds does not have? */
   const needsNames = r => !!(r.spec && r.spec.pair && r.spec.pair.second && r.spec.pair.second.needNames);
   function wantTables() {
+    if (window.CNViewer && CNViewer.on()) return;   // (CLOUDDRIVE build step 14: E4, a viewer page never asks for Etsy's SKU tables by itself; a person's button still does)
     if (tableTimer || tableBusy || !S.cloud.ok) return;
     tableTimer = setTimeout(() => { tableTimer = 0; askTables().catch(e => console.warn("SKU tables", e)); }, 800);
   }
@@ -2231,6 +2233,7 @@ const Orders = window.Orders = (() => {
   }
   /** §10.3: every order's update_timestamp re-read through the station; changed → re-interpret; vanished → dropped. */
   async function revalidate(run, why) {
+    if (window.CNViewer && CNViewer.on()) return { gone: [], cloud: true };   // (CLOUDDRIVE build step 14: the cloud checks the run's orders from the world, never this page through the Design Station)
     // an order found gone stays gone: reading it again at every check cost an Etsy call each time and changed nothing.
     // A committed line is cut and its order design-complete at the station, which reports it as no longer open: every
     // check read it again (an Etsy call each, towards the hourly cap that stops the run) and a later Etsy update, such
@@ -4597,6 +4600,26 @@ function placedOfRecord(d) {
   return ((d && d.placements) || []).map(p => ({ p, c: ((d && d.charms) || []).find(c => c.id === p.id) || null }));
 }
 
+/* SHEETCHOICE (cloud plan v2, build step 5, 20 Nov 2026): the sheet each piece goes on is chosen by charm-nest-place.js, the one copy this page and the cloud both run (Pool.attachPool's
+   choice, LiveNest.intakePage / pairFits / lineFits / orderHome / reopensHome, Pool.greenFits / partnerSheets and the green-line wait). This page is its host: what the rules read of
+   the page is given here, each read when it is used, as the code read it when it lived here. Made at its first use. */
+let placeRulesMade = null;
+function placeRules() {
+  return placeRulesMade || (placeRulesMade = window.CharmNestPlace.create({
+    sheets: () => allSheets(), pagesOf: m => pagesOf(m), closed: p => !!(window.LiveNest && window.LiveNest.closed(p)),
+    holding: p => !!(window.Gate && typeof window.Gate.holding === "function" && window.Gate.holding(p)),
+    fixedSet: p => { try { return typeof Sets !== "undefined" && !!Sets && typeof Sets.ofRun === "function" && Sets.ofRun(p.runId).some(s => (s.committedAt || s.processReady || s.laserSetPending || +s.laserDoneAt > 0) && (s.sheetIds || []).includes(p.sheetId)); } catch (_) { return false; } },
+    rows: () => (typeof Orders !== "undefined" && Orders && typeof Orders.rows === "function" ? Orders.rows() : null),
+    run: () => (typeof B !== "undefined" && B ? B.run : null), settings: () => S.settings,
+    r16On: () => !(typeof S !== "undefined" && S && S.settings && S.settings.nospread === "off"),
+    fast: m => O.FAST_MATERIALS.has(m), cuts: m => m === "rose" || (typeof CharmNestRose !== "undefined" && typeof CharmNestRose.cuts === "function" && CharmNestRose.cuts(m)),
+    addPage: (m, o) => addPage(m, o), fillingPage: m => (typeof fillingPage === "function" ? fillingPage(m) : null),
+    greenPage: (m, run) => window.Pool.greenPage(m, run), reopenHome: (p, rid) => window.LiveNest.reopenHome(p, rid),
+    topupRoom: p => (window.CN && typeof window.CN.topupRoom === "function" ? window.CN.topupRoom(p) : Infinity),
+    topupTakes: (p, pieces, info) => (window.CN && typeof window.CN.topupTakes === "function" ? window.CN.topupTakes(p, pieces, info) : true)
+  }));
+}
+
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
 const Pool = window.Pool = (() => {
   const PoolPieces = window.CharmNestPoolPieces;   // the shape of a piece record (side, bodyIndex, groupKey, groupSize) and how an old record is read: charm-nest-pool-pieces.js
@@ -4826,7 +4849,9 @@ const Pool = window.Pool = (() => {
     const live = (row.poolIds || []).map(id => B.pool.rows.get(id)).filter(r => r && !["abandoned", "superseded"].includes(r.state));
     if (live.length) { const g = Math.max(0, ...live.map(r => +r.groupSize || 0)); if (g > 1) row.groupSize = g; else delete row.groupSize; }
     // a line pooled before one body was made of a design drawn twice (a live pool row of it holds the folded charm's hash) is the whole charm it was cut as: the intake's words about one body are taken back
-    if (sp.pair && sp.pair.oneBody && live.length) { const e = Master.entryFor(sp.designSku), whole = e ? wholeHashes(e, sp.size) : new Set(); if ((whole.size && live.some(r => whole.has(String(r.charmHash)))) || (e && window.CharmNestPair && window.CharmNestPair.onlyBodyOf && window.CharmNestPair.onlyBodyOf(e) && !designLoaded(e, sp.size))) O.solo(sp, null); }   // (a design named as ONE body whose file is not read yet: the pooled piece is taken as made whole, see oneRow)
+    const saidBody = live.map(r => PoolPieces.cleanBody ? PoolPieces.cleanBody(r) : {}).filter(x => typeof x.oneBody === "boolean");   // (BODYID, cloud plan v2 step 3: a piece the cloud made says whether it is cut whole: believed, never its hash)
+    if (sp.pair && sp.pair.oneBody && saidBody.length) { if (saidBody.some(x => !x.oneBody)) O.solo(sp, null); }
+    else if (sp.pair && sp.pair.oneBody && live.length) { const e = Master.entryFor(sp.designSku), whole = e ? wholeHashes(e, sp.size) : new Set(); if ((whole.size && live.some(r => whole.has(String(r.charmHash)))) || (e && window.CharmNestPair && window.CharmNestPair.onlyBodyOf && window.CharmNestPair.onlyBodyOf(e) && !designLoaded(e, sp.size))) O.solo(sp, null); }   // (a design named as ONE body whose file is not read yet: the pooled piece is taken as made whole, see oneRow)
     if (live.length) noticeSet(row, live);
     if (row.repoolChanged || row.changePending) return;
     // (a row taken off its sheet on purpose, abandoned or superseded, is not a piece the line still has: a line taken off is made up new at the rule's count)
@@ -4960,49 +4985,10 @@ const Pool = window.Pool = (() => {
      green-line sheet that keeps the rule, a new one when none does. Its set is then the one set of its partners (Gate: its green line is cut automatically once that set is complete). */
   const lineCuts = m => m === "rose" || (typeof CharmNestRose !== "undefined" && typeof CharmNestRose.cuts === "function" && CharmNestRose.cuts(m));
   const orderOfCharm = c => String(c && c.order != null ? c.order : "").split("/")[0];
-  function partnerSheets(orderIds, run, skip) {
-    const ids = new Set([...orderIds].map(String).filter(Boolean)), out = { gold: new Set(), silver: new Set() };
-    if (!ids.size) return out;
-    for (const p of allSheets()) {
-      if (!out[p.metal] || (run && p.runId && p.runId !== run.runId)) continue;
-      if (p.charms.some(c => !(skip && skip.has(c)) && ids.has(orderOfCharm(c)))) out[p.metal].add(p);
-    }
-    return out;
-  }
-  /** greenFits(page, orderId | [orderId], run, {skip}): may this green-line sheet take pieces of these orders (skip: pieces on their way elsewhere, not counted). */
-  /* (RGONE, Paul 9 Nov 2026: "There should never be just one piece on a rose gold sheet to be cut ... the system should never automatically do this and there should never be two partial rose gold sheets
-     in one set.") The live Sandbox Set-1 of 8 Nov: RG Sheet 1 (11 pieces) shared orders with GF Sheet 1; an order with SS Sheet 1 came next. GF 1 and SS 1 were both drafts that shared no order YET, so the
-     rule below refused it ("they could end in two sets"), the intake opened a NEW Rose Gold sheet for that one piece, both were cut automatically into Set 1 with GF 1 + SS 1: two partial RG sheets, one of
-     them holding one piece. Two drafts outside every set that are each still UNPAIRED (no order shared with any sheet of the other metal) and the same place in line (the n-th GF and the n-th SS sheet of
-     the run that are in no set) form the same set (SetRules.formAll: the earliest completed GF and SS units first), so the Rose Gold sheet takes the order and stays one sheet. */
-  function draftsMeet(g, s, run) {
-    const inRun = p => !(run && p.runId && p.runId !== run.runId) && !p.archived && !p.recalled, loose = p => !(p.setId && !p.draft);
-    const all = allSheets().filter(inRun), ordersOf = p => new Set((p.charms || []).map(orderOfCharm).filter(Boolean));
-    const paired = (p, otherMetal) => { const mine = ordersOf(p); return all.some(q => q.metal === otherMetal && (q.charms || []).some(c => mine.has(orderOfCharm(c)))); };
-    if (paired(g, "silver") || paired(s, "gold")) return false;
-    const rank = p => all.filter(q => q.metal === p.metal && loose(q)).indexOf(p);
-    const rg = rank(g); return rg >= 0 && rg === rank(s);
-  }
-  function greenFits(page, orderId, run, o) {
-    const skip = (o && o.skip) || null, add = partnerSheets([].concat(orderId), run, skip); if (!add.gold.size && !add.silver.size) return true;      // (an order with no GF / SS piece ties the sheet to nothing)
-    const mine = partnerSheets(page.charms.filter(c => !(skip && skip.has(c))).map(orderOfCharm), run, skip);
-    const gf = new Set([...mine.gold, ...add.gold]), ss = new Set([...mine.silver, ...add.silver]);
-    if (gf.size > 2 || ss.size > 2) return false;
-    // (PAIR2, Paul 20 Nov 2026: "the rose gold and a 10 K and a 14 K should be allowed to match to such a set and be able to have mixed orders with all the sheets and the given set"): with two GF or two SS
-    //  partners, every partner is in ONE set, or none is in a set and they are one unit (tied together by shared orders): the sheet still goes with exactly one set
-    if (gf.size > 1 || ss.size > 1) {
-      const parts = [...gf, ...ss], setOf = p => (p.setId && !p.draft ? p.setId : null), sets = new Set(parts.map(setOf));
-      if (sets.size > 1) return false;
-      if (!sets.has(null)) return true;
-      const ord = p => new Set((p.charms || []).filter(c => !(skip && skip.has(c))).map(orderOfCharm).filter(Boolean)), seen = new Set([parts[0]]), todo = [parts[0]];
-      while (todo.length) { const a = todo.pop(), oa = ord(a); for (const b of parts) if (!seen.has(b) && [...ord(b)].some(x => oa.has(x))) { seen.add(b); todo.push(b); } }
-      return seen.size === parts.length;
-    }
-    // (both partners in one set; or neither in a set yet and each the other's one partner, PAIR: they share an order, so they are one unit and one set; or both still unpaired and the same place in
-    //  line, RGONE above. Two drafts that share nothing and are paired elsewhere could end in two sets)
-    if (gf.size && ss.size) { const setOf = p => (p.setId && !p.draft ? p.setId : null), g = [...gf][0], s = [...ss][0], a = setOf(g), b = setOf(s); if (a !== b) return false; if (!a) { const og = new Set(g.charms.map(orderOfCharm).filter(Boolean)); if (!s.charms.some(c => og.has(orderOfCharm(c))) && !draftsMeet(g, s, run)) return false; } }
-    return true;
-  }
+  /* (SHEETCHOICE, cloud plan v2 step 5: partnerSheets, draftsMeet and greenFits, with the RGONE and PAIR2 rules they keep, are charm-nest-place.js, the one copy this page and the cloud run)
+     greenFits(page, orderId | [orderId], run, {skip}): may this green-line sheet take pieces of these orders (skip: pieces on their way elsewhere, not counted). */
+  function partnerSheets(orderIds, run, skip) { return placeRules().partnerSheets(orderIds, run, skip); }
+  function greenFits(page, orderId, run, o) { return placeRules().greenFits(page, orderId, run, o); }
   /* ═══ RGC1 · one physical sheet at a time, continued past each green line (Paul, 9 Nov 2026: "after a cut line a sheet must continue to get filled with newer orders until the next cut line and so
      forth until the sheet is done and then and only then should the automatic system go to a brand new clean sheet. The user still should be able to override that if necessary by adding a new Custom
      sized sheet inside the options menu") ═══
@@ -5051,7 +5037,7 @@ const Pool = window.Pool = (() => {
     return due.length;
   }
   const greenWaits = new Map();   // row.key -> { page, metal }: the open layout a waiting line waits for (memory only: after a reload the line is simply tried again)
-  const greenOpen = (p, run) => !!p && p.charms.length > 0 && (!run || !p.runId || p.runId === run.runId) && !p.roseCutAt && !p.recalled && !p.releaseFull && !(+p.laserDoneAt > 0);
+  const greenOpen = (p, run) => placeRules().greenOpen(p, run);   // (SHEETCHOICE: charm-nest-place.js)
   const greenName = p => { try { if (window.CharmNestSheetName && typeof CharmNestSheetName.short === "function") return CharmNestSheetName.short(p); } catch (_) { /* the plain name below */ } return `${labelOf(p.metal)} Sheet ${p.page || "?"}`; };
   /** Is this line still waiting for an open layout's green line? (false: it is due again) */
   function greenHeld(row) {
@@ -5093,17 +5079,7 @@ const Pool = window.Pool = (() => {
     try { Orders.render(); } catch (_) { /* drawn at the next look */ }
     return rows.length;
   }
-  /** Should this line wait for the open layout `was` instead of opening a page? (greenFits refused it there) */
-  function greenMustWait(was, rid, run, metal, list) {
-    if (!greenOpen(was, run)) return false;
-    // (3: a formed set never waits for it: its GF / SS sheets are in a formed set the open layout's are not in)
-    const formed = p => p.setId && !p.draft ? String(p.setId) : null, mine = partnerSheets([rid], run), theirs = partnerSheets(was.charms.map(orderOfCharm), run);
-    const mySets = new Set([...mine.gold, ...mine.silver].map(formed).filter(Boolean)), theirSets = new Set([...theirs.gold, ...theirs.silver].map(formed).filter(Boolean));
-    if ([...mySets].some(s => !theirSets.has(s))) return false;
-    // (the order's own sheet of this colour elsewhere, R16: it goes there, as before)
-    try { const LN = window.LiveNest; if (LN && typeof LN.orderHome === "function") { const home = LN.orderHome(metal, run, rid, { skip: list }); if (home && home !== was) return false; } } catch (_) { /* no home: it waits */ }
-    return true;
-  }
+  /* (RGC1's wait, greenMustWait: whether a line waits for the open layout's green line, is charm-nest-place.js, asked by attachPool's choice of its sheet: chooseSheet) */
   /* ═══ INPLACE · a replaced piece goes into the spot its old piece left, or that spot stays empty (Paul, 20 Oct 2026) ═══════════════════════════════════════════════════════════════════
      Paul: "I just wanna make sure that you're not nesting the entire sheet because of one charm/charms change. If the new updated charm does not fit into the spot of the previously removed
      charm/charms then leave that particular spot empty and simply add the new charm/charms to the latest unfinished sheet."
@@ -5302,69 +5278,43 @@ const Pool = window.Pool = (() => {
       if (info && window.CN?.nospreadChunk && !info.pieces.some(c => c.chunk)) window.CN.nospreadChunk(metal, info.pieces, info);
       // (INPLACE, Paul 20 Oct 2026: a replaced line's new pieces go into the spots its old ones left, or, when they do not fit there, onto the latest unfinished sheet: inPlaceAttach)
       const ip = row._vacated ? inPlaceAttach(row, run, metal, list, info) : null;
-      let page=ip ? ip.page : window.LiveNest ? LiveNest.intakePage(metal, run, row.order.receiptId, list, info, { wait: (metal === "gold" || metal === "silver") && byMetal.size === 1 }) : pagesOf(metal).at(-1);
+      // (SHEETCHOICE, cloud plan v2 step 5, 20 Nov 2026: the sheet is chosen by charm-nest-place.js chooseSheet, the one copy this page and the cloud both run: LiveNest.intakePage's choice, the
+      //  line's own sheet first (R2), LISTPICK's home sheet (with PICKFULL's reopening, relinkPrep), Decision 2's one GF and/or one SS partner sheet of one set with RGC1's wait (NOWAIT: a Rose Gold
+      //  line never waits), PAIR / PAIRFIX with its wait, R16's own sheet of the order (kept released while it nests: reopenHome) and a split of necessity said, then the next sheet when the one
+      //  chosen is another run's or shut. INPLACE's own sheet (ip) stands as it is. What follows is this page's own: the line's waits, the words, the card)
       // (a sheet kept for this order's own release stays open to the rest of the order's pieces: the order goes on one sheet whole)
       const shut = p => { const k = row.releasing && p.keepRelease && p.keepRelease.rid === String(row.order.receiptId) ? p.keepRelease : null; if (k) p.keepRelease = null; try { return !!(window.LiveNest && LiveNest.closed(p)); } finally { if (k) p.keepRelease = k; } };
-      // (the line's own sheet first, when it still takes pieces: the order's home sheet can be an earlier one, and a pair is never put half on each)
-      if (!ip) { const open = matePages.filter(p => p.metal === metal && !shut(p) && (!run || !p.runId || p.runId === run.runId)); if (open.length && !open.includes(page)) page = open[0]; }
-      // (LISTPICK, Paul 18 Oct 2026: a line made up again because its listing's charm was picked goes first into the vacant space its old pieces left, on the sheet they were taken off; when
-      //  that sheet is closed meanwhile the intake's own choice stands, and what does not fit there moves on to the next sheet, overflowToNextSheet)
-      if (!ip && !matePages.length && row._relink && Array.isArray(row._relink.homes)) {
+      const pick = placeRules().chooseSheet({ metal, rid: row.order.receiptId, run, list, info, ip, matePages, byMetalSize: byMetal.size, shut,
+        relinkHomes: row._relink && Array.isArray(row._relink.homes) ? row._relink.homes : null,
         // (PICKFULL, Paul 19 Oct 2026: a home sheet that was only FULL, still a draft waiting for its set, is not full any more once the old pieces came off: it takes the picked charm back into their room; the sorter marks it full again when it is)
-        for (const p of row._editSku ? [] : row._relink.homes) if (p && p.metal === metal && p.releaseFull && (p.draft || !p.setId) && Gate.modern(p.runId) && !(p.label && p.label.own) && pagesOf(p.metal).includes(p)) { p.releaseFull = false; if (p.keepRelease && p.keepRelease.full) p.keepRelease = null; }   // (and the hold Gate.keep put on it when its pieces came off: a draft has no set to keep)
-        const home = row._relink.homes.find(p => p && p.metal === metal && pagesOf(metal).includes(p) && !shut(p) && (!run || !p.runId || p.runId === run.runId)); if (home) page = home;
+        relinkPrep: m => { for (const p of row._editSku ? [] : row._relink.homes) if (p && p.metal === m && p.releaseFull && (p.draft || !p.setId) && Gate.modern(p.runId) && !(p.label && p.label.own) && pagesOf(p.metal).includes(p)) { p.releaseFull = false; if (p.keepRelease && p.keepRelease.full) p.keepRelease = null; } } });   // (and the hold Gate.keep put on it when its pieces came off: a draft has no set to keep)
+      // (RGC1, Paul 9 Nov 2026: a 10K / 14K line the open layout cannot take waits for its green line, then continues on its leftover: greenResume)
+      if (pick.wait && pick.wait.kind === "green") {
+        const was = pick.wait.sheet, n = list.length, name = greenName(was);
+        greenWaits.set(row.key, { page: was, metal });
+        row.state = "waiting"; row.wait = { kind: "green", material: metal, sheetId: was.sheetId || null, page: was.page || null };
+        row.reason = `waits for the green line on ${name}, then continues on its leftover (one ${labelOf(metal)} sheet is filled at a time)`;
+        const waitingNow = Orders.rows().filter(r => r.state === "waiting" && r.wait && r.wait.kind === "green" && r.wait.material === metal && greenWaits.get(r.key) && greenWaits.get(r.key).page === was);
+        was.greenWaitNote = `${waitingNow.length} order line${waitingNow.length === 1 ? "" : "s"} wait${waitingNow.length === 1 ? "s" : ""} for this green line, then continue${waitingNow.length === 1 ? "s" : ""} on its leftover`;
+        try { agent({ metal, pool: true }, "nest", `Order ${row.order.receiptId}: its ${n} ${labelOf(metal)} piece${n === 1 ? "" : "s"} wait${n === 1 ? "s" : ""} for the green line on ${name}, then continue${n === 1 ? "s" : ""} on its leftover (${name} shares orders with another Gold Filled / Sterling Silver unit; one ${labelOf(metal)} sheet is filled at a time)`); } catch (_) { /* a note only */ }
+        try { renderCard(was); } catch (_) { /* drawn at the next look */ }
+        waited++; continue;
       }
-      if (!ip && lineCuts(metal) && !matePages.includes(page) && !greenFits(page, String(row.order.receiptId), run)) {   // (Decision 2: one GF and/or one SS partner sheet, in one set)
-        const was = page, alt = pagesOf(metal).find(p => p !== was && !shut(p) && (!run || !p.runId || p.runId === run.runId) && greenFits(p, String(row.order.receiptId), run));
-        // (NOWAIT, Paul 14 Nov 2026: "the order that does not fit would automatically go to a new draft sheet and the almost full RG sheet would still attempt to fit incoming RG orders": a Rose Gold
-        //  line is never left waiting for the open layout's green line; it goes on another open layout that keeps the rule, else a new draft (greenPage), and the open layout keeps taking what fits it.
-        //  10K / 14K lines wait as before (RGC1, Paul 9 Nov 2026: one physical sheet at a time)
-        if (metal !== "rose" && !alt && byMetal.size === 1 && greenMustWait(was, String(row.order.receiptId), run, metal, list)) {
-          const n = list.length, name = greenName(was);
-          greenWaits.set(row.key, { page: was, metal });
-          row.state = "waiting"; row.wait = { kind: "green", material: metal, sheetId: was.sheetId || null, page: was.page || null };
-          row.reason = `waits for the green line on ${name}, then continues on its leftover (one ${labelOf(metal)} sheet is filled at a time)`;
-          const waitingNow = Orders.rows().filter(r => r.state === "waiting" && r.wait && r.wait.kind === "green" && r.wait.material === metal && greenWaits.get(r.key) && greenWaits.get(r.key).page === was);
-          was.greenWaitNote = `${waitingNow.length} order line${waitingNow.length === 1 ? "" : "s"} wait${waitingNow.length === 1 ? "s" : ""} for this green line, then continue${waitingNow.length === 1 ? "s" : ""} on its leftover`;
-          try { agent({ metal, pool: true }, "nest", `Order ${row.order.receiptId}: its ${n} ${labelOf(metal)} piece${n === 1 ? "" : "s"} wait${n === 1 ? "s" : ""} for the green line on ${name}, then continue${n === 1 ? "s" : ""} on its leftover (${name} shares orders with another Gold Filled / Sterling Silver unit; one ${labelOf(metal)} sheet is filled at a time)`); } catch (_) { /* a note only */ }
-          try { renderCard(was); } catch (_) { /* drawn at the next look */ }
-          waited++; continue;
-        }
-        page = alt || greenPage(metal, run);
-        try { agent({ metal, pool: true }, "nest", `Order ${row.order.receiptId}: its ${labelOf(metal)} piece goes on ${alt ? "another" : "a new"} ${labelOf(metal)} sheet, so that each ${labelOf(metal)} sheet shares orders with one Gold Filled and one Sterling Silver sheet of one set`); } catch (_) { /* a note only */ }
+      // (PAIRFIX, Paul 12 Nov 2026: "one sheet at a time for everything": a one-colour line the sheet still filling cannot pair WAITS for it to fill, then goes on the next sheet: pairResume)
+      if (pick.wait && pick.wait.kind === "pair") {
+        const f = pick.wait.sheet, rid = String(row.order.receiptId), nm = greenName(f), other = metal === "gold" ? "Sterling Silver" : "Gold Filled";
+        pairWaits.set(row.key, { page: f, metal, at: Date.now() });
+        row.state = "waiting"; row.wait = { kind: "pair", material: metal, sheetId: f.sheetId || null, page: f.page || null };
+        row.reason = `waits for ${nm} to fill, then goes on the next ${labelOf(metal)} sheet (${nm} already shares its orders with another ${other} sheet; one ${labelOf(metal)} sheet is filled at a time)`;
+        try { agent({ metal, pool: true }, "nest", `Order ${rid}: its ${labelOf(metal)} piece${list.length === 1 ? "" : "s"} wait${list.length === 1 ? "s" : ""} for ${nm} to fill, then go${list.length === 1 ? "es" : ""} on the next sheet (one Gold Filled sheet and one Sterling Silver sheet share an order; one sheet at a time)`); } catch (_) { /* a note only */ }
+        waited++; continue;
       }
-      // (PAIR, Paul 26 Oct 2026: the mirror for Gold Filled and Sterling Silver: a sheet whose one partner of the other metal is this order's, or that has none yet. LiveNest.intakePage asks it already;
-      //  this is for the sheets chosen around it (a line's home sheet, LISTPICK). An order with pieces of this colour on the sheet already keeps them there: all of an order on one sheet of its colour, R16)
-      { const rid = String(row.order.receiptId), LN = window.LiveNest;
-        if (!ip && (metal === "gold" || metal === "silver") && LN && typeof LN.pairFits === "function" && !matePages.includes(page) && !page.charms.some(c => orderOfCharm(c) === rid) && !LN.pairFits(page, [rid], run)) {
-          const was = page, room = p => (!window.CN?.topupRoom || window.CN.topupRoom(p) > 0) && (!window.CN?.topupTakes || window.CN.topupTakes(p, list, info));
-          const alt = pagesOf(metal).find(p => p !== was && p.charms.length && !shut(p) && (!run || !p.runId || p.runId === run.runId) && LN.pairFits(p, [rid], run) && room(p));
-          // (PAIRFIX, Paul 12 Nov 2026: "one sheet at a time for everything". The sheet still filling is used only when it pairs; when it does not, a one-colour line WAITS for it to fill and
-          //  then goes on the next sheet (pairResume). A new sheet only when none is filling, or for a line of several colours)
-          const home16 = typeof LN.orderHome === "function" ? LN.orderHome(metal, run, rid, { skip: list }) : null;
-          const nx = alt || home16 || addPage(metal, { ok: p => LN.pairFits(p, [rid], run), wait: byMetal.size === 1 && S.settings.onesheet !== "off" });
-          if (!nx) {
-            const f = typeof fillingPage === "function" ? fillingPage(metal) : was, nm = greenName(f || was), other = metal === "gold" ? "Sterling Silver" : "Gold Filled";
-            pairWaits.set(row.key, { page: f || was, metal, at: Date.now() });
-            row.state = "waiting"; row.wait = { kind: "pair", material: metal, sheetId: (f || was).sheetId || null, page: (f || was).page || null };
-            row.reason = `waits for ${nm} to fill, then goes on the next ${labelOf(metal)} sheet (${nm} already shares its orders with another ${other} sheet; one ${labelOf(metal)} sheet is filled at a time)`;
-            try { agent({ metal, pool: true }, "nest", `Order ${rid}: its ${labelOf(metal)} piece${list.length === 1 ? "" : "s"} wait${list.length === 1 ? "s" : ""} for ${nm} to fill, then go${list.length === 1 ? "es" : ""} on the next sheet (one Gold Filled sheet and one Sterling Silver sheet share an order; one sheet at a time)`); } catch (_) { /* a note only */ }
-            waited++; continue;
-          }
-          page = nx;
-          try { agent({ metal, pool: true }, "nest", `Order ${rid}: its ${labelOf(metal)} piece goes on ${alt ? "another" : "a new"} ${labelOf(metal)} sheet, so that one Gold Filled sheet and one Sterling Silver sheet share it`); } catch (_) { /* a note only */ }
-        } }
-      // (R16 HARD, Paul 26 Oct 2026: "sheets of the same colour cannot have cross-pollination of charms from a multi-charm/earring orders": the order's own sheet of this colour, where its other pieces are,
-      //  wins over every choice above, open or released full and not cut, approved or sent (LiveNest.orderHome); it keeps its release and its set while it nests them (reopenHome), and its nest keeps the
-      //  order whole there or passes the WHOLE order on. A sheet that cannot take them any more (cut, approved, sent) leaves a split of necessity, said in the log)
-      const LN16 = window.LiveNest, rid16 = String(row.order.receiptId), back = !ip && LN16 && typeof LN16.orderHome === "function" ? LN16.orderHome(metal, run, rid16, { skip: list }) : null;
-      if (back && back !== page) page = back;
-      if (!ip && !back && LN16 && typeof LN16.orderHome === "function" && (metal === "gold" || metal === "silver") && S.settings.nospread !== "off") {
-        const apart = pagesOf(metal).filter(p => p !== page && (!run || !p.runId || p.runId === run.runId) && !p.recalled && (p.charms || []).some(c => !list.includes(c) && !c.excluded && !c.chunk && orderOfCharm(c) === rid16));
-        if (apart.length) try { agent({ metal, pool: true }, "warn", `Split order ${rid16} (a split of necessity: its other ${labelOf(metal)} pieces are on ${apart.map(p => p.page ? "sheet " + p.page : "a sheet").join(", ")}, which can take no more: cut, approved for laser cutting, sent or held) — both sheets must go in one set`); } catch (_) { /* a note only */ }
-      }
-      if(!ip && ((run && page.runId && page.runId!==run.runId) || shut(page) && page !== back))page=lineCuts(metal) ? greenPage(metal, run) : addPage(metal, (metal === "gold" || metal === "silver") && LN16 && typeof LN16.pairFits === "function" ? { ok: p => LN16.pairFits(p, [rid16], run) } : {});   // (PAIRFIX: the sheet still filling only when it pairs) (RGC1: a green-line metal's next page continues on its newest cut's leftover)
-      if (back && page === back && typeof LN16.reopenHome === "function") LN16.reopenHome(page, rid16);
+      for (const ev of pick.events) try {
+        if (ev.kind === "green") agent({ metal, pool: true }, "nest", `Order ${row.order.receiptId}: its ${labelOf(metal)} piece goes on ${ev.alt ? "another" : "a new"} ${labelOf(metal)} sheet, so that each ${labelOf(metal)} sheet shares orders with one Gold Filled and one Sterling Silver sheet of one set`);
+        else if (ev.kind === "pair") agent({ metal, pool: true }, "nest", `Order ${String(row.order.receiptId)}: its ${labelOf(metal)} piece goes on ${ev.alt ? "another" : "a new"} ${labelOf(metal)} sheet, so that one Gold Filled sheet and one Sterling Silver sheet share it`);
+        else if (ev.kind === "split") agent({ metal, pool: true }, "warn", `Split order ${String(row.order.receiptId)} (a split of necessity: its other ${labelOf(metal)} pieces are on ${ev.apart.map(p => p.page ? "sheet " + p.page : "a sheet").join(", ")}, which can take no more: cut, approved for laser cutting, sent or held) — both sheets must go in one set`);
+      } catch (_) { /* a note only */ }
+      let page = pick.page;
       if (!(ip && ip.placed)) { S.sheets[metal].active=pagesOf(metal).indexOf(page);if(!page.el)window.CN?.showPage(metal,S.sheets[metal].active); }   // the card shows the page its buttons act on
       if (run) page.runId = run.runId;
       for (const c of list) if (!page.charms.includes(c)) page.charms.push(c);
@@ -5895,6 +5845,30 @@ const Gate = window.Gate = (() => {
   const modern = runId => (!B.run && !runId) || (!!B.run && B.run.releasePolicy === 2 && (!runId || runId === B.run.runId));
   const selected = () => B.run?.solidIncluded || R.solidIncluded || {};
   const solid = m => ["gold10k", "gold14k"].includes(m);
+  /* ═══ GATECORE (Paul, 20 Nov 2026: the page and the cloud decide sets with ONE copy, so every computer and the cloud agree) ═══
+     Every decision of the set assembly is charm-nest-assembly-core.js's now, the copy the cloud runs (netlify/functions/_charmNestAssembly.js): the sheet's own release rule (policy,
+     basePolicy), the cardinal marks (cardinalApply, the green homes), SPLITWAIT, which free sheets form a set and when (assemble), and tendSet's joins and a person's take-outs. This page
+     hands it a LIVE view of its own memory (its sheets are the truth here: V.live) and keeps its own side of each step as `io` (its writes, its cards, its agent lines): assembleNow below.
+     A gate is made once per set of modules and reused; a look at a run that is not B.run gets one of its own. */
+  const viewOf = runOf => ({ live: true, get run() { return runOf(); }, get pages() { return allSheets(); }, get now() { return Date.now(); },
+    ofRun: runId => Sets.ofRun(runId), selected: () => selected(), modern: runId => modern(runId), leaving: mergeLeaving, joinRefused, clock: gateClock,
+    fileBase: sh => CN.sheetFileBase(sh), get topupOrders() { return TOPUP.orders; }, locale: undefined, hint: " (reload the page if this stays)",
+    sheetFull: q => { try { return !!(window.RoseStock && typeof RoseStock.full === "function" && RoseStock.full(q)); } catch (_) { return false; } },
+    rows: () => (typeof Orders !== "undefined" && Orders && typeof Orders.rows === "function" ? Orders.rows() : []),
+    // (GREENCORE: the green line's inputs only this page has: its in-memory flags, a take-off and a cut it can run, a clear of a sheet still running, its sheets in line order)
+    roseBusy: (p, kind) => !!(kind === "cut" ? p._roseAction || p._rosePlanning || p._roseLoading || p._autoCutting : kind === "trim" ? p._incBusy || p._rosePlanning || p._roseAction || (window.SheetWin && typeof SheetWin.isOpen === "function" && SheetWin.isOpen() && typeof SheetWin.current === "function" && SheetWin.current() === p.sheetId) : p._roseAction || p._autoCutting),
+    canClear: () => { const SW = window.SheetWin; return !!(SW && typeof SW.takeOffOrder === "function"); }, clearBusy: p => rgClearBusy.has(p.sheetId),
+    canCut: () => { const RS = window.RoseStock; return !!(RS && typeof RS.record === "function" && S.cloud.ok); }, lineOf: m => (S.sheets[m] && S.sheets[m].pages) || [],
+    modules: () => ({ SetRules: window.CharmNestSetRules || null, SharedOrders: SOrd(), SheetName: window.CharmNestSheetName || null, Orders: window.CharmNestOrders || null, Invariants: window.CharmNestSetInvariants || null, Place: window.CharmNestPlace || null }) });
+  let coreMemo = null;
+  function coreGate(run) {
+    const A = window.CharmNestAssemblyCore;
+    if (!A || typeof A.gate !== "function") throw new Error("The set assembly did not load (charm-nest-assembly-core.js), so no set is formed and no sheet is moved. Reload the page.");
+    if (run && run !== B.run) return A.gate(viewOf(() => run));
+    const mods = [A, window.CharmNestSetRules, SOrd(), window.CharmNestSheetName, window.CharmNestOrders, window.CharmNestSetInvariants, window.CharmNestPlace];
+    if (!coreMemo || coreMemo.mods.some((m, i) => m !== mods[i])) coreMemo = { mods, G: A.gate(viewOf(() => B.run)) };
+    return coreMemo.G;
+  }
   /* 10K and 14K go into the set a sheet at a time, each by its own "Include in current set" (Paul, 28 Sep: "The system
      incorrectly takes all sheets even the ones that are partial ... each sheet should have to be toggled independently").
      The switch was the metal's: ticked on Sheet 1, it took the partial Sheet 2 with it. A sheet ticked before, when the
@@ -5905,10 +5879,10 @@ const Gate = window.Gate = (() => {
      under the old rule, never throws a sheet out of its set). */
   const goldFamily = m => m === "rose" || solid(m);   // the metals with a green line that join a set by their own conditions (R12): Rose Gold, 10K, 14K
   const inSetNow = sh => !!sh.setId && !sh.draft;   // the sheet's real place: a set it is in (a draft is in none)
-  const picked = (sh, choices = selected()) => typeof sh.solidPick === "boolean" ? sh.solidPick : sh.metal === "rose" ? inSetNow(sh) : choices[sh.metal] === true;
+  const picked = (sh, choices = selected()) => coreGate().picked(sh, choices);   // (GATECORE: its own tick, else the metal's; Rose Gold "picked" only while in a set)
   /** A recorded green-line cut keeps a sheet in the set it is in (charm-nest-shared-orders.js fixedWhy; SetEdit sheetCut): a 10K or 14K sheet the cardinal rule pulled in and that was then cut stays, though nobody ticked it.
    *  (Paul, 26 Oct 2026: it is no longer "the set it can't leave": a cut sheet none of whose partners are in its set leaves it with them, by Decision 1's trim or greenAway, and joins the set they form) */
-  const staysCut = sh => goldFamily(sh.metal) && !!sh.roseCutAt && inSetNow(sh);   // (R12: a recorded cut keeps a sheet in the set it is in. audit G4, 25 Oct 2026: it also read solidPick, which ticking ANOTHER sheet of the metal set to false on this one, and the cut sheet was drafted out of its set. Taking it out by hand drafts it first, so inSetNow is false there)
+  const staysCut = sh => coreGate().staysCut(sh);   // (GATECORE) (R12: a recorded cut keeps a sheet in the set it is in. audit G4, 25 Oct 2026: it also read solidPick, which ticking ANOTHER sheet of the metal set to false on this one, and the cut sheet was drafted out of its set. Taking it out by hand drafts it first, so inSetNow is false there)
   /** (Paul, 27 Oct 2026, of 14K Sheet 1 approved into Set 1: "To me it looks like the 14K sheet is correctly added, and has all the pieces but for some reason, this is erroring out") A 10K / 14K sheet a
    *  person put in its set by their own yes (its Approve, its Include, its Cut Sheet press: solidPick, saved as solidIncluded true) stays there as a recorded cut does. Written again (an artwork edit, Manual
    *  Control, a piece replaced) it keeps its set, its number and its files' name (nextSheetSeq: keepsPlace); a look at its set never takes it out for being written. Before, the write drafted it on this page
@@ -5918,12 +5892,12 @@ const Gate = window.Gate = (() => {
      QR label once it is nested and verified) A person's Merge is one of the ways out of the set staysJoined leaves open: the sheets it takes are let go by the look at the set it makes
      (assemble), as they were before staysJoined (27 Oct 2026) kept them in and the emptied sheet stayed named in its set. Held only for that look (mergeSheets). */
   const mergeLeaving = new WeakSet();
-  const staysJoined = sh => solid(sh.metal) && sh.solidPick === true && inSetNow(sh) && !sh.leftSet && !mergeLeaving.has(sh);
+  const staysJoined = sh => coreGate().staysJoined(sh);   // (GATECORE: mergeLeaving is handed to it as the view's `leaving`)
   /** (Paul, 12 Nov 2026: "the Rose Gold sheet must be added to its set automatically; this problem must not come up later") A Rose Gold sheet the automatic cut put in its ONE set (autoMatched,
    *  Gate.autoCut) whose cut the server has not recorded yet WAITS IN that set for its green line cut: it is not taken out again (the set's Approve for laser cutting waits for it, a plain waiting line,
    *  CharmNestSetInvariants waits 'greenCut'), also while it is written again; it is cut there by the automatic cut's next try. A person's take-out (Include off, Take out: its tick off) still wins. */
-  const staysWaiting = sh => sh.metal === "rose" && !sh.roseCutAt && !(+sh.laserDoneAt > 0) && sh.solidPick === true && inSetNow(sh) && !sh.leftSet && !!sh.autoMatched && String(sh.autoMatched) === String(sh.setId) && !mergeLeaving.has(sh);
-  const staysInSet = sh => staysCut(sh) || staysJoined(sh) || staysWaiting(sh);
+  const staysWaiting = sh => coreGate().staysWaiting(sh);   // (GATECORE)
+  const staysInSet = sh => coreGate().staysInSet(sh);
   // (the run still arranges a metal's sheets once one of them is in, as it did once the metal was: only the set is per sheet)
   const anyPicked = (m, choices = selected(), runId = B.run?.runId) => choices[m] === true || allSheets().some(p => p.metal === m && p.solidPick === true && (!runId || !p.runId || p.runId === runId));
   /* (Paul, 12 Nov 2026: the live 14K Draft 1 sat un-nested, "waiting for you · tick Include in Options", and the Rose Gold sheet's automatic cut was refused for its piece, "A piece is not on a saved sheet
@@ -5971,25 +5945,10 @@ const Gate = window.Gate = (() => {
      (below) reads the live pages at every assembly and marks which sheets the rule pulls in with a partner (cardinalPull) and which
      wait for a partner that cannot join yet (cardinalHold). The marks are derived, never saved: recomputed from the pages each time,
      so an order taken off, a piece nested somewhere else or a sheet finishing moves the sets at once. */
-  function policy(sh, seq, choices = selected()) {
-    const r = basePolicy(sh, seq, choices);
-    if (sh.setWait && r.include) return Object.assign({}, r, { include: false, reason: sh.setWait });   // (a set needs a completed GF and a completed SS sheet: Gate.assembleNow, SetRules.settle)
-    if (sh.cardinalHold && r.include) return Object.assign({}, r, { include: false, reason: sh.cardinalHold });
-    if (sh.cardinalPull && !r.include) return Object.assign({}, r, { include: true, reason: sh.cardinalPull });
-    if (sh.greenAway && r.include && inSetNow(sh)) return Object.assign({}, r, { include: false, reason: sh.greenAway });   // (Paul, 26 Oct 2026: a green-line sheet belongs to its ONE set, greenHomes: cardinalApply)
-    return r;
-  }
-  function basePolicy(sh, seq, choices = selected()) {
-    // a sheet a person took out of its committed set (the In current set switch, or the Library) stays out of every other set until it is put back: the run never pulls it in by itself
-    if (sh.leftSet && !inSetNow(sh)) return { include: false, reason: "Taken out of its set" };
-    if (sh.roseCutAt && staysCut(sh)) return { include: true, reason: "Cut · stays in its set" };
-    if (staysJoined(sh)) return { include: true, reason: "Approved · stays in its set" };   // (Paul, 27 Oct 2026: a 10K / 14K sheet a person approved into its set stays there while it is written again, as a cut one does)
-    if (staysWaiting(sh)) return { include: true, reason: "Waiting for its green line cut · stays in its set" };   // (Paul, 12 Nov 2026: a Rose Gold sheet waits for its automatic cut IN its one set)
-    const r = O_.sheetRelease({ material: sh.metal, verified: !!sh.verification?.ok, placed: sh.placements.length,
-      stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: solid(sh.metal) ? Object.assign({}, choices, { [sh.metal]: picked(sh, choices) }) : sh.metal === "rose" ? Object.assign({}, choices, { rose: picked(sh, choices) ? true : undefined }) : choices });
-    // (Paul, 27 Oct 2026: a Rose Gold / 10K / 14K sheet joins a set by its approval like any sheet; its set's Approve waits for its back engravings, never its joining: SetEdit.engravingGap retired)
-    return r;
-  }
+  // (GATECORE: charm-nest-assembly-core.js policy / basePolicy, the one copy: a person's take-out, a recorded cut, an approved 10K / 14K, a Rose Gold sheet waiting for its cut, else
+  //  CharmNestOrders.sheetRelease; then setWait, cardinalHold, cardinalPull and greenAway on top. Paul, 27 Oct 2026: its back engravings never hold its joining)
+  const policy = (sh, seq, choices = selected()) => coreGate().policy(sh, seq, choices);
+  const basePolicy = (sh, seq, choices = selected()) => coreGate().basePolicy(sh, seq, choices);
   async function upgrade(run) {
     if (!run || run.releasePolicy === 2) return;
     const prior = Sets.ofRun(run.runId);
@@ -6013,51 +5972,24 @@ const Gate = window.Gate = (() => {
   // a sheet the sheet window is rewriting (charms taken off or moved onto it) keeps its set: see holdRelease there
   const holding = p => !!p.keepRelease && Date.now() - (+p.keepRelease.at || 0) < 600000;
   /** (STUCKSPIN, Paul 28 Oct 2026) A join of `sh` into `set` the cloud refused for the owner's rules within ten minutes: its words, else "". */
-  const joinRefused = new Map();
-  const joinRefusedOf = (sh, set) => { const r = sh && joinRefused.get(sh.sheetId); if (!r) return ""; if (r.setId !== set.setId || Date.now() - r.at > 600000) { joinRefused.delete(sh.sheetId); return ""; } return r.why; };
-  /** (STUCKSPIN, Paul 28 Oct 2026: "GF Draft 9 cannot go into Set 1 ... Set 1 already holds a completed GF and a completed SS sheet") The members of a set as the formation reads them: a member that is
-   *  being written again (its nest finishing: finishNest marks it _fullWhileWritten; or kept released while the sheet window rewrites it, holding) counts as the full sheet its record holds. Read as
-   *  filling for those seconds, its set looked short of a class, the free GF Draft 9 was sent to complete it, the cloud refused (the record is full) and the run stopped. */
-  const writtenFull = p => !p.releaseFull && ((!!p._fullWhileWritten && (["nesting", "finishing", "queued"].includes(p.status) || (!!p.persisted && !p.persistedDone))) || (holding(p) && !!p.keepRelease.full));
-  const formMembers = set => membersOfSet(set).map(p => (writtenFull(p) ? Object.assign({}, p, { releaseFull: true }) : p));
+  const joinRefused = new Map();   // (read by the core's tendSet: joinRefusedOf)
+  const gateClock = { completion: 0, join: 0 };   // (releasedAt and joinedAt: one strictly increasing tick per look, kept here, ticked by the core)
+  // (STUCKSPIN, Paul 28 Oct 2026: a member being written again counts as the full sheet its record holds: the core's writtenFull / formMembers)
   /** A released sheet that pieces are taken off keeps its set and gets its label made again (see holding). */
   const keep = p => { if ((p.releaseFull || (p.setId && !p.draft)) && !p.roseCutAt && !p.laserDoneAt && !p.recalled) p.keepRelease = { full: !!p.releaseFull, at: Date.now() }; };
   const SOrd = () => (window.SharedOrders && window.SharedOrders.fromPage && window.SharedOrders.core) ? window.SharedOrders : null;
   const sheetNameOf = p => window.CharmNestSheetName ? CharmNestSheetName.name(p) : `${labelOf(p.metal)} Sheet ${p.page}`;
-  const ordersWords = (os, tell) => os.length === 1 ? `order ${os[0]}${tell && tell(os[0]) ? ` (${tell(os[0])})` : ""}` : `orders ${os.slice(0, 3).join(", ")}${os.length > 3 ? " and more" : ""}`;
-  /** What an order's pieces are, for the one line a held or pulled sheet says: only a mismatched pair (a left and a right earring on the group's sheets) is told; every other order keeps its plain words. */
-  const tellOf = (V, ids) => oid => { const sd = new Set(); for (const id of ids) { const n = V.norm.get(id); for (const p of (n && n.pieces) || []) if (p.orderId === oid && p.side) sd.add(p.side); } return sd.has("L") && sd.has("R") ? "its left and right earrings" : ""; };
-  /** The run's pages as the rule reads them: { sheets: [core sheets], page: id -> page, id: page -> id }. */
-  function cardinalView(run) {
-    const SO = SOrd(); if (!SO || !run) return null;
-    const sheets = [], page = new Map(), idOf = new Map();
-    for (const p of allSheets().filter(p => p.runId === run.runId)) { const n = SO.fromPage(p); if (n) { sheets.push(n); page.set(n.id, p); idOf.set(p, n.id); } }
-    return { SO, sheets, page, idOf, norm: new Map(sheets.map(n => [n.id, n])) };
-  }
-  /** Why a Rose Gold / 10K / 14K sheet cannot join a set by the order rule (the cardinal pull); "" when it can. The sheet's own tick is the person's yes and never asks this. */
-  function goldGap(p) {
-    if (!goldFamily(p.metal)) return "";
-    if ((p.roseCutAt || +p.laserDoneAt > 0) && p.autoMatched) return "";   // (Paul, 26 Oct 2026: a sheet cut automatically for its set joins it whatever its backs; the set's Approve waits for them)
-    if (!(p.roseCutAt || +p.laserDoneAt > 0)) return p.metal === "rose" ? "a Rose Gold sheet joins a set only by its own Cut Sheet press" : `a ${labelOf(p.metal)} sheet joins a set only by its own Include or Cut Sheet press`;
-    return "";   // (Paul, 27 Oct 2026: its back engravings are its set's to wait for, never a reason it stays out)
-  }
-  /** Why a sheet cannot join a set now, in plain words ("" when it can). `ready` = the run's sheets with saved files. */
-  // (MCFREE, Paul 20 Oct 2026: a charm may be placed by hand where it overlaps another, shown red; the charms of a sheet that overlap (Manual Control's own check, and the
-  //  sheet's verifier), so that such a sheet joins no set and never reaches the laser until they are moved clear)
-  const handOverlaps = (sh => { let n = 0; try { n = (window.CNManual && typeof CNManual.conflicts === "function" && CNManual.conflicts(sh).n) || 0; } catch (_) {} const pairs = (sh && sh.verification && sh.verification.geom && sh.verification.geom.overlappingPairs) || []; return Math.max(n, new Set([].concat(...pairs)).size); });
-  function cannotJoin(p, ready) {
-    const gold = goldGap(p); if (gold) return gold;
-    // (NOHOLD, Paul 14 Nov 2026: "I don't want this rule, the user is already informed by the red charm overlap, there's no need to enforce"): charms placed by hand where they overlap are shown red, and nothing more
-    if (p.endedBy === "stopped") return "its nesting was stopped";
-    if (p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone)) return "it is still being nested or saved";
-    if (!(p.placements || []).length) return "nothing is placed on it";
-    if (!p.verification?.ok) return "its layout has not been verified yet";
-    if (!ready.has(p)) return "its sheet files are not saved yet";
-    return "";
-  }
+  /** The run's pages as the rule reads them: { sheets: [core sheets], page: id -> page, id: page -> id } (GATECORE: the core's cardinalView, SharedOrders.fromPage's reading). */
+  const cardinalView = run => coreGate().cardinalView(run);
+  /** Why a Rose Gold / 10K / 14K sheet cannot join a set by the order rule (the cardinal pull); "" when it can (GATECORE: the core's goldGap). Paul, 26 Oct 2026: a sheet cut automatically for its set
+   *  joins it whatever its backs; Paul, 27 Oct 2026: its back engravings are its set's to wait for, never a reason it stays out. */
+  const goldGap = p => coreGate().goldGap(p);
+  /** Why a sheet cannot join a set now, in plain words ("" when it can). `ready` = the run's sheets with saved files (GATECORE: the core's cannotJoin).
+   *  (NOHOLD, Paul 14 Nov 2026: charms placed by hand where they overlap are shown red, and nothing more: no rule here) */
+  const cannotJoin = (p, ready) => coreGate().cannotJoin(p, ready);
   /** The run's sets that are still being made: its uncommitted dispatch sets, in set order. (Paul, 12 Oct: a run has several now, the sets that have formed, closed to automatic joining, beside the one that is forming.) */
-  const openSetsOf = runId => Sets.ofRun(runId).filter(s => s.group === "dispatch" && !s.committedAt);
-  const membersOfSet = set => allSheets().filter(p => p.runId === set.runId && p.setId === set.setId && !p.draft);
+  const openSetsOf = runId => coreGate().openSetsOf(runId);   // (GATECORE)
+  const membersOfSet = set => coreGate().membersOfSet(set);
   /** True when a set has formed and takes no sheet on its own any more (charm-nest-set-rules.js closed(): the one closing rule). A page without the module never closes a set (as before). */
   /* SETSTAYSCLOSED (Paul, 16 Nov 2026: "why this sheet was allowed to be added to an existing set ... This breaks my rules"): a set that HAS formed stays closed for good. It was closed only while its
      sheets still read as a completed GF and a completed SS sheet; when GF Sheet 1 of Set 2 was saved empty by a fault (16 Nov, 2:41 PM) the set read as "short", was opened again and took the next
@@ -6066,12 +5998,12 @@ const Gate = window.Gate = (() => {
   /* SETSTAYSCLOSED 2 (Paul, 16 Nov 2026, the same evening: GF Sheet 2, taken out of Set 2, went straight into Set 1): a set formed before the time was kept has no time saved, and right after a
      reload any of its sheets being written again reads "not completed" for a moment: Set 1 read as short of a GF sheet and took the free one. A set that HOLDS a Gold Filled sheet and a Sterling
      Silver sheet has formed at some time (a partial sheet never joins a set, so both came in completed): it is closed, whatever its sheets read as now. */
-  const formedOnce = set => { if (!set) return false; if (+set.formedAt > 0) return true; const SRx = window.CharmNestSetRules; if (!SRx || typeof SRx.metalClass !== "function") return false; const cls = membersOfSet(set).map(p => SRx.metalClass(p)); return cls.includes("GF") && cls.includes("SS"); };
-  const closedSet = set => !!set && (formedOnce(set) || (!!window.CharmNestSetRules && window.CharmNestSetRules.closed(membersOfSet(set))));
+  const formedOnce = set => coreGate().formedOnce(set);   // (GATECORE)
+  const closedSet = set => coreGate().closedSet(set);
   /** The set the run's next completed sheets join on their own: its newest open set while that has not formed; none when there is no open set or the newest has formed (a new set forms then). */
-  function collectingOf(runId) { const open = openSetsOf(runId), last = open[open.length - 1]; return last && !closedSet(last) ? last : null; }
+  const collectingOf = runId => coreGate().collectingOf(runId);   // (GATECORE)
   /** The run's newest open set, formed or not: the set a 10K, 14K or Rose Gold sheet is ticked into. (SETFIX: no rule reads its number any more; the former even-numbered rule for Rose Gold is gone.) */
-  const newestOpenOf = runId => { const open = openSetsOf(runId); return open[open.length - 1] || null; };
+  const newestOpenOf = runId => coreGate().newestOpenOf(runId);   // (GATECORE)
   /** Marks the run's pages (p.cardinalPull / p.cardinalHold / p.cardinalNote / p.cardinalHome) from the live pages: assembleNow and validateRelease. `sets`: the run's open sets (one set is read as a list of one).
    *  Paul, 12 Oct: a partner sheet that cannot join yet (Rose Gold before its Cut Sheet press, a sheet still being saved) no longer holds the whole group out. The sheets that can join go in,
    *  each sheet of the group says plainly which partner to add ("orders shared with RG Draft 1: add that sheet to this set"), and the set cannot be approved until that sheet is in it
@@ -6084,154 +6016,11 @@ const Gate = window.Gate = (() => {
    *  own, or its back engraving not approved: goldGap) and, `withSets`, every sheet already in a set (open or committed). */
   // (Paul, 26 Oct 2026: a Rose Gold / 10K / 14K sheet never ties two GF / SS units together, cut or uncut, in a set or not: every green-line sheet is an anchor. A cut one used to tie as any sheet does, so a
   //  sheet filled before the intake rule, with orders of GF Sheet 1 and GF Sheet 2, chained GF Sheet 2 into Set 1 once it was cut or ticked. Its own place is its ONE set: greenHomesOf)
-  function anchorsOf(V, choices = selected(), withSets = true) {
-    return V.sheets.filter(n => { const p = V.page.get(n.id); return !!p && ((withSets && inSetNow(p)) || !!n.fixed || goldFamily(p.metal)); }).map(n => n.id);
-  }
-  /** The ONE set of each green-line sheet of the run (charm-nest-shared-orders.js greenHomes: its fixed set, the set Gate.autoCut matched it to, the set it is in, else the earliest-formed set of its partners
-   *  that is still open): Map(coreId -> { home, sets, partners, orders, split }). Fixed: a sheet the laser cut, or in a set approved for laser cutting or committed. (Paul, 26 Oct 2026: "the set it can't
-   *  leave" is only theirs: a recorded green-line cut alone no longer pins a sheet to the set it is in, the cut RG Sheet 2 leaves Set 1 with GF Sheet 2 and joins the set GF Sheet 2 forms) */
-  function greenHomesOf(V, run) {
-    const core = V && V.SO && V.SO.core; if (!core || typeof core.greenHomes !== "function") return new Map();
-    const all = Sets.ofRun(run.runId).filter(s => !/^superseded/.test(String(s.status || ""))), SRg = window.CharmNestSetRules;
-    return core.greenHomes(V.sheets, { green: n => { const p = V.page.get(n.id); return !!p && goldFamily(p.metal); }, rank: sid => { const st = all.find(s => s.setId === sid); return st ? [String(st.day || ""), +st.seq || 0] : ["~", Infinity]; },
-      open: sid => { const st = all.find(s => s.setId === sid); return !!st && !(SRg && SRg.exempt(st)); }, matched: n => { const p = V.page.get(n.id); return p && p.autoMatched ? String(p.autoMatched) : null; },
-      fixed: n => { const p = V.page.get(n.id); if (!p || !inSetNow(p)) return null; const st = all.find(s => s.setId === p.setId); return (+p.laserDoneAt > 0 || (st && ((SRg && SRg.exempt(st)) || st.processReady || st.laserSetPending || st.laserDoneAt))) ? String(p.setId) : null; } });
-  }
-  function formationOf(V, anchored, choices) {
-    const SRp = window.CharmNestSetRules, core = V.SO.core;
-    const ends = SRp && SRp.isPartial ? V.sheets.filter(n => { const p = V.page.get(n.id); return p && SRp.isPartial(p) && !inSetNow(p); }).map(n => n.id) : [];
-    // (SETFIX, Paul 19 Oct 2026) `anchored` true: the groups a NEW set is formed from and a free sheet's home is read from (every sheet in a set is an anchor too); "set": the groups the marks of
-    //  the sheets already in an open set are read from (a pull keeps such a sheet where it is), where only the fixed sheets and the uncut gold-family sheets outside every set tie nothing
-    const anchors = anchored ? anchorsOf(V, choices, anchored === true) : [];
-    return Object.assign(core.formation ? core.formation(V.sheets, ends, SRp && SRp.PARTIAL_BRIDGE, anchors) : { groups: core.groups(V.sheets), bridges: [] }, { endIds: new Set(ends), anchorIds: new Set(anchors) });
-  }
-  function cardinalApply(run, pages, sets, choices = selected()) {
-    for (const p of allSheets().filter(p => p.runId === run.runId)) { delete p.cardinalPull; delete p.cardinalHold; delete p.cardinalNote; delete p.cardinalHome; }
-    const V = cardinalView(run); if (!V) return [];
-    const open = (Array.isArray(sets) ? sets : sets ? [sets] : []).filter(Boolean), last = open[open.length - 1] || null, collecting = last && !closedSet(last) ? last : null;
-    const ready = new Set(pages), homeOf = p => (p.setId && !p.draft && open.find(s => s.setId === p.setId)) || null;
-    /* SETFIX (Paul, 19 Oct 2026): "the first set is always correct, but all subsequent sets ... jamming all of the available sheets into a single set". Root cause: a free sheet's group was the whole
-       chain of sheets tied by orders, THROUGH sheets that are in a set (the committed Set 1), cut, or an uncut Rose Gold sheet that keeps filling: a sheet with one order on a Set 1 sheet and a sheet
-       with another order on it were one unit (and with a Set 2 sheet in the chain, both went into Set 2, closed or not). The marks of every sheet outside an open set are now read from the anchored
-       groups (formationOf(V, true)): a sheet goes with the sheets it shares an order with, never with the sheets its order mates share orders with in a set. The sheets already IN an open set keep the
-       marks the groups gave them before (a pull keeps such a sheet where it is): nothing that is in a set moves because of this. */
-    const MARKS = ["cardinalPull", "cardinalHold", "cardinalNote", "cardinalHome"];
-    const pass = (F, anchored) => {
-    const out = [];
-    // (SetRules.PARTIAL_BRIDGE 'spread': a partial sheet with orders on several groups holds none of them; it and its mixed orders are flagged for a person to take off)
-    for (const b of F.bridges) {
-      const p = V.page.get(b.id); if (!p) continue;
-      p.cardinalNote = `${ordersWords(b.orders)} ${b.orders.length === 1 ? "is" : "are"} on ${sheetNameOf(p)} and on sheets of ${b.groups.length} different groups (${b.groups.map(ids => ids.map(id => sheetNameOf(V.page.get(id))).join(", ")).join("; ")}): each group is settled on its own, take ${b.orders.length === 1 ? "that order" : "those orders"} off a sheet so that no order is spread over two sets`;
-      out.push({ ids: [b.id, ...b.groups.flat()], orders: b.orders, state: "bridge", why: p.cardinalNote });
-    }
-    for (const g of F.groups) {
-      // (SETFIX) a sheet whose green line is cut and that is in one of the run's OPEN sets is fixed in that set, but it does not stop its group from joining the set: the set is still being made, so the
-      //  group's other sheets (a second Rose Gold sheet cut later, a partner that was still being saved) belong in it all the same. Only a sheet cut by the laser, or in a set sent to the station, does.
-      const openCut = p => !!p && !!p.roseCutAt && !(+p.laserDoneAt > 0) && !!homeOf(p);
-      // (Paul, 26 Oct 2026: the group's Rose Gold / 10K / 14K sheets are attached to it but are no part of it: each is in its ONE set, marked below; they never make a home, a hold or a pull for the GF / SS sheets)
-      let members = g.ids.map(id => V.page.get(id)).filter(p => p && !goldFamily(p.metal)); const orders = g.orders, fixed = g.ids.filter(id => V.page.get(id) && !goldFamily(V.page.get(id).metal) && V.norm.get(id).fixed && !openCut(V.page.get(id))), tell = tellOf(V, g.ids);
-      if (!members.length) continue;
-      if (fixed.length) {
-        // a sheet of the group is cut, or in a set already sent to the station: the others can never be in its set. Nothing is held back
-        // for it (the work goes on); each sheet that is not fixed says so, with the exact reason.
-        const why = fixed.map(f => `${V.norm.get(f).label}: ${V.norm.get(f).fixed}`).join("; ");
-        for (const p of members) if (!fixed.includes(V.idOf.get(p))) p.cardinalNote = `${ordersWords(orders, tell)} also on ${why}, so ${members.length > 2 ? "they cannot" : "it cannot"} be in the same set`;
-        // (SETFIX, Paul 19 Oct 2026) in the anchored groups a fixed sheet is an order mate the group can never be with (the order is split already, by necessity): the group's other sheets go on by
-        //  their own rule, with the open set their other order mates are in when there is one, else into the next set on their own merits (the formation's units do not tie through it)
-        if (!anchored || !members.some(p => !fixed.includes(V.idOf.get(p)) && homeOf(p))) { out.push({ ids: g.ids, orders, state: "fixed", why }); continue; }
-        members = members.filter(p => !fixed.includes(V.idOf.get(p)));
-      }
-      const homes = [...new Set(members.map(homeOf).filter(Boolean))], home = homes.length === 1 ? homes[0] : null;
-      // (the set number the group is read against: the group's own set; else the set that is forming; none yet = no guess)
-      const seq = home ? home.seq : collecting ? collecting.seq : 0, wants = p => basePolicy(p, seq, choices).include, inHome = p => !!home && homeOf(p) === home;
-      // (Paul, 13 Oct) a PARTIAL GF or SS sheet (not fully nested: charm-nest-set-rules.js isPartial) outside every open set never joins a set, not even as a partner the cardinal rule would pull:
-      // it is "stuck" until it is full. One already in an open set (made before this rule) is left exactly as it is.
-      const SRp = window.CharmNestSetRules, partialOut = SRp && SRp.isPartial ? new Set(members.filter(p => !homeOf(p) && SRp.isPartial(p))) : new Set();
-      const wanting = members.filter(wants), need = members.filter(p => !wants(p)), stuck = need.map(p => ({ p, w: partialOut.has(p) ? `it is not full yet${SRp.fillWords(p)}` : cannotJoin(p, ready) })).filter(x => x.w), stuckSet = new Set(stuck.map(x => x.p));
-      const together = o => `Shares ${ordersWords(orders, tell)} with ${members.filter(m => m !== o).map(sheetNameOf).join(", ")}`;
-      if (homes.length > 1) {
-        // already spread over several sets (flagged as ever, never moved): the sheets outside wait until a person puts the group right; a sheet already in a set stays where it is
-        for (const p of wanting) if (!homeOf(p)) p.cardinalHold = `Waits: sheets that share ${ordersWords(orders, tell)} are already in ${homes.map(s => s.name || `Set ${s.seq}`).join(" and ")}: put them in one set first`;
-        // (audit B3, 25 Oct 2026: a sheet outside every set that neither wants in nor can be pulled (a cut Rose Gold sheet that was the partner of two sets) said nothing on its card: it says why)
-        for (const p of need) if (!homeOf(p) && !p.cardinalHold) p.cardinalNote = `Shares ${ordersWords(orders, tell)} with sheets in ${homes.map(s => s.name || `Set ${s.seq}`).join(" and ")}: it can join only one of them, so take those orders off a sheet first`;
-        for (const p of need) if (homeOf(p) && !stuckSet.has(p)) p.cardinalPull = together(p);
-        out.push({ ids: g.ids, orders, state: "spread", why: homes.map(s => s.name).join(", ") });
-        continue;
-      }
-      if (!wanting.length) continue;
-      if (partialOut.size && !home) {
-        // the group is eligible for a set only when every GF and SS sheet of it is full: with no sheet of it in a set, the whole group waits outside any set together (nothing is split, nothing moves)
-        const names = [...partialOut].map(sheetNameOf), line = `Waits: ${ordersWords(orders, tell)} shared with ${names.join(" and ")}, which ${names.length > 1 ? "are" : "is"} not full yet, so they stay out of a set together`;
-        for (const p of wanting) p.cardinalHold = line;
-        out.push({ ids: g.ids, orders, state: "waiting", why: line, partial: names });
-        continue;
-      }
-      // (a partner that cannot join yet, a Rose Gold sheet before its Cut Sheet press, still belongs to the group's set: nothing else may take it into another set meanwhile)
-      for (const p of need) if (!stuckSet.has(p)) { p.cardinalPull = together(p); if (home && !inHome(p)) p.cardinalHome = home.setId; } else if (home && !inHome(p)) p.cardinalHome = home.setId;
-      if (home) for (const p of wanting) if (!inHome(p)) p.cardinalHome = home.setId;
-      if (!stuck.length) { out.push({ ids: g.ids, orders, state: "together", why: "" }); continue; }
-      // some partner cannot join yet: the others go in, and every sheet of the group says which to add
-      const waits = stuck.map(x => `${sheetNameOf(x.p)} (${x.w})`).join("; "), names = stuck.map(x => sheetNameOf(x.p));
-      const homeName = home ? home.name || `Set ${home.seq}` : "this set", addNames = stuck.filter(x => !partialOut.has(x.p)).map(x => sheetNameOf(x.p)), fullNames = stuck.filter(x => partialOut.has(x.p)).map(x => sheetNameOf(x.p));
-      // (a partner that is not full yet cannot be added: it joins by itself once it is full)
-      const what = [addNames.length ? `add ${addNames.length > 1 ? "those sheets" : "that sheet"} to ${homeName}` : "", fullNames.length ? `${fullNames.join(" and ")} ${fullNames.length > 1 ? "join" : "joins"} ${homeName} once ${fullNames.length > 1 ? "they are" : "it is"} full` : ""].filter(Boolean).join("; ");
-      for (const p of members) if (!stuckSet.has(p)) p.cardinalNote = `${ordersWords(orders, tell).replace(/^o/, "O")} shared with ${names.join(" and ")}: ${what} (${stuck.map(x => x.w).join("; ")})`;
-      out.push({ ids: g.ids, orders, state: "partial", why: waits, stuck: names });
-    }
-    return out;
-    };
-    const runPages = allSheets().filter(p => p.runId === run.runId), FA = formationOf(V, true, choices);
-    // (the sheets that are no free sheet: in an open set, or outside every set but tying nothing, a partial GF/SS sheet or an uncut gold-family one: their marks (a pull, the set they are reserved
-    //  for, the partner line) come from the groups that read the open sets' sheets as one with the sheets they share orders with)
-    const notFree = p => !!homeOf(p) || (!inSetNow(p) && (FA.endIds.has(V.idOf.get(p)) || FA.anchorIds.has(V.idOf.get(p))));
-    pass(formationOf(V, "set", choices), false);
-    const kept = new Map(runPages.filter(notFree).map(p => [p, MARKS.map(k => p[k])]));
-    for (const p of runPages) for (const k of MARKS) delete p[k];
-    const out = pass(FA, true);
-    for (const [p, was] of kept) MARKS.forEach((k, i) => { if (was[i] === undefined) delete p[k]; else p[k] = was[i]; });
-    greenMarks(run, V, runPages, open, homeOf, ready, choices);
-    return out;
-  }
-  /* (Paul, 26 Oct 2026) "a given Rose Gold sheet must be matched with the Set of sheets containing the GF and/or SS sheet with which the RG sheet shares charms with. No other multi-charm orders should be
-     allowed to intertwine the RG sheet with any other GF and SS sheets unless they belong to the same Set of Sheets"; of a sheet with orders of two sets: "The system should pick a set automatically". Each green-line
-     sheet is in its ONE set (greenHomesOf). Outside every set it is reserved for it (cardinalHome): it joins it by its own press or by the automatic cut (autoCut), is pulled in when nothing stops it, and the GF /
-     SS sheets of that set that share its orders name it as the partner still to come. In a set that is not its one set, and free to move, it leaves (greenAway). Its orders with GF / SS sheets outside that set
-     are a known split: one plain line, never a hold, a pull or a reason for another unit to join. */
-  function greenMarks(run, V, runPages, open, homeOf, ready, choices) {
-    const GH = greenHomesOf(V, run), all = Sets.ofRun(run.runId), setName = sid => { const st = all.find(s => s.setId === sid); return st ? st.name || `Set ${st.seq}` : "its set"; };
-    const MARKS = ["cardinalPull", "cardinalHold", "cardinalNote", "cardinalHome"], named = ids => ids.map(i => V.page.get(i)).filter(Boolean).map(sheetNameOf);
-    // (the GF / SS unit a partner sheet is in: every sheet of it names the green-line sheet still to come, as the group's sheets always did)
-    const FS = formationOf(V, "set", choices), unitOf = i => { const g = FS.groups.find(x => x.ids.includes(i) && !x.anchors.includes(i) && !x.ends.includes(i)); return g ? g.ids.filter(x => !g.anchors.includes(x) && !g.ends.includes(x)) : [i]; };
-    for (const p of runPages.filter(p => goldFamily(p.metal))) {
-      delete p.greenAway;
-      const id = V.idOf.get(p), h = id && GH.get(id); if (!h) continue;
-      for (const k of MARKS) delete p[k];
-      const home = h.home ? open.find(s => s.setId === h.home) || null : null, mates = h.partners.filter(i => { const q = V.page.get(i); return q && h.home && q.setId === h.home && !q.draft; });
-      const mineOrders = [...new Set(mates.flatMap(i => h.orders[i] || []))].sort(), here = homeOf(p), tell = tellOf(V, [id].concat(mates));
-      // (Paul, 27 Oct 2026: "it shares with GF Sheet 1 and GF Sheet 1 ship in two parts": each sheet with its set, and with its own orders: SharedOrders splitWords)
-      const splitSet = i => { const q = V.page.get(i); return q && q.setId && !q.draft ? setName(q.setId) : ""; }, splitDay = i => { const q = V.page.get(i), st = q && all.find(s => s.setId === q.setId); try { return st && st.day ? new Date(st.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""; } catch (_) { return (st && st.day) || ""; } };
-      const split = h.split.length ? `${sheetNameOf(p)} belongs to ${setName(h.home)} only: ${V.SO.core.splitWords ? V.SO.core.splitWords(h.split, { name: i => named([i])[0] || i, set: splitSet, day: splitDay }) : `${ordersWords([...new Set(h.split.flatMap(x => x.orders))].sort())} it shares with ${named(h.split.map(x => x.sheet)).join(", ")} ${h.split.flatMap(x => x.orders).length === 1 ? "ships" : "ship"} in two parts`} (a ${labelOf(p.metal)} sheet is in one set)` : "";
-      if (inSetNow(p)) {
-        if (here && h.home && h.home !== here.setId && !(+p.laserDoneAt > 0) && !(here.processReady || here.laserSetPending || here.laserDoneAt)) { p.greenAway = `Its orders are with the sheets of ${setName(h.home)}: a ${labelOf(p.metal)} sheet is in one set, so it leaves ${here.name || "this set"}`; continue; }
-        if (here && mates.length && !basePolicy(p, here.seq, choices).include && !cannotJoin(p, ready)) p.cardinalPull = `Shares ${ordersWords(mineOrders, tell)} with ${named(mates).join(", ")}`;
-      } else if (home) {
-        const wants = basePolicy(p, home.seq, choices).include, gap = wants ? "" : cannotJoin(p, ready);
-        p.cardinalHome = home.setId;
-        if (!wants && !gap) p.cardinalPull = `Shares ${ordersWords(mineOrders, tell)} with ${named(mates).join(", ")} in ${setName(home.setId)}`;
-        if (gap) for (const i of mates) for (const u of unitOf(i)) { const q = V.page.get(u); if (q && !goldFamily(q.metal) && q.setId === home.setId && !q.draft && !q.cardinalNote) q.cardinalNote = `${ordersWords(mineOrders, tell).replace(/^o/, "O")} shared with ${sheetNameOf(p)}: add that sheet to ${setName(home.setId)} (${gap})`; }
-        // (Paul, 26 Oct 2026: a 10K / 14K sheet is never cut or approved by itself: it waits greyed in its set, the Library's set card, for a person's press; its own card says so)
-        // (Paul, 27 Oct 2026: a FULL one needs the approval only: no green line, nothing to cut away: RoseStock.full, the test its own Cut Sheet button reads)
-        const tryFull = q => { try { return !!(window.RoseStock && typeof RoseStock.full === "function" && RoseStock.full(q)); } catch (_) { return false; } };
-        if (gap && solid(p.metal) && !p.roseCutAt && !(+p.laserDoneAt > 0)) p.cardinalNote = tryFull(p) ? `Waits in ${setName(home.setId)} for your approval: it is full, so it needs no green line. Press Approve on ${setName(home.setId)} in the Library and it joins ${setName(home.setId)}. Until then its charms can be moved by hand` : `Waits in ${setName(home.setId)} for your approval and its green cut line: press Approve & cut green line on ${setName(home.setId)} in the Library and it joins ${setName(home.setId)}. Until then its charms can be moved by hand`;
-      } else if (h.partners.length) {
-        // (its partners are in no set yet: it waits for THEIR set, never another one; a partner that is not full yet keeps it out with its group, as ever, R11)
-        const SRg = window.CharmNestSetRules, part = h.partners.map(i => V.page.get(i)).filter(q => q && SRg && SRg.isPartial(q)), all = [...new Set(Object.values(h.orders).flat())].sort();
-        p.cardinalHold = part.length ? `Waits: ${ordersWords(all, tell)} shared with ${part.map(sheetNameOf).join(" and ")}, which ${part.length > 1 ? "are" : "is"} not full yet, so they stay out of a set together`
-          : `Waits: ${ordersWords(all, tell)} shared with ${named(h.partners).join(", ")}, which ${h.partners.length === 1 ? "is" : "are"} in no set yet: it joins their set once it forms`;
-      }
-      if (split) { if (!p.cardinalNote) p.cardinalNote = split; for (const x of h.split) { const q = V.page.get(x.sheet); if (q && !q.cardinalNote) q.cardinalNote = `${ordersWords(x.orders).replace(/^o/, "O")} also on ${sheetNameOf(p)}, which belongs to ${setName(h.home)}: a ${labelOf(p.metal)} sheet is in one set, so ${x.orders.length === 1 ? "that order ships" : "those orders ship"} in two parts`; } }
-    }
-  }
+  // (GATECORE: anchorsOf, greenHomesOf, formationOf, cardinalApply and greenMarks are charm-nest-assembly-core.js's, word for word what this page ran: the marks cardinalPull, cardinalHold, cardinalNote,
+  //  cardinalHome and greenAway are written on this page's own sheets, as before)
+  const greenHomesOf = (V, run) => coreGate().greenHomesOf(V, run);
+  const formationOf = (V, anchored, choices) => coreGate().formationOf(V, anchored, choices);
+  const cardinalApply = (run, pages, sets, choices = selected()) => coreGate().cardinalApply(run, pages, sets, choices);
   /** What the rule says of one sheet changing set on its own (a tick of Include): { list: the solid sheets that change with it,
    *  blocked: the plain reason it cannot ("" when it can), orders }. */
   function cardinalFor(sh, included) {
@@ -6251,21 +6040,13 @@ const Gate = window.Gate = (() => {
     const shared = new Set(stays.flatMap(shares));
     return { list: list.length ? list : [sh], orders: g.orders, blocked: stays.length ? `${sheetNameOf(sh)} stays with ${stays.map(sheetNameOf).join(" and ")}: they share ${shared.size === 1 ? "an order" : "orders"}.` : "" };
   }
-  /** The multi-piece orders of a set's sheets that also have pieces on a sheet of its run outside it that could still join it. */
-  function cardinalSplit(set) {
-    const V = B.run && B.run.runId === set.runId ? cardinalView(B.run) : null; if (!V) return [];
-    const ids = V.sheets.filter(n => n.setId === set.setId).map(n => n.id), items = V.SO.core.between(V.sheets, ids, set.setId);
-    // (Paul, 26 Oct 2026: an order a green-line sheet shares with GF / SS sheets outside its ONE set is a known split, never a reason to hold the set: SharedOrders realPartners)
-    const real = typeof V.SO.core.realPartners === "function" ? V.SO.core.realPartners(V.sheets, items, set.setId, greenHomesOf(V, B.run), { green: n => { const p = V.page.get(n.id); return !!p && goldFamily(p.metal); } }) : items;
-    return real.filter(it => it.thereIds.some(i => !V.norm.get(i).fixed));
-  }
-  let assemblyQueue = Promise.resolve(), completionClock = 0, joinClock = 0;
-  /** One strictly increasing millisecond tick per look at a set (joinedAt on the sheets that join it, formedAt on the set when it first holds a valid minimum: charm-nest-set-invariants.js rule R6 reads them). */
-  const joinTick = () => (joinClock = Math.max(Date.now(), joinClock + 1));
-  /** What a sheet that joins a set writes of its own tick: Rose Gold only ever true or nothing (a false mark on a Rose Gold record would read as "not in its set" to everything that joins it from the Library);
-   *  10K and 14K as ever (true: its own tick · null: the cardinal rule pulled it in · false: neither). */
-  const solidMark = (sh, choices) => sh.metal === "rose" ? (sh.solidPick === true ? true : null) : solid(sh.metal) ? (picked(sh, choices) ? true : sh.cardinalPull ? null : false) : null;
+  /** The multi-piece orders of a set's sheets that also have pieces on a sheet of its run outside it that could still join it (GATECORE: the core's cardinalSplit; Paul, 26 Oct 2026: an order a
+   *  green-line sheet shares with GF / SS sheets outside its ONE set is a known split, SharedOrders realPartners). */
+  const cardinalSplit = set => coreGate().cardinalSplit(set);
+  let assemblyQueue = Promise.resolve();
+  // (the ticks of a look, joinedAt / formedAt / releasedAt, are the core's tick over gateClock; what a joining sheet writes of its own tick is the core's solidMark)
   function assemble(run, context) {
+    if (window.CNViewer && CNViewer.on()) return Promise.resolve(false);   // (CLOUDDRIVE build step 14: sets are formed by the cloud)
     const ops = window.CharmNestOperations;
     if (ops && !context) return ops.run({key:'membership:'+run?.runId, label:'Updating set membership', resources:['production:'+run?.runId], latest:true, priority:10}, token=>assemble(run,token));
     const task = assemblyQueue.catch(() => {}).then(() => assembleNow(run, context)).then(r => { selfCheck(run); return r; }).finally(() => { refreshAllCards(); });
@@ -6278,30 +6059,9 @@ const Gate = window.Gate = (() => {
      it and waits for it, set.cardinalWait); formation itself never builds a set around one. A committed or completed set is never judged (skipExempt). */
   const checks = new Map();
   /** The run's sets and sheets as the checker reads them, and the options; null when it cannot be read (no checker or no shared-orders page side loaded). */
-  function invariantInput(run) {
-    const SO = SOrd(), SRp = window.CharmNestSetRules; if (!SO || !SRp || !run) return null;
-    const keyOf = p => p.sheetId || `${p.runId || "run"}:${p.metal}:${p.page || 1}`;
-    const recs = [], waiting = [];
-    for (const p of allSheets().filter(p => p.runId === run.runId && !p.recalled)) {
-      const n = SO.fromPage(p); if (!n) continue;
-      // a completed GF/SS sheet outside every set that cannot join yet (still being saved or verified, or a person took it out) is not a fault of the assembly: it is not counted as a sheet that should
-      // be in a set (opts.waiting). SETFIX (Paul, 19 Oct 2026): it is still read, because it ties the sheets it shares orders with exactly as it does in the assembly (left out, the checker split a unit
-      // the assembly had rightly kept whole and called its sheets spare)
-      if (!inSetNow(p) && SRp.isCompleted(p) && !goldFamily(p.metal) && (p.leftSet || !p.outputs || !p.persistedDone || basePolicy(p, 0).reason === "Nest and verify first")) waiting.push(n.id);
-      const gold = goldFamily(p.metal);
-      recs.push({ id: n.id, metal: p.metal, runId: p.runId, page: p.page, sheetIndex: p.sheetIndex, draft: !!p.draft, setId: p.setId || null, releaseFull: !!p.releaseFull, laserDoneAt: p.laserDoneAt, roseCutAt: p.roseCutAt,
-        density: p.density, placedCount: (p.placements || []).length, releasedAt: p.releasedAt, joinedAt: p.joinedAt, ...(p.joinedBy ? { joinedBy: p.joinedBy } : {}), pieces: n.pieces,
-        ...(gold ? { cutApproved: p.solidPick === true, ...(p.autoMatched ? { autoMatched: String(p.autoMatched) } : {}), ...(p.autoCutWhy ? { autoCutWhy: String(p.autoCutWhy) } : {}) } : {}) });   // (autoCutWhy: Paul, 12 Nov 2026, why the automatic cut of a Rose Gold sheet waiting in its set is not recorded yet)
-    }
-    const ids = new Set(recs.map(r => r.id)), sets = [];
-    for (const set of Sets.ofRun(run.runId)) {
-      if (/^superseded/.test(String(set.status || ""))) continue;
-      const mine = allSheets().filter(p => p.runId === run.runId && p.setId === set.setId && !p.draft && !p.recalled).map(keyOf);
-      sets.push({ id: set.setId, name: set.name || `Set ${set.seq}`, seq: set.seq, day: set.day, formedAt: set.formedAt, committedAt: set.committedAt, status: set.status, laserDoneAt: set.laserDoneAt,
-        sheetIds: [...new Set(mine.concat(set.committedAt ? (set.sheetIds || []).filter(i => ids.has(i)) : []))] });
-    }
-    return { sets, sheets: recs, opts: { skipExempt: true, partialPartners: "pending", waiting } };
-  }
+  // (GATECORE: the core's invariantInput. A completed GF/SS sheet outside every set that cannot join yet is not counted as one that should be in a set (opts.waiting); SETFIX (Paul, 19 Oct 2026): it is
+  //  still read, because it ties the sheets it shares orders with exactly as it does in the assembly)
+  const invariantInput = run => coreGate().invariantInput(run);
   /** The checker's whole answer for the run's sets now: { ok, violations, partners, warnings, sets, notes, lines }; null when it cannot be read. Pure: no sheet is touched. */
   function selfCheckResult(run) {
     const I = window.CharmNestSetInvariants; if (!I || typeof I.check !== "function") return null;
@@ -6329,16 +6089,11 @@ const Gate = window.Gate = (() => {
     } catch (e) { try { console.warn("[Gate.selfCheck]", e); } catch (_) { /* never blocks */ } return null; }
   }
   async function assembleNow(run, context) {
-    const choices = Object.assign({}, selected());
-    const release = (sh, seq) => policy(sh, seq, choices);
     if (!modern(run?.runId) || !run) return;
-    const committedSheets = new Set(Sets.ofRun(run.runId).filter(s => s.committedAt).flatMap(s => s.sheetIds));
-    const pages = allSheets().filter(p => p.runId === run.runId && p.outputs && p.persistedDone && !committedSheets.has(p.sheetId));
     const SR = window.CharmNestSetRules;
     // (SETFIX, Paul 17 Oct 2026) without the set rules no set is formed, and it is said loudly: the former fallback here put EVERY sheet that wanted in into one set ("every sheet that wants in
     //  joins the run's open set"), which is exactly the set Paul found with 14 sheets in it. A page that cannot read charm-nest-set-rules.js must not guess.
     if (!SR) { const why = "The set rules did not load (charm-nest-set-rules.js), so no set is formed and no sheet is moved. Reload the page."; try { if (typeof agent === "function") agent({ run: run.runId }, "warn", why); } catch (_) { /* the error below says it */ } throw new Error(why); }
-    let open = openSetsOf(run.runId);
     /* Paul, 10 Oct: "In order for a Set of Sheets to be allowed to exist there must be at minimum 1 Completed GF Sheet and 1 Completed SS Sheet."
        Paul, 12 Oct: "as soon as the minimum criteria is met, and none of the other stipulations are conflicting, the set should be formed and as a result all following sheets
        should go into a following new set." (charm-nest-set-rules.js form/closed, the one definition; the server and the Library read the same.) The free sheets (full, in no set,
@@ -6350,84 +6105,52 @@ const Gate = window.Gate = (() => {
        this one set has 4 GF and 2 SS sheets. This should be literally impossible". Sheets that were completed together (a stream's end, a reload, a slow cloud, GF sheets that waited for
        the first SS) used to ALL join the one set the batch made. Now ONE set forms per round, from the fewest units (sheets that share an order are one unit) that make it valid
        (charm-nest-set-rules.js form/formAll), is tended and saved, and the round runs again for what is left: the next set is numbered after this one holds its sheets (Sets.ensure, follow). */
-    // the moment a sheet was first seen completed orders the sets (releasedAt, one tick per look so that two looks never tie); a sheet that is filling again loses it
-    { const seen = pages.filter(p => !p.releasedAt && SR.isCompleted(p)); if (seen.length) { completionClock = Math.max(Date.now(), completionClock + 1); for (const p of seen) p.releasedAt = completionClock; } for (const p of pages) if (p.releasedAt && !SR.isCompleted(p)) delete p.releasedAt; }
-    const inOpen = p => !!p.setId && !p.draft && open.some(s => s.setId === p.setId), adder = p => p.metal === "rose" || solid(p.metal);
-    // a person's drop of a sheet on one of the run's open sets (the Library, charm-nest-sheetwin.js joinSet sets p.handSet for this assembly only): that set takes it, formed or not
-    const handOf = p => (p.handSet && !p.cardinalHome && !adder(p) && open.some(s => s.setId === p.handSet && !s.committedAt)) ? p.handSet : null;
-    for (let round = 0; ; round++) {
-    cardinalApply(run, pages, open, choices);   // (sheets that share a multi-piece order come in together; a partner that cannot join yet is named, never waited for)
-    for (const p of allSheets()) if (p.runId === run.runId) delete p.setWait;
-    // (audit A, 25 Oct 2026: the set the free sheets complete is the EARLIEST open set left short of a class, a sheet of it having gone back to filling; only the newest was
-    //  ever completed, so an older set that went short stayed short for good, R1)
-    const last = open.find(s => membersOfSet(s).length && !formedOnce(s) && !SR.closed(formMembers(s))) || open[open.length - 1] || null, lastClosed = !!last && (formedOnce(last) || SR.closed(formMembers(last)));   // (SETSTAYSCLOSED: a set that has formed is never the one the free sheets complete)   // (STUCKSPIN: formMembers, a member being written again counts as its record)
-    let target = null, addTarget = null, formed = 0, apart = new Set(), joinNow = null;       // target: the set the free sheets join now · addTarget: the set 10K, 14K and Rose Gold may join now · formed: sheets it takes · apart: partners that wait for another set
-    {
-      const free = pages.filter(p => !inOpen(p) && !p.cardinalHome && !handOf(p) && !adder(p) && release(p, last && !lastClosed ? last.seq : 0).include);
-      // (the sheets that share an order: one unit, never split between sets. SETFIX: a partial sheet outside every set is an end of its groups, it never chains two of them together: formationOf)
-      // (SETFIX, Paul 19 Oct 2026: the units never tie through a sheet in a set, a cut one or an uncut Rose Gold / 10K / 14K one: formationOf(V, true). They did, so Set 2 took every unit that had one order
-      //  on a sheet of Set 1)
-      const V = cardinalView(run), pagesOfIds = ids => (ids || []).map(id => V.page.get(id)).filter(Boolean), links = V ? formationOf(V, true, choices).groups.map(g => ({ ids: pagesOfIds(g.ids), anchors: pagesOfIds(g.anchors), ends: pagesOfIds(g.ends) })) : [];
-      const lastOpen = !!last && !formedOnce(last);   // (SETSTAYSCLOSED: a formed set is not offered to the rules as a set to complete: the free sheets form the NEXT set)
-      // (SPLITWAIT, Paul 20 Nov 2026: "no set can be formed when there are mixed orders between coloured sheets"): a GF or SS sheet holding an order whose GF / SS piece is still waiting to be placed
-      //  (on no sheet yet) waits, with every sheet it shares an order with: Set 1 of 18 Nov formed from GF Sheets 1 and 2 while the silver of three of GF Sheet 2's orders waited, and those orders were split
-      const waitingOf = (() => { try {
-        const onSheet = new Set(allSheets().flatMap(p => (p.charms || []).map(c => c.poolId)).filter(Boolean)), out = new Map();
-        for (const r of (typeof Orders !== "undefined" && Orders && typeof Orders.rows === "function" ? Orders.rows() : [])) {
-          if (!r || !r.order || !["pulled", "waiting", "pooled"].includes(r.state) || (r.spec && !["gold", "silver"].includes(r.spec.material))) continue;
-          const ids = r.poolIds || []; if (ids.length && ids.every(id => onSheet.has(id))) continue;
-          const k = String(r.order.receiptId); if (!out.has(k)) out.set(k, r.spec && r.spec.material === "silver" ? "silver" : "gold");
-        }
-        return out;
-      } catch (e) { console.warn("[SPLITWAIT]", e); return new Map(); } })();
-      const oid = c => String(c && c.order != null ? c.order : "").split("/")[0];
-      const holds = new Map(free.map(p => [p, [...new Set((p.charms || []).map(oid).filter(k => waitingOf.has(k)))]]).filter(([, ks]) => ks.length));
-      for (const g of links) if (g.ids.some(x => holds.has(x))) { const ks = [...new Set(g.ids.flatMap(x => holds.get(x) || []))]; for (const x of g.ids) if (free.includes(x) && !holds.has(x)) holds.set(x, ks); }
-      for (const [p, ks] of holds) p.setWait = `Waits for its set: order${ks.length === 1 ? "" : "s"} ${ks.slice(0, 3).join(", ")}${ks.length > 3 ? " and more" : ""} still ${ks.length === 1 ? "has" : "have"} ${waitingOf.get(ks[0]) === "silver" ? "Sterling Silver" : "Gold Filled"} pieces waiting to be placed, and no set forms while an order is split`;
-      const freeNow = free.filter(p => !holds.has(p));
-      const f = SR.form(lastOpen ? formMembers(last) : [], freeNow, lastOpen, last && last.name, links);
-      for (const w of f.wait) w.sheet.setWait = w.why;
-      if (f.where === "last") target = last;
-      else if (f.where === "new") {
-        // (Paul, 25 Oct 2026 audit, L: the next set follows the run's NEWEST set by day and number, committed or not. It followed the newest OPEN one; with Set 2
-        //  committed while Set 1 still waited for its partner, the cloud handed Set 2 back again, a second open copy of it was made, no set ever formed again and the
-        //  copy was saved over the committed Set 2.)
-        const newest = Sets.ofRun(run.runId).filter(s => s.group === "dispatch" && !/^superseded/.test(String(s.status || ""))).pop() || last;
-        target = await Sets.ensure(run.runId, "dispatch", newest ? { follow: newest } : {});
-      }
-      if (f.where === "new" && !target) return;      // (the cloud deferred the number: nothing joins now)
-      // (SETFIX, Paul 19 Oct 2026) a NEW set is new: when the numbering hands back a set that already holds sheets (it has formed, or it is the formed set being followed), nothing joins it and
-      //  it is said once. Every round of this loop used to put the next set's sheets into that one set
-      if (f.where === "new" && target && (target === last || target.committedAt || membersOfSet(target).length)) {
-        const why = `${target.name || "A set"} was handed back as the next set but it already holds sheets: no sheet joins it, the next set waits (reload the page if this stays)`;
-        try { if (typeof agent === "function") agent({ run: run.runId }, "warn", why); } catch (_) { /* the wait lines below say it */ }
-        for (const p of f.join || []) p.setWait = why;
-        target = null; f.join = [];
-      }
-      formed = (f.join || []).length; joinNow = new Set(f.join || []);
-      if (target) open = openSetsOf(run.runId);
-      addTarget = target || (last && lastClosed ? last : null);
-      const adders = pages.filter(p => !inOpen(p) && !p.cardinalHome && adder(p) && release(p, (addTarget || last) ? (addTarget || last).seq : 0).include);
-      if (!addTarget && adders.length) for (const w of SR.settle(last ? formMembers(last) : [], adders).wait) w.sheet.setWait = w.why;
-      // a Rose Gold, 10K or 14K sheet the cardinal rule pulls goes with its partners' set: while a free partner waits for a later set, it waits too
-      const joining = new Set(f.join || []);
-      for (const a of adders) if (links.filter(g => g.ids.includes(a)).some(g => g.ids.some(q => q !== a && !adder(q) && free.includes(q) && !joining.has(q)))) apart.add(a);
-    }
-    if (!open.length) { run.heldSheets = pages.length; return; }
-    cardinalApply(run, pages, open, choices);   // (again, now that the sets are numbered and tended)
-    // a sheet of the run joins this set when it is the set's own (the cardinal rule: a mate is in it already), or when it is a free sheet the set takes now
-    const admits = (sh, set) => sh.cardinalHome ? sh.cardinalHome === set.setId : handOf(sh) ? handOf(sh) === set.setId : adder(sh) ? !apart.has(sh) && !!addTarget && addTarget.setId === set.setId : !!target && target.setId === set.setId && (!joinNow || joinNow.has(sh));      // (only the sheets this round's set takes: the rest wait for the next round's)
-    for (const set of open) {
-      if (set.committedAt) continue;
-      const wasThere = membersOfSet(set).length, kept = set.sheetIds.length, forming = target && target.setId === set.setId;
-      await tendSet(run, set, pages, choices, release, admits);
-      // (a set that formed earlier and nothing changed in is not saved again at every look)
-      if (forming || membersOfSet(set).length !== wasThere || set.sheetIds.length !== kept || set.touched) { delete set.touched; await Sets.save(set); }
-    }
-    if (!formed || ![...joinNow].some(p => p.setId && !p.draft) || round > pages.length) break;      // (a set was made or completed: the sheets left over may make the next one)
-    }
-    for (const p of pages) delete p.handSet;      // (a drop is read by one assembly)
-    run.heldSheets = pages.filter(p => p.draft).length;
+    /* GATECORE (Paul, 20 Nov 2026): every decision of the look above is charm-nest-assembly-core.js assemble / tendSet, the copy the cloud runs (releasedAt; the rounds, ONE set per round; the free
+       sheets and SPLITWAIT; SetRules.form / settle; the next set's number; the cardinal marks; a person's take-out, PERSONOUT; NOPARTIALSET; STUCKSPIN). This page keeps its own side of each step: */
+    const say = (level, text, c) => { try { if (typeof agent === "function") agent(Object.assign({ run: run.runId }, c || {}), level, text); } catch (_) { /* the card says it */ } };
+    const io = {
+      say,
+      // (Paul, 25 Oct 2026 audit, L: the next set follows the run's NEWEST set by day and number, committed or not: the core hands Sets.ensure that set to follow)
+      ensureSet: o => Sets.ensure(run.runId, "dispatch", o),
+      // (CLOUDDRIVE build step 8, m:P3; never while the drive is off): the moment a sheet was first seen completed is kept on its record too, so a set forms in the same order wherever it is formed
+      released: (seen, lost) => { if (window.CharmNestDrive) { try { CharmNestDrive.releasedAt(seen, lost); } catch (_) { /* kept in memory, as before */ } } },
+      // (PERSONOUT, Paul 16 Nov 2026: "Remove that sheet from the set of sheets it was incorrectly added to"): a sheet a PERSON marked to leave THIS set leaves it; the system takes no sheet out by itself
+      async leave(sh, set, o) {
+        const previous = { draft: sh.draft, setId: sh.setId, seq: sh.seq, sheetIndex: sh.sheetIndex, label: sh.label };
+        sh.draft = true; sh.setId = null; sh.seq = null; sh.sheetIndex = null; sh.label = null;
+        try {
+          await Pool.update(sh.charms.map(c => c.poolId).filter(Boolean), { setId: null, sheetId: null, state: "ready" });
+          if (sh.sheetId) await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, draft: true, setId: null, setSeq: null, sheetIndex: null, label: null, solidIncluded: o ? o.solidIncluded : null } });
+        } catch (e) { Object.assign(sh, previous); sh.problem = "Set membership was not saved: " + e.message; throw e; }
+        for (const row of Orders.rows()) if (row.poolIds.some(id => sh.charms.some(c => c.poolId === id))) row.state = "pooled";
+        sh.problem = null;
+      },
+      // Membership changes reuse verified artwork and approved backs. Only the manifest metadata and QR need saving; never re-render/re-upload the AI.
+      async join(sh, set, m) {
+        try {
+          try { await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, draft: false, setId: set.setId, setSeq: set.seq, sheetIndex: sh.sheetIndex, fileBase: sh.fileBase, folder: sh.fileBase, solidIncluded: m.solidIncluded } }); }   // (a solid sheet the cardinal rule pulled in is in without its own tick: null, so it never reloads as ticked; Rose Gold the same, its own tick or nothing)
+          catch (e) {
+            /* (STUCKSPIN, Paul 28 Oct 2026: "Run stopped: GF Draft 9 cannot go into Set 1: Set 1 would be bigger than the minimum ...") The cloud judges a join by the saved records (putSheet: R7, R3)
+               and refused one this look asked for by itself: an automatic move the rules refuse is LEFT OUT, never the end of the run (the core puts the sheet back, keeps the cloud's words ten minutes
+               and says it once). A person's own drop is refused to them as before. */
+            if (!(e && e.data && e.data.refused === "setRules") || (sh.handSet === set.setId && !sh.cardinalHome)) throw e;
+            return { refused: "setRules", why: e.message };
+          }
+          await Sets.onSheetSaved(sh, sh.charms, undefined, { setOverride: set });
+          if (Engrave.saveSheetBacks) await Engrave.saveSheetBacks(sh);
+          sh.problem = null;
+        } catch (e) { sh.problem = "Set membership was not saved: " + e.message; throw e; }
+        return { ok: true };
+      },
+      // Membership can have been saved before a label upload was interrupted: retry the QR alone without re-nesting or publishing the sheet twice. A sheet just joined: the run's own done mark.
+      joined(sh, set, o) {
+        if (o && o.again) return Sets.labelsReady(sh, set) ? false : Sets.onSheetSaved(sh, sh.charms, undefined, { labelsOnly: true, setOverride: set }).then(() => true);
+        RunCtl.onSheetDone(sh); return false;
+      },
+      saveSet: set => Sets.save(set)
+    };
+    const r = await coreGate(run).assemble(io);
+    if (!r || r.skipped || r.deferred || r.noOpen) return;      // (the cloud deferred the number, or the run has no open set: nothing more this look)
     // (autoCut and unpair: after this look, never inside it: the Cut Sheet press and the sheet window's move run an assembly of their own)
     // (NOAUTOTRIM, Paul 14 Nov 2026: spare sheets leave a set "only manually, not automatically": trimSurplus is no longer run by itself; a person takes a sheet out by hand)
     if (!(context && context.trimming)) { Promise.resolve().then(() => { autoCut(run); unpair(run).catch(e => console.warn("[Gate.unpair]", e && e.message)); }); }
@@ -6471,33 +6194,22 @@ const Gate = window.Gate = (() => {
      A second Rose Gold sheet is never cut into a set that already holds a CUT Rose Gold sheet by itself: it waits, says so, and a person decides (its own Cut Sheet press still works). Only when the pieces
      do not fit on the fuller sheet (it is full: no room) are both cut, since then the fuller one is not partial. */
   const rgOneTried = new Map(), rgOneSay = new Map(); let rgOneRunning = false;
-  const rgPlaced = p => (p.placements || []).length, orderOfCharm = c => String(c && c.order != null ? c.order : "").split("/")[0];
-  /** The uncut Rose Gold sheets of the run grouped by their ONE set (greenHomesOf), and the Rose Gold sheets already cut into each set. */
-  function rgOneGroups(run, V, GH) {
-    const uncut = new Map(), cutIn = new Map(), add = (m, k, p) => { if (!m.has(k)) m.set(k, []); m.get(k).push(p); };
-    for (const p of allSheets().filter(p => p.runId === run.runId && p.metal === "rose" && !(+p.laserDoneAt > 0) && !p.recalled)) {
-      if (p.roseCutAt) { if (inSetNow(p)) add(cutIn, String(p.setId), p); continue; }
-      if (!rgPlaced(p)) continue;
-      const h = V && GH.get(V.idOf.get(p)); if (h && h.home) add(uncut, String(h.home), p);
-    }
-    for (const l of uncut.values()) l.sort((a, b) => rgPlaced(b) - rgPlaced(a) || (+a.page || 0) - (+b.page || 0));
-    return { uncut, cutIn };
-  }
+  // (GREENCORE: which sheets are one set's Rose Gold sheets, and which of them is the fullest, is charm-nest-assembly-core.js rgOneGroups, the cloud's copy)
   /** Move the pieces of the smaller uncut Rose Gold sheets of one set onto the fullest one (one order at a time). true when something moved. */
   async function rgOneMerge(run, home, list, setName) {
     const SW = window.SheetWin, kit = SW && SW.holdKit; if (rgOneRunning || !kit || typeof kit.move !== "function") return false;
     if ((kit.busy && kit.busy()) || committingRun(run)) { rgOneSay.set(home, `${setName}: its Rose Gold pieces go onto ONE sheet as soon as the change running in the sheet window is done`); return false; }
-    const target = list[0], busy = p => p._roseAction || p._autoCutting || p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || !p.persistedDone || p._manualHold || p.rosePlan || p.roseProtected;
+    // (GREENCORE: a sheet that takes or gives nothing now, the orders to move, their pieces, once a minute each, and the move's own guard: the core's rgOne*, the cloud's merge runs the same)
+    const G = coreGate(run), target = list[0], busy = p => G.rgOneBusy(p);
     if (busy(target)) return false;
-    const guard = sh => sh.roseCutAt || +sh.laserDoneAt > 0 || sh.recalled ? "it is cut" : sh._manualHold ? "it is being changed by hand" : "";
+    const guard = sh => G.rgOneGuard(sh);
     rgOneRunning = true; let did = false;
     try {
       for (const src of list.slice(1)) {
         if (busy(src)) continue;
-        const orders = [...new Set(src.charms.filter(c => !c.excluded).map(orderOfCharm).filter(Boolean))];
-        for (const o of orders) {
-          const key = home + "|" + src.sheetId + "|" + o, last = rgOneTried.get(key); if (last && Date.now() - last.at < 60000) continue;
-          const pieces = src.charms.filter(c => orderOfCharm(c) === o); if (!pieces.length) continue;
+        for (const o of G.rgOneOrders(src)) {
+          const key = G.rgOneKey(home, src, o); if (!G.rgOneDue(rgOneTried, key)) continue;
+          const pieces = G.rgOnePieces(src, o); if (!pieces.length) continue;
           rgOneTried.set(key, { at: Date.now() });
           rgOneSay.set(home, `${setName}: its Rose Gold pieces go onto ONE sheet: order ${o} is moving from ${sheetNameOf(src)} to ${sheetNameOf(target)}`); liveRefresh(src);
           try {
@@ -6516,8 +6228,6 @@ const Gate = window.Gate = (() => {
     if (did) { rgOneSay.delete(home); try { await assemble(run); } catch (e) { console.warn("[Gate.rgOne] assemble", e && e.message); } liveRefresh(null); }
     return did;
   }
-  /** true when every order of the smaller sheets was tried and refused for want of room on the fullest one: then it is full, not partial, and both may be cut. */
-  const rgOneNoRoom = (home, list) => list.slice(1).every(src => src.charms.filter(c => !c.excluded).map(orderOfCharm).filter(Boolean).every(o => { const t = rgOneTried.get(home + "|" + src.sheetId + "|" + o); return t && t.room; }));
   /* ═══ RGCLEAR · a Rose Gold sheet's green line holds only its own set's orders (Paul, 12 Nov 2026: "This breaks the rule on this rose gold sheet. There are orders that belong to other sheets ...
      This specific order should have been placed after the green cut line"; "The system must be smart enough to do this retroactively in order to clear a rose gold sheet to be put onto a given set, and the
      noncomplying orders must be put beyond the green line and then ... that part of the sheet must be remastered to accommodate for the removed pieces ... the grey already used parts must not be renewed") ═══
@@ -6526,18 +6236,9 @@ const Gate = window.Gate = (() => {
      (RoseStock.reopen). The sheet is then nested again on what is left of its physical sheet (the grey parts already used stay as they are: the nest only sees the stock's outline), and cut by the next
      automatic try. Once its cut is recorded, the orders taken off are released: they nest past its green line, on the leftover of the same physical sheet, for their own set. */
   const rgClearBusy = new Set();
-  function rgForeign(p, home) {
-    const prot = p.roseCutAt && p.roseProtected && Array.isArray(p.roseProtected.placements) ? new Set(p.roseProtected.placements.map(q => q.id)) : null;
-    const ids = prot || new Set((p.placements || []).map(q => q.id));
-    const orders = [...new Set((p.charms || []).filter(c => !c.excluded && ids.has(c.id)).map(orderOfCharm).filter(Boolean))];
-    // (RGDRAFT, Paul 14 Nov 2026: "fix the rose gold sheet rules that you already know that you made up" / "you add the butterfly to the existing pieces that are not linked and then add the green cut line"): an order is of another set only when a piece of it is on a sheet IN another set. A piece on a draft (a 14K or 10K draft waiting for approval, a Gold Filled or
-    //  Sterling Silver draft) is in no set: it never made its Rose Gold piece "another set's" (Paul's words were "orders that belong to other sheets"; "or a draft" was added when it was coded)
-    return orders.filter(o => allSheets().some(q => q !== p && !q.recalled && (q.charms || []).some(c => !c.excluded && orderOfCharm(c) === o) && !!q.setId && !q.draft && String(q.setId) !== home));
-  }
-  function rgClearStep(run, p, home, stName) {
-    const SW = window.SheetWin; if (!SW || typeof SW.takeOffOrder !== "function") return false;
-    if (rgClearBusy.has(p.sheetId)) return true;
-    const foreign = rgForeign(p, home); if (!foreign.length) return false;
+  /** (GREENCORE) Take the orders of another set off a Rose Gold sheet (autoCutPlan's "clear": the core found them, rgForeign; RGDRAFT, Paul 14 Nov 2026: an order is of another set only when a piece
+   *  of it is on a sheet IN another set), then nest the sheet again; a cut sheet's recorded cut is set aside first. */
+  function rgClearAct(run, p, foreign, stName) {
     rgClearBusy.add(p.sheetId);
     const ow = foreign.length === 1 ? `order ${foreign[0]}` : `orders ${foreign.join(", ")}`;
     p.autoCutWait = `${stName}: ${ow} ${foreign.length === 1 ? "has" : "have"} pieces in another set, so ${foreign.length === 1 ? "it goes" : "they go"} past the green line of ${sheetNameOf(p)}; the sheet is nested again, then cut`;
@@ -6546,8 +6247,8 @@ const Gate = window.Gate = (() => {
       try {
         if (p.roseCutAt) await window.RoseStock.reopen(p, { replace: true, force: true, by: "Brites Manager (automatic: orders of another set go past the green line)" });
         for (const o of foreign) {
-          let r = null; try { r = await SW.takeOffOrder({ orderId: o, sheetId: p.sheetId, scope: "sheet", mode: "hold", by: "Brites Manager (automatic)", note: `Past the green line of ${sheetNameOf(p)}: its other pieces are in another set` }); } catch (e) { r = { error: String(e && e.message || e) }; }
-          const off = !(p.charms || []).some(c => !c.excluded && orderOfCharm(c) === o);
+          let r = null; try { r = await window.SheetWin.takeOffOrder({ orderId: o, sheetId: p.sheetId, scope: "sheet", mode: "hold", by: "Brites Manager (automatic)", note: `Past the green line of ${sheetNameOf(p)}: its other pieces are in another set` }); } catch (e) { r = { error: String(e && e.message || e) }; }
+          const off = !(p.charms || []).some(c => !c.excluded && String(c && c.order != null ? c.order : "").split("/")[0] === o);
           if (off) { (run.rgClearHeld || (run.rgClearHeld = {}))[o] = { sheetId: p.sheetId, at: Date.now() }; try { agent({ run: run.runId, metal: "rose" }, "ok", `Order ${o}: taken off ${sheetNameOf(p)} automatically; it goes past its green line, with its own set`); } catch (_) {} }
           else { try { agent({ run: run.runId, metal: "rose" }, "warn", `Order ${o} could not come off ${sheetNameOf(p)} yet (${(r && r.error) || "another change is running"}); tried again shortly`); } catch (_) {} }
         }
@@ -6560,83 +6261,39 @@ const Gate = window.Gate = (() => {
         try { agent({ run: run.runId, metal: "rose" }, "warn", `${sheetNameOf(p)}: its orders of another set could not be taken off yet (${String(e && e.message || e)}); tried again shortly`); } catch (_) {}
       } finally { setTimeout(() => rgClearBusy.delete(p.sheetId), 30000); delete p.autoCutWait; liveRefresh(p); }
     })();
-    return true;
   }
   /** The orders RGCLEAR took off a Rose Gold sheet are released once that sheet's cut is recorded (or it is gone): they nest past its green line, for their own set. */
   /* (RGDRAFT, Paul 14 Nov 2026: "fix the rose gold sheet rules that you already know that you made up" / "you add the butterfly to the existing pieces that are not linked and then add the green cut line"): an order held off a Rose Gold sheet is still "another set's" only while its sheet would hold orders of two different sets: the sets of the order's other pieces and the sets of the
      sheet's other orders' pieces, counting only sheets that are in a set. One set or none: the order goes back on the sheet, and the sheet joins that set and is cut there */
-  function rgStillForeign(o, p) {
-    const setsOf = rid => new Set(allSheets().filter(q => q !== p && !q.recalled && !!q.setId && !q.draft && (q.charms || []).some(c => !c.excluded && orderOfCharm(c) === rid)).map(q => String(q.setId)));
-    const all = new Set(setsOf(o));
-    for (const r of new Set((p.charms || []).filter(c => !c.excluded).map(orderOfCharm).filter(Boolean))) for (const sid of setsOf(r)) all.add(sid);
-    if (p.setId && !p.draft) all.add(String(p.setId));
-    return all.size > 1;
-  }
-  function rgClearRelease(run) {
+  /** One order RGCLEAR held is let go once its sheet's cut is recorded (autoCutPlan's "release": the core's rgStillForeign, NO6H: never by time; RGDRAFT: at once when nothing ties its sheet to two sets). */
+  function rgClearReleaseOne(run, o) {
     const held = run && run.rgClearHeld, HU = window.HoldUI; if (!held || !HU || typeof HU.release !== "function") return;
-    for (const [o, x] of Object.entries(held)) {
-      if (!x || x.releasing) continue;
-      const p = allSheets().find(q => q.sheetId === x.sheetId);
-      if (p && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled && rgStillForeign(o, p)) continue;   // (it waits for the cut)   (NO6H, Paul 14 Nov 2026: "Definitely not!!!": no release after 6 hours; only the cut, or nothing tying its sheet to two sets, lets it go)   (RGDRAFT, Paul 14 Nov 2026: "fix the rose gold sheet rules that you already know that you made up" / "you add the butterfly to the existing pieces that are not linked and then add the green cut line"): released at once when nothing ties its sheet to two sets
-      x.releasing = true;
-      Promise.resolve(HU.release(o)).then(r => { if (r && r.ok) { delete held[o]; try { agent({ run: run.runId, metal: "rose" }, "ok", `Order ${o}: released after the green line cut; it nests past the line`); } catch (_) {} try { if (window.RunCtl && RunCtl.save) RunCtl.save(run); } catch (_) {} } else x.releasing = false; })
-        .catch(() => { x.releasing = false; });
-    }
+    const x = held[o]; if (!x || x.releasing) return;
+    x.releasing = true;
+    Promise.resolve(HU.release(o)).then(r => { if (r && r.ok) { delete held[o]; try { agent({ run: run.runId, metal: "rose" }, "ok", `Order ${o}: released after the green line cut; it nests past the line`); } catch (_) {} try { if (window.RunCtl && RunCtl.save) RunCtl.save(run); } catch (_) {} } else x.releasing = false; })
+      .catch(() => { x.releasing = false; });
   }
+  /* GREENCORE (Paul, 20 Nov 2026: the Rose Gold cut is one copy too): WHAT the automatic cut does, and in which order, is charm-nest-assembly-core.js autoCutPlan, the copy the cloud's green-line
+     unit runs (A1 the RGCLEAR releases, A2 the retroactive clear, then per Rose Gold sheet: RGREST, a person's take-out, RGONE, its ONE set complete, RGCLEAR, the retry key and its wait, the cut).
+     This page hands it its own memory (autoCutTried, rgOneTried, run.rgClearHeld) and its flags, and carries each step out here, as it always did. */
   function autoCut(run) {
+    if (window.CNViewer && CNViewer.on()) return;   // (CLOUDDRIVE build step 14: the cloud cuts the green line)
     try {
-      // (RGCLEAR) released after their sheet's cut; and a sheet already cut into an open set that holds an order of another set inside its line is cleared, retroactively
-      try { rgClearRelease(run); } catch (e) { console.warn("[Gate.rgClear] release", e && e.message); }
-      try {
-        const setsNow = Sets.ofRun(run.runId).filter(st => !st.committedAt), appr = st => !!(st.committedAt || st.processReady || st.laserSetPending || st.laserDoneAt);
-        for (const p of allSheets().filter(p => p.runId === run.runId && p.metal === "rose" && p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled && inSetNow(p))) {
-          const st = setsNow.find(x => x.setId === p.setId); if (!st || appr(st)) continue;
-          if (p._roseAction || p._autoCutting || p._manualHold || ["nesting", "finishing", "queued"].includes(p.status)) continue;
-          rgClearStep(run, p, String(st.setId), st.name || "its set");
+      const plan = coreGate(run).autoCutPlan({ clearHeld: (run && run.rgClearHeld) || {}, tried: autoCutTried, oneTried: rgOneTried }), RS = window.RoseStock;
+      for (const x of plan.steps) {
+        const p = x.sheet;
+        if (x.kind === "release") { rgClearReleaseOne(run, x.order); continue; }
+        if (x.kind === "clear") { rgClearAct(run, p, x.foreign, x.setName); continue; }
+        if (x.kind === "cutOther") {   // (RGONE: a set that already holds a cut Rose Gold sheet takes no second one by itself)
+          p.autoCutWait = x.words;
+          if (!p._rgOneSaid) { p._rgOneSaid = true; try { agent({ run: run.runId, metal: p.metal }, "warn", `${sheetNameOf(p)}: not cut automatically: ${x.setName} already holds ${sheetNameOf(x.other)} (one Rose Gold sheet per set)`); } catch (_) {} }
+          liveRefresh(p); continue;
         }
-      } catch (e) { console.warn("[Gate.rgClear] retro", e && e.message); }
-      const RS = window.RoseStock; if (!RS || typeof RS.record !== "function" || !run || !modern(run.runId) || !S.cloud.ok) return;
-      const SRa = window.CharmNestSetRules, sets = Sets.ofRun(run.runId).filter(st => !st.committedAt), V = cardinalView(run), GH = V ? greenHomesOf(V, run) : new Map();
-      const approved = st => !!(st.committedAt || st.processReady || st.laserSetPending || st.laserDoneAt);
-      const RG1 = rgOneGroups(run, V, GH), merging = new Set();
-      for (const p of allSheets().filter(p => p.runId === run.runId && goldFamily(p.metal) && autoCuts(p.metal) && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled)) {
-        if (p._roseAction || p._rosePlanning || p._roseLoading || p._autoCutting || p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || !p.persistedDone || !p.verification?.ok || !p.placements.length || p._manualHold) continue;
-        let h = V && GH.get(V.idOf.get(p)), free = false;
-        // (RGREST, Paul 15 Nov 2026: "whatever is still remaining from the last green cut line should get added to the newest set of sheets. Of course, if there is an order that connects the Rose Gold sheet to another sheet
-        //  and another set of sheets, that takes precedence"): a Rose Gold sheet that is FINISHED (it is full, or a newer Rose Gold draft of the run has taken pieces) and that NO order ties to another sheet joins the run's
-        //  newest open set by itself: its pieces past the last green line are cut into it. A sheet an order ties to other sheets keeps the rule above (its partners' set, and it waits for them).
-        if (p.metal === "rose" && (!h || !h.home) && !(h && h.partners && h.partners.length)) {
-          let done = !!p.releaseFull; if (!done) { try { done = !!(RS.full && RS.full(p)); } catch (_) { /* not full that we can tell */ } }
-          if (!done) { const pages = (S.sheets.rose && S.sheets.rose.pages) || [], at = pages.indexOf(p); done = at >= 0 && pages.slice(at + 1).some(q => q && q.runId === run.runId && !q.recalled && (q.placements || []).length > 0); }
-          const nst = done ? newestOpenOf(run.runId) : null;
-          if (nst && !approved(nst)) { h = { home: nst.setId, partners: [], split: [] }; free = true; }
-        }
-        if (!h || !h.home) continue;                       // (no partner in a set yet: its set is not complete)
-        // (Paul, 12 Nov 2026: a person's own take-out wins: a Rose Gold sheet a person took out (Include off, Take out, a drop out of the set) is never put back by the automatic cut; its own press does)
-        if (p.autoCutOff || (p.leftSet && !inSetNow(p) && String(p.leftSet) === String(h.home))) continue;
-        // (RGONE: one Rose Gold sheet per set. A set that already holds a cut Rose Gold sheet takes no second one by itself; several uncut ones of one set are made one sheet first, then that one is cut)
-        { const home = String(h.home), stName = (sets.find(x => x.setId === h.home) || {}).name || "its set", cutOther = (RG1.cutIn.get(home) || []).filter(q => q !== p), sibs = RG1.uncut.get(home) || [];
-          if (cutOther.length) {
-            p.autoCutWait = `${stName} already has ${sheetNameOf(cutOther[0])} cut: a set never takes two partial Rose Gold sheets by itself, so ${sheetNameOf(p)} is not cut automatically. Press its Cut Sheet to add it anyway, or move its pieces`;
-            if (!p._rgOneSaid) { p._rgOneSaid = true; try { agent({ run: run.runId, metal: p.metal }, "warn", `${sheetNameOf(p)}: not cut automatically: ${stName} already holds ${sheetNameOf(cutOther[0])} (one Rose Gold sheet per set)`); } catch (_) {} }
-            liveRefresh(p); continue;
-          }
-          if (sibs.length > 1 && !rgOneNoRoom(home, sibs)) {
-            p.autoCutWait = `${stName} has ${sibs.length} Rose Gold sheets (${sibs.map(q => `${sheetNameOf(q)}: ${rgPlaced(q)} piece${rgPlaced(q) === 1 ? "" : "s"}`).join(", ")}): their pieces go onto ${sheetNameOf(sibs[0])} first, then that one sheet is cut`;
-            if (!merging.has(home)) { merging.add(home); Promise.resolve().then(() => rgOneMerge(run, home, sibs, stName)).catch(e => console.warn("[Gate.rgOne]", e && e.message)); }
-            continue;
-          }
-          delete p._rgOneSaid;
-        }
-        if (inSetNow(p) && p.setId !== h.home) continue;                                         // (in a set that is not its one set: it leaves it first, greenAway)
-        if (!free && !h.partners.some(i => { const q = V.page.get(i); return q && q.setId === h.home && !q.draft && SRa && SRa.isCompleted(q); })) continue;
-        const st = sets.find(x => x.setId === h.home); if (!st || approved(st) || (!free && (!SRa || !SRa.closed(membersOfSet(st))))) continue;   // (RGREST: a sheet no order ties to another joins the newest open set, formed or still collecting)
-        if (rgClearStep(run, p, String(st.setId), st.name || "its set")) continue;   // (RGCLEAR: its line holds only the orders of its own set)
-        const key = p.sheetId + "|" + st.setId + "|" + (p.jobId || "") + "|" + Object.keys(p.backPool || {}).length + "|" + Object.keys(p.outputs || {}).sort().join(",") + "|" + (p.label ? 1 : 0), last = autoCutTried.get(p.sheetId);
-        // (refused and nothing changed on the sheet: again in ten minutes, not at every look. Paul, 12 Nov 2026: a sheet that waits IN its set is not put in and taken out by a try any more, so it is tried
-        //  again every minute: it is cut the moment its reasons clear, whichever sheet cleared them, e.g. a partner's piece now on a saved sheet)
-        if (last && last.key === key && Date.now() - last.at < (last.refused && !(last.waitsIn && inSetNow(p) && p.setId === h.home) ? 600000 : 60000)) continue;
-        const tried = { key, at: Date.now() }; autoCutTried.set(p.sheetId, tried);
+        if (x.kind === "mergeWait") { p.autoCutWait = x.words; continue; }
+        if (x.kind === "merge") { const home = x.home, list = x.list, stName = x.setName; Promise.resolve().then(() => rgOneMerge(run, home, list, stName)).catch(e => console.warn("[Gate.rgOne]", e && e.message)); continue; }
+        if (x.kind === "passOne") { delete p._rgOneSaid; continue; }
+        if (x.kind !== "cut") continue;
+        const st = x.set, tried = { key: x.key, at: Date.now() }; autoCutTried.set(p.sheetId, tried);
         const was = { inSet: inSetNow(p), pick: p.solidPick };
         p._roseAction = true; p._autoCutting = true; p.autoMatched = st.setId;   // (its back engraving does not hold its join while the press runs: basePolicy; the set's Approve for laser cutting holds the set)
         const by = (typeof stampWho === "function" && stampWho().by) || "Brites Manager (automatic)";
@@ -6676,6 +6333,7 @@ const Gate = window.Gate = (() => {
         };
         go().finally(() => { p._roseAction = false; delete p._autoCutting; liveRefresh(p); });
       }
+      if (plan.error) throw plan.error;
     } catch (e) { try { console.warn("[Gate.autoCut]", e); } catch (_) {} }
   }
   /** After a membership or cut change: every view of this screen at once (the cards, the gate, the Library and its Approve buttons, the order window, the run banner, an open sheet window); other screens
@@ -6693,20 +6351,10 @@ const Gate = window.Gate = (() => {
     const SO = SOrd(); if (!SO || !run || !modern(run.runId)) return false;
     const spare = violations(run).filter(v => v.rule === "surplus" && Array.isArray(v.unit) && v.unit.length);
     if (!spare.length) return false;
-    const pageOf = new Map(); for (const p of allSheets().filter(p => p.runId === run.runId)) { const n = SO.fromPage(p); if (n) pageOf.set(n.id, p); }
-    const sets = new Map(Sets.ofRun(run.runId).map(st => [st.setId, st]));
-    const approved = st => !!(st.committedAt || st.processReady || st.laserSetPending || st.laserDoneAt);
-    const busy = p => p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone) || p._manualHold || p._incBusy || p._rosePlanning || p._roseAction || (window.SheetWin && typeof SheetWin.isOpen === "function" && SheetWin.isOpen() && typeof SheetWin.current === "function" && SheetWin.current() === p.sheetId);
-    const moved = [];
-    for (const v of spare) {
-      const st = sets.get(v.set); if (!st || approved(st)) continue;
-      const unit = v.unit.map(id => pageOf.get(id));
-      // (Paul, 26 Oct 2026: "the cut RG2 must leave Set 1 together with GF2": a green-line sheet of the unit leaves with it, cut or uncut; its cut, stock and remnant stay recorded, only its set
-      //  changes. A sheet the laser cut never moves)
-      if (unit.some(p => !p || +p.laserDoneAt > 0 || p.processReady || p.setId !== st.setId || busy(p))) continue;
-      for (const p of unit) { p.leftSet = st.setId; p.draft = true; if (goldFamily(p.metal)) p.solidPick = false; }
-      moved.push({ st, unit });
-    }
+    // (GREENCORE: which spare units may leave now is charm-nest-assembly-core.js trimPlan: a set not approved, no sheet of the unit cut on the laser, sent, elsewhere or busy, this page's own flags
+    //  handed in. Paul, 26 Oct 2026: "the cut RG2 must leave Set 1 together with GF2": a green-line sheet of the unit leaves with it, cut or uncut. A sheet the laser cut never moves)
+    const moved = coreGate(run).trimPlan(run, spare);
+    for (const { st, unit } of moved) for (const p of unit) { p.leftSet = st.setId; p.draft = true; if (goldFamily(p.metal)) p.solidPick = false; }
     if (!moved.length) return false;
     const ctx = Object.assign({}, context || {}, { trimming: true });
     try { await assembleNow(run, ctx); }                                   // (the set lets the spare unit go: tendSet, putSheet as drafts, the set's lists and labels made again)
@@ -6729,42 +6377,9 @@ const Gate = window.Gate = (() => {
      Only a set that is not committed, approved for laser cutting or on its way, a sheet that is not cut, being nested, saved or edited, and an order that ties nothing else; one move at a time, never while a
      person's change runs in the sheet window; tried again at a later look while it cannot (at most once a minute). What it does, or waits for, is one plain line on the set (Gate.unpairLine). */
   const unpairTried = new Map(), unpairSay = new Map(); let unpairRunning = false;
-  /** The moves that would put the run's sets right: [{ set, from, to|null (a new sheet), metal, orders, second, pieces:[charm] }] (pure: nothing is changed). */
-  function unpairPlan(run) {
-    const out = [], approvedSet = st => !!(st.committedAt || st.processReady || st.laserSetPending || st.laserDoneAt), SRu = window.CharmNestSetRules;
-    const placedOrders = p => { const on = new Set((p.placements || []).map(x => x.id)); return new Set((p.charms || []).filter(c => on.has(c.id)).map(c => String(c.order != null ? c.order : "").split("/")[0]).filter(Boolean)); };
-    const early = (a, b) => (+a.joinedAt || 0) - (+b.joinedAt || 0) || (+a.releasedAt || 0) - (+b.releasedAt || 0) || (+a.page || 0) - (+b.page || 0);
-    const fixedSheet = p => !!(p.roseCutAt || +p.laserDoneAt > 0 || p.recalled || p.processReady || p._manualHold || p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone) || !p.sheetId);
-    for (const st of openSetsOf(run.runId)) {
-      if (approvedSet(st)) continue;
-      const members = membersOfSet(st).filter(p => (p.metal === "gold" || p.metal === "silver") && SRu && SRu.isCompleted(p)), gfs = members.filter(p => p.metal === "gold").sort(early), sss = members.filter(p => p.metal === "silver").sort(early);
-      if (gfs.length < 2 && sss.length < 2) continue;
-      const os = new Map(members.map(p => [p, placedOrders(p)])), common = (a, b) => [...os.get(a)].filter(o => os.get(b).has(o));
-      // the set's own pair: its earliest GF sheet and earliest SS sheet that share an order
-      let pair = null; for (const g of gfs) { for (const s of sss) if (common(g, s).length) { pair = [g, s]; break; } if (pair) break; }
-      if (!pair) continue;
-      for (const [second, mate, keep] of [...gfs.filter(g => g !== pair[0]).map(g => [g, pair[1], pair[0]]), ...sss.filter(s => s !== pair[1]).map(s => [s, pair[0], pair[1]])]) {
-        // (only a sheet tied to the set by orders it shares with the pair's sheet of the other metal and nothing else: an order of its own colour on the pair's sheet (R16) or a tie to another sheet of the set is no pairing fault)
-        const orders = common(second, mate); if (!orders.length || common(second, keep).length || members.some(m => m !== second && m !== mate && m !== keep && common(second, m).length)) continue;
-        if (fixedSheet(mate)) continue;
-        // (one move per order, the sheet window's unit) where it goes: the second sheet's own partner of that metal (an open sheet outside every set that shares orders with it), else an open sheet that keeps
-        //  the pairing, else a new one
-        for (const o of orders) {
-          const pieces = mate.charms.filter(c => String(c.order != null ? c.order : "").split("/")[0] === o); if (!pieces.length) continue;
-          const LN = window.LiveNest, skip = new Set(pieces), fits = p => !LN || typeof LN.pairFits !== "function" || LN.pairFits(p, [o], run, { skip });
-          const free = p => p !== mate && p.runId === run.runId && p.metal === mate.metal && !(p.setId && !p.draft) && !(LN && LN.closed && LN.closed(p)) && !fixedSheetBusy(p) && fits(p);
-          const own = pagesOf(mate.metal).find(p => free(p) && [...placedOrders(p)].some(q => os.get(second).has(q)));
-          // (R16 HARD, Paul 26 Oct 2026: a sheet of this colour that already holds other pieces of the order takes these, so the order is whole on it; a move that would put it on a second sheet of
-          //  one colour waits: the order stays where it is, its sheets stay one unit)
-          const elsewhere = pagesOf(mate.metal).filter(p => p !== mate && p.runId === run.runId && !p.recalled && (p.charms || []).some(c => !skip.has(c) && !c.excluded && String(c.order != null ? c.order : "").split("/")[0] === o));
-          if (elsewhere.length) { const h = elsewhere.length === 1 && free(elsewhere[0]) ? elsewhere[0] : null; if (h) out.push({ set: st, from: mate, to: h, metal: mate.metal, orders: [o], second, pieces }); continue; }
-          out.push({ set: st, from: mate, to: own || pagesOf(mate.metal).find(p => free(p) && (p.charms || []).length) || null, metal: mate.metal, orders: [o], second, pieces });
-        }
-      }
-    }
-    return out;
-  }
-  const fixedSheetBusy = p => !!(p.recalled || p.roseCutAt || +p.laserDoneAt > 0 || p._manualHold || ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone));
+  /** The moves that would put the run's sets right: [{ set, from, to|null (a new sheet), metal, orders, second, pieces:[charm] }] (pure: nothing is changed). GREENCORE: charm-nest-assembly-core.js unpairPlan,
+   *  with this page's line of sheets and LiveNest's own pairing and closing rules handed in. (R16 HARD, Paul 26 Oct 2026: a sheet of this colour that already holds other pieces of the order takes these) */
+  const unpairPlan = run => { const LN = window.LiveNest; return coreGate(run).unpairPlan(run, { pagesOf, pairFits: LN && typeof LN.pairFits === "function" ? (p, o, r, x) => LN.pairFits(p, o, r, x) : null, closed: LN && LN.closed ? p => LN.closed(p) : null }); };
   /** The plain line a set shows while UNPAIR works on it, or waits: "" when nothing is to be done. */
   const unpairLine = setId => unpairSay.get(String(setId)) || "";
   async function unpair(run) {
@@ -6803,88 +6418,11 @@ const Gate = window.Gate = (() => {
     return did;
   }
   const committingRun = run => !!window.CharmNestOperations?.running?.("commit:" + run.runId);
-  /** One open set of the run, kept as the rules say: a sheet that no longer qualifies goes back out, the set's lists follow, a sheet the set takes now joins with its number and QR label. */
-  async function tendSet(run, set, pages, choices, release, admits) {
-    const SRt = window.CharmNestSetRules, before = joinTick(), at = joinTick();
-    if (SRt && !set.formedAt && (SRt.validSet(membersOfSet(set)).ok || formedOnce(set))) { set.formedAt = before; set.touched = true; }   // (SETSTAYSCLOSED 2: and kept with the set from now on)      // (a set that had formed before this look, a reload: its time is not known, so it counts from now: a sheet that joins it in this look is a late joiner)
-    // (a sheet being rewritten by hand in the sheet window keeps its place and gets its new label once it is written)
-    // (NOSETPULL, Paul 13 Nov 2026: "nothing is allowed to pull a set apart ... the system must not be allowed to remove sheets from a set just because orders are being shipped ... delete it now"; "I never even allowed this to happen"): a sheet is NEVER taken out of its set by the system: the rule that sent a sheet "that no longer qualifies" back to the drafts is deleted (only a person moves a sheet out of a set)
-    // (PERSONOUT, Paul 16 Nov 2026: "Remove that sheet from the set of sheets it was incorrectly added to"): NOSETPULL switched the whole let-go off, and with it the only way a PERSON's own
-    //  take-out (Gate.leaveSet) and the set's own repair ("Rebuild this set correctly", SetRepair) had to take a sheet out: both mark the sheet (leftSet = this set, draft) and ask the assembly,
-    //  which then answered "the run keeps it" every time. A sheet a person marked to leave THIS set leaves it; the system still takes no sheet out by itself, whatever the sheet reads as.
-    for (const sh of pages.filter(p => p.setId === set.setId && p.draft === true && p.leftSet === set.setId && !release(p, set.seq).include)) {
-      const previous = {draft:sh.draft,setId:sh.setId,seq:sh.seq,sheetIndex:sh.sheetIndex,label:sh.label};
-      if (window.CharmNestSheetName) set.sheetNos = CharmNestSheetName.raise(set.sheetNos, [sh]);   // (the number it had is retired for this set: nobody else is given it, charm-nest-sheet-name.js)
-      if (window.CharmNestSheetName && CharmNestSheetName.fileTag(sh)) sh.leftFileBase = sh.fileBase;   // (the set's file name it leaves with: a later save renames it working_, and claim reads this one to give its own old number back when it returns. Diagnostic, 26 Oct 2026)
-      sh.draft = true; sh.setId = null; sh.seq = null; sh.sheetIndex = null; sh.label = null;
-      try {
-        await Pool.update(sh.charms.map(c => c.poolId).filter(Boolean), { setId:null, sheetId:null, state:"ready" });
-        if (sh.sheetId) await api("charmNestLibrary", { op:"putSheet", sheet:{ id:sh.sheetId, draft:true, setId:null, setSeq:null, sheetIndex:null, label:null, solidIncluded:solid(sh.metal) ? picked(sh, choices) : null } });
-      } catch(e) { Object.assign(sh,previous); sh.problem="Set membership was not saved: "+e.message; throw e; }
-      for (const row of Orders.rows()) if (row.poolIds.some(id => sh.charms.some(c => c.poolId === id))) row.state = "pooled";
-      sh.problem=null;set.labels = null;set.touched = true;
-    }
-    const included = new Set(allSheets().filter(p => p.setId === set.setId && !p.draft).map(p => p.sheetId));
-    set.sheetIds = set.sheetIds.filter(id => included.has(id)); set.labelFiles = set.labelFiles.filter(f => included.has(f.sheetId));
-    set.materials = [...new Set(allSheets().filter(p => included.has(p.sheetId)).map(p => p.metal))];
-    for (const [rid, order] of Object.entries(set.orders)) {
-      for (const [tid, line] of Object.entries(order.lines)) { line.copies = line.copies.filter(c => included.has(c.sheetId)); if (!line.copies.length) delete order.lines[tid]; }
-      if (!Object.keys(order.lines).length) delete set.orders[rid];
-    }
-    for (const sh of pages) {
-      if (!release(sh, set.seq).include) continue;
-      // Membership can have been saved before a label upload was interrupted.
-      // Retry the QR alone without re-nesting or publishing the sheet twice.
-      if (sh.setId === set.setId) {
-        if (!Sets.labelsReady(sh, set)) { await Sets.onSheetSaved(sh, sh.charms, undefined, {labelsOnly:true,setOverride:set}); set.touched = true; }
-        continue;
-      }
-      if (sh.setId && !sh.draft) continue;      // (in another open set of the run: only a person, or the cardinal rule through that set, moves it)
-      if (!admits(sh, set)) continue;
-      // (STUCKSPIN, Paul 28 Oct 2026) a join the cloud refused for the owner's rules a moment ago is not asked again at every look: the sheet waits outside with the cloud's words (joinRefusedOf)
-      { const rf = joinRefusedOf(sh, set); if (rf) { sh.setWait = rf; continue; } }
-      // (NOPARTIALSET, Paul 18 Nov 2026: removing a charm from a 25% full draft: "why would that be engaged ... this draft sheet isn't complete"): a partial GF or SS sheet (not full, not cut) never joins a set (your rule R3), not even as a partner the cardinal rule would pull: it is not put into the set in memory
-      //  (the cloud refuses it, and while it waited for that a save of the sheet sent the join); only a person's own drop of it is asked, and refused to them in the cloud's words
-      if (SRt && typeof SRt.isPartial === "function" && SRt.isPartial(sh) && !(sh.handSet === set.setId && !sh.cardinalHome)) continue;
-      const previous = { draft:sh.draft, setId:sh.setId, setDay:sh.setDay, seq:sh.seq, group:sh.group, sheetIndex:sh.sheetIndex, fileBase:sh.fileBase, joinedAt:sh.joinedAt, joinedBy:sh.joinedBy }, nosWas = set.sheetNos;
-      sh.draft = false; sh.setId = set.setId; sh.setDay = set.day; sh.seq = set.seq; sh.group = "dispatch";
-      sh.joinedAt = at; if (sh.handSet === set.setId && !sh.cardinalHome) sh.joinedBy = "person"; else delete sh.joinedBy;      // (SETFIX: when it joined, and whether a person's drop put it there: the checker's closed-set rule reads both)
-      // after the highest number in use, and after any number that was ever in use in this set (set.sheetNos): a sheet that left the set must not leave its number to be taken twice.
-      // A sheet coming back to the set it left takes its own number again when it is free; its page in the run is never its number (charm-nest-sheet-name.js)
-      if (window.CharmNestSheetName) {
-        const here = allSheets().filter(p => p !== sh && p.setId === set.setId && p.metal === sh.metal);
-        set.sheetNos = CharmNestSheetName.raise(set.sheetNos, allSheets().filter(p => p !== sh && p.setId === set.setId));
-        sh.sheetIndex = CharmNestSheetName.claim(sh.leftFileBase && !CharmNestSheetName.fileTag(sh) ? Object.assign({}, sh, { fileBase: sh.leftFileBase }) : sh, here, set.sheetNos, n => CN.sheetFileBase(Object.assign({}, sh, { sheetIndex: n })));
-        delete sh.leftFileBase;
-        set.sheetNos = CharmNestSheetName.raise(set.sheetNos, [sh]);
-      } else sh.sheetIndex = 1 + Math.max(0, ...allSheets().filter(p => p !== sh && p.setId === set.setId && p.metal === sh.metal).map(p => +p.sheetIndex || 0));
-      sh.fileBase = CN.sheetFileBase(sh);
-      set.labels = null;
-      // Membership changes reuse verified artwork and approved backs. Only the
-      // manifest metadata and QR need saving; never re-render/re-upload the AI.
-      try {
-        try { await api("charmNestLibrary", {op:"putSheet", sheet:{id:sh.sheetId,draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:sh.sheetIndex,fileBase:sh.fileBase,folder:sh.fileBase,solidIncluded:solidMark(sh, choices)}}); }   // (a solid sheet the cardinal rule pulled in is in without its own tick: null, so it never reloads as ticked; Rose Gold the same, its own tick or nothing)
-        catch (e) {
-          /* (STUCKSPIN, Paul 28 Oct 2026: "Run stopped: GF Draft 9 cannot go into Set 1: Set 1 would be bigger than the minimum ...") The cloud judges a join by the saved records (putSheet: R7, R3)
-             and refused one this look asked for by itself: this page's copy of the set was behind its records (a sheet of it read as filling while it was written again). An automatic move the rules
-             refuse is LEFT OUT, never the end of the run: the sheet stays where it was, waits outside with the cloud's words, nothing was written, and the next looks do not ask again for ten minutes.
-             A person's own drop is refused to them as before. */
-          if (!(e && e.data && e.data.refused === "setRules") || (sh.handSet === set.setId && !sh.cardinalHome)) throw e;
-          Object.assign(sh, previous); if (previous.joinedAt === undefined) delete sh.joinedAt; if (previous.joinedBy === undefined) delete sh.joinedBy; set.sheetNos = nosWas;
-          const why = String(e.message || "the set rules refused it").replace(/\.$/, "");
-          joinRefused.set(sh.sheetId, { setId: set.setId, at: Date.now(), why }); sh.setWait = why;
-          try { agent({ run: run.runId, metal: sh.metal }, "warn", `${sheetNameOf(sh)} was not put into ${set.name || "the set"} (the cloud refused it for your set rules, so it waits outside and the run goes on): ${why}`); } catch (_) { /* the card says it */ }
-          continue;
-        }
-        await Sets.onSheetSaved(sh, sh.charms, undefined, {setOverride:set});
-        if (Engrave.saveSheetBacks) await Engrave.saveSheetBacks(sh);
-        sh.problem = null;
-      } catch (e) { Object.assign(sh, previous); sh.problem = "Set membership was not saved: " + e.message; throw e; }
-      RunCtl.onSheetDone(sh);
-      set.touched = true;
-    }
-    if (SRt && !set.formedAt && SRt.validSet(membersOfSet(set)).ok) { set.formedAt = at; set.touched = true; }   // (SETSTAYSCLOSED: the time is never taken back: a formed set that reads short later, a member saved empty or back to filling, is NOT forming again)      // (a set that lost a member and holds no valid minimum any more is forming again: its sheets that rejoin are no late joiners) it formed in this look: from now on it is closed to automatic joining (charm-nest-set-rules.js closed)
-  }
+  /* One open set of the run, kept as the rules say (GATECORE: charm-nest-assembly-core.js tendSet, the cloud's copy; this page's writes are assembleNow's io): the set's lists follow its members;
+     a sheet the set takes now joins with its number and QR label; (NOSETPULL, Paul 13 Nov 2026: "nothing is allowed to pull a set apart") the system never takes a sheet out by itself; (PERSONOUT,
+     Paul 16 Nov 2026) a sheet a PERSON marked to leave THIS set (leftSet = this set, draft) leaves it, its number retired for the set and its file name kept (leftFileBase) to take back when it
+     returns; (STUCKSPIN, Paul 28 Oct 2026) a join the cloud refused for the owner's rules a moment ago is not asked again for ten minutes; (NOPARTIALSET, Paul 18 Nov 2026) a partial GF or SS sheet
+     never joins a set, only a person's own drop of it is asked; (SETSTAYSCLOSED) the time a set formed (formedAt) is never taken back. */
   function editable(sh) {
     // Stock dimensions are shared only by pages of this material. Independent
     // nesting, thumbnail work and cloud activity must not disable this control.
@@ -9064,18 +8602,22 @@ const Engrave = window.Engrave = (() => {
    *    person to confirm ("Words to confirm", the reason line says what was read, split, left out and fixed): they are never cut unseen. What the rules cannot settle (a request that may carry the words, a bracket that
    *    may be for the shop, a label used twice) returns false here and the line goes on exactly as before (the paid reader, a person). ── */
   const READER = () => (typeof CharmNestEngraveRead !== "undefined" ? CharmNestEngraveRead : null);
-  /* FOLLOWASK (Paul, 15 Nov 2026): "the engraving ... needs to also be smart and interpreted so that the system doesn't conflate user instructions with the actual things they want on the charm". The words lose the
-     instruction text ("on the left side please", "all caps", a web link); the asks stay on the job (job.asks) for applyAsks after the fit. Rule-based, no model. Returns the lines to engrave; job.askUnsure when a person must look. */
-  function takeAsks(job, lines) {
-    const A = typeof CharmNestEngraveAsks !== "undefined" ? CharmNestEngraveAsks : null; job.askUnsure = false; delete job.applied;
-    if (!A || !lines || !lines.length) return lines;
-    let r; try { r = A.asksOf(lines.join("\n")); } catch (_) { return lines; }
-    job.asks = r.asks.length ? r.asks : undefined; job.askUnsure = !!r.unsure;
-    const out = r.words.split("\n").map(x => x.trim()).filter(Boolean);
-    if (r.asks.some(a => a.type === "reference")) job.askRef = true; else delete job.askRef;
-    return out;
-  }
-  const askWhy = job => job.askUnsure ? "Check the requested inscription: it may be an instruction" : job.askRef ? "A web link was sent with the order: it is not engraved. Say what goes on the charm" : null;
+  /* ── THE READING ITSELF is charm-nest-engrave-classify.js (cloud plan v2, build step 11, C3): classifyOnce, the rules' turn (readByRules), the faces' reading (classifyFaces), the pieces' and the
+     discs' own words, the free reading of a line not pooled yet (freeWords), the paid reader's answer (settleReading) and raiseCandidate, ONE copy that the page and the cloud both run. The page builds it
+     here over its own objects (the job map, ensureJobs, setReady / toWords / setNone, agentCall, the log), so the page reads exactly as it always did; the names below are the page's doors into it. ── */
+  let CLASSIFY_ = null;
+  const CLS = () => CLASSIFY_ || (CLASSIFY_ = CharmNestEngraveClassify.make({
+    items: () => items(), ensureJobs: row => ensureJobs(row), setNone: (j, why) => setNone(j, why), toWords: (j, why) => toWords(j, why), setReady: (...a) => setReady(...a),
+    needEvent: j => needEvent(j), agent: (...a) => agent(...a), agentCall: (...a) => agentCall(...a),
+    FACES: () => FACES(), READER: () => READER(), SIDES: () => SIDES(), ASKS: () => (typeof CharmNestEngraveAsks !== "undefined" ? CharmNestEngraveAsks : null), O: () => (typeof O !== "undefined" ? O : null), seals: () => CNEngravingSeals,
+    neverEngraves: row => neverEngraves(row), neverWhy: row => neverWhy(row), NEVER_OPEN: j => NEVER_OPEN(j), faceOf: x => faceOf(x),
+    trust: () => S.settings.engraveConfidence,   // (Settings' engraving confidence)
+    customSent: row => !!(window.CustomSheet && CustomSheet.sentOf && CustomSheet.sentOf(row)),
+    finished: row => !!(typeof O !== "undefined" && O && O.FINISHED_LINE && O.FINISHED_LINE.has(row.state))
+  }));
+  /* FOLLOWASK (Paul, 15 Nov 2026): the words lose the instruction text ("on the left side please", "all caps", a web link); the asks stay on the job (job.asks) for applyAsks after the fit (charm-nest-engrave-classify.js takeAsks). */
+  function takeAsks(job, lines) { return CLS().takeAsks(job, lines); }
+  const askWhy = job => CLS().askWhy(job);
   const lineRowOf = row => (row && row.parentRow) || row;
   /* SETBAR (Paul, 13 Oct 2026: "The thinner bar always sits on the shorter chain unless the user special requests a different layout"): the reader's one hook. A set's piece is the engraving job of slot D1 (the large,
      thicker bar) or D2 (the small, thinner bar); its chain is CharmNestOrders.setPiecesOf's `length` (null while a different layout is asked for and no person has looked: nothing is then assigned, the person sees every wording). */
@@ -9086,141 +8628,22 @@ const Engrave = window.Engrave = (() => {
     };
   })();
   /** The line's personalisation read by the rules (null: no reader on the page, or nothing written). */
-  function personalRead(row) {
-    const R = READER(), line = lineRowOf(row), sp = line && line.spec; if (!R || !sp || !(sp.personalization || []).length) return null;
-    try { return R.readPersonalisation(sp.personalization, { lengths: R.lengthsOfLine(line.line) }); } catch (_) { return null; }
-  }
-  /** Nobody else has spoken about the engraving (a buyer message, a staff note, an engraving-like message): the rules read the personalisation field alone only then, as the disc reading does. */
-  function spokeAlone(sp) { return !String(sp.buyerMessage || "").trim() && !String(sp.staffNote || "").trim() && !(sp.messages || []).some(m => (typeof O !== "undefined" && O && O.engravingNote ? O.engravingNote(m && m.text) : true)); }
-  /** A different layout of the set asked for by the buyer (the personalisation or the message): the clause, or "" (a set only: a line of more than one piece, or one that names two chain lengths). */
-  function layoutAsked(row, jobs) {
-    const R = READER(), line = lineRowOf(row), sp = line && line.spec; if (!R || !sp) return "";
-    let lengths = []; try { lengths = R.lengthsOfLine(line.line); } catch (_) { lengths = []; }
-    if (!(jobs.length > 1 || lengths.length > 1)) return "";
-    return R.layoutClause((sp.personalization || []).join("\n")) || R.layoutClause(sp.buyerMessage || "");
-  }
-  /** Give one job the words the rules read (or none), and put it to a person: "Words to confirm". */
-  function giveRead(row, j, words, why, how, confidence) {
-    const sp = row.spec, lines = takeAsks(j, String(words || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean));   // (FOLLOWASK: an instruction in the words is an ask, not engraving)
-    if (askWhy(j)) { why = askWhy(j); confidence = 0; }
-    j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
-    Object.assign(j, { text: lines.join("\n"), lines, source: "personalization", quote: (sp.personalization || []).join(" / ") || null, confidence: lines.length ? confidence || 0 : 0, questions: [why], claudeReasoning: null, requests: { side: faceOf(j), font: null, handwriting: false, image: false }, wordsSource: "personalization:" + how });   // (the reading stays on the card as its note once the preview is drawn and the reason line is gone, as the faces reading's own reason does)
-    toWords(j, why);
-    if (!j.pre) needEvent(j);
-    return j;
-  }
-  /** The rules' turn at a line, before the disc reading and the paid reader. true: the line is settled (its jobs wait for a person to confirm), false: go on as before. */
-  async function readByRules(row, jobs) {
-    const R = READER(); if (!R) return false;
-    const sp = row.spec, owner = items(), say = (a, b) => `${a}${b ? " — " + b : ""}`;
-    const stop = () => items() !== owner || row.state === "gone";
-    const all = jobs; jobs = jobs.filter(j => ["classify", "reclassify"].includes(j.state) && owner.get(j.key) === j);   // (only the jobs still to be read: one a person decided or approved is never touched)
-    if (!jobs.length) return false;
-    // 1. a different layout asked for: never guessed, a person decides which words go on which bar (the per-length wordings stay beside it)
-    const layout = layoutAsked(row, jobs), rd = personalRead(row);
-    if (layout) {
-      const why = say(`The buyer asks for a different layout: “${layout.slice(0, 160)}”. A person decides which words go on which piece`, rd && rd.labelled ? "the buyer wrote " + R.wordings(rd) : "");
-      for (const j of jobs) { giveRead(row, j, "", why, "layout"); if (stop()) return true; }
-      agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}: the buyer asks for a different layout (“${layout.slice(0, 80)}”): waits for a person`);
-      return true;
-    }
-    // 2. the yes / no / ask of the line from its options (ENGRAVED / BLANK) and what was written: a BLANK line with a note that asks for engraving, an ENGRAVED line with nothing written
-    const line = lineRowOf(row), dec = R.decide({ options: ((line.line && line.line.variations) || []).map(v => ({ name: v.name || v.formatted_name || "", value: v.value || v.formatted_value || "" })), words: (sp.personalization || []).length > 0,
-      note: !!(String(sp.buyerMessage || "").trim() && R.noteAsksEngraving(sp.buyerMessage)) || !!(String(sp.staffNote || "").trim() && R.noteAsksEngraving(sp.staffNote)), anyNote: !spokeAlone(sp) });
-    if (dec.engrave === "ask") {   // (BLANK with words or a note that asks for engraving, ENGRAVED with nothing written, two options that disagree: nothing is engraved until a person decides, and the card says why)
-      const has = (sp.personalization || []).length > 0, lab = !!(rd && rd.labelled);
-      const proposal = has && !lab ? (rd && !rd.unsure ? rd.whole : sp.personalization.join("\n")) : "";
-      const why = say(dec.why.charAt(0).toUpperCase() + dec.why.slice(1), lab ? R.say(rd) : rd && !rd.unsure && rd.changed ? R.say(rd) : "");
-      for (const j of jobs) { giveRead(row, j, proposal, why, "ask"); if (stop()) return true; }
-      agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}: ${dec.why}`);
-      return true;
-    }
-    // 3. the words themselves
-    if (!rd || rd.unsure || !spokeAlone(sp)) return false;
-    if (rd.labelled) {
-      const isSet = (jobs.length > 1 && !copiesOnly(jobs)) || rd.lengths.length > 1;   // (PIECES: two copies of one charm are not a set of two pieces: one label, its words on each copy)
-      if (!isSet && rd.pieces.length === 1) {   // one necklace, one label: its words are the line's
-        for (const j of jobs) { giveRead(row, j, rd.pieces[0].words, say(R.say(rd), "confirm the words"), "labelled", 0.9); if (stop()) return true; }
-        return true;
-      }
-      const asg = R.assign(rd, R.slotsOf(row, all)), note = R.say(rd);
-      const usable = asg.unmatched.length === 0 && Object.keys(asg.bySlot).length > 0;   // (every wording found its piece; a piece with no wording of its own is asked, never given another's)
-      const got = Object.values(asg.bySlot).map(x => x.label).join(" and ");
-      for (const j of jobs) {
-        const mine = usable && j.slot ? asg.bySlot[j.slot] : null, where = jobs.length > 1 && j.slot ? " (" + (SIDES().earOf(j.slot) || j.slot) + ")" : "";
-        giveRead(row, j, mine ? mine.words : "", mine ? say(note, `${mine.label} piece${where}: confirm the words`) : usable ? say(`The buyer wrote words for ${got} only: say what goes on this piece${where}, or no engraving`, note) : say(`Say which words go on this piece${where}`, note), mine ? "labelled" : "labelled-open", mine ? 0.9 : 0);
-        if (stop()) return true;
-      }
-      agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}: ${R.say(rd)}${usable ? "" : " — which piece gets which is for a person"}, no paid reading`);
-      return true;
-    }
-    if (rd.changed && jobs.length === 1) {   // the words with the notes taken out and the degree signs put right
-      giveRead(row, jobs[0], rd.whole, say(R.say(rd), "confirm the words"), "cleaned", 0.9);
-      agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}: ${R.say(rd)}, no paid reading`);
-      return true;
-    }
-    return false;
-  }
-  const jobFace = j => (j && (j.face === "front" || /~front$/.test(String(j.key))) ? "front" : "back");   // (the face of a job, in a line: the page's Faces module is the one reader, this is the same rule for the code below)
-  /** Are all these jobs copies of one thing (slots "C1".."CN")? Then they are not a set of different pieces. */
-  const copiesOnly = jobs => { const S = SIDES(); return !!S && jobs.length > 0 && jobs.every(j => j.slot && S.isCopy(j.slot)); };
-  /** PIECES: the words of each piece of a line cut by unit (quantity >= 2), from the personalisation field alone, when the note says plainly which words go on which piece (charm-nest-engrave-sides.js wordsForPieces), else null:
-   *  then every piece gets the one reading of the line. Never for a line of quantity 1 (the disc reading below handles those). */
-  function pieceWordsOf(row, jobs) {
-    const S = SIDES(); if (!S || !S.wordsForPieces) return null;
-    const mine = jobs.filter(j => jobFace(j) !== "front" && j.slot); if (mine.length < 2 || !mine.some(j => S.isCopy(j.slot) || S.unitOf(j.slot) > 1)) return null;
-    return S.wordsForPieces(row.spec || {}, mine.map(j => j.slot), { engravingNote: typeof O !== "undefined" && O ? O.engravingNote : null });
-  }
-  /** Each piece of a line cut by unit takes ITS words from the note (pieceWordsOf). A note that numbers the pieces, has one entry for each or says "the same on all" is ready for its fit; a plain list ("Mom & Dad") is a proposal for a person to confirm. */
-  async function giveUnitWords(row, jobs, split) {
-    const sp = row.spec, owner = items(), S = SIDES();
-    for (const j of jobs) {
-      if (!["classify", "reclassify"].includes(j.state) || items().get(j.key) !== j || !j.slot || jobFace(j) === "front") continue;
-      const lines = String(split.words[j.slot] || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean); if (!lines.length) continue;
-      j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
-      Object.assign(j, { text: lines.join("\n"), lines, source: "personalization", quote: (sp.personalization || []).join(" / "), confidence: split.sure ? 1 : 0, questions: [], claudeReasoning: null, requests: { side: jobFace(j), font: null, handwriting: false, image: false }, wordsSource: "personalization:" + split.how, wordsHow: "pieces" });
-      agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku} · ${S.slotWord(j)}: "${lines.join(" / ")}" read from the note (${split.how}), no paid reading`);
-      if (split.sure) await setReady(j); else toWords(j, `The note may give each piece its own words: confirm the words of ${S.slotWord(j) || "this piece"}`);
-      if (items() !== owner || row.state === "gone") return;
-    }
-  }
-  /** The words of each disc of a counted line, from its personalisation field alone (charm-nest-engrave-sides.js splitWords), or null when the note does not say plainly. */
-  function discWordsOf(row, jobs) {
-    const S = SIDES(); if (!S || !S.wordsForDiscs) return null;
-    return S.wordsForDiscs(row.spec || {}, jobs.map(j => j.slot), { engravingNote: typeof O !== "undefined" && O ? O.engravingNote : null });
-  }
-  /** The line's engraving setup when the line is read face by face (a front job, a front in the setup, or a person's own back words); null for a line that engraves the back as it always did (the reader decides). */
-  function facedSetup(row, jobs) {
-    const F = FACES(); if (!F) return null;
-    const setup = F.setupOf(row);
-    // (a reading the intake marked for a person goes to the cards for a person too: the paid reader never decides it)
-    // (BFSIDES: a back line whose words the intake itself read, "2 sides" on a design with its own front art, is read from the setup too: no paid reading, nothing guessed)
-    const ownPieces = !!(setup.edited && setup.pieces && row.engravingOverride && row.engravingOverride.pieces);   // (a person gave a piece its own words)
-    return jobs.some(isFront) || setup.faces.includes("front") || (setup.faces.includes("back") && (setup.back || ownPieces) && (setup.edited || setup.sides)) || setup.needsPerson ? setup : null;
-  }
-  /** SETWORDS: the intake's own default-face reading (a bar's front, a listing's face: spec.engraving source "profile") of a line of several pieces that could not give each piece its words, with no person's word on it and
-   *  no listing profile of its own (PIECE_LISTINGS reads its pieces itself): its words are read by the rules (readByRules) and the usual path, its face stays the one the rule gave. */
-  function unsplitDefault(row, jobs, setup) {
-    const line = lineRowOf(row), sp = line && line.spec, e = sp && sp.engraving;
-    if (!e || e.source !== "profile" || setup.edited || !(jobs.length > 1) || row.engravingOverride || (line && line.engravingOverride)) return false;
-    try { if (O.pieceListing && O.pieceListing(line.line)) return false; } catch (_) { return false; }
-    if (e.needsPerson && !e.pieces) return true;
-    // (a SET, a line that names two chain lengths, whose words carry chain-length or Left / Right labels: the splitter gave them out in order, but no bar of a set is "left" and a length belongs to its chain: the rules decide, as before)
-    const R = READER(), rd = personalRead(row); let lens = []; try { lens = R ? R.lengthsOfLine(line.line) : []; } catch (_) { lens = []; }
-    return lens.length > 1 && !!(rd && rd.labelled && rd.pieces.some(p => p.kind === "length" || p.kind === "side"));
-  }
-  /** engraveCandidate is the intake's word about WORDS ("something is written to engrave"). A line the buyer asked to engrave on a face without writing any (the intake's reading: needsPerson, "nowords"), or
-   *  that a person set up with faces, is raised here so a person is asked rather than the line being cut plain. Custom, add-on and no-design lines are never raised. In memory only: it is read again on every pull. */
-  function raiseCandidate(row) {
-    row = (row && row.parentRow) || row; const sp = row && row.spec; if (!sp) return false; if (neverEngraves(row)) return false; if (sp.engraveCandidate) return true;   // (an earring is never raised: ZODNOBACK)
-    const F = FACES(); if (!F || !sp.designSku || sp.noDesign || sp.ownDesign || (sp.special && (sp.special.notCut || sp.special.own)) || (window.CustomSheet && CustomSheet.sentOf && CustomSheet.sentOf(row))) return false;
-    // SETBAR-C: the option says ENGRAVED (listing 532401548 "GOLD·Set·ENGRAVED") and the buyer wrote nothing anywhere: the buyer paid for engraving, so a person is asked what to engrave (it was cut plain, in silence)
-    { const R = READER(); if (R && row.state !== "gone" && !(typeof O !== "undefined" && O && O.FINISHED_LINE && O.FINISHED_LINE.has(row.state)) && !(row.engrave && !["classify", "reclassify"].includes(row.engrave.state))) { let d = null; try { d = R.decide({ options: ((row.line && row.line.variations) || []).map(v => ({ name: v.name || v.formatted_name || "", value: v.value || v.formatted_value || "" })), words: false, note: false }); } catch (_) { d = null; }
-      if (d && d.token === "ENGRAVED" && d.engrave === "ask") { sp.engraveCandidate = true; sp.engraveRaised = true; return true; } } }
-    let st; try { st = F.setupOf(row); } catch (_) { return false; }
-    if (!st.faces.length || !(st.needsPerson || st.edited)) return false;
-    sp.engraveCandidate = true; sp.engraveRaised = true; return true;
-  }
+  function personalRead(row) { return CLS().personalRead(row); }
+  function spokeAlone(sp) { return CLS().spokeAlone(sp); }
+  function layoutAsked(row, jobs) { return CLS().layoutAsked(row, jobs); }
+  function giveRead(row, j, words, why, how, confidence) { return CLS().giveRead(row, j, words, why, how, confidence); }
+  /** The rules' turn at a line, before the disc reading and the paid reader (SETBAR-C). true: the line is settled (its jobs wait for a person to confirm), false: go on as before. */
+  function readByRules(row, jobs) { return CLS().readByRules(row, jobs); }
+  const jobFace = j => CLS().jobFace(j);
+  const copiesOnly = jobs => CLS().copiesOnly(jobs);
+  function pieceWordsOf(row, jobs) { return CLS().pieceWordsOf(row, jobs); }
+  function giveUnitWords(row, jobs, split) { return CLS().giveUnitWords(row, jobs, split); }
+  function discWordsOf(row, jobs) { return CLS().discWordsOf(row, jobs); }
+  /** The line's engraving setup when the line is read face by face, or null for a line that engraves the back as it always did (the reader decides). */
+  function facedSetup(row, jobs) { return CLS().facedSetup(row, jobs); }
+  function unsplitDefault(row, jobs, setup) { return CLS().unsplitDefault(row, jobs, setup); }
+  /** engraveCandidate is the intake's word about WORDS; a line the buyer asked to engrave on a face without writing any, or that a person set up with faces, is raised so a person is asked (in memory only). */
+  function raiseCandidate(row) { return CLS().raiseCandidate(row); }
   /** NO EARRING IS EVER ENGRAVED (ZODNOBACK): the line's open engraving jobs (a words card, a placement to check, a restored card from an earlier session) are put away as "no engraving", and an open summary with no job
    *  of its own likewise; its Review cards go with them. A job with an approval on it, a cut-plain decision, its seals and the records on sheets are never touched. Asked for every line each time it is read again
    *  (Orders.interpretAll), so a restore, a pull and a changed order all pass here. → true when something changed. */
@@ -9233,43 +8656,10 @@ const Engrave = window.Engrave = (() => {
     if (hit) { try { const S = SIDES(); if (S && row._engraveLinked) S.linkParent(sidesCtx, row, jobsOf(row)); } catch (_) { /* the summary is drawn again from the jobs */ } }
     return hit;
   }
-  /** What a face job starts with from the setup, or null. A back line the intake read as "back" with nothing a person said keeps the old reader: no seed. */
-  function seedOf(setup, job) {
-    const F = FACES(); if (!F || !setup) return null;
-    if (setup.mode === "back" && !setup.edited && !(setup.sides && setup.back)) return null;   // (a back line the intake read as "back" with no words of its own keeps the reader; "2 sides" on a design with its own front art carries the back's words)
-    return F.seedFor(setup, faceOf(job), job.slot || null);   // (the ear's own words when the buyer gave different words for each ear or disc)
-  }
-  /** The words of each face job of a line that has a front or a person's own words: from the setup, no paid reading, nothing guessed. A face with no words goes to a person with the buyer's own words
-   *  beside it. Only the jobs still to be read are touched: a face already decided stays as it is. */
-  async function classifyFaces(row, jobs, setup) {
-    const sp = row.spec, owner = items(), job = jobs[0], F = FACES();
-    const todo = jobs.filter(j => ["classify", "reclassify"].includes(j.state) && items().get(j.key) === j);
-    const quote = (sp.personalization || []).join(" / ") || setup.raw || null;   // (words only in a note: the intake keeps them as `raw`, so the card shows what the buyer wrote)
-    // (a person's words for ONE piece, engravingOverride.pieces[slot]: that job is read from its own piece's setup, so it needs no one while a sibling piece still does)
-    const pieceSetup = j => (j.slot && row.engravingOverride && row.engravingOverride.pieces && F ? F.setupOf(lineOf(row), undefined, j.slot) : setup);
-    for (const j of todo) {
-      const face = faceOf(j), sj = pieceSetup(j), seed = seedOf(sj, j);
-      j.state = "classify"; j.row.engrave = { needed: false, state: "classify", seals: CNEngravingSeals.merge(j.row.engrave, j) };
-      j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
-      if (seed && !sj.needsPerson) {
-        delete j.seededFrom;
-        Object.assign(j, { text: seed.text, lines: seed.lines.slice(), source: seed.source, quote, confidence: seed.confidence, questions: [], claudeReasoning: null, requests: { side: face, font: seed.fontWord || null, handwriting: false, image: false }, wordsSource: "spec.engraving", faceFontWord: seed.fontWord || null, ...(seed.how === "single" ? { wordsHow: "single" } : {}) });
-        agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}${j.slot ? " · " + SIDES().slotWord(j) : ""} · ${face}: "${seed.text.replace(/\n/g, " / ")}" taken from ${seed.how === "person" ? "the person's setup" : "the order"} (${setup.why || setup.mode}), no paid reading`);
-        await setReady(j);
-      } else {
-        // a face with no words, or a reading the intake marked for a person: the card asks (with the intake's own reason), the words it found stand as the proposal, nothing is approved and nothing is paid for
-        const why0 = sj.needsPerson ? (sj.why || "The note does not say which words go on the front and which on the back") : `The order gives no words for the ${face}`;
-        const rdNone = !seed && setup.mode === "none" ? personalRead(row) : null;   // (SETBAR-C: a BLANK line that has words proposes the words read by the rules, never the labelled wordings of two pieces glued together)
-        const proposal = seed ? seed.text : setup.mode === "none" ? (rdNone && rdNone.labelled && !rdNone.unsure ? "" : rdNone && rdNone.changed && !rdNone.unsure && !rdNone.labelled ? rdNone.whole : (sp.personalization || []).join("\n")) : "", lines = proposal.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
-        const why = why0 + (rdNone && rdNone.changed && !rdNone.unsure && READER() ? " — " + READER().say(rdNone) : "");
-        Object.assign(j, { text: lines.join("\n"), lines, source: "personalization", quote, confidence: 0, questions: [why], claudeReasoning: null, requests: { side: face, font: seed && seed.fontWord || null, handwriting: false, image: false }, wordsSource: "spec.engraving", faceFontWord: seed && seed.fontWord || null });
-        toWords(j, why);
-      }
-      if (items() !== owner || row.state === "gone") return job;
-      if (!j.pre) needEvent(j);   // (ENGPRE: a line read before it is pooled writes nothing to the order's timeline: its edit and its approval do)
-    }
-    return job;
-  }
+  /** What a face job starts with from the setup, or null. */
+  function seedOf(setup, job) { return CLS().seedOf(setup, job); }
+  /** The words of each face job of a line that has a front or a person's own words: from the setup, no paid reading, nothing guessed. */
+  function classifyFaces(row, jobs, setup) { return CLS().classifyFaces(row, jobs, setup); }
   /* FACEHEAD (Paul, 11 Nov 2026, order 4220952355: no grid, no engraving, no controls on a front + back heart): a face that waits for a person only because the intake could not read its words
      ("which words go on the front and which on the back"), that no person has answered, is read again from the order as it reads now, once per page: when the order now gives that face its
      words, it is drawn and fitted and goes on to Approve as any face read from the order. A face a person has answered, or one the order still does not say, stays as it is. */
@@ -9289,153 +8679,11 @@ const Engrave = window.Engrave = (() => {
       }
     } finally { rereading = false; }
   }
-  async function classifyOnce(row, opts) {
-    const jobs = ensureJobs(row), job = jobs[0]; const sp = row.spec; const owner = items();
-    for (const j of jobs) CNEngravingSeals.keep(j);
-    // NO EARRING IS EVER ENGRAVED (ZODNOBACK): nothing is read, nothing is paid for, nothing asks; a job with an approval on it stays as it is
-    if (neverEngraves(row)) { for (const j of jobs) if (NEVER_OPEN(j) && j.state !== "none") setNone(j, neverWhy(row)); return job; }
-    if (!sp.engraveCandidate && !raiseCandidate(row)) { for (const j of jobs) setNone(j, "no personalisation, message or note"); return job; }
-    // a person said "no engraving" for this line: it stays so (never the paid reader again)
-    const said = FACES() ? FACES().setupOf(row) : null;
-    if (said && said.edited && said.mode === "none") { for (const j of jobs) setNone(j, `no engraving — decided by ${said.by || "a person"}`); return job; }
-    // "1 side" on a design with its own front art (the intake's reading, no person's word against it): only the art is engraved, the buyer's words are not; the card says so, nothing is paid for or asked
-    if (said && !said.edited && said.mode === "none" && said.sides && !said.needsPerson) { for (const j of jobs) setNone(j, said.why || "1 side: only the design's own art is engraved"); return job; }
-    // a line with a front (or a person's own words for a face, or a reading marked for a person): each face job takes its words from the line's setup, no paid reading (charm-nest-engrave-faces.js)
-    // SETWORDS (Paul, 9 Nov 2026; tests/charm-nest/engrave-read-world.cjs): BARFRONT (28 Oct) gives every bar necklace the FRONT, the set of 2 bars of listing 532401548 too. Its default reading hands a line of several pieces
-    // to the pieces' splitter, which knows no chain lengths: "16\"= 33*0'45\" N … (the asterisk is …) 18\"= Ginger" waited whole, asterisks and note to the shop included, for a person to split by hand. The bar rule
-    // decides the FACE; the WORDS of such a line (the intake's default reading, unsplit, no person's word, no listing profile of its own) are read here as before BARFRONT: per chain length, notes out, ° for *, BLANK / ENGRAVED, a layout asked for.
-    const faceSetup = facedSetup(row, jobs), setWords = !!faceSetup && unsplitDefault(row, jobs, faceSetup);
-    if (faceSetup && !setWords) return classifyFaces(row, jobs, faceSetup);
-    // SETBAR-C: the buyer's words read by plain rules before any paid reader: a label per piece (16"= ... 18"= ...), a note to the shop left out, an asterisk that is a degree sign, a different layout asked for, BLANK / ENGRAVED
-    if (await readByRules(row, jobs)) return job;
-    // Etsy offers engraving on these designs; legacy catalog estimates are not eligibility rules.
-    const engravable = !neverEngraves(row);   // (always true here: an earring never gets this far, the line above puts it away; the server answers "no engraving" for engravable:false too)
-    // a line cut into slots that already holds the words (read before it was known to be a pair) asks a person which ear gets which: no new paid reading
-    if (jobs.length > 1 && jobs.every(j => j.seededFrom && j.text)) {
-      for (const j of jobs) { const earOf = SIDES().slotWord(j); delete j.seededFrom; j.lines = j.lines && j.lines.length ? j.lines : String(j.text).split(/\r?\n/).map(x => x.trim()).filter(Boolean); toWords(j, `Say which words go on the ${earOf ? earOf.toLowerCase() : "piece"}`); }
-      return job;
-    }
-    // the discs of one counted line whose note says plainly which words go on which disc ("Tag 1: J, Tag 2: Q", DISCREAD): each disc takes its own words here, no paid reading;
-    // anything the note leaves open (or another voice on the order: a buyer message, a staff note) goes to the reader below as before
-    // PIECES: a line of quantity >= 2 whose note says plainly which words go on which piece (numbered, one entry each, "the same on all", a short list): each piece takes its own. A piece the line gained after its sibling was read
-    // starts with the sibling's words for a person to confirm. Anything else is read once (below) and EVERY piece gets the whole reading.
-    const unitSplit = pieceWordsOf(row, jobs);
-    if (unitSplit) { await giveUnitWords(row, jobs, unitSplit); return job; }
-    { const open = jobs.filter(j => ["classify", "reclassify"].includes(j.state)), copied = open.filter(j => j.copiedFrom && j.text);
-      if (copied.length && copied.length === open.length) { for (const j of copied) { delete j.seededFrom; toWords(j, "This piece was added to the order: confirm the words (copied from the piece before it)"); } return job; } }
-    const discSplit = discWordsOf(row, jobs);
-    if (discSplit) {
-      for (const j of jobs) {
-        const w = discSplit.words[+String(j.slot).slice(1) - 1];
-        j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
-        Object.assign(j, { text: w, lines: [w], source: "personalization", quote: (sp.personalization || []).join(" / "), confidence: 1, questions: [], claudeReasoning: null, requests: { side: "back", font: null, handwriting: false, image: false }, wordsSource: "personalization:" + discSplit.how });
-        agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku} · ${SIDES().slotWord(j)}: "${w}" read from the note (${discSplit.how}), no paid reading`);
-        await setReady(j);
-      }
-      return job;
-    }
-    // ENGPRE: a line read before it is pooled (opts.free) never starts the paid reader: its words are the buyer's own (freeWords), for a person to confirm and approve
-    if (opts && opts.free) return freeWords(row, jobs);
-    for (const j of jobs) {
-      j.state = "classify"; j.row.engrave = { needed: false, state: "classify",seals:CNEngravingSeals.merge(j.row.engrave,j) };
-      // A fresh reading replaces the line split, size and decision kept for earlier words. The fit restored the first words
-      // it had seen, so an order whose words changed on Etsy showed its new words but was engraved with the old ones.
-      j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
-    }
-    let r = null;
-    // the Claude job already asked about these very words is taken up again (its poll cut off by the network, a reload)
-    // rather than paid for a second time; one that failed is replaced once
-    // (a line cut into slots names them in the question, so the model says which words go on which ear or disc; any other line asks exactly as before)
-    const slots = jobs.length > 1 ? [...new Set(jobs.map(j => j.slot).filter(Boolean).filter(sl => !SIDES().isCopy(sl)).map(sl => SIDES().baseSlot(sl)))] : null;   // (PIECES: the reader is asked once, about the ears / discs of ONE unit; a copy of a charm is no slot to it)
-    // (SETBAR-C: when the page knows the chain each piece hangs on, the reader is told, so a label "16\"= ..." lands on the right slot; unknown: not sent, the request is byte for byte what it was)
-    const chains = (() => { const R = READER(); if (!R || !slots || slots.length < 2) return null; const sl = R.slotsOf(row, jobs); return sl && sl.every(x => x.length != null) ? Object.fromEntries(sl.map(x => [x.slot, x.length])) : null; })();
-    const ask = { order: row.order.receiptId, sku: sp.designSku, title: row.line.title, form: sp.form, quantity: sp.quantity, engravable, personalization: sp.personalization, buyerMessage: sp.buyerMessage, staffNote: sp.staffNote, messages: sp.messages, ...(slots && slots.length > 1 ? { slots } : {}), ...(chains ? { pieceLengths: chains } : {}) };
-    // (ENGENT: the question carries the words decoded; its key is made from the words as Etsy gave them, as it always was, so a reading already asked for before the words were decoded is taken up again, never paid for twice)
-    let key = 2166136261; for (const ch of JSON.stringify(Object.assign({}, ask, O.rawWords(row.order, row.line)))) key = Math.imul(key ^ ch.charCodeAt(0), 16777619); key = (key >>> 0).toString(36);
-    const prior = job.claudeJob && job.claudeJob.ask === key ? job.claudeJob.id : null;
-    try { r = await agentCall("engraveIntent", ask, { label: `Claude reads the words of ${row.order.receiptId}`, background: true, existingId: prior, retryFailed: !!prior, onStarted: id => { job.claudeJob = { id, ask: key }; } }); }
-    catch (e) { r = { skipped: e.message }; }
-    // ENGENT: the reader's answer is the customer's words read back; an answer to a question asked before the words were decoded may still carry Etsy's entities ("&#39;"): the words are read decoded, nothing is asked again
-    if (r && !r.skipped && !r.error) { const d = x => (typeof x === "string" && x.indexOf("&") >= 0 ? O.decodeEntities(x) : x); r = Object.assign({}, r, { text: d(r.text), sourceQuote: d(r.sourceQuote) }, Array.isArray(r.pieces) ? { pieces: r.pieces.map(p => (p && typeof p.text === "string" ? Object.assign({}, p, { text: d(p.text) }) : p)) } : {}); }
-    const live = jobs.filter(j => items().get(j.key) === j && j.state === "classify");
-    if (items() !== owner || row.state === "gone" || !live.length) return job;
-    for (const j of live) await settleReading(j, r);
-    return job;
-  }
-  /** ENGPRE · the words of a line whose piece is not pooled yet, with NO paid reading (Paul, 13 Oct: a clear personalisation, a typed name and a font word, costs nothing). The buyer's personalisation field, the font
-   *  request taken out (BFFONT), is the proposal. When it is the only thing the buyer wrote (no message, no staff note), short, it is the words (the very reading the reader gives such a line) and the job goes on to its fit;
-   *  anything else is a proposal for a person to confirm ("Words to confirm", the words box already holding it). A line cut into slots asks which words go on which piece. Nothing is written to the order's timeline, the pool or a sheet. */
-  async function freeWords(row, jobs) {
-    const sp = row.spec, owner = items(), todo = jobs.filter(j => ["classify", "reclassify"].includes(j.state) && owner.get(j.key) === j);
-    const pers = (sp.personalization || []).map(x => String(x == null ? "" : x)), text = pers.join("\n");
-    const fr = typeof O !== "undefined" && O.fontReadText ? O.fontReadText(text, { cueOnly: true }) : { changed: false, lines: [] };
-    const lines = (fr.changed ? fr.lines : text.split(/\r?\n/)).map(x => String(x).trim()).filter(Boolean);
-    const alone = !String(sp.buyerMessage || "").trim() && !String(sp.staffNote || "").trim() && !(sp.messages || []).length;
-    const unitSplit = pieceWordsOf(row, todo);   // (PIECES: the note says which words go on which piece of a line cut by unit)
-    if (unitSplit) { await giveUnitWords(row, todo, unitSplit); return todo[0] || jobs[0]; }
-    for (const j of todo) {
-      j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
-      const face = faceOf(j), req = { side: face, font: null, handwriting: false, image: false };
-      const own = takeAsks(j, lines), awhy = askWhy(j), clearOwn = alone && own.length >= 1 && own.length <= 4 && own.every(x => x.length <= 40) && !awhy;   // (FOLLOWASK: "Anna (on the left side please)" is the word Anna and an ask)
-      if (todo.length > 1 && !copiesOnly(todo)) {
-        Object.assign(j, { text: "", lines: [], source: "personalization", quote: pers.join(" / ") || null, confidence: 0, questions: [], claudeReasoning: null, requests: req });
-        toWords(j, `Say which words go on the ${(SIDES().slotWord(j) || "piece").toLowerCase()}`);
-      } else if (clearOwn) {
-        Object.assign(j, { text: own.join("\n"), lines: own.slice(), source: "personalization", quote: pers.join(" / ") || null, confidence: 1, questions: [], claudeReasoning: null, requests: req, wordsSource: "personalization:clear" });
-        agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}: "${j.text.replace(/\n/g, " / ")}" taken from the personalisation, no paid reading`);
-        await setReady(j, false);
-      } else {
-        Object.assign(j, { text: own.join("\n"), lines: own.slice(), source: "personalization", quote: pers.join(" / ") || null, confidence: 0, questions: [], claudeReasoning: null, requests: req, wordsSource: "personalization:proposal" });
-        if (awhy) toWords(j, awhy); else if (own.length) toWords(j, "Check the requested inscription"); else toWords(j, "Enter the requested inscription");
-      }
-      if (items() !== owner || row.state === "gone") return todo[0] || jobs[0];
-    }
-    return jobs[0];
-  }
-  /** One job takes the reading (a line cut into slots hands each its own: `r.pieces` names the words of each ear or disc; without them every slot gets the one text). */
-  async function settleReading(job, r) {
-    const row = job.row, sp = row.spec;
-    if (!r || r.skipped || r.error) {
-      // Keep the verbatim proposal reviewable even when the classifier is unavailable.
-      // (BFFONT: a line that is only a font request - "Typewriter font" - is not a word to engrave; the font itself is spec.fontText)
-      const fr0 = typeof O !== "undefined" && O.fontReadText ? O.fontReadText(sp.personalization.join("\n"), { cueOnly: true }) : { changed: false, lines: [] };
-      job.text = fr0.changed && fr0.lines.length ? fr0.lines.join("\n") : sp.personalization.join("\n"); job.lines = fr0.changed && fr0.lines.length ? fr0.lines : sp.personalization.slice(); job.source = "personalization"; job.confidence = 0; job.questions = [`Claude was unavailable (${(r && (r.skipped || r.error)) || "no answer"}) — confirm the words`]; job.requests = { side: "back", font: null, handwriting: false, image: false };
-      { const R = READER(); if (R && job.lines.length) { const fd = R.fixDegrees(job.lines.join("\n")); if (fd.count) { job.lines = fd.text.split("\n"); job.text = fd.text; } const fs = R.fixSymbols ? R.fixSymbols(job.lines.join("\n")) : null; if (fs && fs.count) { job.lines = fs.text.split("\n"); job.text = fs.text; } } }   // (SETBAR-C: the buyer's asterisk in a coordinate is the degree sign here too)
-      job.lines = takeAsks(job, job.lines); job.text = job.lines.join("\n");   // (FOLLOWASK)
-      if (askWhy(job)) return toWords(job, askWhy(job));
-      return job.lines.length ? setReady(job) : toWords(job, "Enter the requested inscription");
-    }
-    if (job.slot && !(SIDES() && SIDES().isCopy(job.slot)) && Array.isArray(r.pieces) && r.pieces.length) {
-      const mine = r.pieces.find(x => x && x.slot === (SIDES() ? SIDES().baseSlot(job.slot) : job.slot));   // (a later unit's piece reads the words of the same ear or disc of the first unit)
-      if (!mine) { Object.assign(job, { text: r.text || "", lines: String(r.text || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean), source: r.source, quote: r.sourceQuote, confidence: r.confidence, requests: r.requests, questions: (r.questions || []).slice() }); return toWords(job, `Say which words go on the ${(SIDES().slotWord(job) || "piece").toLowerCase()}`); }
-      r = Object.assign({}, r, { text: String(mine.text || ""), engrave: !!String(mine.text || "").trim() });
-    }
-    job.text = r.text || ""; job.lines = job.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); job.source = r.source; job.quote = r.sourceQuote; job.confidence = r.confidence; job.requests = r.requests; job.questions = r.questions || []; job.claudeReasoning = r.reasoning || null; job.ignored = Array.isArray(r.ignored) ? r.ignored.slice(0, 8) : [];
-    const originalLines=[(sp.personalization || []).join("\n"),sp.buyerMessage,sp.staffNote,job.quote].filter(Boolean)
-      .map(t=>String(t).split(/\r?\n/).map(t=>t.trim()).filter(Boolean))
-      .find(lines=>lines.length && lines.join(" ").replace(/\s+/g," ")===job.text.replace(/\s+/g," ").trim());
-    if(originalLines) {job.lines=originalLines;job.text=originalLines.join("\n");}
-    // SETBAR-C: the reader copies the buyer's words verbatim, asterisk and all: an asterisk standing for the degree sign inside a coordinate ("33*0'45\" N") is the degree sign (charm-nest-engrave-read.js fixDegrees; nothing else is touched)
-    { const R = READER(); if (R && job.lines.length) { const fd = R.fixDegrees(job.lines.join("\n")); if (fd.count) { job.lines = fd.text.split("\n"); job.text = fd.text; } const fs = R.fixSymbols ? R.fixSymbols(job.lines.join("\n")) : null; if (fs && fs.count) { job.lines = fs.text.split("\n"); job.text = fs.text; } } }
-    // BFFONT: a line of the reading that is only a font request ("Typewriter font") is never engraved; its font is read from the order's own words (spec.fontText) and, when the reader named none, from the request itself
-    { const fr = typeof O !== "undefined" && O.fontReadText ? O.fontReadText(job.lines.join("\n"), { cueOnly: true }) : { changed: false, lines: [], requests: [] };
-      if (fr.changed && fr.lines.length) { const ask = fr.requests.find(q => q.asked); job.lines = fr.lines; job.text = fr.lines.join("\n"); if (ask && !(job.requests && job.requests.font)) job.requests = Object.assign({}, job.requests, { font: ask.asked }); } }
-    // FOLLOWASK (Paul, 15 Nov 2026): the reader's words lose any instruction to the shop ("on the left", "all caps", a web link); the asks wait on the job for the fit
-    job.lines = takeAsks(job, job.lines); job.text = job.lines.join("\n");
-    agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}${job.slot ? " · " + SIDES().slotWord(job) : ""}: Claude reads ${r.engrave ? `"${job.text.replace(/\n/g, " / ")}" from ${r.source} (${Math.round(r.confidence * 100)}%)` : "no engraving"}${job.questions.length ? ` · ${job.questions.length} question(s)` : ""}${job.ignored.length ? ` · left out (a note to the shop): ${job.ignored.map(x => "“" + x + "”").join(", ")}` : ""}`, { reason: r.reasoning || null });
-    // Confidence describes the interpretation, not whether a preview can be drawn.
-    // Nothing here approves or exports a proposed inscription.
-    if (askWhy(job)) return toWords(job, askWhy(job));
-    if (!r.engrave && !job.lines.length) {
-      // Settings' engraving confidence: 0 is a setting (trust every reading); it used to be read as 0.8, like an empty field
-      const trust = S.settings.engraveConfidence;
-      if (job.confidence < (trust != null && trust !== "" && Number.isFinite(+trust) ? +trust : 0.65) || job.questions.length)
-        return toWords(job, "Check the requested inscription");
-      setNone(job, "No engraving requested"); return job;
-    }
-    if (!job.lines.length) return toWords(job, "Enter the requested inscription");
-    return setReady(job);
-  }
+  async function classifyOnce(row, opts) { return CLS().classifyOnce(row, opts); }
+  /** ENGPRE · the words of a line whose piece is not pooled yet, with NO paid reading. */
+  function freeWords(row, jobs) { return CLS().freeWords(row, jobs); }
+  /** One job takes the paid reader's answer. */
+  function settleReading(job, r) { return CLS().settleReading(job, r); }
   function setNone(job, why) { job.state = "none"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: false, state: "none", reason: why, approved: true }; Review.remove("eng:" + job.key); RunCtl.poke(); return job; }
   function toWords(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, neverWhy(job.row));   // (NO EARRING IS EVER ENGRAVED: nothing ever asks for words on an earring)
     if (typeof faceHasEditorArt === "function" && faceHasEditorArt(job) && !(job.decision && job.decision.text) && artOnlyPlacement(job)) { RunCtl.poke(); return job; }   // (EDITOR WORDS: a face the charm editor drew never waits for words: what the order offers stays an offer, the face waits for Approve)
@@ -9800,6 +9048,7 @@ const Engrave = window.Engrave = (() => {
   }
   /** Fits every job whose words are read and whose sheet is written; returns how many it fitted. */
   async function fitAll(run) {
+    if (window.CNViewer && CNViewer.on()) return 0;   // (CLOUDDRIVE build step 14: the cloud fits the words)
     const owner = items(), jobs = [...owner.values()].filter(j => !j.editingBack && j.state === "ready" && j.row.state !== "gone" && canFit(j) && !isWorking(j));
     let fitted = 0;
     // a job counts only when the fit moved it on: one left "ready" (its charm not found on the sheet yet) changed nothing
@@ -9889,6 +9138,7 @@ const Engrave = window.Engrave = (() => {
   }
   /** Every line that carries an engraving and has no job of its own yet (a pass beside the run, like classifyAll; it starts no paid reading and counts as no work for the run). */
   async function earlyAll() {
+    if (window.CNViewer && CNViewer.on()) return 0;   // (CLOUDDRIVE build step 14: the cloud reads the engraving)
     const owner = items();
     for (const r of Orders.rows()) {
       if (items() !== owner) return;
@@ -10287,10 +9537,27 @@ const Engrave = window.Engrave = (() => {
      on it (moveTo, at Engrave.stagePlaceOf's centre); (4) every engraved face not approved yet is approved, Front before Back (approve: its seal, its file, the sheets and the made thumbnails, as any approval).
      A step that fails stops there and says why: what was approved stays approved, what was not stays to approve, never wrong.
        stage: { choice: none|front|back|both, slot, faces: { front: { text, font, pos }, back }, patch (CharmNestEngraveSetup.patchOf: what differs from what is kept) }
-       o: { button (the stamp's place: an element, or a function giving the one on the page now), step() (called at every step made: the panel's watchdog), approve: false (step 1 only: the staged faces and words
-            are kept, nothing is approved: a host that closes the card itself, a test) }
+       o: { button (the stamp's place: an element, or a function giving the one on the page now), step(code, words) (called at every step made: the panel shows the words under Approve, and each
+            call is progress for its watchdog), approve: false (step 1 only: the staged faces and words are kept, nothing is approved: a host that closes the card itself, a test) }
        -> { ok, cancelled?, message?, none?, approved: [job keys], failed? } */
-  const STAGE_MS = 90000;
+  /* APPROVESTEP (Paul, 20 Nov 2026: "an approval still working is never reported as failed; while it works the card says which step; it fails only on a real error or after several minutes of
+     silence"): a wait of the commit ends only after STAGE_MS with NOTHING moving (every step and every change of the face resets it), never after a fixed time while it still works. */
+  const STAGE_MS = 4 * 60000;
+  const minutesOf = ms => { const m = Math.round(ms / 60000); return m >= 1 ? `${m} minute${m === 1 ? "" : "s"}` : `${Math.max(1, Math.round(ms / 1000))} seconds`; };
+  /** APPROVESTEP: the step an approval of a job is at, told to the commit that runs it (job._onStep, set by commitStageNow around its approve): the words go under the card's Approve. */
+  function jobStep(job, code, words) { try { const f = job && job._onStep; if (typeof f === "function") f(code, words); } catch (_) { /* a step is only shown */ } }
+  /** APPROVESTEP: a wait whose length is another's (the run's production lock, held by a sheet being saved or nested) is said every 10 s, with what it waits for: it is never taken for silence. */
+  async function beatWhile(job, code, words, p) {
+    const say = () => {
+      let w = words;
+      try { const ops = window.CharmNestOperations, snap = ops && typeof ops.snapshot === "function" ? ops.snapshot() : null, mine = "back-record:" + job.key;
+        const holder = snap && (snap.active || []).find(t => t && t.key !== mine && (t.resources || []).some(r => /^production:/.test(r)));
+        if (holder && holder.label) w = `Waiting for “${holder.label}” to finish, then ${words.charAt(0).toLowerCase()}${words.slice(1)}`; } catch (_) { /* the plain words */ }
+      jobStep(job, code, w);
+    };
+    say(); const t = setInterval(say, 10000);
+    try { return await p; } finally { clearInterval(t); }
+  }
   /** The commit, its piece's jobs marked as being kept while it runs (_stageCommit: discardStaged leaves them, a tab drawn again meanwhile never puts back a face being approved). */
   async function commitStage(row, stage, o) {
     const line = lineOf(row), slot = stage && stage.slot ? String(stage.slot) : null, mark = on => { try { for (const j of jobsOf(line)) if ((j.slot || null) === slot) { if (on) j._stageCommit = true; else delete j._stageCommit; } } catch (_) { /* nothing to mark */ } };
@@ -10304,18 +9571,24 @@ const Engrave = window.Engrave = (() => {
     if (line.state === "gone") return { ok: false, message: "This order is no longer in the run.", approved: [] };
     const choice = ["none", "front", "back", "both"].includes(stage.choice) ? stage.choice : null; if (!choice) return { ok: false, message: "Nothing is chosen to approve.", approved: [] };
     const slot = stage.slot ? String(stage.slot) : null, on = choice === "both" ? ["front", "back"] : choice === "none" ? [] : [choice], faces = stage.faces || {};
-    const until = Date.now() + STAGE_MS * Math.max(0.001, +window.CN_SPIN_SCALE || 1), wait = ms => new Promise(r => setTimeout(r, ms));
+    const scale = Math.max(0.001, +window.CN_SPIN_SCALE || 1), silence = STAGE_MS * scale, wait = ms => new Promise(r => setTimeout(r, ms));
+    let moved = Date.now();   // (APPROVESTEP: when the commit last moved; a wait ends after `silence` with nothing moving)
+    const until = () => moved + silence;
     const mine = f => jobsOf(line).find(j => faceOf(j) === f && (j.slot || null) === slot) || null;
-    const stampAt = () => { try { const b = typeof o.button === "function" ? o.button() : o.button; return b && b.isConnected !== false ? b : null; } catch (_) { return null; } }, step = what => { try { if (typeof o.step === "function") o.step(what); } catch (_) { /* the panel's own */ } };
-    const by = employeeName() || await approveWithin(needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: stampAt() }), APPROVE_MS.sign, "").catch(() => "");
+    const stampAt = () => { try { const b = typeof o.button === "function" ? o.button() : o.button; return b && b.isConnected !== false ? b : null; } catch (_) { return null; } }, step = (what, words) => { moved = Date.now(); try { if (typeof o.step === "function") o.step(what, words); } catch (_) { /* the panel's own */ } };
+    step("start");
+    // (APPROVESTEP: a sign-in asked under Approve is a person's wait, never silence: said every 10 s until it is answered or put away)
+    const by = employeeName() || await (async () => { step("sign", "Waiting for someone to sign in…"); const beat = setInterval(() => step("sign", "Waiting for someone to sign in…"), 10000); try { return await approveWithin(needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: stampAt() }), APPROVE_MS.sign, "").catch(() => ""); } finally { clearInterval(beat); } })();
     step("signed");
     // (an approval of this piece still finishing (its back file, its save: the tail of an earlier Approve) is let finish first, so a change made on top of it is never refused or lost)
-    { const tail = () => jobsOf(line).some(j => (j.slot || null) === slot && (j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving)), by4 = Date.now() + 4000 * Math.max(0.001, +window.CN_SPIN_SCALE || 1); while (tail() && Date.now() < Math.min(until, by4)) await wait(60); }   // (at most 4 s: a file still being written for the sheets never holds a change back longer; an approval still running is said by the press that meets it)
+    { const tail = () => jobsOf(line).some(j => (j.slot || null) === slot && (j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving)), by4 = Date.now() + 4000 * scale; if (tail()) step("tail", "Letting the approval before this one finish…"); while (tail() && Date.now() < Math.min(until(), by4)) await wait(60); }   // (at most 4 s here: a file still being written for the sheets never holds a change back longer; step 4 waits for it before it approves again)
     if (!by) return { ok: false, cancelled: true, message: "Nobody is signed in.", approved: [] };
     // (1) the faces, their words and fonts (and the place dragged on a face that has no job yet)
     const before = new Set(jobsOf(line).map(j => j.key)), patch = stage.patch && typeof stage.patch === "object" ? stage.patch : null;   // (a job made by this commit takes its dragged place as _placeAt; one that was there, placed or opened again, is moved below)
     if (patch && (patch.mode || patch.front !== undefined || patch.back !== undefined)) {
-      while (setupBusy.has(line.key) && Date.now() < until) await wait(40);   // (another piece of this line is being kept: this one follows it)
+      if (setupBusy.has(line.key)) step("keep", "Waiting for another piece of this order to be kept…");
+      while (setupBusy.has(line.key) && Date.now() < until()) await wait(40);   // (another piece of this line is being kept: this one follows it)
+      step("keep", "Keeping the words and the font…");
       const places = {}, looks = {}; for (const f of on) { const p = faces[f] && faces[f].pos; if (p && Array.isArray(p.charm)) { places[f] = p.charm; looks[f] = lookOf(p); } }
       const res = await saveSetup(line, Object.assign({}, patch, slot ? { slot } : {}), { places, looks });
       if (!res || !res.ok) return { ok: false, cancelled: !!(res && res.cancelled), message: (res && res.message) || "The change was not kept.", approved: [] };
@@ -10344,8 +9617,8 @@ const Engrave = window.Engrave = (() => {
       const text = String((faces[f] && faces[f].text) || "").trim(); let why = "", seen = "";
       for (;;) {
         const j = mine(f);
-        { const now = j ? j.key + ":" + j.state + ":" + (j.fit ? 1 : 0) : ""; if (now !== seen) { seen = now; step("face"); } }   // (a face moving on is progress; this wait has its own limit)
-        if (!j) { if (Date.now() > until) { why = `the ${f} could not be made here`; break; } await wait(60); continue; }
+        { const now = j ? j.key + ":" + j.state + ":" + (j.fit ? 1 : 0) : ""; if (now !== seen) { seen = now; step("face", !j ? `Making the ${f} engraving…` : OPENREAD.includes(j.state) ? `Reading the ${f} words…` : ["words", "blocked"].includes(j.state) ? `Keeping the ${f} words…` : ["ready", "fitting"].includes(j.state) ? `Placing the ${f} words on the charm…` : `The ${f} words are placed…`); } }   // (a face moving on is progress: APPROVESTEP, the wait ends only after STAGE_MS with nothing moving)
+        if (!j) { if (Date.now() > until()) { why = `the ${f} could not be made here (nothing moved for ${minutesOf(silence)})`; break; } await wait(60); continue; }
         jobs[f] = j;
         if (["approved", "written"].includes(j.state)) break;
         if (j.state === "review" && j.fit && j._placeAt && !lateTasks.has(j) && !isWorking(j)) { const pc = j._placeAt; delete j._placeAt; if (j.view && !j.fit.artOnly) { const c = viewPointOf(j.view, pc); try { if (c && moveTo(j, c)) j.nudged = true; } catch (_) { /* the system's place stands */ } } const lk = j._placeLook; delete j._placeLook; if (lk) applyLook(j, lk); }   // (fitted by another path than prepareLate: the dragged place is put on it here)
@@ -10356,7 +9629,7 @@ const Engrave = window.Engrave = (() => {
         if (["none", "skipped"].includes(j.state)) { why = `the ${f} is not engraved`; break; }
         if (OPENREAD.includes(j.state) && !preparingNow(j) && readsFree(j)) prepareLate(line).catch(() => {});
         else if (j.state === "ready" && !isWorking(j) && !lateTasks.has(j) && !fitTasks.get(j)) { if (!canFit(j)) { why = `the ${f} words wait for the piece's sheet`; break; } if (!fitting.has(j)) { fitting.add(j); fitJob(j).catch(() => {}); } }
-        if (Date.now() > until) { why = `the ${f} words were not placed in time`; break; }
+        if (Date.now() > until()) { why = `the ${f} words were not placed: nothing moved for ${minutesOf(silence)}`; break; }
         await wait(60);
       }
       if (why) { try { toast("Not approved: " + why.replace(/^(?:not approved:\s*)/i, ""), "bad", 7000); } catch (_) {} return { ok: false, said: true, message: "Not approved: " + why.replace(/^(?:not approved:\s*)/i, ""), approved: [] }; }   // (APPROVEALL: said where the person is, never silent)
@@ -10376,15 +9649,24 @@ const Engrave = window.Engrave = (() => {
     for (const f of on) {
       const j = mine(f) || jobs[f]; if (!j) return { ok: false, message: `Not approved: the ${f} could not be made here.`, approved };
       if (["approved", "written"].includes(j.state)) { approved.push(j.key); continue; }
-      step("approve");
+      // (APPROVESTEP: an approval of this face still finishing (its file, its save: an earlier press) is waited for while it moves, never met with "Still approving" and reported as a failure)
+      { const busyNow = () => !!(j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving); let sig = "";
+        while (busyNow() && Date.now() < until()) { const now = [j.state, j.approvalPreparing ? 1 : 0, j.backSaving ? 1 : 0, j.stamping ? 1 : 0, (j.backs || []).length].join(":"); if (now !== sig) { sig = now; step("tail", `Letting the ${f} approval before this one finish…`); } await wait(100); }
+        if (busyNow()) return { ok: false, message: `Not approved: the ${f} approval before this one did not finish (nothing moved for ${minutesOf(silence)}). Press Approve to try again.`, approved, failed: j.key };
+        if (["approved", "written"].includes(j.state)) { approved.push(j.key); continue; } }
+      step("approve", `Checking the ${f} placement…`);
       // (the face is approved the moment its state says so: the rest of the approval (its back file for the sheets, its save) goes on behind it, as after any Approve; the commit does not wait for it)
-      { const task = Promise.resolve(approve(j, by, stampAt(), { quick: true, moveOn: false })).catch(() => {}); let done = false; task.then(() => { done = true; }); while (!done && !["approved", "written"].includes(j.state)) await Promise.race([task, wait(60)]); }
-      step("approved");   // (the stamp on the panel's own anchor: the live Approve is never the approval's button)
+      // (APPROVESTEP: every step the approval makes, its file, its upload, its record in the cloud, is told to this commit while it runs: j._onStep)
+      j._onStep = (code, words) => step(code, words);
+      try { const task = Promise.resolve(approve(j, by, stampAt(), { quick: true, moveOn: false })).catch(() => {}); let done = false; task.then(() => { done = true; }); while (!done && !["approved", "written"].includes(j.state)) await Promise.race([task, wait(60)]); }
+      finally { delete j._onStep; }
+      step("approved", `The ${f} is approved…`);   // (the stamp on the panel's own anchor: the live Approve is never the approval's button)
+      if (j.approving && j.approving.cloud) { approved.push(j.key); continue; }   // (CLOUDLANE step 11, dormant: the press went to the cloud, which saves the file and then seals it)
       if (!["approved", "written"].includes(j.state)) { const w = APPROVE_WHY.get(j.key); return { ok: false, message: (w && w.text) || `Not approved: the ${f} is still to approve.`, approved, failed: j.key, said: !!w }; }   // (said: the approval already told the person why)
       approved.push(j.key);
     }
     // (every engraved face approved, read again now: a face that went back to review under the commit (approved before, its words changed) is never left behind with the card looking calm)
-    { const left = on.filter(f => { const j = mine(f); return !j || !["approved", "written"].includes(j.state); }); if (left.length) return { ok: false, message: `Not approved: the ${left.join(" and ")} ${left.length > 1 ? "are" : "is"} still to approve. Press Approve again.`, approved }; }
+    { const left = on.filter(f => { const j = mine(f); return !j || (!["approved", "written"].includes(j.state) && !(j.approving && j.approving.cloud)); }); if (left.length) return { ok: false, message: `Not approved: the ${left.join(" and ")} ${left.length > 1 ? "are" : "is"} still to approve. Press Approve again.`, approved }; }
     void mark; return { ok: true, approved, moveOn: pin };
   }
   /** ENGSTAGE (coordinator 30 Oct 2026: "when a commit ends, move on ONLY if the piece's draft is clean (nothing staged on top, no commit waiting) ... A deferred move-on must re-check this at the moment it
@@ -10538,7 +9820,7 @@ const Engrave = window.Engrave = (() => {
      task was held, approveOnce's own checks), and every wait of an approval (the fit of new words, a sign-in, the back file, the workspace save, the stamp) could hold job._approvalTask and approvalPreparing
      for good: that press never ended, every later press was dropped without a word, and the card, drawn again by any adjustment, showed a live green Approve. Each wait now has a time limit (approveWithin,
      as STUCKSPIN's within: the wait itself goes on, the approval lets go and says so). Nothing of the placement is reset by a press that does not approve: the words stay where they were moved. */
-  const APPROVE_MS = { fit: 60000, sign: 300000, file: 90000, save: 30000, stamp: 8000 };
+  const APPROVE_MS = { fit: 4 * 60000, sign: 300000, file: 4 * 60000, save: 2 * 60000, stamp: 8000 };   // (APPROVESTEP, Paul 20 Nov 2026: a step still working is never cut short at a minute or 90 s: only minutes with nothing moving end it)
   const approveWithin = (p, ms, why) => new Promise((res, rej) => { const t = setTimeout(() => rej(Object.assign(new Error(why), { stuck: true })), ms * Math.max(0.001, +window.CN_SPIN_SCALE || 1)); Promise.resolve(p).then(v => { clearTimeout(t); res(v); }, e => { clearTimeout(t); rej(e); }); });   // (CN_SPIN_SCALE: a test's clock; 1 on the page)
   /** The line under the card's Approve that says why the press did not approve ('' takes it away). Kept in memory, by the job's key, for a card of it drawn again within 20 s (a "still approving" line is not). */
   const APPROVE_WHY = new Map();
@@ -10590,17 +9872,18 @@ const Engrave = window.Engrave = (() => {
   }
   async function approveOnce(job, by, button, o) {
     { const art=typeof charmEditSaving==="function" ? charmEditSaving(job) : null;   // (APPROVE AFTER THE EDITOR: the Charm Editor's save of this piece is still under way: it is waited for, said at once, and what it left is approved)
-      if(art){approveSay(job,"Saving this piece's artwork from the Charm Editor first · the approval follows",null,true);try{await approveWithin(art,APPROVE_MS.fit,"the artwork was not saved within a minute");}catch(e){notApproved(job,`Not approved: ${e.message}. Press Approve again once the card says the artwork is saved.`);return;}approveSay(job,"");return approveOnce(job,by,button);} }
+      if(art){approveSay(job,"Saving this piece's artwork from the Charm Editor first · the approval follows",null,true);jobStep(job,"art","Saving this piece's artwork from the Charm Editor first…");try{await approveWithin(art,APPROVE_MS.fit,`the artwork was not saved within ${minutesOf(APPROVE_MS.fit)}`);}catch(e){notApproved(job,`Not approved: ${e.message}. Press Approve again once the card says the artwork is saved.`);return;}approveSay(job,"");return approveOnce(job,by,button);} }
     const owner=items(),row=job.row,pendingFit=fitTasks.get(job);
     { const why=approveBlocked(job,owner,pendingFit); if(why){approveRefused(job,why);return;} approveSay(job,""); }
     if(neverEngraves(row) && !job.approvalIntent){setNone(job,neverWhy(row));Orders.render();render();return;}   // (NO EARRING IS EVER ENGRAVED: an old open card is put away, nothing is approved)
-    if(job.approvalIntent){recoverApprovals();if(job.state==="approved" || job.approving){approveSay(job,"");await saveBacks(job);}else approveSay(job,"Not approved: the approval that was under way could not be finished. Look at the placement, then press Approve again.");return;}   // (HELDREL: the recovered approval, or one line why not: never a silent press)
+    if(job.approvalIntent){recoverApprovals();if(job.state==="approved" || job.approving){approveSay(job,"");jobStep(job,"save",`Saving the ${faceWord(job)} file of the approval under way to the cloud…`);await saveBacks(job);}else approveSay(job,"Not approved: the approval that was under way could not be finished. Look at the placement, then press Approve again.");return;}   // (HELDREL: the recovered approval, or one line why not: never a silent press)
     if(pendingFit){
       // A can arrive while new words still wait for fonts or the fitting worker.
       // Keep the duplicate task lock, let that fit finish without preparation
       // flags blocking it, and verify only its latest resulting geometry.
       approveSay(job,"Placing the words on the charm first · the approval follows",null,true);   // (APPROVE AFTER THE EDITOR: this wait was silent, up to a minute: the press seemed to do nothing)
-      try{await approveWithin(pendingFit,APPROVE_MS.fit,"the words were not placed within a minute");}catch(e){
+      jobStep(job,"face","Placing the words on the charm first…");
+      try{await approveWithin(pendingFit,APPROVE_MS.fit,`the words were not placed within ${minutesOf(APPROVE_MS.fit)}`);}catch(e){
         if(items()===owner && owner.get(job.key)===job && job.row===row && row.state!=="gone" && !["approved","written","skipped","none"].includes(job.state))notApproved(job,`Not approved: the engraving preview could not finish (${e.message}). Refit the words before approving.`);
         else approveSay(job,"Not approved: the placement changed while its words were placed. Look at it, then press Approve.");
         return;
@@ -10633,20 +9916,31 @@ const Engrave = window.Engrave = (() => {
     if (!by) { approveSay(job, "Not approved: nobody is signed in. Sign in, then press Approve."); return; }
     // says which step is missing (it read "Nothing verified to approve" whatever the reason)
     if (!job.fit || !job.verify || !job.verify.geometry.ok) { notApproved(job, !job.fit ? "Not approved: the words are not placed on the charm yet" : !job.verify ? "Not approved: the placement is still being checked" : "Not approved: the placement failed its check · move or resize the words first", 4000); return; }
+    // (CLOUDLANE, cloud plan v2 build step 11, P9; DORMANT: only while the cloud carries this run and "engrave" is one of its lanes, never while the drive is off) the cloud builds, checks, uploads and
+    //  records the file (SEALAFTERSAVE there too): the press is sent to it, and nothing is built or written here. The face waits in `approving` until the cloud's record says it is written.
+    { const EC = window.CharmNestEngraveCloud;
+      if (EC && typeof EC.lane === "function" && !job.editingBack && !unplacedPre(job) && await EC.lane(job)) {
+        const sent = await EC.approve(job, by);
+        if (sent && sent.ok) { job.approving = { at: sent.at, by, text: job.text, cloud: true }; approveSay(job, `Sent to the cloud: it saves the ${faceWord(job)} file, then the seal comes down`, null, true); try { Session.schedule(); } catch (_) {} for (const show of [render, () => Orders.render()]) try { show(); } catch (_) {} return; }
+        if (!(sent && sent.local)) { notApproved(job, `Not approved: ${String((sent && sent.message) || "the cloud did not take the approval").replace(/^Not approved:\s*/i, "")}`); return; }
+      } }
     const approvedAt=Date.now();let prepared;
-    try{prepared=await approveWithin(prepareApproval(job,by,approvedAt),APPROVE_MS.file,`the ${faceWord(job)} file was not made in ${Math.round(APPROVE_MS.file/1000)} seconds. Press Approve to try again`);}catch(e){notApproved(job,`Not approved: ${e.message}`);return;}
+    jobStep(job,"file",`Making and checking the ${faceWord(job)} file…`);
+    try{prepared=await approveWithin(prepareApproval(job,by,approvedAt),APPROVE_MS.file,`the ${faceWord(job)} file was not made in ${minutesOf(APPROVE_MS.file)}. Press Approve to try again`);}catch(e){notApproved(job,`Not approved: ${e.message}`);return;}
     if(job.row?.state==="gone" || typeof items==="function" && items().get(job.key)!==job){approveRefused(job,job.row?.state==="gone" ? "Not approved: this order is no longer in the run." : "stale");return;}
     if(job.fit!==prepared.fit || job.view!==prepared.view){notApproved(job,"Not approved: the placement changed while it was checked. Review it before approving.",4000);return;}
     job.approvalIntent={phase:"verified",at:approvedAt,by,text:job.text};
     if(typeof Session!=="undefined"){
+      jobStep(job,"checkpoint","Keeping the approval…");
       try {Session.schedule();if(await approveWithin(Session.flushNow?.(),APPROVE_MS.save,"the workspace save did not answer")===false)throw new Error("Workspace checkpoint did not complete");}
-      catch(e){delete job.approvalIntent;notApproved(job,`Not approved: the approval could not be saved on this browser${e && e.stuck ? " (the workspace save did not answer in " + Math.round(APPROVE_MS.save / 1000) + " seconds)" : ""}. Your changes are kept: press Approve to try again.`);return;}
+      catch(e){delete job.approvalIntent;notApproved(job,`Not approved: the approval could not be saved on this browser${e && e.stuck ? " (the workspace save did not answer in " + minutesOf(APPROVE_MS.save) + ")" : ""}. Your changes are kept: press Approve to try again.`);return;}
     }
     // SEALAFTERSAVE: a placed piece's approval waits in job.approving until its back is saved (writeBacksOnce finalizes it: state, seal, event); the stamp comes down on the button then
     const hold=!job.editingBack && !unplacedPre(job);
     if(hold){
       job.approving={at:approvedAt,by,text:job.text};
       approveSay(job,`Saving the ${faceWord(job)} file… the seal comes down when it is saved`,null,true);
+      jobStep(job,"save",`Saving the ${faceWord(job)} file to the cloud…`);
       try{await saveBacks(job);}catch(e){approveSay(job,`Not saved yet: ${e && e.message}`);}
       if(!(job.approvedAt===approvedAt && ["approved","written"].includes(job.state) && !job.approving)){return;}   // (not saved: writeBacks said why, plainly, and no seal or event was made)
       { const sealNow=(CNEngravingSeals.list(job).filter(x=>+x.at===approvedAt)).pop()||null;
@@ -10682,9 +9976,12 @@ const Engrave = window.Engrave = (() => {
       if(job.state==="review")render();
     }
   }
+  /** CLOUDLANE (cloud plan v2 build step 11, P9; DORMANT: false while the drive is off): the cloud carries this run and "engrave" is one of its lanes, so its back files are the cloud's to write. */
+  const cloudBacks = () => { try { const EC = window.CharmNestEngraveCloud; return !!(EC && typeof EC.carries === "function" && EC.carries()); } catch (_) { return false; } };
   /** An approval's back files are written; only invalid geometry needs a new placement review. */
   async function saveBacks(job) {
     if(unplacedPre(job))return;   // (ENGPRE: approved before its piece was on a sheet: its back file is written once it is, at the run's Engraving step; nothing waits, nothing is retried)
+    if(cloudBacks() || (job.approving && job.approving.cloud))return;   // (CLOUDLANE: the cloud writes them, and every approval sent to it; this page writes none)
     if(job._backTask)return job._backTask;
     const task=saveBacksOnce(job);job._backTask=task;
     try{return await task;}finally{if(job._backTask===task)delete job._backTask;}
@@ -10710,7 +10007,7 @@ const Engrave = window.Engrave = (() => {
   // back files waiting for the cloud are written when it is back (cn-cloud-back, "online") and, failing that, 30 s, 1, 2
   // and 5 minutes on, then every 10 minutes
   const backRetry = { t: 0, n: 0 };
-  function retryBacksLater() { if (backRetry.t) return; backRetry.t = setTimeout(() => { backRetry.t = 0; resumeBacks(true); }, [30000, 60000, 120000, 300000, 600000][Math.min(backRetry.n++, 4)]); }
+  function retryBacksLater() { if (backRetry.t || cloudBacks()) return; backRetry.t = setTimeout(() => { backRetry.t = 0; resumeBacks(true); }, [30000, 60000, 120000, 300000, 600000][Math.min(backRetry.n++, 4)]); }   // (CLOUDLANE: none while the cloud writes them)
   /** A reload while an approval's back files were being written left it approved with none, or only some, of them:
       its sheet showed "Saving…" until the run next passed Engraving, and not at all while the run stayed stopped. After the
       workspace is restored those writes run again, as the approval ran them (saveBacks). */
@@ -10737,11 +10034,13 @@ const Engrave = window.Engrave = (() => {
     return cleared;
   }
   function resumeBacks(pendingOnly) {
+    if (cloudBacks() || (window.CNViewer && CNViewer.on())) return;   // (CLOUDLANE: the cloud writes this run's back files, the ones left waiting too; CLOUDDRIVE build step 14: in mode "on" the cloud writes them)
     recoverApprovals();
     try { let healed = 0; for (const job of items().values()) if (healBlockedApproval(job)) healed++; if (healed) { Session.schedule(); render(); } } catch (e) { console.warn("[Engrave] heal", e); }   // (ENGSAVED: an approval blocked after its back was saved is put right)
     let waiting = 0;
     for (const job of items().values()) {
       if (!apLive(job) || job.backSaving || job.approvalPreparing || job.stamping || !apAt(job) || !(job.fit && job.view || job.writtenFit && job.writtenFit.approvedAt === job.approvedAt) || !(job.copies || []).length || unplacedPre(job)) continue;
+      if (job.approving && job.approving.cloud) continue;   // (CLOUDLANE: an approval sent to the cloud is the cloud's to save, a reload or not)
       if (!job.backPending && !job.poolPending && job.state==="written" && job.copies.every(id => (job.backs || []).some(b => b.poolId === id && b.approvedAt === job.approvedAt && b.sheetId===sheetFor(job,id)?.sheetId))) continue;
       if (pendingOnly && !job.backPending && !job.poolPending) continue;
       // (with the cloud still away it waits on: each try builds and checks the file before it finds that out)
@@ -12827,6 +12126,7 @@ const Engrave = window.Engrave = (() => {
     return true;
   }
   function writeBacks(job) {
+    if (cloudBacks()) return Promise.resolve(false);   // (CLOUDLANE: the cloud writes them; this page writes none)
     const write = async()=>{
       try{return await writeBacksNow(job);}
       catch(e){
@@ -12849,7 +12149,7 @@ const Engrave = window.Engrave = (() => {
             try{notApproved(job,why);}catch(_){}
           }else{
             job.backPending=e.message || "Back files wait for saving";retryBacksLater();
-            try{approveSay(job,`Not approved yet: saved when the cloud is back (${job.backPending}). The seal comes down as soon as the ${faceWord(job)} file is saved; it is tried again by itself.`);}catch(_){}   // (kept, not passing: the panel's commit reads it back as its reason)
+            try{approveSay(job,!S.cloud.ok ? `Not approved yet: saved when the cloud is back (${job.backPending}). The seal comes down as soon as the ${faceWord(job)} file is saved; it is tried again by itself.` : `Not approved yet: the ${faceWord(job)} file could not be recorded in the cloud (${String(job.backPending).replace(/[.\s]+$/, "")}). It is tried again by itself; press Approve to try it now.`);}catch(_){}   // (kept, not passing: the panel's commit reads it back as its reason)   // (APPROVEHANG: "when the cloud is back" only when the cloud is away: a refusal with the cloud up says the cloud's own words)
           }
           Session.schedule();
           for(const show of [()=>agent({engrave:true},"warn",`${job.row.order.receiptId}: ${e.message}`),render])try{show();}catch(viewError){console.warn("Engraving save view",viewError);}
@@ -12888,7 +12188,22 @@ const Engrave = window.Engrave = (() => {
   function backFolderOf(sh) {
     if (sh && sh.folderPath) return sh.folderPath;
     const o = (sh && sh.cloud && sh.cloud.ai && sh.cloud.ai.path) || (sh && sh.recalled && sh.recalled.outputs && sh.recalled.outputs.ai && sh.recalled.outputs.ai.path) || "";
-    return o ? String(o).replace(/\/[^/]*$/, "") : "";
+    return o ? String(o).replace(/\/[^/]*$/, "") : plannedFolderOf(sh);
+  }
+  /* APPROVEHANG (Paul, 20 Nov 2026, order 4239497797: a 5X9 tag, front "&", on the draft sheet silver-s9-mwo63jne, folderPath null: Approve hung). A draft still filling has saved no file yet: no
+     folderPath on this page and no outputs in its record, so backFolderOf answered "" and the approved front file was never uploaded; SEALAFTERSAVE then held the approval in `approving` for good,
+     tried again every 10 minutes and said "Reconnect to save the approved back files" with the cloud up. Such a sheet's back files go in the folder its own files WILL be saved in, by persistSheet's
+     own rule (a sheet outside a set: charmnest/sheets/<day>/<name>; in a set: the set's folder): the back record keeps its own path and address, so a sheet saved later, or in another folder, finds
+     it all the same (every reader takes a back's file from its record: CharmNestExport.faceOutputs, sheetBacks). "" only for a sheet with no id yet. */
+  function plannedFolderOf(sh) {
+    if (!sh || !sh.sheetId) return "";
+    try {
+      const rec = sh.recalled || {}, name = sh.fileBase || rec.fileBase || (typeof sheetFileBase === "function" ? sheetFileBase(sh) : "");
+      if (!name || /[\/\\]/.test(name)) return "";
+      const day = sh.setDay || rec.day || (typeof today === "function" ? today() : new Date().toISOString().slice(0, 10)), seq = sh.seq || rec.setSeq || null;
+      const base = sh.setId && !sh.draft && seq && window.CharmNestOrders && typeof CharmNestOrders.setFolder === "function" ? `${CharmNestOrders.setFolder(day, seq)}/${name}` : `charmnest/sheets/${day}/${name}`;
+      return /^charmnest\/(?:sheets|sets)\/\d{4}-\d{2}-\d{2}\//.test(base) ? base : "";
+    } catch (_) { return ""; }
   }
   async function writeBacksOnce(job) {
     if (!apLive(job) || !job.fit || !job.view) return;
@@ -12912,24 +12227,26 @@ const Engrave = window.Engrave = (() => {
         if(job.backs.some(b=>b.poolId===poolId && b.approvedAt===approval && b.sheetId===sh.sheetId && b.outputs?.ai?.url && b.outputs?.png?.url) && sh.backPool.some(b=>b.poolId===poolId && faceOf(b)===faceOf(job) && b.approvedAt===approval))continue;
         { const saved = savedBackOf(job, poolId); if (saved) { if (!job.backs.some(b => b.poolId === poolId && b.approvedAt === approval && b.sheetId === sh.sheetId)) job.backs.push(saved); continue; } }   // (ENGSAVED: this approval's back is saved: nothing to build or check again)
         const p = B.pool.rows.get(poolId) || {}; const copy = job.editingBack ? job.editOriginal.copy || 1 : p.copy || 1;
-        const name = `${sh.fileBase}_${faceWord(job)}_${poolId}_${approval}`;
+        const name = `${sh.fileBase || (sh.recalled && sh.recalled.fileBase) || (typeof sheetFileBase === "function" ? sheetFileBase(sh) : sh.sheetId)}_${faceWord(job)}_${poolId}_${approval}`;   // (APPROVEHANG: a draft never saved has no file name of its own yet: the one it will be saved under)
         let rec=job.stagedBacks.find(b=>b.poolId===poolId && b.approvedAt===approval && b.sheetId===sh.sheetId && b.outputs?.ai?.url && b.outputs?.png?.url);
         if(!rec){
+        jobStep(job, "build", `Making the ${faceWord(job)} file for ${sh.fileBase ? sheetName(sh) : "its sheet"}…`);
         const built = await P.buildBackFile({ charm: charm0, mirrored: !!charm0.mirrored, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, ...(isFront(job) ? { face: "front" } : {}), ...(!isFront(job) && Array.isArray(charm0.artBack) && charm0.artBack.length ? { artBack: charm0.artBack } : {}), view: fileViewOf(job), title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · ${faceWord(job)}`, meta: { poolId, ...(isFront(job) ? { face: "front" } : {}), order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: apBy(job), approvedAt: apAt(job), upAngle: view.upAngle, flipChecks: view.checks } });
         const verified = await verifyBackFile(built.bytes, job);                 // 7.4 · flip integrity re-run on the written, re-parsed file
         if (!verified.ok) throw Object.assign(new Error(`the written ${faceWord(job)} file did not re-verify (${verified.why})`),{engravingInvalid:true});
         let ai = null, pngUp = null;
         const dir = backFolderOf(sh);   // (BACKFOLDER, Paul 18 Nov 2026: "Not approved yet ... Reconnect to save the approved back files" on Ana's and Michelle's computers)
+        if (S.cloud.ok && dir) jobStep(job, "upload", `Uploading the ${faceWord(job)} file to the cloud…`);
         if (S.cloud.ok && dir) { ai = await uploadBytes(`${dir}/${faceWord(job)}/${name}.ai`, built.bytes, "application/illustrator", `Saving ${faceWord(job)} ${copy}`); pngUp = await uploadBytes(`${dir}/${faceWord(job)}/${name}.png`, pngBlob, "image/png"); }
         rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, materialVersion:2, ...(fit.artOnly ? { artOnly:true } : {}), upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, ...pieceFields(job), text: job.text, lines: job.lines, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), ...(job.fontAsked ? { fontAsked: job.fontAsked } : {}), weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: apBy(job), approvedAt: apAt(job), engravingSeals: job.approving ? [sealOfApproving(job)] : CNEngravingSeals.keep(job), nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: fileViewOf(job), reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
-        if(!rec.outputs.ai?.url || !rec.outputs.png?.url)throw new Error("Reconnect to save the approved back files");
+        if(!rec.outputs.ai?.url || !rec.outputs.png?.url)throw new Error(!S.cloud.ok ? "Reconnect to save the approved back files" : !dir ? `${sheetName(sh)} has no folder for its files yet` : `the approved ${faceWord(job)} file was not uploaded`);   // (APPROVEHANG: "Reconnect" only when the cloud is away)
         // Keep the exact uploaded payload before sending it. A lost reply must replay
         // these same file tokens, not upload again and look like a different edit.
         job.stagedBacks=job.stagedBacks.filter(b=>b.poolId!==poolId);job.stagedBacks.push(rec);Session.schedule();
         if(await Session.flushNow?.()===false)throw new Error("Workspace checkpoint waits before recording the approved back");
         }
         // the sheet's saves write its list of backs too: recording one waits its turn with them, and nothing else does
-        const recorded = await recordBack(job, async () => {
+        const recorded = await beatWhile(job, "record", "Recording the approval in the cloud…", recordBack(job, async () => {   // (APPROVESTEP: its turn behind a sheet's save is said, never silence)
           if (!current()) return false;
           if (sheetFor(job,poolId) !== sh) throw Object.assign(new Error("The charm moved during approval. Retry on its current sheet."),{engravingPending:true});
           if (!S.cloud.ok || !rec.outputs.ai?.url || !rec.outputs.png?.url) throw new Error("Reconnect to save the approved back files");
@@ -12945,7 +12262,7 @@ const Engrave = window.Engrave = (() => {
           job.stagedBacks=job.stagedBacks.filter(b=>b.poolId!==poolId);Session.schedule();
           if(job.editingBack) job.expectedApprovedAt=rec.approvedAt; window.LaserReview?.saved(sh); shown = true;
           return true;
-        });
+        }));
         if (!recorded) return;
         agent({ metal: sh.metal, engrave: true }, "ENGRAVE", `${isFront(job) ? "Front" : "Back"} file written and re-verified: ${name}.ai (${rec.reference?.redrawn ? "cut reference redrawn from the exact transformed paths" : "original cut bytes under the mirror matrix"})`);
       }
@@ -12959,6 +12276,7 @@ const Engrave = window.Engrave = (() => {
     delete job._backPreview; delete job._previewSize; delete job._previewAt;   // the saved picture stands for it from now on
     // a piece is "engraved" when EVERY face it expects is written: the first face to be written leaves the piece as it was (Faces.bothFacesWritten, over this line's other jobs of the same piece)
     const othersDone = !job.editingBack && jobsOf(job.row).filter(o => o !== job && (o.copies || []).some(id => job.copies.includes(id))).every(o => ["written", "skipped", "none"].includes(o.state));
+    jobStep(job, "pool", "Marking the piece engraved in the cloud…");
     await Pool.update(job.copies, isFront(job) ? { engraveFront: true, engraveFrontApprovedBy: apBy(job), ...(job.editingBack || !othersDone ? {} : {state:"engraved"}) } : { engrave: true, engraveApprovedBy: apBy(job), ...(job.editingBack || !othersDone ? {} : {state:"engraved"}) });
     if(!current())return;
     delete job.poolPending;
@@ -12975,7 +12293,7 @@ const Engrave = window.Engrave = (() => {
      again (a piece moved to another sheet, a carried line) builds them again from the charm, as they were fitted
      (restoreWritten). A placement this page could not build again exactly is kept whole. */
   const hasPlacement = job => !!(job.fit && job.view) || !!(job.writtenFit && job.approvedAt && job.writtenFit.approvedAt === job.approvedAt);
-  const maskKey = m => { let h = 2166136261; for (let i = 0; i < m.bits.length; i++) h = Math.imul(h ^ m.bits[i], 16777619) >>> 0; return [m.w, m.h, m.res, m.ox, m.oy, h].join(":"); };
+  const maskKey = m => { if (window.CharmNestBackFile) return CharmNestBackFile.maskKey(m); let h = 2166136261; for (let i = 0; i < m.bits.length; i++) h = Math.imul(h ^ m.bits[i], 16777619) >>> 0; return [m.w, m.h, m.res, m.ox, m.oy, h].join(":"); };   // (the one formula, charm-nest-back-file.js, the cloud's too; the same line stands in while that file is loading)
   function restoreWritten(job) {
     const w = job.writtenFit, again = why => Object.assign(new Error(why), { engravingInvalid: true });
     if (!w || w.approvedAt !== job.approvedAt) throw again("This engraving's placement is not kept — fit the words again");
@@ -13033,56 +12351,17 @@ const Engrave = window.Engrave = (() => {
   }
   /** Parse the written back file and compare its cut geometry with the verified view (mirrored back for the front-coordinates variant). */
   async function verifyBackFile(bytes, job) {
-    try {
-      const parsed = await P.parseSource(bytes, "back.ai");
-      // A back file has one explicit cut-reference layer. Do not mistake a
-      // rectangular charm containing holes for an artboard around many charms.
-      const references=parsed.segments.concat(parsed.nested).filter(m=>m.kind==="path" && m.closed && (m.stroke || m.fill) && /CUT OUTLINE/.test(m.layer || ""));
-      const larger=(a,b)=>(b.bbox[2]-b.bbox[0])*(b.bbox[3]-b.bbox[1])>(a.bbox[2]-a.bbox[0])*(a.bbox[3]-a.bbox[1])?b:a;
-      const g=references.length ? null : await (P.groupCharmsAsync || P.groupCharms)(parsed,{minPt:4});
-      if(!references.length && !g.charms.length)return {ok:false,why:"no cut outline found in the written file"};
-      const c=references.length ? {outline:references.reduce(larger),members:references} : g.charms.reduce(larger);
-      const cut = c.members.filter(m => m === c.outline || G.isCutLine(m));
-      const bbW = cut.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
-      const bbV = job.view.members.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
-      const res = 6; const fw = G.makeFrame([0, 0, bbW[2] - bbW[0], bbW[3] - bbW[1]], res, (bbW[2] - bbW[0]) / 2, 1), fv = G.makeFrame([0, 0, bbV[2] - bbV[0], bbV[3] - bbV[1]], res, (bbV[2] - bbV[0]) / 2, 1);
-      if (Math.abs(fw.w - fv.w) > 2 || Math.abs(fw.h - fv.h) > 2) return { ok: false, why: `written extent ${fw.w}×${fw.h} px differs from the verified back ${fv.w}×${fv.h} px` };
-      // Reuse the preview's pixel grid after translating both files to their cut bounds.
-      // A new bbox-centred grid shifts the clearance pixels on asymmetric rotated charms.
-      const originalFrame=job.view.mask;
-      const frame=originalFrame ? {w:originalFrame.w,h:originalFrame.h,res:originalFrame.res,ox:originalFrame.ox-bbV[0],oy:originalFrame.oy-bbV[1],cx:originalFrame.cx-bbV[0],cy:originalFrame.cy-bbV[1]} : fv;
-      const front = job.face !== "front" && (S.settings.backFileView || "asSeenFromBack") === "frontCoordinates";   // (the FRONT file is the charm as it is: nothing to turn back)
-      const normalized=G.translate(-bbW[0],-bbW[1]);
-      const writtenToView=front ? G.mul(normalized,G.mirrorX((bbW[2]-bbW[0])/2)) : normalized;
-      const wc=cut.map(m=>G.transformSeg(m,writtenToView)),vc=job.view.members.map(m=>G.transformSeg(m,G.translate(-bbV[0],-bbV[1])));
-      const outlineIndex=job.view.outline ? job.view.members.indexOf(job.view.outline) : job.view.members.reduce((best,m,i,all)=>(m.bbox[2]-m.bbox[0])*(m.bbox[3]-m.bbox[1])>(all[best].bbox[2]-all[best].bbox[0])*(all[best].bbox[3]-all[best].bbox[1])?i:best,0);
-      const W=G.materialMask(wc,wc[cut.indexOf(c.outline)],frame),V=G.materialMask(vc,vc[outlineIndex],frame);
-      const diff = G.diffFraction(W,V);
-      // CHARM EDIT · BACK (27 Oct 2026): the parts a person added to the back are written in the same ENGRAVE layer as the words. They were checked on the metal when they were saved
-      // (charm-nest-art-edit.js) and the words keep off them (engraveMask avoid, see fitInput); the clearance off the cut edges checked here is the words' own, so an added part (known by its box, turned into
-      // this frame as the view turns it: backArtOf) is not read as a word. A file with nothing added is read exactly as before.
-      const addedBoxes=job.face !== "front" && typeof backArtOf === "function" ? backArtOf(job).filter(s=>s.fill).map(s=>G.transformSeg(s,G.translate(-bbV[0],-bbV[1])).bbox) : [];
-      const addedPart=s=>{if(!addedBoxes.length)return false;const b=G.transformSeg(s,writtenToView).bbox;return !!b && addedBoxes.some(a=>a.every((v,i)=>Math.abs(v-b[i])<.1));};
-      const textPaths=parsed.segments.concat(parsed.nested).filter(s=>s.kind==="path" && s.fill && !s.stroke && !/CUT OUTLINE/.test(s.layer || "") && !addedPart(s)),textOk=textPaths.length>=1;
-      // Preserve the written Béziers so verifyInk uses the same curved outlines
-      // and sampling as the preview. Flattening them first changed valid fits.
-      const textCmds=textPaths.flatMap(s=>G.transformSeg(s,writtenToView).subpaths.flatMap(sub=>sub.map(([op,p,p1,p2])=>{
-        if(op==='m' || op==='l')return {type:op==='m'?'M':'L',x:p[0],y:p[1]};
-        if(op==='c')return {type:'C',x1:p[0],y1:p[1],x2:p1[0],y2:p1[1],x:p2[0],y:p2[1]};
-        if(op==='h')return {type:'Z'};
-        throw new Error("Unsupported engraving path in the back file");
-      })));
-      // EDITOR WORDS (27 Oct 2026): a face approved with no words (its engraving is the charm editor's parts) is right when its file carries no words at all
-      if(job.fit && job.fit.artOnly)return {ok:diff<=.01 && !textPaths.length,why:diff>.01?`cut geometry differs by ${(diff*100).toFixed(2)}%`:textPaths.length?'words in a file that carries none':null,pixelDiff:diff,textPaths:false,artOnly:true};
-      const ink=textOk && G.verifyInk(textCmds,G.engraveMask({mask:W},{marginMm:job.mask?.marginMm || 0}));
-      return {ok:diff<=.01 && textOk && ink.ok,why:diff>.01?`cut geometry differs by ${(diff*100).toFixed(2)}%`:!textOk?'no engraving paths in the file':!ink.ok?'engraving intersects a cut-out or cut-edge clearance':null,pixelDiff:diff,textPaths:textOk,ink};
-    } catch (e) { return { ok: false, why: e.message }; }
+    // (cloud plan v2 build step 11: the check lives in charm-nest-back-file.js, line for line as it was here, and the cloud's back-file tasks run the very same one)
+    const BF = window.CharmNestBackFile; if (!BF || typeof BF.verifyBackFile !== "function") return { ok: false, why: "charm-nest-back-file.js did not load: reload the page" };
+    let added = []; try { added = job.face !== "front" && typeof backArtOf === "function" ? backArtOf(job) : []; } catch (_) { added = []; }
+    return BF.verifyBackFile(bytes, { P, G, view: job.view, mask: job.mask, fit: job.fit, face: job.face, backFileView: S.settings.backFileView || "asSeenFromBack", added });
   }
   /** back/back-index.pdf and back/back-report.json for a sheet: a summary for people, drawn once after a run of
    *  approvals has settled, in the background worker, after the approval's save has let go of the run. It used to be
    *  drawn again inside every approval, on the page's own thread (0.1 to 0.6 s, longer with every back on the sheet),
    *  while the run's nesting and sheet saves waited for the approval to finish. */
   function scheduleBackOutputs(sh) {
+    if (window.CNViewer && CNViewer.on()) return;   // (CLOUDDRIVE build step 14: the cloud writes a sheet's back index)
     clearTimeout(sh._backIndexTimer);
     sh._backIndexTimer = setTimeout(() => {
       sh._backIndexTimer = null;
@@ -15879,6 +15158,7 @@ const Sets = window.Sets = (() => {
         indexed.some(g => g.path === f.path && g.url === f.url && g.part === f.part) && (f.notes || []).join("|") === pairNotes(sh, set, placed, parts[i]).concat(i === 0 && CPL ? CPL.labelNotes(placed) : []).join("|"));
   }
   async function onSheetSaved(sh, items, outputs, {labelsOnly = false, setOverride = null} = {}) {
+    if (window.CNViewer && CNViewer.on()) return;   // (CLOUDDRIVE build step 14: a set's labels and lists are the cloud's)
     const set = setOverride || setOfSheet(sh); if (!set) return;
     // a sheet of a COMMITTED set that is nested again (a partial sheet chosen for it, Paul 7 Oct) gets its QR label and the set's label list made again, but its orders were
     // already designed at the station: their pool rows stay "committed" and the set keeps its status
@@ -16009,6 +15289,7 @@ const Sets = window.Sets = (() => {
   }
   function releaseIssue(set) { try { validateRelease(set); return null; } catch(e) { if(e.releasePending)return e.message; throw e; } }
   async function finalize(set, context) {
+    if (window.CNViewer && CNViewer.on()) return;   // (CLOUDDRIVE build step 14: a set's labels are the cloud's)
     const ops=window.CharmNestOperations;
     if(ops && !context){await Gate.flush(B.run);return ops.run({key:'labels:'+set.setId,label:'Saving set labels',resources:['production:'+set.runId]},token=>finalize(set,token));}
     if(B.run?.runId===set.runId)await RunCtl.save(B.run);
@@ -16050,6 +15331,7 @@ const Sets = window.Sets = (() => {
   }
   /** §8.4 · the real lock, the preview, the commit — held and refused orders stay open on the station. */
   async function commit(set, run, context) {
+    if (window.CNViewer && CNViewer.on()) return;   // (CLOUDDRIVE build step 14: the cloud commits a set to the Design Station)
     const ops=window.CharmNestOperations;
     if(ops && !context){await Gate.flush(run);return ops.run({key:'commit:'+run.runId,label:'Committing set',resources:['production:'+run.runId]},async token=>{if(run.membershipNext || run.membershipDirty)return {membershipChanged:true};Gate.refreshMembership();try{return await commit(set,run,token);}finally{requestAnimationFrame(()=>Gate.refreshMembership());}});}
     // (Paul, 15 Oct 2026: "resilient against lost internet connections, interruptions") The station already marked this set's orders design-complete, but the
@@ -16117,10 +15399,15 @@ const Sets = window.Sets = (() => {
     return { completed, refused: set.refused, held: ev.held };
   }
   async function undo(set) {
+    // (CLOUDDRIVE build step 12, hard-parts §2.9; never while the drive is off) the cloud carries this set's run and "commit" is one of its lanes: the Undo is ONE press, nothing is undone here (cloudUndo, below)
+    if (await commitLane(set && set.runId)) return cloudUndo(set);
     // a set that committed nothing (every order held or refused) has nothing to reopen at the station
     const reopened = (set.committed || []).map(String);
     // (an undo that stopped after the station reopened the orders, before the set's record saved, is finished by pressing it again: "nothing to undo" there means the orders are open already)
-    if (reopened.length) { await DesignLink.ensure(); await DesignLink.call("complete.undo", { receiptIds: reopened }, { timeoutMs: 180000 }).catch(e => { if (!/nothing to undo/.test(e.message)) throw e; }); }
+    let st = null;
+    if (reopened.length) { await DesignLink.ensure(); st = await DesignLink.call("complete.undo", { receiptIds: reopened, runId: set.runId || null, setId: set.setId || null, by: String((B && B.employee) || "").trim() }, { timeoutMs: 180000 }).catch(e => { if (!/nothing to undo/.test(e.message)) throw e; }); }
+    // (the station looked for itself and found the run is the cloud's: it sent the press, reopened nothing, and nothing is written here either)
+    if (st && st.cloud) return cloudSaid(set, st, Date.now());
     set.status = "awaiting review"; set.committed = []; set.committedAt = null; set.completedAt = null; set.completionDay = null; await save(set);
     try { humanAct.set(true, reopened, set.name); } catch (_) {}
     window.SheetEvents?.undone(set, reopened);   // a note on each reopened order (idle time)
@@ -16129,6 +15416,72 @@ const Sets = window.Sets = (() => {
     if (B.run && (B.run.setId === set.setId || (B.run.setIds || []).includes(set.setId))) { B.run.status = "review"; B.run.step = "engrave"; await RunCtl.save(B.run); RunCtl.renderBanner(); }
     agent({ run: set.runId }, "DS", `${set.name}: completion undone on the station — set back to awaiting review, every file kept`);
     Orders.render();
+  }
+  /* (CLOUDDRIVE build step 12, hard-parts §2.9; DORMANT: never while the drive is off) THE UNDO OF A SET THE CLOUD SENT TO THE DESIGN STATION. While the cloud carries the set's run
+     (Charm_Nest_Run_Carrier says "cloud") and "commit" is one of the drive's lanes (Charm_Nest_Open/drive.cloudSteps), the person's Undo set is ONE press, commitUndoAsk
+     { runId, setId, by }: nothing is undone here (the station is not asked; the set, its pieces and the run are not written). The cloud's commit unit reopens the orders at the
+     station when the run reaches its commit step (a resting run is sent Resume for it, as the op asks). The person is told in words what happened: asked, then undone (the set's
+     commit record, commitGet, followed until it says so), undone already (the station's "nothing to undo"), or refused with the reason. Every other case is undo() as it was. */
+  const UNDO_FOLLOW_MS = 4000, UNDO_FOLLOW_MAX_MS = 20 * 60000;
+  const undoDev = () => { try { return (window.CharmNestRunFollow && window.CharmNestRunFollow.dev()) || ""; } catch (_) { return ""; } };
+  /** The lane, read at the press: the run's carrier (one read, kept 30 s: with the drive off it is never "cloud", and the page goes on as today), then the switch as it is now. */
+  async function commitLane(runId) {
+    const V = window.CNViewer;
+    if (!runId || !V || typeof V.lane !== "function" || typeof V.carrierOf !== "function") return false;
+    try {
+      const c = await V.carrierOf(runId);
+      if (!V.on() && !(c && c.dev === "cloud")) return false;
+      if (!(Date.now() - (+V.state().at || 0) < 60000)) await V.read("undo");
+      return !!V.lane("commit", runId);
+    } catch (_) { return false; }
+  }
+  async function cloudUndo(set) {
+    const at = Date.now(); let r = null;
+    try { r = await api("charmNestLibrary", { op: "commitUndoAsk", runId: set.runId, setId: set.setId, by: String((B && B.employee) || "").trim(), dev: undoDev() }, { quiet: true }); }
+    catch (e) { r = { error: (e && e.data && e.data.error) || (e && e.message) || String(e) }; }
+    if (!r || r.error || !r.ok) return cloudSaid(set, { cloud: true, ok: false, state: "refused", words: (r && r.error) || "the cloud did not answer" }, at);
+    return cloudSaid(set, { cloud: true, ok: true, state: r.already && !r.asked ? "already" : "asked", already: !!r.already, words: r.words || "" }, at);
+  }
+  /** What the person is told (never silent), and an asked undo followed on the set's commit record until the cloud says it is undone. → { cloud, ok, state, words, followed? } */
+  function cloudSaid(set, a, at) {
+    const name = set.name || set.setId;
+    if (!a.ok) { const words = `${name}: not undone · ${a.words}`; toast(words, "bad", 9000); agent({ run: set.runId }, "DS", words); return { cloud: true, ok: false, state: "refused", words }; }
+    if (a.state === "already") { const words = `${name}: already undone · ${a.words || "its orders are open at the Design Station"}`; toast(words, "ok", 7000); agent({ run: set.runId }, "DS", words); return { cloud: true, ok: true, state: "already", words }; }
+    const words = `${name}: Undo asked of the cloud · ${a.words || "the cloud reopens its orders at the Design Station when the run reaches its commit step"}`;
+    toast(words, "ok", 8000); agent({ run: set.runId }, "DS", `${words} (asked by ${String((B && B.employee) || "").trim() || "a person"})`);
+    resumeResting(set.runId).catch(() => {});
+    return { cloud: true, ok: true, state: "asked", words, followed: followUndo(set, at) };
+  }
+  /** A run that rests after it finished (processed) never reaches its commit step by itself: it is sent Resume (runControl), as a person's press. A run a person PAUSED is not resumed
+      (their pause stands): the person is told the undo waits for their Resume. A stopped run is not either: its stop says why. */
+  async function resumeResting(runId) {
+    const F = window.CharmNestRunFollow, fw = F && typeof F.state === "function" ? F.state() : null, run = fw && fw.runId === runId ? fw.run : null;
+    if (run && run.status === "paused") { const words = "The run is paused: this undo happens once someone presses Resume"; toast(words, "bad", 9000); agent({ run: runId }, "DS", words); return false; }
+    if (!run || run.status !== "processed") return false;
+    const r = await api("charmNestLibrary", { op: "runControl", runId, action: "resume", by: String((B && B.employee) || "").trim(), dev: undoDev() }, { quiet: true });
+    return !!(r && !r.error);
+  }
+  function followUndo(set, at) {
+    const name = set.name || set.setId, end = at + UNDO_FOLLOW_MAX_MS; let saidStop = "";
+    return new Promise(resolve => {
+      const tick = async () => {
+        let j = null;
+        try { const r = await api("charmNestLibrary", { op: "commitGet", runId: set.runId, setId: set.setId }, { quiet: true }); j = (r && r.journals && r.journals[0]) || null; } catch (_) { j = null; }
+        if (j && j.stage === "undone") {
+          const n = ((j.result && j.result.reopened) || j.completed || []).length;
+          const words = `${name}: completion undone by the cloud · ${n ? `its ${n} order${n === 1 ? " is" : "s are"} open again at the Design Station` : "awaiting review again"}, every file kept`;
+          toast(words, "ok", 9000); agent({ run: set.runId }, "DS", words);
+          return resolve({ state: "undone", words, n });
+        }
+        try {   // (the run stopped before its commit step: said once, with its own words)
+          const F = window.CharmNestRunFollow, fw = F && F.state ? F.state() : null, run = fw && fw.runId === set.runId ? fw.run : null;
+          if (run && run.status === "stopped" && saidStop !== String(run.stoppedBy || "")) { saidStop = String(run.stoppedBy || ""); toast(`${name}: the Undo waits · the run is stopped${saidStop ? ` (${saidStop})` : ""}: the cloud reopens the orders once it is resumed`, "bad", 9000); }
+        } catch (_) {}
+        if (Date.now() >= end) { const words = `${name}: the cloud has not undone it yet · it does so when the run reaches its commit step`; toast(words, "bad", 12000); return resolve({ state: "waiting", words }); }
+        setTimeout(tick, UNDO_FOLLOW_MS);
+      };
+      setTimeout(tick, UNDO_FOLLOW_MS);
+    });
   }
   /** The Library's Sets view: one card per set, its sheets side by side, engraving count, label thumbnails. */
   function libraryGroups(sets, sheets) {
@@ -16300,7 +15653,9 @@ const Sets = window.Sets = (() => {
         byRun().set(local.runId || st.setId, local);
         const n = (local.committed || []).length;       // (what the station reopens: undo empties the list)
         U.says(n ? `Reopening ${n} order${n === 1 ? "" : "s"} at the station…` : "Undoing the completion…");
-        await undo(local);
+        const u = await undo(local);
+        // (CLOUDDRIVE build step 12, hard-parts §2.9: the cloud undoes this set: nothing changed here yet, so the card is set down as it was, and the words were said; it is drawn again once the cloud says it is undone)
+        if (u && u.cloud) { U.fail(); if (u.state === "already" && onUndo) onUndo(card); if (u.followed) u.followed.then(f => { if (f && f.state === "undone" && onUndo && card.isConnected) onUndo(card); }).catch(() => {}); return; }
         await U.done(st, n);
         if (onUndo) onUndo(card);
       } catch (e) { U.fail(); toast(e.message, "bad", 6000); }
@@ -16462,11 +15817,12 @@ const RunCtl = window.RunCtl = (() => {
   /* (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"): the computer that carries the run says so in the cloud (runCarrier, renewed every 20 s); a computer whose run was taken over by another one reloads and follows it;
      Resume on a computer while another, alive, carries the run asks the person first; a computer coming back with its saved copy of a run another computer carries now follows it. */
   const carrierDev = () => { try { return window.CharmNestRunFollow && typeof CharmNestRunFollow.dev === "function" ? CharmNestRunFollow.dev() : ""; } catch (_) { return ""; } };
-  async function carrier(runId, o = {}) { const dev = carrierDev(); if (!dev || !runId) return null; return api("charmNestLibrary", Object.assign({ op: "runCarrier", runId, dev, by: String((B && B.employee) || "").trim() }, o), { quiet: true }).then(res => { try { if (res && res.cmdsWaiting && B.run && window.CharmNestRunFollow) CharmNestRunFollow.now("cmds"); } catch (_) {} return res; }); }   // (CMDBEAT: the heartbeat's answer says a request from another computer waits: it is looked at now)
+  async function carrier(runId, o = {}) { const dev = carrierDev(); if (!dev || !runId) return null; return api("charmNestLibrary", Object.assign({ op: "runCarrier", runId, dev, by: String((B && B.employee) || "").trim() }, o), { quiet: true }).then(res => { try { if (res && res.cmdsWaiting && B.run && window.CharmNestRunFollow) CharmNestRunFollow.now("cmds"); } catch (_) {} try { window.CharmNestEngraveCloud?.noteCarrier?.(runId, res); } catch (_) {} return res; }); }   // (CLOUDLANE step 11: the engrave lane hears who carries the run from this answer, at no read of its own) (CMDBEAT: the heartbeat's answer says a request from another computer waits: it is looked at now)
   let carrierLost = false;
   async function carrierBeat() {
     const r = B.run; if (!r || !r.runId || carrierLost || !(S.cloud && S.cloud.ok)) return;
     let res = null; try { res = await carrier(r.runId); } catch (_) { return; }
+    try { if (window.CharmNestDrive) CharmNestDrive.beat(res, r); } catch (_) { /* (CLOUDDRIVE build step 15: the hand-over to the cloud, charm-nest-drive.js; nothing while the drive is off) */ }
     if (!res || !res.ok || res.mine || r !== B.run) return;
     carrierLost = true; const who = (res.carrier && res.carrier.by) || "another computer";
     try { agent({ run: r.runId }, "warn", `This run is now carried by ${who} on another computer: this page reloads and follows it from the cloud`); } catch (_) {}
@@ -16591,6 +15947,7 @@ const RunCtl = window.RunCtl = (() => {
       (every step saves it; the banner says "Not saved online" meanwhile), so a passing failure here lets the run go on; any other failure is thrown to the caller as before. */
   const saveSoft = async r => { try { await save(r); } catch (e) { if (!(e && e.transient)) throw e; } };
   async function start(opts = {}) {
+    if (window.CNViewer && CNViewer.on()) return CNViewer.startRun(opts);   // (CLOUDDRIVE build step 14: the cloud starts and carries the run; this page follows it)
     if (B.run && ["running", "review", "paused", "processed", "stopped"].includes(B.run.status)) { toast("A run is already open — resume, finish, or abandon it before starting another", "bad"); return B.run; }
     if (B.run) await save(B.run);
     if ((B.run || Recall.on()) && clearRunState()===false) return B.run;
@@ -16638,6 +15995,8 @@ const RunCtl = window.RunCtl = (() => {
       // again at once never lets the page answer. While anything else gets its turn between steps nothing changes; after 1.5 s without one the loop waits a moment, and the page answers.
       if (!loopFresh.asked) { loopFresh.asked = true; setTimeout(() => { loopFresh.at = performance.now(); loopFresh.asked = false; }, 0); }
       if (performance.now() - loopFresh.at > 1500) { window.CharmNestHang?.count?.("loop breath (page not answering)"); await new Promise(res => setTimeout(res, 50)); if (r!==B.run || r.status !== "running") break; }
+      // (CLOUDDRIVE build step 15, P12): while the run is being handed to the cloud, it waits here, between two steps, and starts nothing new (charm-nest-drive.js holdLoop; never while the drive is off)
+      if (window.CharmNestDrive && CharmNestDrive.holdLoop(r)) { while (r === B.run && r.status === "running" && CharmNestDrive.holdLoop(r)) await new Promise(res => setTimeout(res, 2000)); if (r !== B.run || r.status !== "running") break; }
       if(r.membershipNext){await Gate.flush(r);r.step=r.membershipNext;delete r.membershipNext;}
       const step = r.step, membershipRevision=r.membershipRevision || 0;
       window.CharmNestHang?.count?.("loop step " + step);
@@ -16987,8 +16346,10 @@ const RunCtl = window.RunCtl = (() => {
   // (ONEFILL: on its own, every 4 s, in the tab carrying the run; nothing is read or written by the look itself: the sheet they move to is saved by its own nest, and a reload while paused gathers again)
   let gathering = false;
   function gatherNow() {
+    if (window.CNViewer && CNViewer.holdNew()) return;   // (CLOUDDRIVE build step 14: the cloud gathers; during the drain nothing new starts here)
     const r = B.run; if (gathering || !r || ["complete", "abandoned"].includes(r.status) || r.arrivalBusy || settling === r || !claimed.has(r.runId) || B.resuming) return;   // (only the tab carrying the run)   (TAKEOVERSAFE, Paul 14 Nov 2026: "A real run takeover between computers ... test them"): and never while the run is being rebuilt here (a half-restored run gathered a piece onto a second sheet)
     try { if (window.CharmNestOperations && typeof CharmNestOperations.busy === "function" && CharmNestOperations.busy("production:" + r.runId)) return; } catch (_) { /* looked at again */ }
+    try { if (window.CharmNestDrive && CharmNestDrive.draining(r)) return; } catch (_) { /* (CLOUDDRIVE build step 15: no new nest while the run is handed to the cloud) */ }
     gathering = true;
     try {
       try { if (window.Pool && typeof Pool.pairResume === "function") Pool.pairResume(r); } catch (e) { console.warn("pair resume", e); }
@@ -17064,12 +16425,23 @@ const RunCtl = window.RunCtl = (() => {
     finally { if (B.resuming === (runId || true)) B.resuming = null; try { if (window.Review && Review.redrawLater) Review.redrawLater(500); } catch (_) {} }
   }
   async function resumeRunNow(runId) {
-    const rr = await api("charmNestLibrary", { op: "runGet", runId }); const rec = rr.run; if (!rec) { toast("Run record not found", "bad"); return; }
-    // the orders the run is done with are in its line archive, outside the record: still counted, never taken in again
-    if (rec.lineArchive) { const la = rec.lineArchive; rec.lineArchive = { parts: +la.parts || 0, at: la.at || null, base: { lines: +la.lines || 0, committed: +la.committed || 0, held: +la.held || 0, sheets: +la.sheets || 0 } }; }
-    if (rec.status === "processed") { rec.step = "engrave"; rec.processingComplete = false; }
-    const pendingStop=reviewStop(rec);
+    if (window.CNViewer && CNViewer.on()) { await CNViewer.control("resume"); return; }   // (CLOUDDRIVE build step 14: Resume is a press the cloud acts on)
+    const readRec = async () => {
+      const rr = await api("charmNestLibrary", { op: "runGet", runId }); const rec = rr.run; if (!rec) return null;
+      // the orders the run is done with are in its line archive, outside the record: still counted, never taken in again
+      if (rec.lineArchive) { const la = rec.lineArchive; rec.lineArchive = { parts: +la.parts || 0, at: la.at || null, base: { lines: +la.lines || 0, committed: +la.committed || 0, held: +la.held || 0, sheets: +la.sheets || 0 } }; }
+      if (rec.status === "processed") { rec.step = "engrave"; rec.processingComplete = false; }
+      return rec;
+    };
+    let rec = await readRec(); if (!rec) { toast("Run record not found", "bad"); return; }
+    let pendingStop=reviewStop(rec);
     { let c = null; try { c = await carrier(runId); } catch (_) { c = null; }   // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access")
+      /* (CLOUDDRIVE build step 8, P8; never while the drive is off): a run the cloud carries is asked back (restoreFromCloud): the cloud hands it over once it has finished what
+         it is doing, said in words meanwhile; the run's record is then read again, so this computer starts from everything the cloud wrote (P-m9: never an older copy of it) */
+      if (c && c.ok && !c.mine && c.carrier && c.carrier.dev === "cloud" && window.CharmNestDrive) {
+        c = await CharmNestDrive.takeFromCloud(runId, o => carrier(runId, o)); if (!c) return;
+        if (c.mine) { const again = await readRec(); if (!again) { toast("Run record not found", "bad"); return; } rec = again; pendingStop = reviewStop(rec); if (rec.stopKind === "parked" || rec.stopKind === "handback") rec.stopKind = null; }
+      }
       if (c && c.ok && !c.mine && c.alive) {
         const who = (c.carrier && c.carrier.by) || "another computer", ago = c.carrier && c.carrier.at ? Math.max(0, Math.round((Date.now() - c.carrier.at) / 1000)) : 0;
         if (!confirm(`This run is being carried by ${who} on another computer (seen ${ago} s ago).\n\nTake it over on this computer? That computer stops carrying it and follows it.`)) return;
@@ -17169,6 +16541,7 @@ const RunCtl = window.RunCtl = (() => {
       if (+d.joinedAt) pg.joinedAt = +d.joinedAt; if (d.joinedBy) pg.joinedBy = d.joinedBy; if (!pg.leftSet && d.leftSet) { pg.leftSet = d.leftSet; if (["gold10k","gold14k","rose"].includes(d.metal)) pg.solidPick = false; }   // (CLOUDMARKS, Paul 14 Nov 2026: "You must put all this in the cloud"): the set marks from the sheet's cloud record   // a sheet a person took out of a committed set stays out (and can be put back by the In current set switch)
       pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = (set && set.day) || d.day;   /* (NAMECLASH) */ pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; if (d.draftOrder != null && Number.isFinite(+d.draftOrder)) { pg.draftOrder = +d.draftOrder; pg._savedDO = pg.draftOrder; if (Number.isFinite(+d.page)) pg._savedPage = +d.page; } pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
+      if (+d.releasedAt > 0 && !pg.releasedAt) pg.releasedAt = +d.releasedAt;   // (CLOUDDRIVE m:P3: the moment the sheet was first seen completed, kept on its record outside "off"; none on a record while the drive is off)
       // a 10K/14K sheet keeps its own size after a reload (keptStock: a cut sheet an Apply size left as it was), read from
       // the size its record was nested at; one at the metal's size now takes the metal's size (as before)
       delete pg.keptStock;
@@ -17299,6 +16672,7 @@ const RunCtl = window.RunCtl = (() => {
     return ((lr && lr.runs) || []).some(x => x && x.runId && !["complete", "abandoned", "archived"].includes(x.status) && !(B.run && x.runId === B.run.runId));
   }
   async function autoStart(o = {}) {
+    if (window.CNViewer && CNViewer.holdNew()) return;   // (CLOUDDRIVE build step 14: the cloud starts the next run)
     if (!o.asked) {
       let open = true; try { open = await openRunInCloud(); } catch (_) { toast("Auto is on, but the cloud could not be asked whether a run is open: no run is started on this computer yet", "bad", 8000); return; }
       if (open) { agent({ bridge: true }, "cloud", "A run is open in the cloud: Auto starts no new run on this computer"); toast("A run is already open in the cloud: this computer follows it and starts no run of its own", "ok", 7000); return; }
@@ -17379,6 +16753,7 @@ const RunCtl = window.RunCtl = (() => {
   }
   /** Called by the heartbeat, the boot after a reload (now: true) and the network coming back. */
   async function autoResume(now) {
+    if (window.CNViewer && CNViewer.holdNew()) return false;   // (CLOUDDRIVE build step 14: the cloud resumes by its own rules)
     const r = B.run; if (auto.busy || !autoResumable(r)) return false;
     if (auto.runId !== r.runId || auto.step !== r.step) { Object.assign(auto, { runId: r.runId, step: r.step, n: 0, next: ((r.errors || []).at(-1)?.t || Date.now()) + AUTO_WAIT[0] }); renderBanner(); }
     clearTimeout(auto.t);
@@ -17388,7 +16763,9 @@ const RunCtl = window.RunCtl = (() => {
     try {
       if (globalThis.navigator?.onLine === false) throw new Error("the network is down");
       if (!await claimRun(r.runId)) throw new Error("another sorter tab is carrying on with this run");
-      { const c = await carrier(r.runId).catch(() => null); if (c && c.ok && !c.mine && c.alive) throw new Error(`${(c.carrier && c.carrier.by) || "another computer"} carries this run on another computer`); }   // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access")
+      { const c = await carrier(r.runId).catch(() => null); if (c && c.ok && !c.mine && c.alive) throw new Error(`${(c.carrier && c.carrier.by) || "another computer"} carries this run on another computer`);
+        if (c && c.ok && !c.mine && c.cloud) throw new Error("the cloud carries this run: a person's Resume takes it back");   // (CLOUDDRIVE P8: a run the cloud carries is never taken by Auto, whatever the age of its beat; never while the drive is off)
+      }   // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access")
       await api("charmNestLibrary", { op: "ping", calibration: false }, { quiet: true });
       await DesignLink.ensure();
       if (!autoResumable(r)) return false;
@@ -17535,6 +16912,7 @@ const RunCtl = window.RunCtl = (() => {
      where the next button takes the pressed one's place (a double click lands there, as it did on the band), and closes
      on a button that leads elsewhere or ends what the pill was showing. */
   function pillClick(e) {
+    if (window.CNViewer && CNViewer.pill(e)) return;   // (CLOUDDRIVE build step 14: the run's buttons send runControl in mode "on")
     const b = e.target.closest("button"); if (!b || b.disabled) return;
     const r = B.run, close = () => { const m = document.getElementById("runMenu"); if (m) m.open = false; };
     // a question asked once the menu has closed, never over it
@@ -19349,6 +18727,7 @@ const CustomSheet = window.CustomSheet = (() => {
   /** The cloud's repair pass (orphan uploads, records, pending Etsy steps): best effort, never awaited by anything the person sees; once per load, on online, every ~10 minutes while the page is open. */
   let repairAt = 0;
   async function keepRepair(reason) {
+    if (window.CNViewer && CNViewer.on()) return;   // (CLOUDDRIVE build step 14: KEEPSAVE's repair is the cloud's cron; this page keeps no save loop)
     try {
       if (WORKSPACE_SANDBOX || S.cloud.ok !== true || Date.now() - repairAt < 4 * 60 * 1000) return;
       repairAt = Date.now(); await api("charmNestLibrary", { op: "customSaveRepair", etsy: true }, { quiet: true });
@@ -19356,7 +18735,7 @@ const CustomSheet = window.CustomSheet = (() => {
   }
   // COST (Oct 2026): not in a hidden tab (the next beat after it is looked at again does it; a load and online still do)
   setInterval(() => { try { if (!document.hidden) keepRepair("beat"); } catch (_) { /* quiet */ } }, 10 * 60 * 1000);
-  const keepKick = reason => { try { const kp = keeperOf(); if (kp) { kp.resume(reason || "kick"); keepPaintLater(); if (reason === "load" || reason === "online") setTimeout(() => keepRepair(reason), 3000); } } catch (err) { console.warn("Save keeper", err); } };
+  const keepKick = reason => { if (window.CNViewer && CNViewer.on()) return;/* (CLOUDDRIVE build step 14: no save keeper here) */ try { const kp = keeperOf(); if (kp) { kp.resume(reason || "kick"); keepPaintLater(); if (reason === "load" || reason === "online") setTimeout(() => keepRepair(reason), 3000); } } catch (err) { console.warn("Save keeper", err); } };
   /** This workspace's intents only (a sandbox page never runs a real save, and a real page never runs a rehearsal). */
   const mine = rec => !!rec && !!rec.sandbox === !!WORKSPACE_SANDBOX;
   /** The intent of one card (the newest that is not switched off), or null. (An Etsy step adopted from the cloud has no card: it is the order's.) */
@@ -20701,6 +20080,7 @@ const Review = window.Review = (() => {
      A second call for a line waits for the first, then runs on what the line is THEN. `pre(row)` (relink's) runs in the line's turn and may decline (false): nothing is done. */
   const repoolTurn = new Map();
   function repool(row, pre) {
+    if (window.CNViewer && CNViewer.on()) return Promise.resolve(false);   // (CLOUDDRIVE build step 14: a line is made again by the cloud from its reading)
     const k = row && row.key, prev = k ? repoolTurn.get(k) : null;
     const go = () => (pre ? Promise.resolve(pre(row)).then(ok => (ok === false ? false : repoolOnce(row))) : repoolOnce(row));
     // (no other make-up of the line under way and no `pre`: it starts at once, as it always did)
@@ -23687,7 +23067,7 @@ const Sandbox = window.Sandbox = (() => {
   /* COST (Oct 2026): the registry and the engine are no longer tags of the page (a blocking script in its head for every
      production page): they load here, at once on a page in the sandbox, when Settings opens, and before anything that
      clears or counts the browser's side (wipe, browserLeft, wipeBrowser). The tokens are the ones the tags had. */
-  const SBX_FILES = ["charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1-sv1-advsb1-krep1-kt1-cost18-plc1-ae1-ls1-dsg1-dl1-ob1-ps1", "charm-nest-sandbox-browser.js?v=20261010-wb1"];
+  const SBX_FILES = ["charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1-sv1-advsb1-krep1-kt1-cost18-plc1-ae1-ls1-dsg1-dl1-ob1-ps1-rlh1", "charm-nest-sandbox-browser.js?v=20261010-wb1"];
   let sbxTask = null, hooked = false;
   function loadScripts() {
     const done = () => { if (!hooked && BX()) { hooked = true; try { BX().setHooks(memoryHooks); } catch (_) {} } return !!(BX() && window.CharmNestSandboxFamilies); };
@@ -29090,6 +28470,7 @@ const Session = window.Session = (() => {
     if (WORKSPACE_SANDBOX && d.streamId && window.Sandbox && Sandbox.restoredStream) { try { Sandbox.restoredStream(d.streamId); } catch (_) {} }
     // the sheets cut short while nesting, whose best-layout records restore reads (and a reload before the next checkpoint reads again)
     const cutShort = cutShortIn((d.sheets || []).flatMap(g => g.pages || []));
+    let cloudGone = null;   // (CLOUDDRIVE build step 8, P8; never while the drive is off): the run whose saved copy here must not be used: the cloud carries it, or took it after this copy was saved
     let cloud = null;   // (CLOUDLINES: the run's record in the cloud, read below; it is the authority on which order lines the run holds)
     try {
       // A purged/abandoned cloud run must never be resurrected by an old browser checkpoint.
@@ -29131,7 +28512,7 @@ const Session = window.Session = (() => {
       B.carry = d.carry;
       B.run = d.run; B.orders = d.orders; B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
       // (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"): the run this computer carried before it closed, carried meanwhile by another computer that is alive, is not taken back: this page follows it from the cloud
-      try { if (B.run && B.run.runId && S.cloud && S.cloud.ok && window.RunCtl && RunCtl.carrier) { const c = await RunCtl.carrier(B.run.runId, { check: true }); if (c && c.ok && !c.mine && (c.alive || (c.carrier && c.carrier.dev))) { agent({ bridge: true }, "cloud", c.alive ? `${B.run.runId} is carried by ${(c.carrier && c.carrier.by) || "another computer"} on another computer: this computer follows it` : `${B.run.runId} was last carried on another computer: this computer's saved copy of it is older than the cloud's and is not used; the run is followed from the cloud (Resume takes it up here, from the cloud)`); B.run = null; } } } catch (_) { /* the heartbeat looks again in 20 s */ }   // (CACHEONLY, Paul 15 Nov 2026: "Computers are only fed the truth"): and a run another computer carried LAST, though that computer is gone now, is not carried on from this computer's older copy either (it was, and its next save put the older copy over the cloud's)
+      try { if (B.run && B.run.runId && S.cloud && S.cloud.ok && window.RunCtl && RunCtl.carrier) { const c = await RunCtl.carrier(B.run.runId, { check: true }); if (window.CharmNestDrive && CharmNestDrive.staleCheckpoint(c, d)) cloudGone = B.run.runId; if (c && c.ok && !c.mine && (c.alive || (c.carrier && c.carrier.dev)) || cloudGone) { agent({ bridge: true }, "cloud", c.alive ? `${B.run.runId} is carried by ${(c.carrier && c.carrier.by) || "another computer"} on another computer: this computer follows it` : `${B.run.runId} was last carried on another computer: this computer's saved copy of it is older than the cloud's and is not used; the run is followed from the cloud (Resume takes it up here, from the cloud)`); B.run = null; } } } catch (_) { /* the heartbeat looks again in 20 s */ }   // (CACHEONLY, Paul 15 Nov 2026: "Computers are only fed the truth"): and a run another computer carried LAST, though that computer is gone now, is not carried on from this computer's older copy either (it was, and its next save put the older copy over the cloud's)
       // (CLOUDWORLD stage B, Paul 20 Nov 2026: "the computers are never allowed to store their own information"): a computer that carries no run shows no order line of its own copy: the cloud's come in as soon as it is read (charm-nest-cloud-world.js)
       if (!B.run && !WORKSPACE_SANDBOX && window.CloudWorld && CloudWorld.firstRead) { try { await Promise.race([CloudWorld.firstRead(), new Promise(r => setTimeout(r, 8000))]); } catch (_) {} }   // (the cloud world's first read decides: at most 8 s)
       if (!B.run && window.CloudWorld && CloudWorld.wanted && CloudWorld.wanted() && !WORKSPACE_SANDBOX) { B.orders.rows = []; B.orders.byKey = new Map(); d.review = []; d.jobs = (d.jobs || []).filter(j => j.editingBack && j.editRow); }
@@ -29147,6 +28528,9 @@ const Session = window.Session = (() => {
       // the lines of orders the run is done with come back from their rows (left out of the checkpoint, runCopy)
       if (B.run?.linesFromRows) { const lines = B.run.lines || (B.run.lines = {}); for (const k of B.run.linesFromRows) { const row = B.orders.byKey.get(k); if (row) lines[k] = Orders.lineRecord(row)[1]; } delete B.run.linesFromRows; }
       B.pool.rows = d.pools || new Map(); B.sets = d.sets || new Map(); B.customDesigns = d.customDesigns || {}; B.cleared = d.cleared || {};
+      // (CLOUDDRIVE P8): the sheets of a run the cloud carries (or took after this copy was saved) are not put back from this computer's copy, so nothing owed is written from it
+      //  (writeAsPlaced below): the run is followed from the cloud, and a person's Resume takes it back from there (restoreFromCloud, then restoreRunSheets)
+      if (cloudGone) { for (const group of d.sheets) group.pages = (group.pages || []).filter(p => !p || p.runId !== cloudGone); agent({ run: cloudGone }, "cloud", `${cloudGone}: the cloud carries this run (or took it after this computer last saved it): this computer's saved sheets of it are not used; it follows the run from the cloud, and Resume takes it back from there`); }
       for (const group of d.sheets) {
         const prim = S.sheets[group.metal], card = prim.cardEl;
         group.pages.forEach(unlean);   // (LEAN: a followed sheet kept as its record comes back as the record it is shown from)
@@ -29670,10 +29054,12 @@ const Arrivals = window.Arrivals = (() => {
   }
   let softFails = 0;   // (STATIONOPEN: intakes in a row that failed for a passing cause)
   async function processPending({checkpoint=false}={}) {
+    if (window.CNViewer && CNViewer.holdNew()) return;   // (CLOUDDRIVE build step 14: new orders join the run in the cloud)
     // (PULLEDWAITS, Paul 15 Nov 2026: "Michelle's computer is showing 791 orders, whereas my computer is only showing 790"): an order another computer read and wrote into the cloud run reached this page only as a line (state "pulled"); "pending" was set
     //  only by this page's own check for new orders, so that line was never placed, even after a reload. A line of the open run that is still only "pulled" IS pending, whoever read it
     if (!state.pending && B.run && !["complete", "abandoned"].includes(B.run.status) && S.settings.runMode === "auto" && !Recall.on() && Orders.rows().some(x => x && x.state === "pulled" && !x.parentRow && x.order && x.order.receiptId != null)) { state.pending = true; save(); }
     if (!state.pending || S.settings.runMode !== "auto" || Recall.on()) return;
+    try { if (window.CharmNestDrive && CharmNestDrive.draining(B.run)) return; } catch (_) { /* (CLOUDDRIVE build step 15: while the run is handed to the cloud no new order joins it here; the cloud's intake takes them) */ }
     const r = B.run;
     if (!r || ["complete", "abandoned"].includes(r.status)) {
       state.pending = false; save();
@@ -29734,6 +29120,7 @@ const Arrivals = window.Arrivals = (() => {
     return r.holder || {};
   }
   async function check() {
+    if (window.CNViewer && CNViewer.holdNew()) return;   // (CLOUDDRIVE build step 14: new orders are read by the cloud)
     if (busy || paused || S.settings.pollOrders === "off" || window.Sandbox?.held?.()) return;   // (a cleaned sandbox waits for Start)
     if (window.CloudWorld && CloudWorld.drives && CloudWorld.drives()) return;   // (CLOUDWORLD stage B: the cloud reads the orders; a computer it drives takes them from it and pulls nothing)
     busy = true; paint(); const began = Date.now(), gen = epoch;
@@ -29846,46 +29233,10 @@ const LiveNest = window.LiveNest = (() => {
        follow(orderIds, run, {except})        after pieces of these orders moved on (overflow): their pieces of the other metals (not `except`, the metal that moved) that are not placed yet go to a sheet that keeps the rule */
   const PAIR_OF = { gold: "silver", silver: "gold" };
   const pairOrder = c => String(c && c.order != null ? c.order : "").split("/")[0];
-  /** The run's sheets of metal `m` holding a piece of one of the orders `ids` (a Set). */
-  function sheetsHolding(m, ids, run, skip) {
-    const out = new Set(); if (!ids.size) return out;
-    for (const p of allSheets()) { if (p.metal !== m || p.recalled || (run && p.runId && p.runId !== run.runId)) continue; if ((p.charms || []).some(c => !(skip && skip.has(c)) && ids.has(pairOrder(c)))) out.add(p); }
-    return out;
-  }
-  const ordersHeld = (p, skip) => new Set((p.charms || []).filter(c => !(skip && skip.has(c))).map(pairOrder).filter(Boolean));
-  /** Lines of these orders of metal `m` that are not on any sheet yet (the order rows; a world without them knows of none): they come later, to the sheet's partner. */
-  function linesToCome(ids, m) {
-    try {
-      if (typeof Orders === "undefined" || !Orders || typeof Orders.rows !== "function") return false;
-      const on = new Set(allSheets().flatMap(p => (p.charms || []).map(c => c.poolId)).filter(Boolean));
-      return Orders.rows().some(r => r && r.order && ids.has(String(r.order.receiptId)) && r.spec && r.spec.material === m && !["gone", "noDesign", "skipped", "committed", "abandoned"].includes(r.state) && !(r.poolIds || []).some(id => on.has(id)));
-    } catch (_) { return false; }
-  }
-  /* PAIRFREE (Paul, 16 Nov 2026: "This order needs a resolution, the SS piece must be added to an existing SS draft sheet"): an order a PERSON sent on although its Gold Filled and Sterling
-     Silver pieces are not on one pair of sheets (the run's pairFree list, kept with the run in the cloud) is not judged by the pairing rule any more, on any sheet and at any later look: it goes
-     on the sheet still filling, it is never passed on for the rule, and it does not count as that sheet's partner for the other orders. Every other order is judged exactly as before. */
-  const pairFreeOf = run => { try { const r = run || (typeof B !== "undefined" && B.run) || null; return new Set(((r && r.pairFree) || []).map(String)); } catch (_) { return new Set(); } };
-  function pairFits(page, orderIds, run, o = {}) {
-    const other = page && PAIR_OF[page.metal]; if (!other) return true;
-    const free = pairFreeOf(run);
-    const ids = new Set([].concat(orderIds == null ? [] : orderIds).map(String).filter(x => x && !free.has(x))); if (!ids.size) return true;
-    const skip = o.skip || null, heldHere = ordersHeld(page, skip); for (const x of free) heldHere.delete(x);
-    const mine = sheetsHolding(other, heldHere, run, skip), theirs = sheetsHolding(other, ids, run, skip);
-    // (PAIR2, Paul 20 Nov 2026: sets of 2 GF + 1 SS are normal; "I'm afraid this new rule is gonna … create endless chains of sheets in one set"): a GF or SS sheet shares orders with at most TWO
-    //  sheets of the other metal, and only when neither of them shares orders with another sheet of this one's metal, so a unit is at most 2 + 1 sheets and never chains on
-    const partners = new Set([...mine, ...theirs]);
-    if (partners.size > 2) return false;
-    if (partners.size === 2) for (const q of partners) { const qs = sheetsHolding(page.metal, ordersHeld(q, skip), run, skip); qs.delete(page); if (qs.size) return false; }
-    // (will go to: the order's lines of the other metal not on a sheet yet go to this sheet's one partner; when that partner takes nothing any more, they could not, so this sheet does not take the order)
-    if (mine.size === 1 && !theirs.size && closed([...mine][0]) && linesToCome(ids, other)) return false;
-    return true;
-  }
-  function lineFits(page, orderIds, run, o = {}) {
-    if (!page) return true;
-    if (PAIR_OF[page.metal]) return pairFits(page, orderIds, run, o);
-    const G = (typeof window !== "undefined" && window.Pool && typeof window.Pool.greenFits === "function") ? window.Pool.greenFits : (typeof greenFits === "function" ? greenFits : null);
-    return G ? G(page, orderIds, run, o) : true;
-  }
+  /* (SHEETCHOICE, cloud plan v2 step 5: sheetsHolding, ordersHeld, linesToCome, PAIRFREE and the PAIR / PAIR2 rule itself are charm-nest-place.js, the one copy this page and the cloud both run)
+     pairFits(page, orderIds, run, {skip}): may this GF / SS sheet take pieces of these orders; lineFits: the same for any metal (greenFits for Rose Gold / 10K / 14K) */
+  function pairFits(page, orderIds, run, o = {}) { return placeRules().pairFits(page, orderIds, run, o); }
+  function lineFits(page, orderIds, run, o = {}) { return placeRules().lineFits(page, orderIds, run, o); }
   /** After pieces of these orders moved to another sheet (overflowToNextSheet): a sheet of another metal whose pieces of them are not placed yet, and that no longer keeps the rule with them, passes them
    *  on to a sheet of its metal that does (the earliest open one with room, else a new one), which nests them. A placed piece stays: the assembly's repair (Gate.unpair) or, for a green-line sheet, its one set
    *  (greenHomes) takes care of it. → [{ from, to, pieces }]
@@ -29939,23 +29290,14 @@ const LiveNest = window.LiveNest = (() => {
      order comes off it (keepOrdersWhole: the solver seats an order all or nothing, and the saved pieces of an order that missed are lifted with it) and goes to the next sheet in line that takes it whole
      (overflowToNextSheet), while single-piece orders fill the room. The page's net at every nest (homeward, charm-nest-1.html) sends a piece that still finds itself apart from its order back to it.
      S.settings.nospread = "off" puts it back with the rest of NOSPREAD. */
-  const r16On = () => !(typeof S !== "undefined" && S && S.settings && S.settings.nospread === "off");
-  const fixedSetOf = p => { try { return typeof Sets !== "undefined" && !!Sets && typeof Sets.ofRun === "function" && Sets.ofRun(p.runId).some(s => (s.committedAt || s.processReady || s.laserSetPending || +s.laserDoneAt > 0) && (s.sheetIds || []).includes(p.sheetId)); } catch (_) { return false; } };
-  function reopensHome(p, run, rid) {
-    if (!p || !PAIR_OF[p.metal] || p.recalled || p.roseCutAt || +p.laserDoneAt > 0 || p.processReady || p._manualHold || p._inplaceHold || p.runHold || p.problem) return false;
-    if (run && p.runId && p.runId !== run.runId) return false;
-    if (window.Gate?.holding?.(p) && !(rid != null && p.keepRelease && p.keepRelease.rid === String(rid).split("/")[0])) return false;   // (kept for another order's change: the sheet window's move, a release from hold)
-    return !fixedSetOf(p);
-  }
-  function orderHome(m, run, orderId, o = {}) {
-    if (!PAIR_OF[m] || orderId == null || orderId === "" || !r16On()) return null;
-    const oid = String(orderId).split("/")[0], skip = o.skip ? new Set(o.skip) : null;
-    const mine = p => (p.charms || []).filter(c => !(skip && skip.has(c)) && !c.excluded && pairOrder(c) === oid);
-    const pages = pagesOf(m).filter(p => !p.recalled && (!run || !p.runId || p.runId === run.runId) && mine(p).length);
-    if (!pages.length || pages.some(p => mine(p).some(c => c.chunk))) return null;   // (an order bigger than one sheet: its units fill consecutive sheets by design)
-    // (already apart, a split of necessity or one made before this rule: the open sheet gathers what comes, else one that reopens; the page's net brings the rest when it can)
-    return pages.find(p => !closed(p)) || pages.find(p => reopensHome(p, run, oid)) || null;
-  }
+  /* (SHEETCHOICE, cloud plan v2 step 5: R16's own sheet of an order, orderHome, and whether a released sheet reopens for its own order's late pieces, reopensHome, are charm-nest-place.js,
+     the one copy this page and the cloud both run; reopenHome below, the keep of the release while it nests them, is this page's own)
+       orderHome(m, run, orderId, {skip})   the sheet of metal m holding pieces of the order that can take more: open, else released full and REOPENABLE; null: a new order, an order bigger than
+                                            one sheet, one already apart or whose sheet is cut, approved or sent
+       reopensHome(p, run, rid)             a released sheet takes its own order's late pieces: not cut, recalled, approved, sent, held by a person, a replaced piece, a problem or another order's change */
+  const r16On = () => placeRules().r16On();
+  function reopensHome(p, run, rid) { return placeRules().reopensHome(p, run, rid); }
+  function orderHome(m, run, orderId, o = {}) { return placeRules().orderHome(m, run, orderId, o); }
   function reopenHome(p, rid) {
     if (!p || !closed(p)) return false;
     const G = window.Gate, key = String(rid).split("/")[0];
@@ -29968,36 +29310,10 @@ const LiveNest = window.LiveNest = (() => {
     try { agent({ metal: p.metal }, "nest", `Order ${key}: its later piece goes to ${p.page ? "sheet " + p.page : "its sheet"}, where the rest of the order is, although that sheet ${p.releaseFull ? "was released full" : "takes no new orders"}: the order stays whole there if it fits, and otherwise the whole order moves on to the next sheet (Paul, 26 Oct 2026: no order on two sheets of one colour)`); } catch (_) { /* a note only */ }
     return true;
   }
-  /* Gold and Silver arrivals go to the run's earliest open sheet first (the pool puts them on the same one). An order
-     that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed
-     it used to be passed over for good, short of full, so it was never released and its orders, the oldest, never cut.
-     Rose Gold keeps the newest sheet, where its green line is. */
-  function intakePage(m, run, orderId, pieces, order, o = {}) {
-    const pages = pagesOf(m), newest = pages.at(-1), fast = O.FAST_MATERIALS.has(m);
-    const open = p => p.charms.length && run && p.runId === run.runId && !closed(p);
-    // an order goes onto one sheet whole: a line joins the order's lines already waiting on a sheet in line. Every metal (Paul, 13 Oct 2026: all the pieces
-    // of an order on one sheet); a Rose Gold, 10K or 14K sheet whose contour is planned or protected is not looked at, those metals keep their newest sheet
-    const home = orderId != null && pages.find(p => open(p) && (fast || !(p.rosePlan || p.roseProtected)) && p.charms.some(c => String(c.order) === String(orderId)));
-    if (home) return home;
-    // (R16 HARD, Paul 26 Oct 2026: the order's own sheet of this colour although it was released full meanwhile, when it is not cut, approved or sent: orderHome. The caller keeps it (reopenHome), and its
-    //  nest keeps the order whole there or passes the whole order on to the next sheet)
-    if (fast && orderId != null) { const back = orderHome(m, run, orderId, { skip: pieces }); if (back) return back; }
-    if (!fast) return newest;
-    // a sheet filling its gaps takes only the orders it still owes a try; the rest of a batch starts the next sheet at once
-    // (CN.topupRoom; Paul, 27 Sep: a whole batch waited on the full sheet and the next sheet was not started)
-    // (and a multi-piece order that cannot fit a gap-filling sheet whole goes on to the next sheet without costing the sheet a try: single-charm
-    // orders fill its small gaps, CN.topupTakes; Paul, 13 Oct 2026)
-    // (NOSPREAD, Paul 17 Oct 2026: asked with the WHOLE order -- `order`: its pieces in hand, the number it will have in all, those already on a sheet -- so that a multi-piece or earring order
-    // goes onto a sheet near completion only if all its pieces fit, and otherwise to the next sheet in line, a new one when none takes it whole; an order bigger than a sheet starts a fresh one)
-    const room = p => (!window.CN?.topupRoom || window.CN.topupRoom(p) > 0) && (!pieces || !window.CN?.topupTakes || window.CN.topupTakes(p, pieces, order));
-    // (PAIR, Paul 26 Oct 2026: and only a sheet whose one partner of the other metal is this order's, or that has none yet: pairFits. Asked first: a sheet that does not pair is not a sheet the order
-    //  "passed at the door" for want of room, nospreadPassed)
-    const pairs = p => orderId == null || pairFits(p, [orderId], run);
-    const pick = pages.find(p => p !== newest && open(p) && pairs(p) && room(p)) || newest;
-    // (PAIRFIX, Paul 12 Nov 2026: the sheet still filling takes the order only when it pairs; o.wait: the pool's own pairing step decides that the line waits for it, so the non-pairing sheet is returned)
-    if (pick === newest && open(newest) && (!pairs(newest) || !room(newest))) { const f = addPage(m, { ok: pairs, wait: !!o.wait }); return f || newest; }
-    return pick;
-  }
+  /* Gold and Silver arrivals go to the run's earliest open sheet first (the pool puts them on the same one); Rose Gold keeps the newest sheet, where its green line is. An order goes onto one
+     sheet whole; R16's own sheet of the order; a sheet filling its gaps takes only the orders it still owes a try (CN.topupRoom); NOSPREAD's whole order (CN.topupTakes); PAIR; PAIRFIX (o.wait).
+     (SHEETCHOICE, cloud plan v2 step 5: charm-nest-place.js intakePage, the one copy this page and the cloud both run) */
+  function intakePage(m, run, orderId, pieces, order, o = {}) { return placeRules().intakePage(m, run, orderId, pieces, order, o); }
   async function add(run) {
     const prepare=async()=>{
     // stopped before these orders went on: they wait as they are, and the intake runs again after Resume
@@ -30892,7 +30208,8 @@ async function bootBridge() {
   // now instead of leaving an empty pane throughout checkpoint reconstruction.
   Views.onShow(S.mode);
   let recovered = false, recoveryFailed = false;
-  try { recovered = await Session.restore(); }
+  const viewer = window.CNViewer ? await CNViewer.boot() : false;   // (CLOUDDRIVE build step 14, m:C5: the drive's switch is read first; in mode "on" this page is a viewer: no workspace is restored or written, no production loop starts)
+  try { recovered = viewer ? false : await Session.restore(); }
   catch (error) { recoveryFailed = true; console.error("Workspace recovery failed; checkpoint retained", error); }
   /* The saved workspace holds a run that another tab of this browser is carrying on (a second tab opened on the same computer): this tab
      shows it and changes nothing. It used to carry the run on beside the first, two tabs nesting the same sheets and writing the same
@@ -30908,7 +30225,8 @@ async function bootBridge() {
   if (recovered) await Cleanups.check({ wait: 8000 }).catch(() => {});
   // Never overwrite a checkpoint with a partially restored workspace or start
   // an automatic run over it. Navigation and the saved Library remain usable.
-  if (!recoveryFailed) {
+  if (viewer) { ListMedia.start(); try { Review.redrawLater(1000); } catch (_) {} CustomSheet.load().catch(e => console.warn("Custom design recovery", e)); }   // (a viewer: what is shown, read from the cloud; nothing is kept, pulled, swept or saved here)
+  if (!recoveryFailed && !viewer) {
     Session.listen(); Arrivals.start(); ListMedia.start(); Upkeep.start(); window.AutoCancel?.start();
     try { Review.redrawLater(1000); } catch (_) {}   // (REDRAW: a SKU re-pointed while the workspace was being restored is looked at now that it holds its sheets)
     try { Review.heldRecheckLater(1500, true); } catch (_) {}   // (HELDRECHECK: a line held for its design against an entry version older than the library's is checked again once)

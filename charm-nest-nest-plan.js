@@ -224,6 +224,22 @@
     return Solver.bestResult(workerBest || pick, best, stockOf(), pickOpts(metal));
   }
 
+  /** (cloud plan v2, build step 6: RESUME) A search taken up again after its run was cut off (a cloud slot whose invocation ended, or was killed, mid-search): every piece the
+      best layout so far had seated is held exactly where it is, and the rest are placed around it (the solver's append: lockedPlacements). A protected green-line piece keeps
+      its protected place, whatever the checkpoint says; a piece a person or the job already held keeps the job's place unless the checkpoint moved it (the unjam may move a saved
+      piece, never a held one). → the job to run, or `job` itself when the checkpoint kept nothing. Pure: `job` and `best` are not changed. */
+  function resumeJob(job, best) {
+    const kept = best && Array.isArray(best.placements) ? best.placements.filter(p => p && p.id != null && [p.cxPt, p.cyPt, p.angle].every(Number.isFinite)) : [];
+    if (!job || !kept.length) return job;
+    const ids = new Set((job.pieces || []).map(p => p.id)), guard = new Set(((job.protectedRose && job.protectedRose.placements) || []).map(p => p.id)), by = new Map();
+    for (const p of (job.protectedRose && job.protectedRose.placements) || []) by.set(p.id, p);
+    for (const p of job.lockedPlacements || []) if (!guard.has(p.id)) by.set(p.id, p);
+    for (const p of kept) if (ids.has(p.id) && !guard.has(p.id)) by.set(p.id, Object.assign({}, p));
+    const out = Object.assign({}, job, { lockedPlacements: [...by.values()].filter(p => ids.has(p.id)), resumed: true });
+    delete out.multiStart; delete out.initialLayout;
+    return out;
+  }
+
   /** Whatever did not fit moves on to the next sheet of the same metal, which then nests on its own.
       A multi-piece order is never split across sheets: if any of its pieces was held back, the whole order goes to the next sheet.
       A pair (any line) is never left half on a sheet either: when a piece of a line did not fit and its saved mates sit locked on
@@ -292,7 +308,7 @@
     CHARM_SCALE, CAREFUL_ANGLES, FEED_ORDERS, ORDER_ROOM, KEEP_MAX, GOLD_METALS, TIGHT_METALS,
     manualSize, carefulNest, orderKey, orderRank, gapFilling, orderSizes, turnOrder, activeCharms, nestItems, feedTurn,
     handLocks, withHandLocks, multiStartFor, buildJob,
-    searchCount, slotJob, keepPlan, keepOpts, pickOpts, keepResult, keepAgain, keepJob, keepNext, pickLayout, finalPick,
+    searchCount, slotJob, keepPlan, keepOpts, pickOpts, keepResult, keepAgain, keepJob, keepNext, pickLayout, finalPick, resumeJob,
     keepOrdersWhole, orderMatesOf
   };
 });

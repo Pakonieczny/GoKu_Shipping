@@ -22,8 +22,12 @@
  *   OrderHold.releaseStatus(rid)                -> { running:boolean, step }   (for resume after a reload)
  *   OrderHold.resumeReleases()                  -> Promise: finishes any release a reload cut short (the page does this by itself)
  *
+ * RELEASEHOLD (Paul, 20 Nov 2026): every release starts IN THE CLOUD (askCloud: op releaseAsk lifts the hold's marks, the run line's hold, writes the timeline's 'released' step and the front
+ * of the queue, at once, for every computer). A computer that does not carry the run is done then (via:'cloud', placed:false: the run's intake places the pieces); the computer that carries it
+ * goes on with the steps below and places them now.
  * Steps (every step has `at`, ms; onStep(step) is called as each real step completes):
  *   { type:'start', rid, resumed? }
+ *   { type:'cloud', rid, text }                                 the release is being made in the cloud (RELEASEHOLD)
  *   { type:'queued', rid, front:true, frontAt }                 the order carries its place at the front of the queue (saved)
  *   { type:'target', sheetId|null, label, spot:null, newSheet, metal, page, density }      one per metal: where it will go
  *   { type:'flight', toSheetId|null, poolIds, metal, page, label }                         its pieces leave On hold for that sheet
@@ -85,7 +89,17 @@
   const busy = sh => ['nesting', 'finishing', 'queued'].includes(sh.status) || !!sh._operationStarting || !!sh._learnedStarting || !!(sh.persisted && !sh.persistedDone && !sh.problem);
   const label = sh => { try { if (G.SheetEvents && G.SheetEvents.label) return G.SheetEvents.label(sh); } catch (_) { /* below */ } return `${(CNx().METAL_TAG || {})[sh.metal] || sh.metal} Sheet ${sh.sheetIndex || sh.page || 1}`; };
   const inSet = sh => !!sh.setId && !sh.draft;
-  const newLabel = metal => { const pages = pagesOf(metal); return `${(CNx().METAL_TAG || {})[metal] || metal} ${G.CharmNestSheetName ? 'Draft' : 'Sheet'} ${Math.max(pages.length, ...pages.map(p => +p.page || 0)) + 1}`; };   // (a sheet not made yet is a draft until it joins a set: charm-nest-sheet-name.js)
+  /** The name a sheet not made yet will have: a draft until it joins a set (charm-nest-sheet-name.js). NAMES / SHEETSAME (Paul, 12 and 20 Nov 2026): a draft is numbered among the drafts of its
+   *  metal in its run (charm-nest-1.html draftNumberOf: not in a set, not cut, with pieces or saved), never by its page, which counts the sheets in sets and the cut ones too; the new sheet is the
+   *  last of them (the highest page). It used to read its page: after a cut "GF Sheet 1" the plan and the target step said "GF Draft 2" and the sheet it started was "GF Draft 1" everywhere after,
+   *  its timeline step included. */
+  const newLabel = metal => {
+    const pages = pagesOf(metal), tag = (CNx().METAL_TAG || {})[metal] || metal, N = G.CharmNestSheetName;
+    if (!N || typeof N.numbered !== 'function') return `${tag} Sheet ${Math.max(pages.length, ...pages.map(p => +p.page || 0)) + 1}`;
+    const run = theRun(), runId = (run && run.runId) || null;
+    const drafts = pages.filter(p => (p.runId || null) === runId && !N.numbered(p) && ((p.charms || []).length > 0 || !!p.sheetId));
+    return `${tag} Draft ${drafts.length + 1}`;
+  };
 
   /** The sheet the order goes on: the one LiveNest.intakePage and attachPool would choose, without making one (null: a new sheet). */
   function pick(metal, rid) {
@@ -325,48 +339,59 @@
       if (G.PlacementFeed && G.PlacementFeed.nudge) G.PlacementFeed.nudge();
     } catch (e) { try { console.warn('[OrderHold.release] the hold marks in the cloud were not cleared', e && e.message || e); } catch (_) { /* none */ } }
   }
-  /** Asks the computer that carries the run to release this order (runCmdPut release) and waits for its answer: up to 150 s, looked at every 2.5 s. Nothing is changed on this page: the order's lines come back from the cloud as the carrier leaves them. */
-  async function relayRelease(rid, who, emit, out, fail) {
-    const RF = G.CharmNestRunFollow, runId = RF.state().runId, dev = RF.dev && RF.dev(), call = body => G.CN.api('charmNestLibrary', body, { quiet: true, timeoutMs: 30000 });
-    const said = e => str(e && e.message || e).slice(0, 160);
-    if (!runId || !dev || !G.CN || typeof G.CN.api !== 'function') return fail(`Order ${rid} is still on hold: this computer cannot reach the run yet. Press Release hold again in a moment.`, 'start');
-    // (ANYWHERE, Paul 19 Nov 2026: "the user tried to release this order's hold, and it was refused ... The computers are just nodes that are sending and receiving information. The cloud controls everything so nothing belongs to any computer"):
-    //  a release is a request in the cloud, and it is put there WHATEVER the carrying computer is doing at this moment: it was refused with "the computer that carries the run is not answering" (a page busy, in the background, asleep for a minute).
-    //  It is done by that computer as soon as it answers (the request lives six hours there, not ten minutes) and every computer sees the order released from the cloud when it is; this page says so plainly and never calls it a failure
-    let c = null; try { c = await call({ op: 'runCarrier', runId, dev, check: true }); } catch (_) { c = null; }
-    const alive = !!(c && c.alive && !c.mine), by = (c && c.carrier && c.carrier.by) ? `${c.carrier.by}'s computer` : 'the computer that carries the run';
-    let put = null;
-    try { put = await call({ op: 'runCmdPut', runId, dev, by: who, cmd: { type: 'release', ids: [rid], label: `Release order ${rid} from hold` } }); } catch (e) { return fail(`Order ${rid} is still on hold: the release could not be sent (${said(e)}). Press Release hold again in a moment.`, 'start'); }
-    if (!put || put.error || !put.id) return fail(`Order ${rid} is still on hold: the release was not sent${put && put.error ? ' (' + said({ message: put.error }) + ')' : ''}.`, 'start');
-    emit({ type: 'queued', rid, front: true, via: by, text: alive ? `Asked ${by} to release it` : `Asked the run in the cloud: ${by} is not answering at this moment` });
-    const queued = (why) => {
-      const text = `Order ${rid}: the release is asked of the run (the cloud keeps it) and ${why}. Nothing more is needed here: the order leaves the hold on every computer as soon as it is done.`;
-      emit({ type: 'queuedPending', rid, text });
-      return out(false, { released: false, queued: true, pending: true, error: text, stage: 'queued', cmdId: put.id });
-    };
-    if (!alive) return queued(`${by} is not answering at this moment, so it is placed as soon as it does`);
-    /* (RELWAIT, Paul 19 Nov 2026: order 4237522021: "Michelle tried to release this order from hold and it failed ... you said you already fixed this problem"): the computer that carries the run took 158 s for that one release (it was busy first, then placing), and this page stopped
-       waiting at 150 s, 8 s before the release was done: the card said it was not released and it WAS. A release asked of the cloud is waited for until it is done (twenty minutes at most, as long as the computer that carries the run still answers), and what that computer is
-       doing is said as it goes; "queued" is only said when that computer stops answering */
-    const t0 = Date.now(), POLL = () => +OH.relayPollMs || 2500, LIMIT = () => +OH.relayLimitMs || 20 * 60000; let last = null, stepSaid = '', told = false;
-    while (Date.now() - t0 < LIMIT()) {
-      await new Promise(res => setTimeout(res, Date.now() - t0 < 60000 ? POLL() : Math.max(POLL(), 5000)));
-      let l = null; try { l = await call({ op: 'runCmdList', runId }); } catch (_) { continue; }
-      last = ((l && l.cmds) || []).find(x => x && x.id === put.id) || last;
-      if (last && (last.state === 'done' || last.state === 'failed')) break;
-      if (last && last.state === 'running' && last.step && last.step !== stepSaid) { stepSaid = last.step; emit({ type: 'queued', rid, text: `${by}: ${last.step}` }); }
-      if (!told && Date.now() - t0 > (+OH.relayNoticeMs || 60000)) { told = true; emit({ type: 'queued', rid, text: `${by} is busy: it releases the order as soon as it can (this page waits for it)` }); }
-      // (still waiting to be started after 30 s and the carrier no longer answering: it stays in the cloud, nothing to wait for here)
-      if (last && last.state === 'waiting' && Date.now() - t0 > 30000) { let c2 = null; try { c2 = await call({ op: 'runCarrier', runId, dev, check: true }); } catch (_) { c2 = null; } if (c2 && (!c2.alive || c2.mine)) return queued(`${by} stopped answering, so it is placed as soon as it does`); }
+  /* RELEASEHOLD (Paul, 20 Nov 2026: "a Release Hold press on ANY computer releases the hold in the cloud at once (hold marks, the run line's hold, the timeline 'released' entry, frontAt) so
+     every computer shows it released; placing the pieces is the intake's normal work; no more waiting on the computer that carries the run"). The press is sent to the cloud (charmNestLibrary
+     releaseAsk, netlify/functions/_charmNestHoldRelease.js), which lifts the hold there in one go: the pool rows' hold marks, the run's lines of the order (no hold, the front of the queue), the
+     timeline's 'released' step. What the press set aside on this page (ReviewRelease.setAside: a line's questions, a blocked SKU cut anyway) goes with it, and the cloud keeps it on the lines.
+     It used to be asked of the computer that carries the run (runCmdPut release) and waited for, up to twenty minutes, while every other computer still showed the order held.
+     -> the cloud's answer ({ ok, frontAt, stamp, lines, already?, aside }) or { ok: false, error } */
+  async function askCloud(rid, who, heldRows, opts) {
+    const CN = G.CN; if (!CN || typeof CN.api !== 'function') return { ok: false, error: 'this page cannot reach the cloud yet' };
+    const RF = G.CharmNestRunFollow, run = theRun(), runId = (run && run.runId) || (RF && typeof RF.state === 'function' ? RF.state().runId : null) || null;
+    const dev = RF && typeof RF.dev === 'function' ? str(RF.dev()) : '';
+    // (what the press sets aside is decided here, where the lines' questions are read; the cloud keeps it with the release)
+    const at = Date.now(), RR = G.ReviewRelease, aside = RR && RR.setAside ? RR.setAside(heldRows.filter(r => (r.problems || []).length), who, at) : { notes: [], away: [], left: [] };
+    const lines = {}; for (const r of heldRows) { const x = {}; if (r.releaseAnyway) x.releaseAnyway = r.releaseAnyway; if (r.blockOverride) x.blockOverride = r.blockOverride; if (Object.keys(x).length) lines[r.key] = x; }
+    const note = (aside.notes || []).slice(0, 4).map(t => str(t).slice(0, 80)).join('; ');
+    let res = null;
+    try { res = await CN.api('charmNestLibrary', Object.assign({ op: 'releaseAsk', orderId: rid, by: who, dev, runId, keys: heldRows.map(r => r.key), lines }, opts && opts.seal ? { seal: opts.seal } : {}, note ? { note: 'released anyway: ' + note } : {}), { quiet: true, timeoutMs: 45000 }); }
+    catch (e) { return { ok: false, error: str(e && e.message || e).slice(0, 200), aside }; }
+    if (!res || !res.ok) return { ok: false, error: str((res && res.error) || 'the cloud gave no answer').slice(0, 200), aside };
+    return Object.assign({}, res, { aside });
+  }
+  /** The order's lines as the cloud holds them now (releaseAsk's answer) put on this page's rows: the cloud's copy, never this page's own decision. The cloud's stamp goes on them too (_lp), so this
+   *  page's next save of the run (the computer that carries it) keeps them and its read of the other computers' changes does not take them a second time. */
+  function applyCloud(rid, res) {
+    const lines = (res && res.lines) || {};
+    for (const r of rowsOfOrder(rid)) {
+      const l = lines[r.key]; if (!l) continue;
+      // (the lines this release released take the cloud's line whole, with its stamp; another line of the order only loses a hold this page still shows and the cloud no longer has)
+      const mine = +l.releasedAt > 0 && +l.releasedAt === +res.frontAt; if (!mine && !(r.hold && !l.hold)) continue;
+      for (const f of mine ? ['state', 'hold', 'heldAt', 'holdSeen', 'reason', 'frontAt', 'releaseHold', 'releaseAnyway', 'blockOverride'] : ['state', 'hold', 'heldAt', 'holdSeen', 'reason']) if (l[f] !== undefined) r[f] = l[f] && typeof l[f] === 'object' ? JSON.parse(JSON.stringify(l[f])) : l[f];
+      if (mine && l._lp && typeof l._lp === 'object') r._lp = Object.assign({}, l._lp);
+      if (!r.hold) r.holdFromCloud = false;
     }
-    if (last && last.state === 'done') {
-      try { if (RF && typeof RF.now === 'function') RF.now('released'); } catch (_) { /* read at the next feed */ }   // (RVSAME: the order's lines as the carrier left them, read now, so its held card leaves this computer's Review at once)
-      refresh();
-      emit({ type: 'released', rid, sheets: [], placed: true }); emit({ type: 'done', placed: true, why: 'released by the computer that carries the run' });
-      return out(true, { released: true, placed: true, via: 'carrier', text: str(last.text) });
-    }
-    if (last && last.state === 'failed') return fail(`Order ${rid} was not released: ${str(last.text || 'the computer that carries the run could not do it').slice(0, 300)}`, 'place', { released: false });
-    return queued(`${by} has not finished it yet, so it is placed as soon as it does`);
+  }
+  /** After the cloud released it: what this page shows of the order is read again from the cloud (its pieces, the run's lines), and every view drawn again. */
+  async function afterCloud(rid) {
+    try { if (G.Orders && typeof G.Orders.interpretAll === 'function') G.Orders.interpretAll(); } catch (_) { /* read again at the next look */ }   // (what the press set aside, releaseAnyway, is read into the lines' questions)
+    try { const OP = G.OrderPieces; if (OP && typeof OP.load === 'function') await OP.load([rid], { force: true }); } catch (_) { /* read at the next look */ }
+    try { if (G.PlacementFeed && typeof G.PlacementFeed.nudge === 'function') G.PlacementFeed.nudge(); } catch (_) { /* the feed's own pace */ }
+    try { const RF = G.CharmNestRunFollow; if (!theRun() && RF && typeof RF.now === 'function') RF.now('released'); } catch (_) { /* read at the next feed */ }
+    refresh();
+  }
+  /** A computer that does not carry the run: the release is done once the cloud has done it; the run's intake places the pieces, at the front of the queue. */
+  async function cloudDone(rid, who, cloud, emit, out) {
+    await afterCloud(rid);
+    const frontAt = +cloud.frontAt || Date.now(), RF = G.CharmNestRunFollow, runs = !!(RF && typeof RF.state === 'function' && RF.state().runId);
+    const why = cloud.already ? 'not on hold in the cloud any more: it is shown as the cloud has it'
+      : runs ? 'released in the cloud: the run places its pieces at the front of the queue' : 'released in the cloud: no run is open, so it waits at the front of the queue';
+    emit({ type: 'queued', rid, front: true, frontAt });
+    emit({ type: 'released', rid, sheets: [], placed: false, cloud: true });
+    emit({ type: 'done', placed: false, why });
+    try { if (G.agent) G.agent({ bridge: true }, 'DS', `Order ${rid} released from hold in the cloud by ${who}${cloud.already ? ' (it was no longer on hold there)' : ''}`); } catch (_) { /* a log line only */ }
+    const anyway = ((cloud.aside && cloud.aside.notes) || []).slice(0, 6).map(t => str(t).slice(0, 160));   // (RELEASE: what the press set aside is said, as on the computer that carries the run)
+    return out(true, Object.assign({ released: true, placed: false, via: 'cloud', frontAt, text: why }, cloud.already ? { already: true } : {}, anyway.length ? { anyway } : {}));
   }
   async function doRelease(rid, opts) {
     const steps = [], emit = s => { s.at = Date.now(); steps.push(s); LAST.set(rid, { step: s }); try { if (opts.onStep) opts.onStep(s); } catch (e) { try { console.warn('[OrderHold.release] onStep', e); } catch (_) { /* none */ } } return s; };
@@ -382,18 +407,30 @@
     if (!rows0.some(r => isHeld(r) || r.releasing)) return fail('This order is not on hold.', 'start');
     const who = str(opts.name || (rows0.find(r => r.releasing) || { releasing: {} }).releasing.by || nameNow()).trim();
     if (!who) return fail('A name is needed for the record.', 'start');
-    // (FOLLOWRELEASE, Paul 18 Nov 2026: "this order was released by a user and then it disappeared for several minutes and then it reappeared again under the review tab"): a computer that only FOLLOWS the run has no run to release into: what it did here (the line's
-    //  questions set aside, a timeline step) never reached the run's line in the cloud, so the order stayed on hold there and came back here at the next read. The release is asked of the computer that carries the run, which does it, and answered
-    if (!(G.B && G.B.run) && G.CharmNestRunFollow && typeof G.CharmNestRunFollow.state === 'function' && G.CharmNestRunFollow.state().runId) {
+    /* 0 · RELEASEHOLD (Paul, 20 Nov 2026): the hold is released IN THE CLOUD first, at once, whichever computer pressed (askCloud: the hold's marks, the run's lines, the timeline step, the front of
+       the queue). A computer that does not carry the run is then done: the run's intake places the pieces (FOLLOWRELEASE's relay to the computer that carries the run, and its wait, are gone).
+       The computer that carries the run goes on below and makes the pieces up now, as its intake always did for a released line; the timeline step it writes at the end is the same one (its id). */
+    const heldRows = rows0.filter(r => isHeld(r) || r.releasing), carries = !!(G.B && G.B.run);
+    let cloud = null;
+    if (!(resumed && carries)) {
+      emit({ type: 'cloud', rid, text: 'Releasing the hold in the cloud' });
+      cloud = await askCloud(rid, who, heldRows, opts);
+      if (cloud.ok) applyCloud(rid, cloud);
+    }
+    if (!carries) {
       for (const r of rows0) delete r.releasing;   // (a flag a follower kept from before: nothing finishes it here)
-      return relayRelease(rid, who, emit, out, fail);
+      if (!cloud || !cloud.ok) { refresh(); return fail(`Order ${rid} is still on hold: the cloud could not release it (${str(cloud && cloud.error || 'not asked').replace(/[.\s]+$/, '')}). Press Release hold again.`, 'start'); }
+      // (a line no open run holds in the cloud (no run is open): its row says what the cloud did to the order's pieces, as a run's line would)
+      for (const r of heldRows) if (!((cloud.lines || {})[r.key])) { r.hold = null; r.heldAt = null; r.holdSeen = false; r.holdFromCloud = false; if (r.state === 'held') { r.state = (r.poolIds || []).length ? 'pooled' : 'pulled'; r.reason = null; } r.frontAt = +cloud.frontAt || Date.now(); }
+      return cloudDone(rid, who, cloud, emit, out);
     }
 
     /* 1 · the place at the front of the queue, saved before anything else changes (a reload from here on finishes it) */
-    const frontAt = resumed ? +rows0.find(r => r.releasing).releasing.at || Date.now() : Date.now();
+    const frontAt = resumed ? +rows0.find(r => r.releasing).releasing.at || Date.now() : (cloud && cloud.ok && +cloud.frontAt) || Date.now();   // (RELEASEHOLD: the cloud's front time, so the timeline step below is the cloud's own)
     // (RELEASE, Paul 19 Oct 2026: the press overrides the hold: what these lines still ask is set aside, row.releaseAnyway, and said on the timeline step; kept in the lines' record with the front place just below)
-    const RR = G.ReviewRelease, aside = RR && RR.setAside ? RR.setAside(rows0.filter(r => (isHeld(r) || r.releasing) && (r.problems || []).length), who, frontAt) : { notes: [], away: [], left: [] };
-    for (const r of rows0) if (isHeld(r) || r.releasing) { r.frontAt = frontAt; r.releasing = { at: frontAt, by: who, stage: (r.releasing && r.releasing.stage) || 'queued' }; }
+    // (RELEASEHOLD: set aside once, when the cloud was asked: askCloud)
+    const RR = G.ReviewRelease, aside = cloud && cloud.aside ? cloud.aside : RR && RR.setAside ? RR.setAside(heldRows.filter(r => (r.problems || []).length), who, frontAt) : { notes: [], away: [], left: [] };
+    for (const r of heldRows) { r.frontAt = frontAt; r.releasing = { at: frontAt, by: who, stage: (r.releasing && r.releasing.stage) || 'queued' }; }
     await persist();
     emit({ type: 'queued', rid, front: true, frontAt });
     const open = runOpen(), mine = rowsOfOrder(rid).filter(r => r.releasing);

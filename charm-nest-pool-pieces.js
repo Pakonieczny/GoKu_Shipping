@@ -87,6 +87,16 @@
     if (!Number.isInteger(size) || size < 2 || size > MAX_PIECES || !keyOk(key)) return {};
     return { groupKey: key, groupSize: size };
   }
+  /** BODYID (cloud plan v2, step 3; Paul, 20 Nov 2026): which body of its design a piece is cut from, as a pool row the CLOUD makes says it (a page's row says nothing here, as before):
+   *  oneBody true (the piece is ONE body of a design that draws two: bodyIndex says which, 0 to 9) or false (the whole design; a piece of an earring pair says its body with its ear, cleanFields).
+   *  The cloud's outlines may differ from Chrome's by an edge pixel, so the body is never read from a charm hash in the cloud: this is how it is told. {} unless oneBody is a boolean and sound. */
+  function cleanBody(o) {
+    if (!o || typeof o !== "object" || typeof o.oneBody !== "boolean") return {};
+    if (cleanFields(o).side) return o.oneBody ? {} : { oneBody: false };
+    const i = o.bodyIndex == null ? 0 : o.bodyIndex;
+    if (!Number.isInteger(i) || i < 0 || i > 9) return {};
+    return { oneBody: o.oneBody, bodyIndex: o.oneBody ? i : 0 };
+  }
   /** The record fields of one piece from CharmNestPair.piecesFor ({ side, mirror, bodyIndex, groupKey, n, of }), or from a stored piece: {} unless it is a left or right piece. */
   function fieldsOf(piece) {
     if (!piece) return {};
@@ -178,5 +188,5 @@
     return out;
   }
 
-  return { FIELDS, MAX_PIECES, parsePoolId, groupKeyOf, cleanFields, cleanGroupFields, fieldsOf, sheetCharmFields, metaOf, groupsOf, legacyGlued, placedCharms, uniqueIds };
+  return { FIELDS, MAX_PIECES, parsePoolId, groupKeyOf, cleanFields, cleanGroupFields, cleanBody, fieldsOf, sheetCharmFields, metaOf, groupsOf, legacyGlued, placedCharms, uniqueIds };
 });

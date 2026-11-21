@@ -43,6 +43,7 @@
     fs("Charm_Nest_Tray", "the Nest tray's dropped files"),   // (CLOUDTRAY)
     fs("Charm_Nest_Activity", "every computer's activity log lines"),   // (CLOUDALL S4; COSTCRON, Paul 14 Nov 2026: kept per world, so a sandbox reset clears it too)
     fs("Charm_Nest_Release", "release records"),
+    fs("Charm_Nest_Release_Jobs", "Release Hold presses done in the cloud"),   // (RELEASEHOLD, Paul 20 Nov 2026: netlify/functions/_charmNestHoldRelease.js, op releaseAsk's journal)
     fs("Charm_Pool", "pool rows"),
     fs("Charm_Pool_Back", "back pool rows"),
     fs("Charm_Nest_Engrave", "engraving work shared by every computer"),   // (ENGRSYNC, Paul 13 Nov 2026: charmNestLibrary.js op_engraveSyncPut)

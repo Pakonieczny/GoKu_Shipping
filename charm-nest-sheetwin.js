@@ -1575,7 +1575,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const base = g && g.base;
     // (a piece with no ear whose record's charm hash is ONE body's, not the design's whole charm's: a line that made one charm of a design drawn twice, Paul 11 Oct 2026; an old record holds the whole charm's hash and is drawn whole)
     if (base && g.src && x.hash && !(x.side === "L" || x.side === "R") && window.Pool && typeof Pool.soloBase === "function") {
-      try { return (await Pool.soloBase(g.src, { hash: x.hash })) || base; } catch (e) { console.warn("sheet window: piece geometry", x.poolId, e); return base; }
+      // (BODYID: the body a piece the cloud made says it is cut from, on its record or its pool row, before any hash)
+      try { return (await Pool.soloBase(g.src, { hash: x.hash, poolId: x.poolId, oneBody: x.oneBody, bodyIndex: x.bodyIndex })) || base; } catch (e) { console.warn("sheet window: piece geometry", x.poolId, e); return base; }
     }
     if (!base || !g.src || !(x.side === "L" || x.side === "R") || x.bodyIndex == null || !Number.isInteger(+x.bodyIndex) || !window.Pool || typeof Pool.ensureBase !== "function") return base;
     try { return (await Pool.ensureBase(g.src, { side: x.side, bodyIndex: +x.bodyIndex, mirror: x.mirror === true })) || null; }
@@ -3321,6 +3322,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   async function takeOff(plan, opt, who) {
     const list = plan.ok; if (!list.length) return;
+    if (window.CNViewer && CNViewer.on()) { await CNViewer.takeOff({ orderId: plan.rid, mode: opt && opt.then === "cancel" ? "cancel" : "hold", note: (opt && opt.note) || "", by: who, only: list.map(o => o.id) }); return; }   // (CLOUDDRIVE build step 14, C2: the cloud takes pieces off)
     const pressedAt = Date.now();   // (a cancel's moment on its timeline: when it was pressed, not when the record was kept)
     const cancel = opt.then === "cancel" && !!plan.rid, note = opt.note || "";
     const ids = new Set(list.map(o => o.id)), rid = plan.rid;
@@ -4079,9 +4081,28 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     /** One order, from its record read once more to its pages read back. "done", "restored" (not cancelled any more:
      *  nothing moved) or "later" (a page still busy, a save or a read-back not through: the next check carries on). */
+    /* (CLOUDTAKEOFF, cloud plan v2 build step 9, P9: one lane, one place; DORMANT: never true while Charm_Nest_Open/drive is absent or "off"): when the cloud carries the open run
+       and its lane "takeoff" is on, the cloud takes cancelled orders off (Charm_Nest_TakeOff), and this page only shows them: its notices come from the shared store as before.
+       Asked only when a job is due here, at most once a minute (driveGet, and the carrier's own read-only check). */
+    let cloudSeen = null;
+    async function cloudTakes() {
+      if (cloudSeen && Date.now() - cloudSeen.at < 60000) return cloudSeen.on;
+      let on = false;
+      try {
+        const d = await api("charmNestLibrary", { op: "driveGet" }, { quiet: true }), drive = d && d.drive;
+        if (drive && (drive.mode === "standby" || drive.mode === "on") && Array.isArray(drive.cloudSteps) && drive.cloudSteps.includes("takeoff")) {
+          const runId = (window.B && B.run && B.run.runId) || (d.state && d.state.runId) || null;
+          const c = runId && window.RunCtl && typeof RunCtl.carrier === "function" ? await RunCtl.carrier(runId, { check: true }) : null;
+          on = !!(c && c.carrier && c.carrier.dev === "cloud");
+        }
+      } catch (_) { on = cloudSeen ? cloudSeen.on : false; }
+      cloudSeen = { at: Date.now(), on };
+      return on;
+    }
     async function job(rid) {
       st = read();
       if (window.Recall?.on?.()) return "later";           // an earlier set on screen: its sheets and lines are history
+      if (await cloudTakes()) return "later";              // (CLOUDTAKEOFF: the cloud does it; dormant while the drive is off)
       let plan = planOf(rid), rec = null, bar = null, pools = null;
       const t0 = Date.now(), j0 = st.jobs[rid];
       const say = text => { if (!bar && window.CNProgress) bar = CNProgress.start(`Cancelled order ${rid}`); if (bar) bar.note(text); };
@@ -4241,6 +4262,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      *  waits in `pend` until it is done here (or restored, or a month old), so one whose job had to wait is taken up
      *  again at the next read, as it was while it stayed among the newest 50. */
     function poll() {
+      if (window.CNViewer && CNViewer.holdNew()) return Promise.resolve([]);   // (CLOUDDRIVE build step 14: in mode "on" the cloud takes cancelled orders off; during the drain nothing new starts here)
       if (polling) return polling;
       polling = (async () => {
         if (typeof S === "undefined" || !S.cloud || S.cloud.ok !== true) return [];
@@ -4278,6 +4300,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
           const p = planOf(id), d = st.done[id], rec = recs.get(id), noticed = !!d && (!rec || +d.at === +rec.at);
           if (p.rows.length || p.off.length || p.wait.length || p.loose.length || (p.left.length && !noticed)) due.push(id);
         }
+        // (CLOUDTAKEOFF, dormant while the drive is off: the cloud carries the run and takes them off itself: nothing is queued here)
+        if ((due.length || far.length) && await cloudTakes()) { if (fresh.length) agent({ bridge: true }, "DS", `${fresh.length} new cancel record${fresh.length === 1 ? "" : "s"}: the cloud takes them off its sheets`); return []; }
         if (fresh.length) agent({ bridge: true }, "DS", `${fresh.length} new cancel record${fresh.length === 1 ? "" : "s"} (${fresh.slice(0, 5).map(c => c.orderId).join(", ")}${fresh.length > 5 ? "…" : ""})${due.length ? ` · ${due.length} held here, coming off` : ""}`);
         for (const id of due.concat(far)) queue.add(id);
         kick();
@@ -6560,6 +6584,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      of the cloud; kept in the outbox (job "mcFiles") until done, so the next page finishes what this one could not. → true when the files were written. */
   const MCF = new Map(), MCF_TRIED = new Map();   // sheetId → the job running; job → how many times this page ran it
   function mcFiles(sh, o = {}) {
+    if (window.CNViewer && CNViewer.on()) return CNViewer.filesAsk(sh);   // (CLOUDDRIVE build step 14: in mode "on" the cloud's sheet writer writes the files of a sheet changed by hand)
     const id = sh.sheetId; if (MCF.has(id)) return MCF.get(id);
     const job = (async () => {
       const st = o.files || stepOf(""), lb = o.labels || stepOf(""), paint = o.paint || (() => {});
@@ -6599,6 +6624,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** The file jobs a page before this one left (or whose patch waited for the cloud): run once their patch is answered and their sheet is here, not busy and not in Manual Control. */
   function mcFilesResume() {
+    if (window.CNViewer && CNViewer.on()) return;   // (CLOUDDRIVE build step 14: no files are written here in mode "on")
     const St = window.CharmNestStore; if (!St || typeof St.pending !== "function") return;
     for (const j of St.pending(e => e.job === "mcFiles")) {
       const sid = j.args && j.args.sheetId; if (!sid || MCF.has(sid)) continue;
@@ -7577,6 +7603,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   async function takeOffOrder(o) {
     o = o || {};
+    if (window.CNViewer && CNViewer.on()) return CNViewer.takeOff(o);   // (CLOUDDRIVE build step 14, C2: in mode "on" a take-off is a press the cloud acts on: takeOffAsk)
     const rid = String(o.orderId || ""), sheetId = String(o.sheetId || ""), mode = o.mode === "cancel" ? "cancel" : "hold", scope = o.scope === "sheet" ? "sheet" : "order";
     const who = String(o.by || whoAmI() || "").trim(), note = String(o.note || "").trim();
     const no = error => ({ ok: false, error, mode, scope, removed: [], stayed: [] });

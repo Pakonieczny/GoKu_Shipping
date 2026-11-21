@@ -38,6 +38,46 @@
   const PAGE = /<(?:!doctype|html|head|body|title)\b/i, PASSING = /inactivity timeout|timed out|answer in time|not answering right now|HTTP (?:408|429|5\d\d)\b|\((?:408|429|5\d\d)\)|failed to fetch|networkerror|load failed/i;
   const passing = e => !!e && (e.transient === true || +e.status >= 500 || [408, 429].includes(+e.status) || PAGE.test(String(e.message ?? e)) || PASSING.test(String(e.message ?? e)));
   const RETRY_MS = 5 * 60000;
+
+  /* OUTLINE TOLERANCE (Paul, 20 Nov 2026: a charm's outline made in the cloud may differ from Chrome's by up to 0.06 mm, never more). charm-nest-pdf.js buildSilhouettes draws at 6 px a point,
+     where one pixel is 25.4 / 72 / 6 = 0.0588 mm: a silhouette the cloud draws is accepted when every pixel it draws differently from Chrome's lies within ONE pixel of Chrome's own edge (one of the
+     8 pixels around it has the other value in Chrome's silhouette: the edge moved by at most a pixel there, or a gap thinner than a pixel closed), on a canvas of the same size, with the area
+     within 1 %. Its hash is not compared: the hash is a 24 x 24 grid of the bits, and it flips on single edge pixels. The cloud therefore never knows a design, or a body of one, by its
+     silhouette's hash (BODYID: soloBase, bodyOf; the pool row's bodyIndex and oneBody). */
+  const OUTLINE_TOL_MM = 0.06, OUTLINE_TOL_PX = 1, MM_PER_PT = 25.4 / 72;
+  /** Chrome's silhouette `page` against the cloud's `cloud`, each { w, h, bits (0/1 a pixel, row by row), areaPt2?, hash?, scale? }. o: { tolPx (1), areaTol (0.01), scale (6 px a point) }.
+   *  → { ok, why, diff (pixels that differ), off (of them, further than tolPx from Chrome's edge), worstPx, worstMm (the furthest, measured to Chrome's edge), areaDiff (a share), sameHash }. */
+  function silhouetteWithin(page, cloud, o) {
+    o = o || {};
+    const tol = Number.isFinite(+o.tolPx) && +o.tolPx >= 0 ? +o.tolPx : OUTLINE_TOL_PX, areaTol = Number.isFinite(+o.areaTol) && +o.areaTol >= 0 ? +o.areaTol : 0.01;
+    const scale = +o.scale || +(page && page.scale) || 6, far = tol + 2;
+    if (!page || !cloud || !page.bits || !cloud.bits) return { ok: false, why: "a silhouette is missing" };
+    if (page.w !== cloud.w || page.h !== cloud.h) return { ok: false, why: `canvas ${cloud.w}x${cloud.h}, Chrome's ${page.w}x${page.h}` };
+    const W = page.w, Hh = page.h, n = W * Hh, A = page.bits, C = cloud.bits;
+    if (A.length < n || C.length < n) return { ok: false, why: "a silhouette holds fewer pixels than its canvas" };
+    /* the distance, in whole pixels (the square around it), from a pixel to the nearest pixel of the other value in Chrome's silhouette: 1 = on Chrome's edge; far = further than tol + 1 */
+    const edgeDist = (x, y, v) => {
+      for (let r = 1; r < far; r++) {
+        for (let dy = -r; dy <= r; dy++) {
+          const yy = y + dy; if (yy < 0 || yy >= Hh) continue;
+          const ring = dy === -r || dy === r;
+          for (let dx = -r; dx <= r; dx += ring ? 1 : 2 * r) { const xx = x + dx; if (xx >= 0 && xx < W && A[yy * W + xx] !== v) return r; }
+        }
+      }
+      return far;
+    };
+    let diff = 0, off = 0, worst = 0;
+    for (let i = 0; i < n; i++) {
+      if ((A[i] ? 1 : 0) === (C[i] ? 1 : 0)) continue;
+      diff++;
+      const x = i % W, y = (i - x) / W, d = edgeDist(x, y, A[i]);
+      if (d > worst) worst = d;
+      if (d > tol) off++;
+    }
+    const pa = +page.areaPt2, ca = +cloud.areaPt2, areaDiff = pa > 0 && ca >= 0 ? Math.abs(ca - pa) / pa : 0;
+    const worstMm = worst * MM_PER_PT / scale, why = [off ? `${off} pixel(s) further than ${tol} px (${(tol * MM_PER_PT / scale).toFixed(3)} mm) from Chrome's edge, the furthest ${worst >= far ? "more than " + (far - 1) : worst} px` : "", areaDiff > areaTol ? `the area differs by ${(areaDiff * 100).toFixed(2)} %` : ""].filter(Boolean).join("; ");
+    return { ok: !why, why, diff, off, worstPx: worst, worstMm: +worstMm.toFixed(4), areaDiff, sameHash: page.hash != null && cloud.hash != null && String(page.hash) === String(cloud.hash) };
+  }
   /* m:E2 (cloud plan v2, step 3): in the cloud an Etsy stop never passes by itself. The page keeps its rule (a 429 is tried again 30 s, 1, 2 and every 5 minutes
      later), but a node host must not keep asking while the shop's Etsy stop switch is on (netlify/functions/_etsyStop.js answers 429 { error: "etsy_stopped" },
      header x-etsy-stopped: 1): a 429 and every stop answer are real failures there, held and said, until a person presses Resume Etsy. */
@@ -100,7 +140,7 @@
      them as getters. Each function below is that maker's own, called through. */
   const MADE = ["sizeEntry", "sizeKeyOf", "sizeHold", "masterCharm", "entryHashes", "loadMasterCharm", "readMasterCharm", "splitBodies", "traceBodies", "soloBodies", "traceSolo", "soloBase",
     "fitFactor", "fitBytes", "cloneCharm", "makePool", "makePoolRead", "stampDesignHold", "bodyPlanFor", "soloFor", "memberSet", "memberSkus", "earMirror", "pairLine", "sidedPiece", "wholeBody",
-    "baseFor", "ensureBase", "gluedLine", "poolAnswer", "trySig", "due", "passing"];
+    "baseFor", "ensureBase", "gluedLine", "poolAnswer", "trySig", "due", "passing", "bodyOf"];
   function create(H) {
     const masterLoads = new Map(); let made = null;
     const maker = () => made || (made = make(H, masterLoads));
@@ -230,11 +270,36 @@
       } catch (e) { src.solo = null; src.soloWhy = `one of its bodies could not be traced (${e.message})`; agent({ pool: true }, "warn", `${src.sku}: one of its bodies could not be cut alone (${e.message}) — a piece of it keeps both bodies`); return null; }
       finally { src.soloChecked = true; }
     }
-    /** The charm a piece with no side is cut from, when its stored record says it is ONE body of the design: `rec` is the pool row or the sheet record's charm, and its charm hash is that body's, not the
-     *  folded charm's. null when it is not (an old record, a line that keeps both bodies, an earring pair): the design's one charm, whole, as before. */
+    /** The charm a piece with no side is cut from, when its stored record says it is ONE body of the design: `rec` is the pool row or the sheet record's charm. null when it is not (an old record,
+     *  a line that keeps both bodies, an earring pair): the design's one charm, whole, as before.
+     *  BODYID (cloud plan v2, step 3; Paul, 20 Nov 2026: the cloud's outlines may differ from Chrome's by up to 0.06 mm, so a silhouette's hash is never how the cloud knows a design): the body is
+     *  read from what the record SAYS (bodyOf: oneBody and bodyIndex, on the record, on its pool row, or, in the cloud, from the line's own reading), never from a hash, wherever that is said. Only a
+     *  record that says nothing, on a page, is still matched by its charm hash (the page's own hash against the page's own bodies: today's rule). In the cloud such a record is refused in words,
+     *  never cut from a guessed body. */
     async function soloBase(src, rec) {
+      const said = bodyOf(rec, true);
+      if (said) { if (!said.oneBody) return null; const bodies = await soloBodies(src); return (bodies && bodies[said.bodyIndex]) || null; }
       const h = rec ? String(rec.charmHash || rec.hash || "").replace(/~ae[0-9a-z]+$/, "") : ""; if (!h || h === String(src.charms[0].hash || "")) return null;   // (ART EDIT: a piece whose own artwork was edited has "~ae…" after the hash it was cut from, charm-nest-art-edit.js)
+      if (H.cloud) throw Object.assign(new Error(`${src.sku || "a design"}${rec && rec.poolId ? " · " + rec.poolId : ""}: which body of the design this piece is cut from cannot be told in the cloud (its record says no body, and a silhouette's hash is never read as one): a person checks it`), { bodyUnknown: true });
       const bodies = await soloBodies(src); return bodies && bodies.find(c => String(c.hash) === h) || null;
+    }
+    /** BODYID: which body of its design a stored piece (a pool row, a sheet record's charm, or a charm) is cut from, from what it says, never from a hash: { oneBody: true, bodyIndex } (one body
+     *  alone), { oneBody: false } (the whole design; a piece of an earring pair says its body with its side), or null (the record says nothing: a piece a page made before this). A pool row says it
+     *  with oneBody (true / false) and bodyIndex; a charm with oneBody as the body's index (traceSolo). A record that says nothing is looked for under its pool id in the pool rows this maker holds;
+     *  with `spec`, a node host may then answer from the line's own reading (H.bodyOf: the reading's one body, or the body its listing's profile cuts for that copy). */
+    function bodyOf(rec, spec) {
+      const said = r => {
+        if (!r || typeof r !== "object") return null;
+        if (r.oneBody === true && Number.isInteger(+r.bodyIndex) && +r.bodyIndex >= 0 && +r.bodyIndex <= 9) return { oneBody: true, bodyIndex: +r.bodyIndex };
+        if (typeof r.oneBody === "number" && Number.isInteger(r.oneBody) && r.oneBody >= 0 && r.oneBody <= 9) return { oneBody: true, bodyIndex: r.oneBody };
+        if (r.oneBody === false) return { oneBody: false };
+        return null;
+      };
+      const own = said(rec); if (own) return own;
+      const row = rec && rec.poolId != null && B && B.pool && B.pool.rows ? B.pool.rows.get(String(rec.poolId)) : null;
+      const its = row && row !== rec ? said(row) : null; if (its) return its;
+      if (spec && typeof H.bodyOf === "function") { try { const b = H.bodyOf(row || rec); if (b) return b; } catch (_) { /* nothing known */ } }
+      return null;
     }
     /** The factor that makes the drawing in these bytes exactly `wantMm` across: the index's sizes carry a margin and a jump ring, so the file itself is measured (its outline's narrow side is the disc's diameter). `guess` (the factor the
      *  index gave) is only used when the file cannot be measured. Refuses a drawing that is not a round disc or is more than 2.5 times off, so a wrong index never cuts a wrong disc. */
@@ -419,6 +484,7 @@
         charm.order = row.order.receiptId; charm.orderDate = +row.order.createTs || 0; charm.arrivedAt = row.arrivedAt || 0; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: ear.sku, copy, quantity: count, form: sp.form, size: sp.size };
         charm.poolId = poolId; charm.metal = sp.material; charm.lineKey = row.key; charm.pinned = null; charm.excluded = false; if (+row.frontAt > 0) charm.frontAt = +row.frontAt; else delete charm.frontAt;
         if (mine) Object.assign(charm, mine);   // side, mirror, bodyIndex, groupKey, groupSize: only a piece of an earring pair carries them (a counted necklace's pieces: groupKey and groupSize)
+        if (H.cloud) { const cb = cloudBody(mine, byBody, one, copy); charm.oneBody = cb.oneBody ? cb.bodyIndex : false; }   // (BODYID: a node host's piece says which body it is cut from, on the charm too: the body's index, or false for the whole design; a writer that records it lets bodyOf read it back)
         pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: row.order.receiptId, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: ear.sku, material: sp.material, size: sp.size || null, form: sp.form || null, chain: sp.chain || null, ...(Array.isArray(sp.optionNotes) && sp.optionNotes.length ? { optionNote: sp.optionNotes.join(" · ").slice(0, 240) } : {}), copy, quantity: count, charmHash: charm.hash, masterHash: ear.entry.masterHash || null, aiPath: sizeEntry(ear.entry, sp.size).aiPath, engrave: !!(row.engrave && row.engrave.needed) && !(byBody && byBody.blank[copy - 1]), state: "ready", lineKey: row.key, updateTs: row.order.updateTs, ...(mine || {}), ...(H.cloud ? cloudBody(mine, byBody, one, copy) : {}) });
         // (ART EDIT, Paul 27 Oct 2026: a line pooled again keeps the pool ids it had; a piece whose own artwork was edited, its pool row says so, is made with that edit: charm-nest-art-edit.js piece)
         const AE = H.ArtEdit(); charms.push(AE !== undefined ? await AE.piece(charm, poolId, B.pool.rows.get(poolId)) : charm);
@@ -441,7 +507,9 @@
     }
     async function soloFor(row, src) {
       const Pair = win.CharmNestPair, whole = src.charms[0]; if (!Pair || !Pair.soloOf || gluedLine(row)) return null;
-      if ((row.poolIds || []).some(id => { const r = B.pool.rows.get(id); return r && r.charmHash && !["abandoned", "superseded"].includes(r.state) && String(r.charmHash) === String(whole.hash); })) return null;
+      // (a live piece of the line cut whole keeps the line whole. BODYID: a record that says so is believed (oneBody false, no ear); only one that says nothing is matched by its hash, as before. In the cloud
+      //  the cloud's own rows always say it, and a line whose live rows a page made is never made up again there: the intake keeps those pieces as they are, _charmNestIntake.js)
+      if ((row.poolIds || []).some(id => { const r = B.pool.rows.get(id); if (!r || ["abandoned", "superseded"].includes(r.state)) return false; const said = bodyOf(r); if (said) return !said.oneBody && !(r.side === "L" || r.side === "R"); return !H.cloud && !!r.charmHash && String(r.charmHash) === String(whole.hash); })) return null;
       const one = Pair.soloOf(pairLine(row), whole); if (!one) return null;
       const bodies = await soloBodies(src), charm = bodies && bodies[one.index];
       return charm ? Object.assign({}, one, { charm }) : null;
@@ -552,8 +620,8 @@
     const due = row => !H.greenHeld(row) && (["pulled", "waiting"].includes(row.state) || row.poolTry !== trySig(row) || (row.poolError > 0 && Date.now() - row.poolError >= RETRY_MS));   // (RGC1: a line waiting for an open layout's green line is not made up again until that line is cut: greenHeld)
     return { sizeEntry, sizeKeyOf, sizeHold, masterCharm, entryHashes, loadMasterCharm, readMasterCharm, splitBodies, traceBodies, soloBodies, traceSolo, soloBase, fitFactor, fitBytes,
       cloneCharm, makePool, makePoolRead, stampDesignHold, bodyPlanFor, soloFor, memberSet, memberSkus, earMirror, pairLine, sidedPiece, wholeBody, baseFor, ensureBase, gluedLine,
-      poolAnswer, trySig, due, passing: H.cloud ? passingCloud : passing };
+      poolAnswer, trySig, due, passing: H.cloud ? passingCloud : passing, bodyOf };
   }
 
-  return { create, lineRecord, FIT_PATH, PAGE, PASSING, RETRY_MS, passing, stopAnswer, pace };
+  return { create, lineRecord, FIT_PATH, PAGE, PASSING, RETRY_MS, passing, stopAnswer, pace, silhouetteWithin, OUTLINE_TOL_MM, OUTLINE_TOL_PX };
 });

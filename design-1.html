@@ -8031,7 +8031,65 @@ const Bridge = (() => {
     const want = new Set(ids.map(String));
     return Object.assign({}, c.result, { completed: (c.result.completed || []).filter(id => want.has(String(id))), refused: (c.result.refused || []).filter(r => want.has(String(r.id))) });
   }
+  /* (CLOUDDRIVE build step 12, hard-parts §2.9; DORMANT: never while the drive is off) The sorter's Undo set names its run and set. While the cloud carries that run
+     (Charm_Nest_Run_Carrier says "cloud") and "commit" is one of the drive's lanes (Charm_Nest_Open/drive.cloudSteps), the cloud sent the set here and the cloud undoes it:
+     this page sends the person's press, commitUndoAsk, and reopens nothing itself (the cloud's commit unit takes the marks off in the ledger; this page's sweep shows it).
+     → null: undone here as today (no run named, another computer carries it, the drive is off, or the cloud could not be asked) | { cloud: true, ok: true, state: "asked" |
+     "already", words } (already: undone before, the station's "nothing to undo"); a refusal throws, in the cloud's words, and nothing is undone anywhere. */
+  async function cloudUndoAsk(a) {
+    const runId = String((a && a.runId) || ""), setId = String((a && a.setId) || "");
+    if (!runId || !setId) return null;
+    const ask = async (body, ms) => {
+      let pc = ""; try { pc = sessionStorage.getItem("designStation.passcode") || ""; } catch (_) {}
+      const ctl = typeof AbortController === "function" ? new AbortController() : null, t = ctl ? setTimeout(() => ctl.abort(), ms) : null;
+      try {
+        const r = await fetch(`${FN}/charmNestLibrary`, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, pc ? { "X-Edit-Passcode": pc } : {}), body: JSON.stringify(Object.assign({}, body, SANDBOX ? { sandbox: true } : {})), ...(ctl ? { signal: ctl.signal } : {}) });
+        let j = null; try { j = await r.json(); } catch (_) { j = null; }
+        return { ok: r.ok, data: j || {} };
+      } finally { if (t) clearTimeout(t); }
+    };
+    try {
+      const c = await ask({ op: "runCarrier", runId, dev: "design-station", check: true }, 4000);
+      if (!(c.ok && c.data.carrier && c.data.carrier.dev === "cloud")) return null;
+      const d = await ask({ op: "driveGet" }, 4000), steps = d.ok && d.data.drive && Array.isArray(d.data.drive.cloudSteps) ? d.data.drive.cloudSteps.map(String) : [];
+      if (!d.ok || !d.data.mode || d.data.mode === "off" || !steps.includes("commit")) return null;
+    } catch (_) { return null; }
+    let r = null; try { r = await ask({ op: "commitUndoAsk", runId, setId, by: String(a.by || "") }, 15000); } catch (e) { r = { ok: false, data: { error: "the cloud did not answer" } }; }
+    if (!r.ok || r.data.error || !r.data.ok) throw new Error(`the cloud did not undo it: ${r.data.error || "no answer"}`);
+    return { cloud: true, ok: true, state: r.data.already && !r.data.asked ? "already" : "asked", already: !!r.data.already, words: r.data.words || "" };
+  }
   function rememberSorterSelection() { writeJson(LSK.selected, { at: Date.now(), ids: [...S.sorterSelected] }); }
+  /* (CLOUDDRIVE build step 12, P12; dormant) the cloud's commit memory: a set the cloud sent to the station is kept in Charm_Nest_Commits/<runId>~<setId> (read with
+     charmNestLibrary commitGet), not in this page's storage. When this page's own memory has nothing for a run, the cloud's is asked, so a computer that takes a run
+     back from the cloud never marks the cloud's orders a second time. The cloud never committed for the run (no journal), or the read fails or is slow: exactly as before. */
+  async function cloudCommits(runId) {
+    if (!runId) return [];
+    let t = null;
+    try {
+      let pc = ""; try { pc = sessionStorage.getItem("designStation.passcode") || ""; } catch (_) {}
+      const ctl = typeof AbortController === "function" ? new AbortController() : null; if (ctl) t = setTimeout(() => ctl.abort(), 4000);
+      const r = await fetch(`${FN}/charmNestLibrary`, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, pc ? { "X-Edit-Passcode": pc } : {}), body: JSON.stringify(Object.assign({ op: "commitGet", runId: String(runId) }, SANDBOX ? { sandbox: true } : {})), ...(ctl ? { signal: ctl.signal } : {}) });
+      if (!r.ok) return [];
+      const j = await r.json(); return Array.isArray(j && j.journals) ? j.journals : [];
+    } catch (_) { return []; } finally { if (t) clearTimeout(t); }
+  }
+  /** priorCommit, then the cloud's: the cloud's finished commits of the run (stage done) answer when they hold every one of these orders. */
+  async function priorCommitAny(runId, ids) {
+    const local = priorCommit(runId, ids); if (local) return local;
+    const done = (await cloudCommits(runId)).filter(j => j && j.stage === "done");
+    if (!done.length) return null;
+    const all = new Set(done.flatMap(j => (j.ids || []).map(String)));
+    if (!ids.every(id => all.has(String(id)))) return null;
+    const want = new Set(ids.map(String));
+    return { completed: [...new Set(done.flatMap(j => (j.completed || []).map(String)))].filter(id => want.has(id)), refused: done.flatMap(j => j.refused || []).filter(r => r && want.has(String(r.id))) };
+  }
+  /** Which of these orders an earlier commit of the run already marked: this page's memory, then the cloud's (any commit past its ledger, not undone). */
+  async function takenAny(runId, ids) {
+    const mine = ids.filter(id => { const p = priorCommit(runId, [id]); return !!p && (p.completed || []).includes(id); });
+    if (mine.length === ids.length) return mine;
+    const marked = new Set((await cloudCommits(runId)).filter(j => j && j.stage !== "undone").flatMap(j => (j.completed || []).map(String)));
+    return ids.filter(id => mine.includes(id) || marked.has(String(id)));
+  }
 
   /* ── the remote cursor: every command glides to the control it acts on and presses it, so a person watching this page
         sees the sorter work the way a colleague would. Targets are looked up by role; anything not on screen falls back to
@@ -8366,8 +8424,8 @@ const Bridge = (() => {
       const ids = (a.receiptIds || []).map(String);
       if (!ids.length) throw new Error("no orders to commit");
       // (the sorter asks which of these orders an earlier commit of its run already marked, after the answer to that commit was lost: nothing is committed)
-      if (a.probe) return { taken: ids.filter(id => { const p = a.runId ? priorCommit(String(a.runId), [id]) : null; return !!p && (p.completed || []).includes(id); }), completed: [], refused: [] };
-      if (a.runId) { const prior = priorCommit(String(a.runId), ids); if (prior) { ticker(`commit for run ${a.runId} already done — same result returned`); return Object.assign({}, prior, { idempotent: true }); } }
+      if (a.probe) return { taken: a.runId ? await takenAny(String(a.runId), ids) : [], completed: [], refused: [] };
+      if (a.runId) { const prior = await priorCommitAny(String(a.runId), ids); if (prior) { ticker(`commit for run ${a.runId} already done — same result returned`); return Object.assign({}, prior, { idempotent: true }); } }
       if (!S.previewed || ids.some(id => !S.previewed.has(id))) throw new Error("commit without a preview of the same orders");
       if (!a.labels || !Array.isArray(a.labels.files) || !a.labels.files.length) throw new Error("no saved labels");
       if (__sweepInFlight > 0) throw new Error("an Etsy sweep is in flight — try again when the refresh finishes");
@@ -8387,6 +8445,9 @@ const Bridge = (() => {
     },
     async "complete.undo"(a) {
       if (__commitInFlight > 0) throw new Error("a completion is in flight");
+      // (CLOUDDRIVE build step 12, hard-parts §2.9; never while the drive is off) a set the cloud sent here is undone by the cloud: the press is sent, nothing is reopened here
+      const cloud = await cloudUndoAsk(a);
+      if (cloud) { ticker(cloud.state === "already" ? "undo: the cloud had undone this set already" : "undo asked of the cloud: it reopens the set's orders"); return cloud; }
       // the sorter names the set's orders, so an undo works after this page reloaded (the last-cleared list lives in memory only).
       // Named orders are the only ones undone: falling back to the last batch completed here would reopen someone else's orders.
       const named = !!(a && Array.isArray(a.receiptIds));

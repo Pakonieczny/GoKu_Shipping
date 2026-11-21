@@ -242,6 +242,34 @@
 [functions."charmNestDriveCron"]
   schedule = "* * * * *"
 
+# ─── Cloud nest (cloud plan v2, build step 6; DORMANT while the drive is off) ───
+# charmNestSolve-background's slot mode makes a sheet's pieces again in node: the page's own
+# silhouettes drawn by the node canvas (@resvg/resvg-js, _charmNestCanvas.js) from the design
+# files read with the vendored pdf-lib (_charmNestPdf.js). The page's {id, job} mode is unchanged.
+[functions."charmNestSolve-background"]
+  external_node_modules = ["@google-cloud/firestore", "@resvg/resvg-js"]
+  included_files = ["vendor/**"]
+
+# The driver's pass makes pieces (cloud plan v2, build steps 3 and 4: _charmNestIntake.js, _charmNestPieceHost.js,
+# charm-nest-pool-make.js): their silhouettes are drawn by _charmNestCanvas.js, which renders with the native
+# @resvg/resvg-js when it is there. Native packages stay outside the bundle, as for etsyMailTrackingSnapshot-background.
+# The cloud driver's pass draws QR labels (build step 10a: _charmNestQrLabel.js, the page's own lib/qrcode.min.js read into a vm, the label's words
+# from netlify/functions/fonts, rasterised by @resvg/resvg-js, a native package kept out of the bundle as for etsyMailTrackingSnapshot-background).
+# The driver's engraving units (cloud plan v2, build step 11; lane "engrave", dormant while the drive is off): the
+# engraving fonts and the shaping engine are read from vendor/ (vendor/fonts/**, vendor/hb.wasm), a design is read
+# with the page's own charm-nest-pdf.js, and an approval's picture is drawn with @resvg/resvg-js.
+[functions."charmNestDrive-background"]
+  external_node_modules = ["@google-cloud/firestore", "@resvg/resvg-js"]
+  included_files = ["vendor/**", "lib/qrcode.min.js", "netlify/functions/fonts/**", "netlify/production-functions/fonts/**"]
+
+# ─── The cloud's one sheet writer (cloud plan v2, build step 7a) ───
+# charmNestSheet-background.js writes a sheet's files in node (_charmNestFinish.js): Firestore, and
+# resvg for its silhouettes, the re-render check and the preview (_charmNestCanvas.js). Started only by
+# the cloud driver's files lane; DORMANT while Charm_Nest_Open/drive is absent or "off".
+[functions."charmNestSheet-background"]
+  external_node_modules = ["@google-cloud/firestore", "@resvg/resvg-js"]
+  included_files = ["vendor/**", "lib/qrcode.min.js", "netlify/functions/fonts/**", "netlify/production-functions/fonts/**"]
+
 # Every page is cross-origin isolated, so a cross-origin picture only loads if its server sends
 # Cross-Origin-Resource-Policy, and Etsy's image CDN (i.etsystatic.com) does not send it reliably: a listing's picture
 # goes missing with ERR_BLOCKED_BY_RESPONSE.NotSameOriginAfterDefaultedToSameOriginByCoep. Show Etsy pictures through

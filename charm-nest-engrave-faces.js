@@ -342,7 +342,7 @@
   const recordsOf = (records, poolId) => ({ front: pickRecord(records, poolId, FRONT), back: pickRecord(records, poolId, BACK) });
 
   /* ── what the panel shows: one row per face the line has ────────────────── */
-  /** [{ face, label, title, words, from, state, job }] Front first. `from`: "person" (a person's words or decision), "order" (the buyer's own labelled words), "reader" (the paid reading),
+  /** [{ face, label, title, words, from, state, job }] Front first. `from`: "person" (a person's words or decision), "order" (the buyer's own labelled words), "staffNote" (a staff note "ENG: …", ENGNOTE), "reader" (the paid reading),
    *  "unread" (nothing yet). The words are the job's when it has them, else the setup's. */
   function panelRows(setup, jobs) {
     const out = [], by = {};
@@ -351,7 +351,7 @@
       const job = by[f] || null, want = setup && setup.faces.includes(f);
       if (!job && !want) continue;
       const w = job && words(job) ? words(job) : joinWords(setup && setup[f]);
-      const how = job && job.decision && job.decision.by ? 'person' : job && job.wordsSource === 'spec.engraving' ? (setup && setup.edited ? 'person' : 'order') : job && (job.source === 'personalization' || job.claudeJob || job.confidence != null) && job.text ? 'reader' : w ? (setup && setup.edited ? 'person' : 'order') : 'unread';
+      const how = job && job.decision && job.decision.by ? 'person' : job && job.source === 'staffNote' && /^staffNote:/.test(String(job.wordsSource || '')) ? 'staffNote' : job && job.wordsSource === 'spec.engraving' ? (setup && setup.edited ? 'person' : 'order') : job && (job.source === 'personalization' || job.claudeJob || job.confidence != null) && job.text ? 'reader' : w ? (setup && setup.edited ? 'person' : 'order') : 'unread';
       out.push({ face: f, label: label(f), title: title(f), words: w, from: how, state: job ? job.state : '', job });
     }
     return out;
