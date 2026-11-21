@@ -214,7 +214,7 @@
     /** A released sheet takes its own order's late pieces: not cut, not recalled, not in a set approved for laser cutting, sent or cut, not held by a person, by a replaced piece,
         by a problem, or for ANOTHER order's change. */
     function reopensHome(p, run, rid) {
-      if (!p || !PAIR_OF[p.metal] || p.recalled || p.roseCutAt || +p.laserDoneAt > 0 || p.processReady || p._manualHold || p._inplaceHold || p.runHold || p.problem) return false;
+      if (!p || !PAIR_OF[p.metal] || p.recalled || p.roseCutAt || +p.laserDoneAt > 0 || p.processReady || p._manualHold || p._inplaceHold || p.problem) return false;   // (HOLDTAKES)
       if (run && p.runId && p.runId !== run.runId) return false;
       if (H.holding && H.holding(p) && !(rid != null && p.keepRelease && p.keepRelease.rid === String(rid).split("/")[0])) return false;   // (kept for another order's change)
       return !(H.fixedSet && H.fixedSet(p));
@@ -379,7 +379,6 @@
   const TASK_ENDED = ["nested", "applied", "done", "error", "stopped", "stale", "superseded", "failed", "skipped"];
   const jobRunning = (j, now) => !!(j && typeof j === "object" && (j.jobId || j.id) && !(num(j.endedAt) > 0) && !TASK_ENDED.includes(String(j.status || j.state || "")) && !(num(j.at) > 0 && now - num(j.at) > JOB_STALE_MS));
   const idOf = s => String((s && (s.id || s.sheetId)) || "");
-  const runHoldOf = (s, run) => { const id = idOf(s); return !!(s && s.runHold) || !!(run && run.sheetHolds && id && run.sheetHolds[id]); };
   const greenPlanned = s => CUT_METALS.includes(s.metal) && !!(s.rosePlanJson || s.rosePlanHash || s.roseProtectedJson || s.rosePlan || s.roseProtected);
   const fixedSetOf = (s, sets) => { const id = idOf(s); return !!id && (sets || []).some(x => x && (x.committedAt || x.processReady || x.laserSetPending || num(x.laserDoneAt) > 0) && (x.sheetIds || []).includes(id)); };
   /** closedRec(sheet, setsOfRun, run, now): LiveNest.closed on a sheet RECORD (P4). True when the sheet takes no new order: its green line was cut, it was released full, the laser marked it
@@ -391,7 +390,9 @@
     now = now || Date.now();
     if (s.archived) return true;
     if (s.roseCutAt || s.releaseFull || num(s.laserDoneAt) > 0 || s.cardinalPull) return true;
-    if (!greenPlanned(s) && (runHoldOf(s, run) || s.intakeFinalized)) return true;
+    /* HOLDTAKES (Paul, 21 Nov 2026: a held sheet split CAMP_0903 onto a new 14K draft): a hold stops a sheet's NEST only; it still takes pieces, and the new pieces lift the hold
+       (_charmNestNestStep.js) */
+    if (!greenPlanned(s) && s.intakeFinalized) return true;
     if (manualAlive(s.manualEdit, now) || jobRunning(s.nestJob, now) || jobRunning(s.filesJob, now)) return true;
     if (s.setId && !s.draft) return true;
     const id = idOf(s);
@@ -400,7 +401,7 @@
   /** reopensHome on a RECORD (placeOnSheet's check of `home`, inside its transaction): a GF / SS sheet that takes its own order's late pieces although it is closed. */
   function reopensHomeRec(s, sets, run, now) {
     now = now || Date.now();
-    if (!s || !PAIR_OF[s.metal] || s.archived || s.roseCutAt || num(s.laserDoneAt) > 0 || s.processReady || manualAlive(s.manualEdit, now) || jobRunning(s.nestJob, now) || jobRunning(s.filesJob, now) || runHoldOf(s, run) || s.problem) return false;
+    if (!s || !PAIR_OF[s.metal] || s.archived || s.roseCutAt || num(s.laserDoneAt) > 0 || s.processReady || manualAlive(s.manualEdit, now) || jobRunning(s.nestJob, now) || jobRunning(s.filesJob, now) || s.problem) return false;   // (HOLDTAKES)
     if (run && run.runId && s.runId && s.runId !== run.runId) return false;
     return !fixedSetOf(s, sets);
   }
@@ -510,7 +511,7 @@
     }
     const pagesOf = m => { if (!all().some(v => v.metal === m)) newDraft(m); return all().filter(v => v.metal === m); };
     /* ONEFILL (Paul, 12 Nov 2026: "one sheet at a time for everything"): a Gold Filled or Sterling Silver sheet of the run still filling, or null */
-    const stillFilling = p => !!p && (p.charms || []).length > 0 && !(p.setId && !p.draft) && !p.releaseFull && !p.topup && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled && !p.problem && !p.runHold && !p.cardinalPull && !p.intakeFinalized && !p._ownLine && !(p.label && p.label.own);
+    const stillFilling = p => !!p && (p.charms || []).length > 0 && !(p.setId && !p.draft) && !p.releaseFull && !p.topup && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled && !p.problem && !p.cardinalPull && !p.intakeFinalized && !p._ownLine && !(p.label && p.label.own);
     function fillingPage(metal, x = {}) {
       if (!FAST.includes(metal) || settings.onesheet === "off") return null;
       const rid = run.runId || null, held = p => !!p._manualHold || !!p._inplaceHold || closedV(p);
