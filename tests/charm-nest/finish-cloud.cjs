@@ -131,6 +131,8 @@ const nestCalls = (X, id) => X.calls.filter(b => b.op === 'nestStart' && b.sheet
     ok('1 · feedOn: replayed, the turn is still asked once (the ledger answers the same ask, no second job)', jobsOf('sheetD').length === 1, jobsOf('sheetD').map(j => j._id));
     const view = { metal: 'gold', placements: [pl('a', 1)], charms: [charm('a', '1'), charm('b', '2')], feedWait: ['b'], releaseFull: true, verification: { ok: true } };
     ok('1 · feedOn on a full sheet passes the waiting orders on (they go to the next sheet)', FC.feedNext(view).act === 'pass' && FC.feedNext(view).pass[0] === 'b');
+    const unv = { metal: 'gold', placements: [pl('a', 1)], charms: [charm('a', '1'), charm('b', '2')], feedWait: ['b'], verification: { ok: false } };
+    ok('1 · NOFLEE: a sheet that missed the gap check keeps its waiting orders and nests again (never sends them to the next draft)', FC.feedNext(unv).act === 'nest');
   }
   {
     // (d) the oldest order cannot fit on an empty sheet: the run stops with those words once; after a Resume the sheet is held
