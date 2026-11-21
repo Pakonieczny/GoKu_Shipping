@@ -6750,6 +6750,16 @@ const filesSteps = b => b.op === "flowApply" && (Array.isArray(b.steps) ? b.step
 /* (CLOUDDRIVE C1, build step 14): a page's press that carries no cv was sent by a page built before pages became viewers. Only a page's own request is judged (its computer's name,
    charm-nest-run-follow.js dev(): "d" and 4 to 14 letters or digits); a function or a cron of the site that calls this handler names no such computer and is never refused for it. */
 const PAGE_DEV = /^d[0-9a-z]{4,14}$/;
+/* (VIEWAPPROVE, Paul 21 Nov 2026, Michelle's None / Front / Back choice refused with "The cloud carries every run now: poolUpdate ...": "Why is this happening?"): a person's own decision on a
+   face (None, Front, Back, Both, cut plain, a face opened again) is a press, not the run's work. Taken from a page in mode "on": a poolUpdate whose patch is ONLY a face's engrave flag and who
+   decided it (nothing of a piece's state, sheet, set or files), and backInvalidate (that face's approved back withdrawn: its record and the sheet's back list, nothing else). */
+const ENGRAVE_DECISION = { engrave: "boolean", engraveFront: "boolean", engraveSkippedBy: "string", engraveFrontSkippedBy: "string" };
+const engraveDecision = b => {
+  if (b.op === "backInvalidate") return true;
+  if (b.op !== "poolUpdate") return false;
+  const p = b.patch; if (!p || typeof p !== "object" || Array.isArray(p)) return false;
+  const keys = Object.keys(p); return keys.length > 0 && keys.every(k => Object.prototype.hasOwnProperty.call(ENGRAVE_DECISION, k) && typeof p[k] === ENGRAVE_DECISION[k]);
+};
 const oldPagePress = b => (b.cv == null || b.cv === "") && PAGE_DEV.test(String(b.dev || "")) && OpClass.classOf(b.op) !== "READ" && !MID_READ.test(String(b.op || ""));
 async function modeOnRefusal(b) {
   const op = b.op, cls = OpClass.classOf(op);
@@ -6761,6 +6771,7 @@ async function modeOnRefusal(b) {
   if (b.cv == null || b.cv === "") return { error: "This page is an old version: it reloads, then you can do this again. Nothing was changed", status: 409, cloudCarries: true, reload: true };
   if (op === "putSheet") { const s = b.sheet && typeof b.sheet === "object" ? b.sheet : {}, hit = PAGE_SHEET_REFUSED.filter(k => Object.prototype.hasOwnProperty.call(s, k)); return hit.length ? Object.assign(words("a sheet's pieces, files, labels and set"), { fields: hit }) : null; }
   if (op === "flowApply") return (Array.isArray(b.steps) ? b.steps : []).some(x => x && (x.type === "setFiles" || x.type === "relabel" || x.relabel)) ? words("a set's labels and files") : null;
+  if (engraveDecision(b)) return null;   // (VIEWAPPROVE: a person's choice on a face, above)
   return cls === "PRODUCTION" ? words(op) : null;
 }
 /** driveGet: the switch, the driver's state and its lease (no nonce), for Settings and the run banner. Read only. */
