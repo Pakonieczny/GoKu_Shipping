@@ -314,6 +314,9 @@
       //  joining a set; it wrote SS_Nov.12.26_Set-1_Sheet-3, a member of the Nov 12 Set 1 since Nov 13, as a draft at its next save, half out of its set (the set and its pieces still named it)
       const held = (() => { try { const sets = sh.setId && sh.sheetId && typeof h.setsOfRun === "function" ? h.setsOfRun(sh.runId) : null; return !!(sets && sets.some(s => s && s.setId === sh.setId && (s.sheetIds || []).includes(sh.sheetId))); } catch (_) { return false; } })();
       if (!held && R && typeof R.isPartial === "function" && (sh.setId || !sh.draft) && R.isPartial(sh) && typeof h.modern === "function" && h.modern(sh.runId)) return { draft: true, setId: null, setSeq: null, sheetIndex: null };
+      // (RELEASEMARK, Paul 20 Nov 2026: GF Draft 1 and 2 were saved as drafts that named Set 5, a set that never listed them): a draft names no set, its number or index, whatever its copy on this
+      //  computer says; only a person's take-out of that very set, under way (leftSet), keeps the name until the run lets it go
+      if (!held && own.draft && own.setId && String(sh.leftSet || "") !== String(own.setId)) return { draft: true, setId: null, setSeq: null, sheetIndex: null };
     } catch (_) { /* its own, as before */ }
     return own;
   }

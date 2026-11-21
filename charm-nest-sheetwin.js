@@ -2367,11 +2367,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** OUTBOX: a field patch of a sheet's record, kept in this computer's outbox (charm-nest-store.js mutate) with what it saw in those fields (base: the later change wins, and says whom it
       overwrote) and sent from there with its mutation id; → the cloud's answer (rejects with the refusal in the cloud's words). Without the outbox, the plain write. */
-  function patchSheet(id, fields, base, label) {
+  function patchSheet(id, fields, base, label, extra) {   // (extra: more of the body, as { reopen: true }: RELEASEMARK, a person's own reopen of a released sheet)
     const St = window.CharmNestStore;
-    if (!St || typeof St.mutate !== "function") return api("charmNestLibrary", { op: "putSheet", sheet: Object.assign({ id }, fields) }, { quiet: true });
+    if (!St || typeof St.mutate !== "function") return api("charmNestLibrary", Object.assign({ op: "putSheet", sheet: Object.assign({ id }, fields) }, extra || {}), { quiet: true });
     const by = whoAmI() || "";
-    return St.mutate({ entity: "s:" + id, op: "putSheet", args: { sheet: Object.assign({ id }, fields), base, by }, fields: Object.keys(fields), label, by }).done.then(ans => {
+    return St.mutate({ entity: "s:" + id, op: "putSheet", args: Object.assign({ sheet: Object.assign({ id }, fields), base, by }, extra || {}), fields: Object.keys(fields), label, by }).done.then(ans => {
       if (ans && ans.overwrote && ans.overwrote.length) { const w = ans.overwrote[0]; tryDo(() => toast(`${w.by || "Someone"} changed this sheet's ${w.field === "releaseFull" ? "release" : w.field} ${agoWords(w.at)} — your change was kept.`, "", 7000)); }
       return ans;
     });
@@ -2412,7 +2412,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         /* OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"; plan: phase 3, labels and releaseFull): the release mark is drawn at once and kept in this computer's outbox
            (a field patch with what it saw: the later change wins and the person whose change lost is told). The label itself waits for the mark's answer: the set it joins is numbered and
            its rules checked on the server (setAllocate, R12), never on a guess. Undone, the same patch goes back (a press still waiting in the outbox is simply replaced). */
-        const markRelease = (on, top) => patchSheet(sh.sheetId, { releaseFull: on, topup: top || null }, { releaseFull: on ? wasFull : true, topup: on ? topWas : (sh.topup || null) }, on ? `The release of ${sheetName(sh)}` : `${sheetName(sh)}'s return to filling`);
+        const markRelease = (on, top) => patchSheet(sh.sheetId, { releaseFull: on, topup: top || null }, { releaseFull: on ? wasFull : true, topup: on ? topWas : (sh.topup || null) }, on ? `The release of ${sheetName(sh)}` : `${sheetName(sh)}'s return to filling`, on ? null : { reopen: true });   // (RELEASEMARK: the undo of this person's own press reopens the sheet: said, or the cloud keeps it released)
         undo = () => { if (!sh.draft || wasFull) return; sh.releaseFull = false; if (topup) { delete topup.closedAt; delete topup.byHand; } markRelease(false, sh.topup).catch(() => {}); };
         await markRelease(true, sh.topup);
         await Gate.assemble(run);

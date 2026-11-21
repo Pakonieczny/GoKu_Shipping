@@ -147,6 +147,18 @@
     return holds;
   }
 
+  /* ═══ NOSPREAD's turn-away, read from the sheets (RELEASEMARK, Paul 20 Nov 2026: GF Draft 1 sat at 78% and never released while four later Gold Filled sheets took the orders). The page counted
+     a whole order turned away from a sheet near completion in its own memory only (_nsPassed): a reload, or another computer carrying the run, lost it and the sheet was never brought to the one nest
+     that releases it. ONEFILL fills one Gold Filled / Sterling Silver sheet at a time, so a LATER sheet of the same metal and run that holds pieces is the record's own proof that this sheet was passed
+     over (refused or shut); every computer and the cloud read the same answer from the same records. ═══ */
+  /** passedOver(sheet, sheets): a Gold Filled / Sterling Silver sheet with pieces on it, and a sheet of its metal and run started after it (cardStartedAt, createdAt; else a higher page) holds pieces. */
+  function passedOver(sh, sheets) {
+    if (!sh || !FAST.includes(sh.metal) || !(sh.placements || []).length || sh.recalled || sh.archived) return false;
+    const born = s => ms(s && (s.cardStartedAt || s.createdAt)) || 0, idOf = s => (s && (s.sheetId || s.id)) || null, mine = born(sh), me = idOf(sh);
+    return (sheets || []).some(q => q && q !== sh && (!me || idOf(q) !== me) && q.metal === sh.metal && (!sh.runId || q.runId === sh.runId) && !q.recalled && !q.archived && (q.placements || []).length > 0
+      && (mine && born(q) ? born(q) > mine : num(q.page) > num(sh.page)));
+  }
+
   /* ═══ the rules for one host ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════ */
   function create(H) {
     const sheets = () => H.sheets() || [];
@@ -536,6 +548,6 @@
   const splitWaitingRec = (lines, views) => splitWaiting(Object.values(lines || {}).filter(l => l && typeof l === "object").map(l => ({ order: { receiptId: l.orderId }, spec: { material: l.material }, state: l.state, poolIds: l.poolIds || [] })), views);
 
   return { create, PAIR_OF, FAST, CUT_METALS, METALS, TOPUP, GAP_PACK, MANUAL_STALE_MS, JOB_STALE_MS,
-    topupRoom, topupTakes, nospreadSheet, nospreadOrder, nospreadChunk, nospreadCfg, splitWaiting, splitHolds, splitWaitingRec,
+    topupRoom, topupTakes, nospreadSheet, nospreadOrder, nospreadChunk, nospreadCfg, splitWaiting, splitHolds, splitWaitingRec, passedOver,
     closedRec, reopensHomeRec, recordView, lineOrder, recordEnv, recordHost, stockRec, pieceTotalsRec, orderInfoRec, charmOfRow, greenLeftoverRec, listedOf, manualAlive, jobRunning };
 });

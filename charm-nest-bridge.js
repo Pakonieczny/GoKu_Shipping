@@ -132,10 +132,13 @@ const ListMedia = (() => {
   // Firebase is the shared source; this small local index makes refresh instant.
   // Image bytes use the seven-day HTTP cache, not another Etsy metadata lookup.
   const photoStorage='cn.listingPhotos.v1',photoAttempts=new Map(),photoChecks=new Map(),photoStates=new Map(),prepareQueue=new Set(),warming=new Set(),photoLoading=new Set();
-  // Reassess legacy 25-call pauses once under the batch budget. Server-side
-  // quota/cooldown checks remain authoritative, including genuine Etsy 429s.
-  const photoPauseStorage='cn.listingPhotoPause.v2';
-  let photoPauseUntil=0;try{photoPauseUntil=Number(localStorage.getItem(photoPauseStorage))||0;}catch(_){}
+  // PHOTOPAUSE (Paul, 20 Nov 2026, "Yes, lift it": the pause lives only in the cloud, and the owner's Resume Etsy clears it; computers store
+  // nothing of production): the photo lookup pause is only what the cloud's latest answer says (every listingPhotos answer carries it as
+  // retryAt, 0 when lookups may run). Nothing is kept in this browser; the copy an older page kept (cn.listingPhotoPause.v2 and the one
+  // before it, cn.listingPhotoPause) is removed here, never read.
+  let photoPauseUntil=0;
+  try{for(const k of ['cn.listingPhotoPause.v2','cn.listingPhotoPause'])localStorage.removeItem(k);
+    for(let i=(localStorage.length||0)-1;i>=0;i--){const k=localStorage.key(i);if(k&&k.startsWith('cn.listingPhotoPause'))localStorage.removeItem(k);}}catch(_){}
   try{for(const [id,url] of JSON.parse(localStorage.getItem(photoStorage)||'[]'))if(typeof url==='string'&&url)photos.set(id,url);}catch(_){}
   let preparing=null,photoTick=0;
   function remember(id,url){
@@ -162,8 +165,11 @@ const ListMedia = (() => {
     return photoPauseUntil>Date.now()?'New Etsy photo lookups resume '+new Date(photoPauseUntil).toLocaleString()+'. Saved photos remain available.':'Missing photos are checked with the next ten-minute update.';
   }
   function acceptPhotos(got,ids){
-    if(got.retryAt>Date.now()){photoPauseUntil=Math.max(photoPauseUntil,got.retryAt);try{localStorage.setItem(photoPauseStorage,String(photoPauseUntil));}catch(_){}}
+    const was=photoPauseUntil>Date.now();
+    photoPauseUntil=Number(got?.retryAt)>Date.now()?Number(got.retryAt):0;   // (PHOTOPAUSE: the cloud's latest answer, never the longest one seen)
     for(const id of ids){photoChecks.set(id,Date.now());photoStates.set(id,got.states?.[id]||'cache-only');if(got.images?.[id])remember(id,photoUrl(got.images[id]));}
+    // (the cloud lifted the pause, e.g. the owner pressed Resume Etsy: the photos still missing are looked up now, not at the next ten-minute round)
+    if(was && !photoPauseUntil){let more=false;for(const id of ids)if(!photos.get(id)){prepareQueue.add(id);more=true;}if(more)prepare([]);}
   }
   function refreshPhotos(ids){
     for(const host of document.querySelectorAll('[data-listing]')){const job=jobs.get(host);if(!job||!ids.includes(job.key)||host.querySelector('img'))continue;
@@ -5287,7 +5293,7 @@ const Pool = window.Pool = (() => {
       const pick = placeRules().chooseSheet({ metal, rid: row.order.receiptId, run, list, info, ip, matePages, byMetalSize: byMetal.size, shut,
         relinkHomes: row._relink && Array.isArray(row._relink.homes) ? row._relink.homes : null,
         // (PICKFULL, Paul 19 Oct 2026: a home sheet that was only FULL, still a draft waiting for its set, is not full any more once the old pieces came off: it takes the picked charm back into their room; the sorter marks it full again when it is)
-        relinkPrep: m => { for (const p of row._editSku ? [] : row._relink.homes) if (p && p.metal === m && p.releaseFull && (p.draft || !p.setId) && Gate.modern(p.runId) && !(p.label && p.label.own) && pagesOf(p.metal).includes(p)) { p.releaseFull = false; if (p.keepRelease && p.keepRelease.full) p.keepRelease = null; } } });   // (and the hold Gate.keep put on it when its pieces came off: a draft has no set to keep)
+        relinkPrep: m => { for (const p of row._editSku ? [] : row._relink.homes) if (p && p.metal === m && p.releaseFull && (p.draft || !p.setId) && Gate.modern(p.runId) && !(p.label && p.label.own) && pagesOf(p.metal).includes(p)) { p.releaseFull = false; p._pickFull = true; if (p.keepRelease && p.keepRelease.full) p.keepRelease = null; } } });   // (RELEASEMARK: _pickFull, the sheet is released again once the picked charm is written: finishNest)   // (and the hold Gate.keep put on it when its pieces came off: a draft has no set to keep)
       // (RGC1, Paul 9 Nov 2026: a 10K / 14K line the open layout cannot take waits for its green line, then continues on its leftover: greenResume)
       if (pick.wait && pick.wait.kind === "green") {
         const was = pick.wait.sheet, n = list.length, name = greenName(was);
@@ -7020,6 +7026,7 @@ const Gate = window.Gate = (() => {
         // as a sheet takes new arrivals (LiveNest.add): its placements stay, locked, and the new charms go around them
         delete t.runHold; delete t.intakeFinalized; delete t.intakeForceFinal; delete t.topup; delete t.missRearranged;
         t.releaseFull = false; t.movedOn = null; t.problem = null; t.feedWait = null; t.rejects = [];
+        t._reopen = true;   // (RELEASEMARK: a person's Merge reopens the sheet it fills: its save says so, or the cloud keeps a released sheet released)
         t.intakeAppend = t.placements.length > 0; t.appendOnly = t.intakeAppend; t.dirty = true; t.status = "ready";
       }
       const prim = S.sheets[m]; if (prim.pages[prim.active] !== t && window.CN?.showPage) window.CN.showPage(m, prim.pages.indexOf(t));
@@ -27963,11 +27970,13 @@ const Recall = window.Recall = (() => {
   const followState = { at: 0, result: "", kept: [], rebuilt: [], renamed: 0 };
   /* SHEETSAME: what makes a sheet's name and place, as its record says it (charm-nest-sheet-name.js reads these): a sheet the cloud renamed, moved into a set or out of one, numbered or cut is taken again, even with
      the same id; and a page that already shows it takes them in place (nothing emptied or built again) */
-  const nameSig = x => [x.id, x.setId || "", x.setSeq || "", x.sheetIndex || "", x.draft ? 1 : 0, x.solidIncluded === false ? 0 : 1, x.fileBase || "", x.page || "", x.draftOrder != null ? x.draftOrder : "", +x.laserDoneAt > 0 ? 1 : 0, +x.roseCutAt > 0 ? 1 : 0].join(":");
+  const nameSig = x => [x.id, x.setId || "", x.setSeq || "", x.sheetIndex || "", x.draft ? 1 : 0, x.solidIncluded === false ? 0 : 1, x.fileBase || "", x.page || "", x.draftOrder != null ? x.draftOrder : "", +x.laserDoneAt > 0 ? 1 : 0, +x.roseCutAt > 0 ? 1 : 0, x.releaseFull ? 1 : 0].join(":");   // (RELEASEMARK: the release mark too)
   function takeNames(pg, rec, runId) {
     if (!pg || !rec) return;
-    pg.setId = rec.setId || null; pg.seq = rec.setSeq || null; pg.setSeq = rec.setSeq || null; pg.setDay = setDayOfRec(rec); pg.sheetIndex = rec.sheetIndex || null; pg.fileBase = rec.fileBase || pg.fileBase || null;
-    pg.draft = !!rec.draft; if (rec.solidIncluded === false) pg.solidIncluded = false; else if (pg.solidIncluded === false) delete pg.solidIncluded;
+    // (RELEASEMARK, Paul 20 Nov 2026: a draft whose record still named Set 5 was a member of Set 5 on the computers that took that name: a draft names no set here, and the release mark is the record's)
+    const inSet = !!rec.setId && !rec.draft;
+    pg.setId = inSet ? rec.setId : null; pg.seq = inSet ? rec.setSeq || null : null; pg.setSeq = pg.seq; pg.setDay = inSet ? setDayOfRec(rec) : rec.day || setDayOfRec(rec); pg.sheetIndex = inSet ? rec.sheetIndex || null : null; pg.fileBase = rec.fileBase || pg.fileBase || null;
+    pg.draft = !!rec.draft; pg.releaseFull = !!rec.releaseFull; if (rec.solidIncluded === false) pg.solidIncluded = false; else if (pg.solidIncluded === false) delete pg.solidIncluded;
     if (Number.isFinite(+rec.page) && +rec.page > 0) pg.page = +rec.page;
     if (rec.draftOrder != null && Number.isFinite(+rec.draftOrder)) { pg.draftOrder = +rec.draftOrder; pg._savedDO = pg.draftOrder; }
     if (+rec.laserDoneAt > 0) pg.laserDoneAt = +rec.laserDoneAt; if (rec.roseCutAt) pg.roseCutAt = rec.roseCutAt;

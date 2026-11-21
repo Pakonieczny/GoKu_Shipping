@@ -4560,7 +4560,16 @@
     const noDesign = listed || !!(special && special.notCut) || !!done;
     // an add-on listing's line (specialOf: own): its design is the order's own, never the master design its SKU happens to match. It is not "no design" (nothing cuts it and
     // nothing closes its order until its own designs are sent to a sheet or a person completes it), and nothing is asked about it: no metal, SKU or option question, no engraving
-    const own = !!(special && special.own && !special.notCut);
+    const ownListing = !!(special && special.own && !special.notCut);
+    /* CUSTOMWAIT (Paul, 20 Nov 2026: "Some orders are still not updating their vector files"): a special line that is made by a person (custom, rework, add-on, special order: every
+       kind but chain only, which is never cut) whose SKU has NO design in any master file is custom work waiting for its design, exactly as an add-on listing's line is: the shop's own
+       code (CUSTOM-N-095-149299, the custom-listing tool's CUSTOM-<family>-<price>-<thread>; RE_…; ADD_…) is a name, never a design (REVDROP, 15 Oct 2026), so "SKU not in any master
+       file" is no question to ask of it. It waits, asked nothing, for its own designs (Send to Sheet), a person's Complete Order, or its design saved to the charm repository
+       (customSaveCommit: the listing's alias names the saved SKU, the line then reads that design and this no longer applies). It used to be held as "unmatched · not in any master
+       file" (since Sep 2026: tests/charm-nest/fixtures/addon-snapshot-lines.json), on every page and in the cloud world alike. Claude still reads it (spec.readable is unchanged),
+       and Claude's or a person's "regular" takes it out (specialOf returns no special). */
+    const waitsDesign = !ownListing && !!special && !special.notCut && !done && !listed && !!ctx.masterEntry && !(sku && ctx.masterEntry(sku));
+    const own = ownListing || waitsDesign;
     const quiet = noDesign || own;
     // ZODSIGN (section 3c): a SHARED zodiac SKU (HUGGIE HOOPS-ZODIAC, one drawing in the master, the Libra huggie, for all twelve signs) takes the sign the buyer NAMED (an option, the personalisation box, the
     // buyer's note): that sign's charm of the line's form, or a plain wait ("The Capricorn charm is not in the repo yet" / "Which zodiac sign?"), never another sign's file. Only an automatic match is replaced:
@@ -4649,8 +4658,9 @@
     // a line with no design of its own (not on the no-design list, not finished by hand) is one Claude reads to tell a
     // custom order from a regular listing whose SKU is not indexed yet (Custom Orders)
     const byOption = special && special.signals[0] === "option";
-    spec.readable = !listed && !done && !byOption && !own && !set && !(sku && ctx.masterEntry && ctx.masterEntry(sku)) && !!ctx.masterEntry;
+    spec.readable = !listed && !done && !byOption && !ownListing && !set && !(sku && ctx.masterEntry && ctx.masterEntry(sku)) && !!ctx.masterEntry;   // (CUSTOMWAIT: a custom line waiting for its design is still read by Claude)
     if (own) spec.ownDesign = true;
+    if (waitsDesign) spec.waitsDesign = true;   // (CUSTOMWAIT: own work because its SKU has no design yet, not because of its listing)
     if (noDesign) spec.noDesignWhy = done ? "completed by hand (Custom Orders)" : listed ? "on the no-design list" : special.label.toLowerCase() + " · not laser cut";
     // the options that name how many pieces ONE unit makes (2 Disc, Number of Discs: 3, a person's answer): read once, for the options below and for the count
     const cr = countRead(line, { optionMaps: ctx.optionMaps });
