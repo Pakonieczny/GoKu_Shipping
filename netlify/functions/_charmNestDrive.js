@@ -342,11 +342,34 @@ async function pass(env) {
       if (Object.keys(keep).length) { await saveState(Object.assign({ runId }, keep)); Object.assign(state, keep); }
       return r || {};
     };
+    /* NOWCMD (Paul 21 Nov 2026, a Change SKU that said "The cloud has not started it yet: it does it at its next pass": "it must be propagated immediately not on a next pass"): a person's
+       request put while this pass runs is taken up by THIS pass, within seconds: the run's requests document is read between every unit of the steps, after every pass item, and before
+       the pass ends; one still "waiting" is done now through the same commands item (its claim, its fence on this pass's lease and the run's carrier, its lanes, its order: oldest first,
+       one computer's presses in the order asked, each idempotent by its own keys), and one whose lane the cloud does not hold is answered at once in words (answerCommands), as at the
+       pass's start. One read when nothing waits; a fence or a hand-back ends the pass as a unit's does. (driveSoon still starts a pass at once when none runs.) */
+    const cmdItem = items.find(it => it && it.name === "commands" && typeof it.unit === "function");
+    const cmdTried = new Map();
+    const cmdNow = async where => {
+      if (["abandoned", "complete"].includes(run.status) || Date.now() > budgetEnd - PASS_TAIL_MS) return 0;
+      let waiting = [];
+      try { const s = await db.collection(CMDS).doc(runId).get(); waiting = Object.values((s.exists && (s.data() || {}).cmds) || {}).filter(c => c && c.id && c.type && c.state === "waiting"); } catch (_) { return 0; }
+      const now = Date.now(); waiting = waiting.filter(c => now - num(cmdTried.get(c.id)) > 15000);   // (one the commands item left waiting, a passing failure or another computer's live claim, is looked at again 15 s on, not before every unit)
+      if (!waiting.length) return 0;
+      live();
+      for (const c of waiting) cmdTried.set(c.id, now);
+      const ours = c => !!cmdItem && Standby.cmdLaneOn(cloudSteps, c.type);
+      let n = 0;
+      if (waiting.some(c => !ours(c))) { const a = await answerCommands(db, runId, cloudSteps, call, (env.passItems || []).some(i => i && i.name === "commands")); out.answered = (out.answered || 0) + a; n += a; }
+      if (waiting.some(ours)) { say(`[drive] NOWCMD: ${waiting.filter(ours).length} request(s) put while the pass runs, taken up now (${where})`); const r = await runItem(cmdItem); if (r !== false) n++; }
+      if (n) out.cmdNow = (out.cmdNow || []).concat([where]).slice(-20);
+      return n;
+    };
     for (const item of items) {
       if (!item || typeof item.unit !== "function" || !laneOn(cloudSteps, String(item.lane || item.name)) || ["abandoned", "complete"].includes(run.status)) continue;
       if (item.name === "release" && out.releases !== undefined) continue;   // (RELEASEHOLD: this pass ran the release unit already, releasesUnit above)
       if (item.name === "files" && filesLooked) continue;   // (build step 7b: the files lane ran above in this pass already)
       if ((await runItem(item)) === false) break;
+      if (item !== cmdItem && (!cmdItem || orderOf(item) > orderOf(cmdItem))) await cmdNow("after " + item.name);   // (NOWCMD: after the commands item's own turn, each item that follows it)
     }
     /* (ONSWITCH) a run step's unit may run one lane's pass items again at its moment of the run, each as above (its own budget, cursor and saved state; a failure said, never a
        stop): the engrave step runs the engraving lane, as the page's step ran Engrave.background. Only a lane that is the cloud's (laneOn): never a lane a computer keeps (P9). */
@@ -393,7 +416,7 @@ async function pass(env) {
         // (build step 8, C5: parked at the checkpoint step, the cloud keeps placing new orders: the pool and nest steps' units, once a pass, when the cloud owns them)
         const pw = await Standby.parkedWork({ run, steps, lanes, cloudSteps, say, ctxFor: (step, i) => { const cur = { runId, step, i, stepStartedAt: Date.now(), parked: true }; return { db, run, runId, step, cursor: cur, call, read, drive, cloudSteps, fence, say, parked: true, unitKey: `${runId}|${step}|${i}|parked`, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, Date.now() + UNIT_BUDGET_MS), gate: o => freshnessGate(db, Object.assign({ stepStartedAt: cur.stepStartedAt }, o)) }; } });
         if (pw) out.parkedWork = pw;
-        await saveState({ runId, seenWorldAt: await worldAt(db) }); out.why = ok ? "waiting for the next try" : "stopped"; return end({ stopped: true });
+        await cmdNow("end (stopped)"); await saveState({ runId, seenWorldAt: await worldAt(db) }); out.why = ok ? "waiting for the next try" : "stopped"; return end({ stopped: true });
       }
     }
     // ── a resting run: its signature moved → its steps again (poke)
@@ -401,9 +424,9 @@ async function pass(env) {
     if (run.status === "processed" || run.status === "paused") {
       const sig = workSignature(run, { sheets });
       if (run.status === "processed" && run.processingSignature && sig !== run.processingSignature) { run.status = "running"; run.processingComplete = false; run.step = "nest"; run.processingSignature = sig; await saveRun("poke|" + sig); out.poked = true; }
-      else { await saveState({ runId, seenWorldAt: await worldAt(db) }); out.why = "resting"; return end({ resting: true }); }
+      else { await cmdNow("end (resting)"); await saveState({ runId, seenWorldAt: await worldAt(db) }); out.why = "resting"; return end({ resting: true }); }
     }
-    if (run.status !== "running") { await saveState({ runId, seenWorldAt: await worldAt(db) }); return end({ status: run.status }); }
+    if (run.status !== "running") { await cmdNow("end (" + run.status + ")"); await saveState({ runId, seenWorldAt: await worldAt(db) }); return end({ status: run.status }); }
 
     // ── the steps, unit by unit (§1.6, 1.7)
     let cursor = state.cursor && state.cursor.runId === runId && state.cursor.step === run.step ? Object.assign({}, state.cursor) : { runId, step: run.step, i: 0, stepStartedAt: Date.now(), jobIds: [], sheetIds: [] };
@@ -415,6 +438,8 @@ async function pass(env) {
       if (yieldAsked) { out.yield = true; out.why = `${yieldAsked.by || "a computer"} asked for the run back: the cloud ended its pass between two steps of work`; break; }
       // a press since the last unit is honoured now (a stop within one unit)
       { const c = await freshControl(db, runId); if (c && num(c.seq) > num(c.ack)) { run.control = c; const r2 = await control(run, { call, stop, saveRun, cursorJobs: cursor.jobIds || [] }); if (r2.stopped || run.status !== "running") break; } }
+      await cmdNow("before " + run.step + " unit " + (cursor.step === run.step ? cursor.i : 0));   // (NOWCMD: a person's request put since the last unit is done now, between two units)
+      if (run.status !== "running") break;
       const step = run.step;
       // (build step 8: a step the cloud does not own, not listed in drive.cloudSteps or not built yet, parks the run with words naming what needs a computer)
       if (!owns(step)) { await stop(Standby.parkWhy(step, cloudSteps, steps, lanes), Standby.parkFix, "parked"); break; }
@@ -459,6 +484,7 @@ async function pass(env) {
       await saveRun("unit|" + ctx.unitKey + "|" + cursor.i);
       await saveState({ runId, cursor, wait: null, ...(n ? { retry: null } : {}) }); n = 0;
     }
+    await cmdNow("end of the pass");   // (NOWCMD: one put during the last unit is done before the pass ends; one put after this read finds the lease's "again": the next pass, at once)
     await saveState({ runId, seenWorldAt: await worldAt(db) });
     return end({ status: run.status, step: run.step, units: out.units });
   } catch (e) {

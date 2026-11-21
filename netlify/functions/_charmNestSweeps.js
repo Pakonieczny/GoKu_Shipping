@@ -6,9 +6,9 @@
  *    pictures   every 5 min, 3 sheets at most (PICTUREKEEP): a sheet whose saved picture is behind its layout owes its files (the cloud's sheet writer draws them).
  *    names      every 5 min (NAMECLASH): two sheets of a set with one name or folder: the one named from a day that is not its set's is named again, and owes its files.
  *    sentrel    every 5 min (SENTISRELEASED): an order a person resolved by Send to Sheet carries the ORDER RELEASED seal of that send on its lines (releaseHold).
- *    gather     every minute (ONEFILL): a Gold Filled / Sterling Silver colour with two sheets still filling has the later one's pieces gathered onto the first, when every
- *               order on it keeps the pairing rule (PAIR2), with no piece back onto a sheet that passed it on (charm.missed); the first then nests (append).
- *               Needs the run view and the placement rules of build step 5 (charm-nest-place.js, _charmNestRunView.js): without them it does nothing.
+ *    gather     every minute (ONEFILL, COMBINEDRAFTS): underfilled Gold Filled / Sterling Silver drafts combined by the combine's own rules and move (_charmNestCombine.js:
+ *               all the pieces of a newer draft onto the oldest draft that takes them whole, orders kept whole, pairs kept, no person's pin; the emptied draft archived and
+ *               the later drafts numbered again; a fresh nest of the target). Never a second combine in a pass: the combine pass item (order 55) and this sweep share one guard.
  *    upkeep     every 30 min (Upkeep): the orders the run finished more than a day ago, archived as they are now, every sheet they are on a day past its set's commit, leave the
  *               run's lines (runLinesRetire, build step 10a), and its committed and holds lists. Nothing is deleted: the archive and the Library keep them.
  *  DORMANT: runs only while the cloud carries the run and "sweeps" is in drive.cloudSteps; each sweep also needs the lane its writes belong to ("nest", "files").          */
@@ -27,9 +27,6 @@ const err = r => (r && r.status >= 400 ? str(r.error || "refused", 200) : "");
 /** A map kept in Charm_Nest_Drive/state as a list of { k, at } (Firestore holds no list of lists; a map saved with merge never loses a key), newest kept. */
 const pairsIn = list => { const o = {}; for (const e of Array.isArray(list) ? list : []) if (e && e.k) o[String(e.k)] = num(e.at); return o; };
 const pairsOut = (o, max) => Object.entries(o).sort((a, b) => b[1] - a[1]).slice(0, max).map(([k, at]) => ({ k, at }));
-let Place = null, RunView = null;
-try { Place = require("../../charm-nest-place.js"); } catch (_) { Place = null; }
-try { RunView = require("./_charmNestRunView"); } catch (_) { RunView = null; }
 
 async function sweepsUnit(ctx) {
   const now = Date.now(), st = (ctx.state && ctx.state.sweeps) || {}, next = Object.assign({}, st), said = [];
@@ -93,28 +90,13 @@ async function sweepsUnit(ctx) {
     return err(a) ? "" : `${Object.keys(patch).length} line(s) sent to their sheet carry their ORDER RELEASED seal`;
   });
 
-  // ── gather (ONEFILL, PAIRFIX)
-  if (due("gather") && Exec.lane(ctx, "nest") && Place && RunView && typeof Place.pairFits === "function" && typeof RunView.loadView === "function" && !(run.settings && run.settings.onesheet === "off")) await guard("gather", async () => {
-    const V = await RunView.loadView({ db: ctx.db, read: ctx.read, run, runId: ctx.runId, now });
-    if (V.settings && V.settings.onesheet === "off") return "";
-    let n = 0;
-    for (const m of ["gold", "silver"]) {
-      const pages = V.pagesOf(m), anyBusy = pages.some(p => busyRec(p, now) || (p.manualEdit && now - num(p.manualEdit.at) < 90000) || p.inplaceHold || (p.feedWait && p.feedWait.length));
-      if (anyBusy) continue;
-      const free = pages.filter(p => (p.charms || []).length && !(p.setId && !p.draft) && !p.releaseFull && !p.topup && !Exec.cutRec(p) && !p.problem && !p.runHold && !p.cardinalPull && !(p.label && p.label.own) && !p.intakeFinalized && !(Place.closedRec && Place.closedRec(p, V)));
-      if (free.length < 2) continue;
-      const first = free[0], oid = c => String(c && c.order != null ? c.order : "").split("/")[0], ids = new Set(), taken = [];
-      for (const p of free.slice(1)) {
-        if ((p.charms || []).some(c => (c.missed || []).includes(first.id))) continue;   // (a sheet holding a piece already shown to have no room on the first stays)
-        const mine = new Set((p.charms || []).map(oid).filter(Boolean)), skip = new Set([...taken, p].flatMap(q => q.charms || []));
-        if (!Place.pairFits(first, [...ids, ...mine], V, { skip })) continue;
-        const a = await put({ op: "cmdMovePieces", runId: ctx.runId, from: { sheetId: p.id, layoutBase: num(p.layoutRev), contentBase: num(p.contentRev) }, to: { sheetId: first.id }, why: "gathered onto the sheet still filling (one sheet at a time)" }, `gather|${p.id}|${first.id}|${num(p.contentRev)}`);
-        if (err(a)) continue;
-        taken.push(p); for (const k of mine) ids.add(k); n++;
-      }
-      if (taken.length && OpClassHas("nestStart")) await put({ op: "nestStart", sheetId: first.id, auto: true, why: "pieces gathered onto it" }, `gather|nest|${first.id}|${now}`);
-    }
-    return n ? `${n} sheet(s) still filling were gathered onto the first one of their colour` : "";
+  // ── gather (ONEFILL, PAIRFIX, COMBINEDRAFTS): the combine's own unit (one rule, one move); it does nothing when the combine pass item already combined in this pass.
+  //    (It checked Place.pairFits, which charm-nest-place.js never exported at its top: it never ran.)
+  if (due("gather") && Exec.lane(ctx, "nest") && !(run.settings && run.settings.onesheet === "off")) await guard("gather", async () => {
+    const Combine = require("./_charmNestCombine");
+    if (Combine.combinedThisPass(ctx)) return "";
+    const r = await Combine.combineUnit(ctx);
+    return r && r.cursor && r.cursor.moved ? str(r.cursor.last, 200) : "";
   });
 
   // ── upkeep (Upkeep: a day past done)

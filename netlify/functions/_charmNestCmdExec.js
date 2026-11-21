@@ -8,7 +8,7 @@
  *
  *    record only   reorder · delete · leaveset · setrebuild · unkeep · repicture
  *    pieces        placewaiting · pairnow · sendhome · remakeline · keepsync · remake · skuonce · release
- *    nest          renest · consolidate · empty · seat
+ *    nest          renest · consolidate · empty · seat   (consolidate / empty: 10K / 14K sheets, and Gold Filled / Sterling Silver drafts of the run: COMBINEDRAFTS)
  *    pieces        customsend (CUSTOMSEND, 21 Nov 2026: a card's sent designs made into pieces by the cloud's intake and placed by its placement)
  *
  *  What it needs of the other steps, by op name (an op that is not the cloud's in this build makes the request answer in words, never wait): nestStart (build step 6),
@@ -24,7 +24,7 @@ const CutLine = require("../../charm-nest-rose.js");
 const { busyRec, WORK } = require("./_charmNestCmdOps");
 
 const SHEETS = "Charm_Nest_Sheets", SETS = "Charm_Nest_Sets", POOL = "Charm_Pool", WORLD_LINES = "Charm_World_Lines", MASTER = "Charm_Master_Index", STOCK = "Charm_Nest_Rose_Stock", INTAKE = "Charm_Nest_Intake_Lines";
-const SOLID = new Set(["gold10k", "gold14k"]);
+const SOLID = new Set(["gold10k", "gold14k"]); const FAST = new Set(["gold", "silver"]);   // (COMBINEDRAFTS: Gold Filled / Sterling Silver drafts are combined and emptied too)
 const OPEN_LINE = l => !!l && !["gone", "committed", "skipped"].includes(String(l.state || ""));
 const NEST_MS = 25 * 60000, PLACE_MS = 15 * 60000, WORLD_MS = 15 * 60000, REMADE_MS = 25 * 60000, FILES_MS = 20 * 60000, RELEASE_PLACE_MS = 20 * 60000;
 const num = v => (Number.isFinite(+v) ? +v : 0);
@@ -388,27 +388,53 @@ async function inplace(x, label) {
     return wait("Making the pieces again…", Object.assign({}, w, { stage: "remade", vac, why, todo, remadeAt: now }));
   }
   if (w.stage === "remade") {
-    const run = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (run && run.run && run.run.lines) || lines(ctx), ready = [], waiting = [];
-    for (const k of w.todo) { const l = L[k]; if (l && l.state === "pooled" && (l.poolIds || []).length) ready.push(k); else waiting.push(k); }
+    /* NOWCMD (Paul 21 Nov 2026: a Change SKU sat 15 minutes at "Making the pieces again… 0 of 1 made": the line went back to the intake, whose gate opens only at the run's checkpoint or
+       when it rests, and the run waited at commit for the Etsy freshness gate). The request makes its own lines' pieces now, as a person's Send to Sheet does (CUSTOMSEND): the intake's
+       pool with only these lines, past the run-step gate, every other rule kept (a blocked SKU, a design missing, a size its design lacks: the line is held with its words) */
+    const got0 = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), fresh = got0 && got0.run;
+    if (fresh && fresh.lines) {
+      const pend = (w.todo || []).filter(k => { const l = fresh.lines[k]; return l && OPEN_LINE(l) && ["pulled", "pooled", "waiting", "contended"].includes(String(l.state)) && !(l.poolIds || []).length; });
+      if (pend.length) {
+        try { await require("./_charmNestIntake").pool({ db: ctx.db, run: Object.assign({}, fresh, { runId: ctx.runId }), runId: ctx.runId, call: ctx.call, read: ctx.read, drive: ctx.drive || {}, cloudSteps: ctx.cloudSteps || [], fence: ctx.fence, say: ctx.say || (() => {}), budgetEnd: num(ctx.budgetEnd) || Date.now() + 45000, settings: null, stockPreset: null }, { step: true, only: new Set(pend) }); }
+        catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; if (ctx.say) ctx.say(`[cmd] ${label}: the pieces were not made now: ${str((e && e.message) || e, 200)}`); }
+      }
+    }
+    const run = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (run && run.run && run.run.lines) || lines(ctx), ready = [], waiting = [], why = (w.why || []).slice();
+    for (const k of w.todo) {
+      const l = L[k];
+      if (l && l.state === "pooled" && (l.poolIds || []).length) ready.push(k);
+      else if (l && ["held", "oversize", "unmatched", "noDesign"].includes(String(l.state)) && !(l.poolIds || []).length) why.push(`${ridOf(k)}: not made again: ${str(l.reason || (l.hold && l.hold.why) || l.state, 160)}`);   // (said exactly, never waited on)
+      else waiting.push(k);
+    }
     if (waiting.length && now - num(w.remadeAt) < REMADE_MS) return wait(`Making the pieces again… ${ready.length} of ${w.todo.length} made`, w, Math.round(100 * ready.length / w.todo.length));
-    return wait("Putting the new pieces in place…", Object.assign({}, w, { stage: "back", ready, late: waiting }));
+    return wait("Putting the new pieces in place…", Object.assign({}, w, { stage: "back", ready, late: waiting, why }));
   }
   if (w.stage === "back") {
-    const run = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (run && run.run && run.run.lines) || lines(ctx), placedOn = new Map(), why = (w.why || []).slice(), unvac = {};
+    const run = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (run && run.run && run.run.lines) || lines(ctx), placedOn = new Map(), why = (w.why || []).slice(), unvac = {}, loose = [];
     for (const k of w.ready || []) {
       const l = L[k], home = ((w.vac[k] || {}).sheets || [])[0]; unvac[k] = { vacated: null };
       if (!l || !home) continue;
       const jr = await ctx.db.collection(INTAKE).doc(k).get(), charms = jr.exists ? (jr.data() || {}).charms : null, s = await sheetRec(ctx, home);
       const mine = Array.isArray(charms) ? charms.filter(c => c && (l.poolIds || []).map(String).includes(String(c.poolId)) && (!s || !c.metal || c.metal === s.metal)) : [];
-      if (!s || !mine.length) { why.push(`${ridOf(k)}: placed as a new piece (${!s ? "its sheet is gone" : "its new pieces are not described yet"})`); continue; }
+      if (!s || !mine.length) { why.push(`${ridOf(k)}: placed as a new piece (${!s ? "its sheet is gone" : "its new pieces are not described yet"})`); loose.push(k); continue; }
       const r = await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: home, poolIds: mine.map(c => String(c.poolId)), charms: mine, keepBacks: !!x.keepBacks, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "" }, `back|${k}|${home}|${num(s.contentRev)}`);
-      if (err(r)) { why.push(`${ridOf(k)}: ${err(r)}; it is placed as any piece is`); continue; }
+      if (err(r)) { why.push(`${ridOf(k)}: ${err(r)}; it is placed as any piece is`); loose.push(k); continue; }
       if (!r.noop) placedOn.set(home, { id: home, layoutRev: num(r.layoutRev), at: now });
     }
     // every place still kept for these lines is let go (a line not put back is placed as any line), then the lines are placed by the cloud's placement as usual
     for (const k of (w.ready || []).concat(w.late || [])) for (const sid of (w.vac[k] || {}).sheets || []) await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, sheetId: sid, release: true }, `release|${k}|${sid}`);
     for (const k of w.late || []) { unvac[k] = { vacated: null }; why.push(`${ridOf(k)}: its pieces were not made again in time; the intake makes them and they are placed as new pieces`); }
     if (Object.keys(unvac).length) await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: unvac }, `inplace|unvac|${Object.keys(unvac).sort().join(",").slice(0, 400)}`);
+    /* NOWCMD: a line that could not go back to its kept place is placed now by the placement unit's own rules (only these lines; SETSHUT and the rest kept), not at the run's next nest step,
+       and every sheet that took one is asked to nest now, so the request answers only once the new pieces are on a sheet */
+    if (loose.length) {
+      try {
+        const g2 = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), fr = g2 && g2.run;
+        if (fr && fr.lines) await require("./_charmNestPlaceUnit").placeAll(Object.assign({}, ctx, { run: Object.assign({}, fr, { runId: ctx.runId }), only: new Set(loose) }));
+        const g3 = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L3 = (g3 && g3.run && g3.run.lines) || {}, on = listedBy(await runSheets(ctx));
+        for (const k of loose) for (const id of (L3[k] || {}).poolIds || []) { const s = on.get(String(id)); if (s && !placedOn.has(s.id) && (s.nestOwed || !seated(s, id))) placedOn.set(s.id, { id: s.id, layoutRev: num(s.layoutRev), at: now }); }
+      } catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; why.push(`the new pieces were not placed now: ${str((e && e.message) || e, 160)}`); }
+    }
     for (const s of placedOn.values()) await startNest(x, s.id, false, `${label}, asked by ${x.cmd.by || "a person"}`);
     return wait("Seating the new pieces…", Object.assign({}, w, { stage: "nest", sheets: [...placedOn.values()], why }));
   }
@@ -507,18 +533,21 @@ async function renest(x) {
     return rec.problem ? no(String(rec.problem.message || rec.problem)) : ok(`${x.work.name} was nested again: ${placedWords(rec)}`);
   });
 }
-async function moveAndNest(x, src, t, words) {
+/* o.draft (COMBINEDRAFTS, 21 Nov 2026: two Gold Filled / Sterling Silver drafts of the run): the emptied draft is archived (archiveEmptySheet) and the target nested again from scratch (fresh) */
+async function moveAndNest(x, src, t, words, o = {}) {
   const r = await put(x, { op: "cmdMovePieces", runId: x.ctx.runId, from: { sheetId: src.id, layoutBase: num(src.layoutRev), contentBase: num(src.contentRev) }, to: { sheetId: t.id, layoutBase: num(t.layoutRev), contentBase: num(t.contentRev) }, by: x.cmd.by || "", why: words }, `move|${src.id}|${t.id}|${num(src.contentRev)}|${num(t.contentRev)}`);
   if (err(r)) return no(err(r));
-  const s = await startNest(x, t.id, false, `${words}, asked by ${x.cmd.by || "a person"}`); if (s.error) return no(`The pieces were moved onto ${nameOf(t)}, but its nest could not start: ${s.error}`);
-  return wait(`Nesting ${r.moved} piece(s) on ${nameOf(t)}…`, { stage: "nest", sheets: [{ id: t.id, layoutRev: num(r.to.layoutRev), at: Date.now() }], moved: (src.poolIds || []).map(String), from: nameOf(src), to: nameOf(t), n: r.moved });
+  let gone = "";
+  if (o.draft && num(r.from && r.from.left) === 0) { const a = await put(x, { op: "archiveEmptySheet", id: src.id, runId: x.ctx.runId }, `archive|${src.id}`); gone = err(a) ? `${nameOf(src)} stays, empty (${err(a)})` : `${nameOf(src)} was left empty and archived`; if (!err(a)) { const re = await require("./_charmNestCombine").renumberAfter(x.ctx, src, k => `${x.ctx.runId}|cmd|${x.cmd.id}|${k}`); if (re.length) gone += `; ${re.join(", ")}`; } }
+  const s = await startNest(x, t.id, !!o.draft, `${words}, asked by ${x.cmd.by || "a person"}`); if (s.error) return no(`The pieces were moved onto ${nameOf(t)}, but its nest could not start: ${s.error}`);
+  return wait(`Nesting ${r.moved} piece(s) on ${nameOf(t)}…`, { stage: "nest", sheets: [{ id: t.id, layoutRev: num(r.to.layoutRev), at: Date.now() }], moved: (src.poolIds || []).map(String), from: nameOf(src), to: nameOf(t), n: r.moved, gone });
 }
 async function moveSettled(x, empty) {
   return settleNests(x, `Nesting on ${x.work.to}…`, async () => {
     const sheets = await runSheets(x.ctx), on = listedBy(sheets), ids = x.work.moved || [], at = new Map();
     let onT = 0; for (const id of ids) { const s = on.get(String(id)); if (!s) continue; if (nameOf(s) === x.work.to && seated(s, id)) onT++; else at.set(nameOf(s), (at.get(nameOf(s)) || 0) + 1); }
     const rest = [...at].filter(([nm]) => nm !== x.work.to).map(([nm, n]) => `${n} on ${nm}`);
-    return ok(`${x.work.n} piece(s) of ${x.work.from} moved onto ${x.work.to}: ${onT} placed there${rest.length ? `; ${empty ? "the rest could not be placed there and went on" : "the rest went on"}: ${rest.join(", ")}` : ""}`);
+    return ok(`${x.work.n} piece(s) of ${x.work.from} moved onto ${x.work.to}: ${onT} placed there${rest.length ? `; ${empty ? "the rest could not be placed there and went on" : "the rest went on"}: ${rest.join(", ")}` : ""}${x.work.gone ? `; ${x.work.gone}` : ""}`);
   });
 }
 async function consolidate(x) {
@@ -526,14 +555,26 @@ async function consolidate(x) {
   if (x.work.stage) return moveSettled(x, false);
   const src = await sheetRec(x.ctx, x.a.sourceId), t = await sheetRec(x.ctx, x.a.targetId);
   if (!src || !t || src.id === t.id || src.metal !== t.metal) return no("Pick two sheets of one metal.");
-  if (!SOLID.has(src.metal)) return no("Sheets are combined by hand for 10K and 14K Gold only.");
+  if (FAST.has(src.metal)) {   // (COMBINEDRAFTS: two Gold Filled / Sterling Silver drafts of the run, judged as the cloud's own combine judges them: all the pieces fit, orders whole, pairs kept, no pin)
+    if (src.runId !== x.ctx.runId || t.runId !== x.ctx.runId) return no("Both sheets must be drafts of the run the cloud carries.");
+    const j = await require("./_charmNestCombine").judgeMove(x.ctx, src.id, t.id); if (!j.ok) return no(`Not combined: ${j.why}`);
+    return moveAndNest(x, src, t, "Combine drafts", { draft: true });
+  }
+  if (!SOLID.has(src.metal)) return no("Sheets are combined by hand for 10K and 14K Gold and for Gold Filled / Sterling Silver drafts only.");
   return moveAndNest(x, src, t, "Merge sheets");
 }
 async function empty(x) {
   if (!lane(x.ctx, "nest")) return no("Nesting is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
   if (x.work.stage) return moveSettled(x, true);
   const src = await sheetRec(x.ctx, x.a.sheetId); if (!src || src.runId !== x.ctx.runId) return no("That sheet is not here.");
-  if (!SOLID.has(src.metal)) return no("Sheets are emptied by hand for 10K and 14K Gold only.");
+  if (FAST.has(src.metal)) {   // (COMBINEDRAFTS: a Gold Filled / Sterling Silver draft's pieces go whole onto the oldest other draft of the run that takes them all)
+    if (!activeCharms(src).length) return no(`${nameOf(src)} has no pieces`);
+    const f = await require("./_charmNestCombine").targetsFor(x.ctx, src.id);
+    if (f.source) return no(`Not emptied: ${f.why[0] || "that draft takes no part"}`);
+    if (!f.targets.length) return no(`${nameOf(src)} has no other draft that can take all its pieces${f.why.length ? `: ${f.why[0]}` : ""}`);
+    return moveAndNest(x, src, f.targets[0], "Empty draft", { draft: true });
+  }
+  if (!SOLID.has(src.metal)) return no("Sheets are emptied by hand for 10K and 14K Gold and for Gold Filled / Sterling Silver drafts only.");
   if (!activeCharms(src).length) return no(`${nameOf(src)} has no pieces`);
   const sets = await runSets(x.ctx), ord = inOrder(await runSheets(x.ctx, src.metal)), i = ord.findIndex(p => p.id === src.id), now = Date.now();
   const cand = ord.slice(0, Math.max(0, i)).concat(ord.slice(i + 1)).filter(p => p.id !== src.id && !cutRec(p) && !lineDrawn(p) && !inAnySet(p, sets) && !busyRec(p, now) && !(p.manualEdit && now - num(p.manualEdit.at) < 90000));

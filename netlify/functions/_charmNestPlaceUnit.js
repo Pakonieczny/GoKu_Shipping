@@ -59,10 +59,11 @@ function sharedValues(f) { const Host = require("./_charmNestPieceHost"), out = 
 
 /** What the unit reads: the run's live sheet records, its sets, the shared settings and plate, Options → Partial Sheet. A shared read that fails stops the unit (it is tried again): the
     choice is never made on settings that were not read. */
-async function readWorld(ctx) {
+async function readWorld(ctx, o = {}) {
   const { db, runId, read } = ctx;
+  const given = Array.isArray(o.records) ? o.records : null;   // (COMBINEDRAFTS: the combine reads the full records, hold marks included, and hands them in)
   const [sq, tq, share, partial] = await Promise.all([
-    db.collection(SHEETS).where("runId", "==", runId).select(...SHEET_FIELDS).get(),
+    given ? { docs: [] } : db.collection(SHEETS).where("runId", "==", runId).select(...SHEET_FIELDS).get(),
     db.collection(SETS).where("runId", "==", runId).select(...SET_FIELDS).get(),
     read({ op: "shareGet", names: ["sorter-settings", "sorter-stock"] }),
     read({ op: "partialPolicyGet" })
@@ -73,7 +74,7 @@ async function readWorld(ctx) {
   const preset = typeof pf.preset === "string" && pf.preset ? pf.preset : "A";
   const pol = partial.policies || {}, modes = {}; for (const m of Object.keys(pol)) modes[m] = pol[m] && pol[m].mode === "new" ? "new" : "auto";
   return {
-    records: sq.docs.map(d => Object.assign({}, d.data(), { id: d.id })).filter(r => !r.archived),
+    records: (given || sq.docs.map(d => Object.assign({}, d.data(), { id: d.id }))).filter(r => !r.archived),
     sets: tq.docs.map(d => Object.assign({ setId: d.id }, d.data())).filter(s => !/^superseded/.test(String(s.status || ""))),
     settings: sf, preset, partial: modes
   };

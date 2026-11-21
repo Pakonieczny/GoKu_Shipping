@@ -67,6 +67,32 @@ function protectedOf(rec, saved, word) {
   return g;
 }
 
+/* ── NQ (Paul, 21 Nov 2026: "the GF and SS sheets nested by the cloud leave big empty spaces ... the 10K / 14K nest packs much better"): a Gold Filled or Sterling Silver sheet was
+   nested three orders at a time (NestPlan.feedTurn), every nest after the first pinned each piece already on the sheet where it lay (the run's own pin, arrivalPin) and placed the
+   next few around it, in ONE search; each little group was seated against the last and the gaps between them were never filled again (44 pieces: eight nests, eight walls).
+   10K and 14K see their whole batch in one search, several careful searches side by side (multiStart, KEEPSEARCH) and keep the least wasteful layout (tight).
+   Now a GF / SS sheet that is still being formed (a draft of the run, or a sheet in no set; never one cut, laser cut, released full, committed or in a set) is laid out whole by every
+   nest, "Nest the rest" as much as "Nest": the whole batch, oldest orders first, the 10K / 14K search, the least wasteful layout kept; only a person's pin (Manual Control: c.manual)
+   holds its piece where it is. Beside those searches one slot appends to the saved layout as before (altJob), and the pick prefers the layout that keeps every piece already on the
+   sheet (wholePick): laying the sheet out again never seats fewer of them. ── */
+const WHOLE_METALS = ["gold", "silver"];
+/** Whether the cloud lays this sheet out whole (see NQ above). */
+function wholeOf(rec) {
+  if (!rec || !WHOLE_METALS.includes(rec.metal)) return false;
+  if (rec.roseCutAt || num(rec.laserDoneAt) > 0 || rec.releaseFull || num(rec.committedAt) > 0 || rec.approvedAt) return false;
+  if (rec.setId && !rec.draft) return false;   // (a sheet of a set keeps its layout: only a draft of the run, or a sheet in no set, is formed again)
+  if (rec.appendOnly === true) return false;   // (a Merge by hand or a piece made again in place promised the sheet's charms stay where they are: _charmNestCmdOps.js)
+  return true;
+}
+/** NQ's pick among the slots' layouts: the one that keeps the most of the pieces already on the sheet (`seated`), then the solver's own judgement with the dead space weighed
+    (tight, as 10K / 14K are picked). → { pick, k } (k: the index in `results`), or null. */
+function wholePick(results, seated, sheet) {
+  const ids = new Set((seated || []).map(String)), keptOf = r => r.placements.reduce((n, p) => n + (ids.has(String(p.id)) ? 1 : 0), 0);
+  let best = null, k = -1;
+  results.forEach((r, i) => { if (!r) return; if (!best) { best = r; k = i; return; } const a = keptOf(r), b = keptOf(best); if (a !== b ? a > b : Solver.betterLayout(r, best, sheet, { tight: true, reachFirst: false })) { best = r; k = i; } });
+  return best ? { pick: best, k } : null;
+}
+
 /* ── prepare (slot 0): the job's input from the sheet's record ── */
 async function prepare(ctx) {
   const { db, bucket, job } = ctx;
@@ -93,26 +119,47 @@ async function prepare(ctx) {
   const saved = (rec.placements || []).filter(p => p && have.has(String(p.id)) && [p.cxPt, p.cyPt].every(v => Number.isFinite(+v)))
     .map(p => ({ id: String(p.id), angle: +p.angle || 0, cxPt: +p.cxPt, cyPt: +p.cyPt, wPt: num(p.wPt), hPt: num(p.hPt), scale: num(p.scale) || NestPlan.CHARM_SCALE, layerName: p.layer || p.layerName || null }));
   const byId = new Map(charms.map(c => [c.id, c]));
-  for (const p of saved) { const c = byId.get(p.id); if (!c) continue; if (fresh && !c.manual) continue; c.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (c.manual && c.manual.size) c.pinned.size = c.manual.size; if (!c.manual) c.arrivalPin = true; }
+  // (NQ: a Gold Filled or Sterling Silver draft is laid out whole, its person pins held: wholeOf; its saved layout is kept only by the contender that appends to it)
+  const whole = wholeOf(rec);
+  const pinSaved = keepAll => { for (const c of charms) { c.pinned = null; delete c.arrivalPin; }
+    for (const p of saved) { const c = byId.get(p.id); if (!c) continue; if (!keepAll && !c.manual) continue; c.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (c.manual && c.manual.size) c.pinned.size = c.manual.size; if (!c.manual) c.arrivalPin = true; } };
+  pinSaved(!fresh && !whole);
   const word = CutLine.cutWord ? CutLine.cutWord(rec.metal) : "Rose Gold";
   let roseProtected = null; try { roseProtected = protectedOf(rec, saved, word); } catch (e) { return { error: `${name}: ${e.message}: reload it and nest again` }; }
-  const view = Object.assign({ metal: rec.metal, runId: rec.runId || null, sheetId: rec.id, charms, placements: fresh ? (roseProtected ? roseProtected.placements.map(p => Object.assign({}, p)) : []) : saved.slice(), rejects: [],
+  const view = Object.assign({ metal: rec.metal, runId: rec.runId || null, sheetId: rec.id, charms, placements: fresh || whole ? (roseProtected ? roseProtected.placements.map(p => Object.assign({}, p)) : []) : saved.slice(), rejects: [],
     topup: rec.topup || null, roseCutAt: null, roseProtected, nestFlow: "standard", runSeed: num(job.seed) || Nest.seedOf(job.id) }, plate);
   const env = Nest.planEnv(S, { agent: (scope, kind, text) => ctx.log(`[nest ${job.id}] ${kind}: ${text}`) });
   // the turn of orders this nest places (a big batch on a Gold or Silver sheet: three orders at a time, oldest first; the rest wait their turn on the sheet)
-  const all = NestPlan.activeCharms(view), items = NestPlan.feedTurn(view, all, env);
+  // (NQ: a draft laid out whole takes its whole batch in one search, as 10K and 14K do: no turn of three orders)
+  const all = NestPlan.activeCharms(view), items = whole ? all : NestPlan.feedTurn(view, all, env);
   const onSheet = new Set(items.map(c => c.id)), kept = view.placements.filter(p => onSheet.has(p.id));
   view.nestInitial = kept.length ? kept.map(p => Object.assign({}, p)) : null;
   view.appendOnly = view.intakeAppend = !!view.nestInitial;   // (a saved layout that takes new pieces places them around itself, as the page's intake appends)
   const solverJob = NestPlan.buildJob(view, env);
-  const n = Math.max(1, Math.min(Nest.MAX_SLOTS, NestPlan.searchCount(solverJob, items.length, () => 1)));
+  // NQ: the whole layout searches as 10K and 14K do (several careful searches side by side, each its own placing order, KEEPSEARCH, the least wasteful kept); a saved layout
+  // that would lose none of its pieces by appending is searched too, in a slot of its own (altJob), so the whole layout never seats fewer of the pieces already on the sheet
+  let alt = null, altSlot = -1, seated = [];
+  if (whole) {
+    solverJob.tight = true; solverJob.multiStart = NestPlan.multiStartFor(env.cores);
+    seated = fresh ? [] : saved.map(p => p.id).filter(id => onSheet.has(id));
+    if (seated.length) {
+      pinSaved(true);
+      const av = Object.assign({}, view, { placements: saved.filter(p => onSheet.has(p.id)).map(p => Object.assign({}, p)), feedWait: null });
+      av.nestInitial = av.placements.map(p => Object.assign({}, p)); av.appendOnly = av.intakeAppend = true;
+      alt = Object.assign(NestPlan.buildJob(av, env), { tight: true, altAppend: true });
+      pinSaved(false);
+    }
+  }
+  let n = Math.max(1, Math.min(Nest.MAX_SLOTS, NestPlan.searchCount(solverJob, items.length, () => 1)));
+  if (alt) { n = Math.min(Nest.MAX_SLOTS, n + 1); altSlot = n - 1; }   // (a slot of its own beside the whole layout's searches; at six, five search the whole layout)
   const keep = NestPlan.keepPlan(solverJob, n, items.length, 0);
   const infoOf = new Map(charms.map(c => [c.id, c.orderInfo]));
   const meta = { charms: all.map(c => metaCharm(c, infoOf.get(c.id) ? flat(infoOf.get(c.id)) : null, c.pinned ? flat(c.pinned) : null)), feedWait: (view.feedWait || []).map(String), appendOnly: view.appendOnly,
     nestInitial: view.nestInitial ? view.nestInitial.map(flat) : null, protectedIds: roseProtected ? (roseProtected.placements || []).map(p => String(p.id)) : [], topup: view.topup || null,
     stock: flat(Nest.stockFor(S, rec.metal, view)), usablePt2: Nest.usableArea(S, view), clearancePt: +S.settings.clearancePt || 0, maxFill: +S.settings.maxFill || 0.8, nospread: S.settings.nospread !== "off",
     missing, verifyRes: [4, 6, 8].includes(+S.settings.verifyRes) ? +S.settings.verifyRes : 6 };
-  return { input: { v: 1, jobId: job.id, sheetId: rec.id, metal: rec.metal, n, keepMax: keep ? keep.max : 0, job: packJob(solverJob), meta }, n, keep, items: items.length, missing, feedWait: meta.feedWait, solverJob };
+  if (whole) Object.assign(meta, { whole: true, seated, altSlot, altNestInitial: alt ? alt.lockedPlacements.filter(p => seated.includes(p.id)).map(flat) : null });
+  return { input: Object.assign({ v: 1, jobId: job.id, sheetId: rec.id, metal: rec.metal, n, keepMax: keep ? keep.max : 0, job: packJob(solverJob), meta }, alt ? { alt: packJob(alt), altSlot } : {}), n, keep, items: items.length, missing, feedWait: meta.feedWait, solverJob, altJob: alt };
 }
 
 /* ── the slot's fenced writes ── */
@@ -170,7 +217,9 @@ const writeFinal = (ctx, best, final) => fencedTx(ctx, async tx => { tx.set(ctx.
 
 /* ── search ── */
 async function search(ctx, input, sd) {
-  const base = ctx.solverJob || (ctx.solverJob = unpackJob(input.job)), metal = input.metal, sheet = base.sheet, keep = num(input.keepMax) > 0, opts = keep ? NestPlan.keepOpts(metal) : {};
+  // (NQ: the slot that appends to the saved layout runs its own job, once, judged as before; every other slot searches the whole layout)
+  const altSlot = !!input.alt && ctx.i === num(input.altSlot);
+  const base = altSlot ? (ctx.altJob || (ctx.altJob = unpackJob(input.alt))) : ctx.solverJob || (ctx.solverJob = unpackJob(input.job)), metal = input.metal, sheet = base.sheet, keep = !altSlot && num(input.keepMax) > 0, opts = keep ? NestPlan.keepOpts(metal) : {};
   const total = num(base.timeBudgetMs) || 180000;
   let startMs = num(sd.searchStartMs);
   if (!startMs) { startMs = Date.now(); await fencedTx(ctx, async tx => { tx.set(ctx.sref, { searchStartMs: startMs }, { merge: true }); }); }
@@ -239,25 +288,27 @@ async function finishCheck(ctx) {
   if (!mine) return { picking: "another slot" };
   const input = ctx.input || (ctx.input = await loadInput(ctx.bucket, j.inputPath || ctx.job.inputPath));
   const base = ctx.solverJob || (ctx.solverJob = unpackJob(input.job)), meta = input.meta || {}, metal = input.metal, stopped = !!j.stopRequested;
-  const finals = ss.map(s => (s.data() || {}).final || {}), results = ss.map(s => parse((s.data() || {}).bestJson)).filter(r => r && Array.isArray(r.placements));
+  const finals = ss.map(s => (s.data() || {}).final || {}), bySlot = ss.map(s => { const r = parse((s.data() || {}).bestJson); return r && Array.isArray(r.placements) ? r : null; }), results = bySlot.filter(Boolean);
   const now = Date.now(), notes = [];
   let status = "done", error = null, result = null;
   if (!results.length) { status = stopped ? "stopped" : "error"; error = stopped ? null : `no search of ${input.sheetId} ended with a layout (${finals.map(f => f.endedBy || "?").join(", ")})`; }
   else {
     // (GOLDOPT, TIGHT, KEEPSEARCH: the least wasteful of the slots' layouts for 10K, 14K and Rose Gold; the page's betterLayout reduce for every metal)
-    const pick = NestPlan.finalPick(results, null, null, metal, () => base.sheet, Solver);
+    // (NQ: a Gold Filled / Sterling Silver sheet laid out whole: the layout that keeps every piece already on the sheet, then the least wasteful: wholePick; appended, the saved layout is held)
+    const wp = meta.whole ? wholePick(bySlot, meta.seated, base.sheet) : null, appended = !!(wp && input.alt && wp.k === num(input.altSlot));
+    const pick = wp ? Solver.bestResult(wp.pick, null, base.sheet) : NestPlan.finalPick(results, null, null, metal, () => base.sheet, Solver);
     const best = finals.reduce((a, f) => (a && num(a.placed) >= num(f.placed) ? a : f), null) || {};
     const endedBy = stopped ? "stopped" : pick.endedBy || best.endedBy || "budget";
     // the orders kept whole (charm-nest-nest-plan.js keepOrdersWhole, as finishNest runs it): an order a piece of which did not fit goes to the next sheet whole
     const byId = new Map(meta.charms.map(c => [c.id, c])), turn = new Map(base.pieces.filter(p => byId.has(p.id)).map(p => [p.id, byId.get(p.id)]));
     const sh = { metal, sheetId: input.sheetId, placements: pick.placements.map(p => Object.assign({}, p)), rejects: (pick.rejects || []).map(String), charms: meta.charms, feedWait: meta.feedWait || [],
-      topup: meta.topup || null, roseProtected: (meta.protectedIds || []).length ? { placements: meta.protectedIds.map(id => ({ id })) } : null, appendOnly: !!meta.appendOnly, nestInitial: meta.nestInitial || null };
+      topup: meta.topup || null, roseProtected: (meta.protectedIds || []).length ? { placements: meta.protectedIds.map(id => ({ id })) } : null, appendOnly: appended || !!meta.appendOnly, nestInitial: (appended ? meta.altNestInitial : meta.nestInitial) || null };
     const S = { settings: { clearancePt: meta.clearancePt, maxFill: meta.maxFill } };
     const whole = NestPlan.keepOrdersWhole(sh, turn, new Set(pick.pocketFilled || []), { groupOf: Nest.groupOf, Orders: O, usableArea: () => num(meta.usablePt2), inflatedArea: c => Nest.inflatedArea(S, c),
       settings: S.settings, nospread: () => (meta.nospread ? NoSpread : null), agent: (scope, kind, text) => notes.push(String(text).slice(0, 400)) });
     // the check (the solver's verifier, as the page's geomCheck: the pieces held where they were must still be there; one the unjam moved, or a lifted one, is no longer held)
     const keptIds = new Set(sh.placements.map(p => p.id)), moved = new Set(((pick.unjam && pick.unjam.moved) || []).map(String));
-    const vjob = Object.assign({}, base, { lockedPlacements: (base.lockedPlacements || []).filter(p => keptIds.has(p.id) && !moved.has(String(p.id))) });
+    const vbase = appended ? unpackJob(input.alt) : base, vjob = Object.assign({}, vbase, { lockedPlacements: (vbase.lockedPlacements || []).filter(p => keptIds.has(p.id) && !moved.has(String(p.id))) });
     let verification; try { const v = Solver.verify(vjob, sh.placements, meta.verifyRes || 6); verification = Object.assign(flat(v), Array.isArray(v.cornerIds) ? { cornerIds: v.cornerIds.slice(0, 50).map(String) } : {}, Array.isArray(v.overlappingPairs) ? { overlapPairs: v.overlappingPairs.length } : {}); }
     catch (e) { verification = { ok: false, error: str(e && e.message, 200) }; }
     const pieces = base.pieces.length, last = finals.find(f => f.timedOut) || best;
@@ -268,7 +319,7 @@ async function finishCheck(ctx) {
     result = { placements: sh.placements.map(flat), rejects: sh.rejects.map(String), endedBy, trials: finals.reduce((n, f) => n + num(f.trials), 0), elapsedMs: Math.max(...finals.map(f => num(f.elapsedMs)), 0),
       density: num(pick.density), usablePt2: num(pick.usablePt2), freePt2: num(pick.freePt2), placedPt2: num(pick.placedPt2), pieces, slots: n,
       ordersWhole: { done: true, lifted: whole.lifted.map(p => String(p.id)), mates: whole.mates.map(p => String(p.id)), wholeMates: whole.wholeMates.map(p => String(p.id)), behind: (whole.behind || []).map(String) },
-      verification, feedWait: (meta.feedWait || []).map(String), missing: (meta.missing || []).map(flat), notes: notes.slice(0, 20), layoutJson: text, retainedBest: !!pick.retainedBest };
+      verification, feedWait: (meta.feedWait || []).map(String), missing: (meta.missing || []).map(flat), notes: notes.slice(0, 20), layoutJson: text, retainedBest: !!pick.retainedBest, ...(meta.whole ? { whole: true, appended } : {}) };
   }
   const shref = db.collection(Nest.SHEETS).doc(ctx.job.sheetId);
   await fencedTx(ctx, async tx => {
@@ -379,4 +430,4 @@ async function handler(body, deps) {
   return { statusCode: 200, body: JSON.stringify(out).slice(0, 800) };
 }
 
-module.exports = { handler, run, prepare, search, finishCheck, protectedOf, packBits, unpackBits, packJob, unpackJob, loadInput, BUDGET_MS };
+module.exports = { handler, run, prepare, search, finishCheck, protectedOf, wholeOf, wholePick, WHOLE_METALS, packBits, unpackBits, packJob, unpackJob, loadInput, BUDGET_MS };

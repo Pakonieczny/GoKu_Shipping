@@ -48,6 +48,7 @@ tryUnits("./_charmEngraveStep", () => require("./_charmEngraveStep"));         /
 tryUnits("./_charmNestCommit", () => require("./_charmNestCommit"));           // build step 12: commit, complete (sending finished sets to the Design Station)
 tryUnits("./_charmNestCmdUnit", () => require("./_charmNestCmdUnit"));   // build step 13: a person's requests (cmd:<type>), order 40
 tryUnits("./_charmNestSweeps", () => require("./_charmNestSweeps"));     // build step 13: the repair sweeps (lane "sweeps"), order 90: after every other pass item
+tryUnits("./_charmNestCombine", () => require("./_charmNestCombine"));   // COMBINEDRAFTS (21 Nov 2026): underfilled Gold Filled / Sterling Silver drafts combined, one a pass (lane "nest"), order 55
 // build step 13: a Release Hold the cloud began and a function left half done ("lifting") is finished by the driver (Release Hold in the cloud: _charmNestHoldRelease.js driveUnit),
 // order 20, lane "cmd:release". (the require sits in its own try: a copy without that module is still bundled, and the line is skipped). The driver's pass runs the same
 // driveUnit itself every pass (releasesUnit, RELEASEHOLD live), so it skips this item in a pass that already did it: one release unit a pass.

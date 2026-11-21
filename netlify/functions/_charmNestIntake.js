@@ -201,12 +201,15 @@ async function saveMarker(c, patch) { await fencedWrite(c.db, c.fence, [[c.db.co
 
 /* ═══ 4 · the gate (C5; bridge processPending) ═══ */
 const operatorStop = r => r.status === "stopped" && (r.stopKind === "operator" || r.stoppedBy === "stopped by the operator");
+const waitsAtEnd = r => r.status === "running" && (r.step === "revalidate" || r.step === "labels" || r.step === "commit");   // (NOWCMD: the three steps behind the Etsy freshness gate)
 const parkedAt = (r, step) => r.status === "stopped" && (r.stopKind === "parked" || /^The cloud parked this run/.test(String(r.stoppedBy || ""))) && r.step === step;
 /** Why the run's lines are not made up into pieces now ("" when they are): the page's processPending rule, with the cloud's park at the checkpoint (§1.10). */
 function poolGate(run, drive, sheets, o = {}) {
   if ((drive && drive.runMode) !== "auto") return "the run mode is manual: new orders join the run and wait for a person to start them";
   if (operatorStop(run)) return "the run was stopped by the operator: new orders wait for Resume";
-  const ok = run.status === "processed" || (run.status === "review" && run.step === "engrave") || (o.checkpoint && run.status === "running" && run.step === "checkpoint") || parkedAt(run, "checkpoint");
+  /* NOWCMD (Paul 21 Nov 2026): a run that merely WAITS at revalidate, labels or commit (the Etsy freshness gate can hold it there for a long time) makes new orders up too: their pieces go on drafts only
+     (the placement keeps SETSHUT: a set being labelled or committed takes no new order); closed while a sheet of the run is nested or written (below) and after an operator's stop (above) */
+  const ok = run.status === "processed" || (run.status === "review" && run.step === "engrave") || (o.checkpoint && run.status === "running" && run.step === "checkpoint") || parkedAt(run, "checkpoint") || waitsAtEnd(run);
   if (!ok) return `the run is ${run.status || "?"} at ${run.step || "?"}: new orders are made up at its next checkpoint`;
   for (const s of (sheets ? sheets.values() : [])) if (busySheet(s)) return `${s.fileBase || s.id} is being nested or written: new orders are made up when it is done`;
   return "";
@@ -521,7 +524,21 @@ async function passIntake(env) {
       // (the gate's own rules first, which read nothing; the run's sheets only when they decide)
       let why = poolGate(run, c.drive, null); if (!why) { c.sheetsRead = await sheetsOfRun(c.db, c.runId); why = poolGate(run, c.drive, c.sheetsRead.sheets); }
       if (why) summary.poolWaits = why;
-      else { const p = await pool(c, {}); Object.assign(summary, { made: p.made, pooled: p.pooled, held: p.held, settled: p.settled, patched: p.patched }); if (p.wait) summary.poolWaits = p.why; if (p.more) summary.more = true; }
+      else {
+        const p = await pool(c, {}); Object.assign(summary, { made: p.made, pooled: p.pooled, held: p.held, settled: p.settled, patched: p.patched }); if (p.wait) summary.poolWaits = p.why; if (p.more) summary.more = true;
+        /* NOWCMD: at revalidate / labels / commit no nest step follows, so the new pieces are placed now (the placement unit's own rules: drafts only, SETSHUT) and each sheet that took one is asked to
+           nest (the pass's NESTNOW pump starts it) */
+        if (waitsAtEnd(run) && cs.includes("nest") && (p.pooled || p.made)) {
+          const got = await c.read({ op: "runGet", runId: c.runId }).catch(() => null), fr = got && got.run;
+          if (fr && fr.lines) {
+            const pl = await require("./_charmNestPlaceUnit").placeAll(Object.assign({}, env, { run: Object.assign({}, fr, { runId: c.runId }) }));
+            summary.placed = (pl && pl.placed) || 0;
+            const sh = await sheetsOfRun(c.db, c.runId), asked = [];
+            for (const s of (sh.sheets ? sh.sheets.values() : [])) if (s && s.nestOwed && !s.archived && !busySheet(s) && !s.setId) { await c.call({ op: "nestStart", runId: c.runId, sheetId: s.id, fresh: false, why: "New orders placed while the run waits at " + run.step }, `intake|nest|${s.id}|${num(s.contentRev)}`); asked.push(s.id); }
+            if (asked.length) summary.nestAsked = asked;
+          }
+        }
+      }
     }
     return { summary, more: !!summary.more };
   } catch (e) {
