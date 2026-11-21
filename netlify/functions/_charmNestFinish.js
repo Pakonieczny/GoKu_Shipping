@@ -516,17 +516,20 @@ async function pathsOf(X) {
   if (X.paths) return X.paths;
   const rec = X.rec, O = X.O, tag = X.Host.METAL_TAG[rec.metal] || String(rec.metal || "").toUpperCase();
   let set = null; if (rec.setId) { try { const s = await X.db.collection(SETS).doc(String(rec.setId)).get(); set = s.exists ? s.data() || {} : null; } catch (_) { set = null; } }
-  const setDay = (set && set.day) || rec.day || torontoDay(Date.now());
+  // (RELEASEMARK, Paul 20 Nov 2026: GF Draft 1 and 2, drafts that named Set 5, had their files under Set 5's folder although Set 5 never listed them): a sheet is filed under its set only when it is
+  //  in it (not a draft) and the set's record lists it; every other sheet is filed as a sheet of its own day
+  const filed = !!rec.setId && !rec.draft && !!set && (set.sheetIds || []).includes(rec.id);
+  const setDay = (filed && set.day) || rec.day || torontoDay(Date.now());
   const name = rec.fileBase || (rec.draft || rec.numberOwed ? `${tag}_working_${rec.id}` : O.sheetName(rec.metal, setDay, rec.setSeq || 1, rec.sheetIndex || rec.page || 1));
   const aiPath = rec.outputs && rec.outputs.ai && rec.outputs.ai.path, folder = aiPath ? aiPath.replace(/\/[^/]+$/, "") : "";
-  const kept = !rec.setId && /^charmnest\/sheets\/\d{4}-\d{2}-\d{2}\//.test(folder) && folder.endsWith("/" + name) ? folder : null;
-  const base = rec.setId ? `${O.setFolder(setDay, rec.setSeq)}/${name}` : kept || `charmnest/sheets/${rec.day || setDay}/${name}`;
-  if (rec.setId && !rec.draft) {
+  const kept = !filed && /^charmnest\/sheets\/\d{4}-\d{2}-\d{2}\//.test(folder) && folder.endsWith("/" + name) ? folder : null;
+  const base = filed ? `${O.setFolder(setDay, rec.setSeq)}/${name}` : kept || `charmnest/sheets/${rec.day || setDay}/${name}`;
+  if (filed) {
     const q = await X.db.collection(SHEETS).where("fileBase", "==", name).where("archived", "==", false).limit(5).get();
     const other = q.docs.find(d => d.id !== rec.id && (d.data() || {}).setId && !(d.data() || {}).draft);
     if (other) throw new Stop("failed", `${name} is also the name of another sheet of a set (${other.id}): writing it would write over that sheet's files. It was not written; the assembly renames it`);
   }
-  return (X.paths = { base, name, day: rec.setId ? setDay : rec.day || setDay });
+  return (X.paths = { base, name, day: filed ? setDay : rec.day || setDay });
 }
 /** membershipOf (finish-core: NOPARTIALSET, with SETSHUT's held rule; KEEPINSET through CharmNestSetRules.isPartial) on the record, with the run's sets. Never sent (P4): a difference
  *  is kept on the task for the assembly unit to act on. → { own, wanted, differs, why } */

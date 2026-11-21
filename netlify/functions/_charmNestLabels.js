@@ -284,7 +284,7 @@ async function doAsk(ctx0, ask) {
         const V = await Assembly.loadView({ db: ctx.db, run, now: Date.now() }), sh = V.pages.find(p => p.sheetId === rec.id);
         if (sh && !sh.draft) { const set = V.sets.find(x => x.setId === sh.setId); if (set) await drawSheet(ctx, V, sh, set); return answer(ctx, ask, { state: "done", doneAt: Date.now() }); }
         const G = Core.gate(V), open = G.newestOpenOf(run.runId), why = sh ? (sh.setWait || sh.cardinalHold || G.policy(sh, open ? open.seq : 0).reason) : "it is not in the run";
-        if (!wasFull) await ctx.call({ op: "putSheet", sheet: { id: rec.id, releaseFull: false, topup: rec.topup || null } }, `complete-undo|${rec.id}|${ask.seq}`);
+        if (!wasFull) await ctx.call({ op: "putSheet", sheet: { id: rec.id, releaseFull: false, topup: rec.topup || null }, reopen: true }, `complete-undo|${rec.id}|${ask.seq}`);
         return answer(ctx, ask, { state: "refused", why: String(why || "it cannot join a set now"), doneAt: Date.now() });
       }
       await ownLabel(ctx, rec);

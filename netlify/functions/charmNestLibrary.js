@@ -963,6 +963,9 @@ async function op_listingPhotos(b) {
     const first=r.images?.[0];images[id]=b.fullFirst===true?(first?.url_fullxfull||first?.url_570xN||first?.url||null):(first?.url_570xN||first?.url_fullxfull||first?.url||null);   // (fullFirst: the full-size picture first, as the station's archive record reads it: CLOUDDRIVE step 12)
     states[id]=r.source;retryAts[id]=r.retryAt||0;etsyCalls+=r.etsyCalls||0;if(['paused','budget-paused'].includes(r.source))retryAt=Math.max(retryAt,r.retryAt||0);
   }
+  // PHOTOPAUSE (Paul, 20 Nov 2026, "Yes, lift it"): every answer carries the cloud's photo pause as it stands (0: lookups may run), a cache-only
+  // answer too, so the page shows exactly what the cloud says and keeps nothing of its own (a pause set before the last Resume Etsy is not one)
+  if(ids.length){try{retryAt=Math.max(retryAt,await cache.pausedUntil());}catch(_){}}
   return {images,states,retryAts,etsyCalls,retryAt};
 }
 
@@ -1080,6 +1083,11 @@ async function carriedElsewhere(runId, dev) {
   try { const d = await col(CARRIER).doc(runId).get(), c = d.exists ? d.data().carrier : null; if (c && c.dev && c.dev !== dev && Date.now() - (num(c.at) || 0) < (c.dev === CLOUD_DEV ? CLOUD_FRESH_MS : 90000)) return { by: str(c.by, 80) || "another computer", at: num(c.at) || 0 }; } catch (_) { /* not known: the save is taken as before */ }
   return null;
 }
+/** RELEASEMARK: the sheet's run follows today's set rules (its record says releasePolicy 2). A run that is not found (a manual sheet, an old record) is not read as one: its saves go as before. */
+async function modernRunOf(tx, runId) {
+  if (!isId(runId)) return false;
+  try { const [r] = await txGetAll(tx, [col(RUNS).doc(String(runId))], ["releasePolicy"]); return !!r && r.exists && (r.data() || {}).releasePolicy === 2; } catch (_) { return false; }
+}
 async function op_putSheet(b) {
   { const s0 = b.sheet || {}, dev0 = str(b.dev, 60);
     if (dev0 && Array.isArray(s0.placements) && !(typeof b.layoutBase === "number" && Number.isFinite(b.layoutBase)) && isId(s0.runId)) {
@@ -1125,7 +1133,7 @@ async function op_putSheet(b) {
   delete doc.contentRev;
   const driveNow = await cloudMode(), contentOn = driveNow !== "off", shutOn = MARKED || driveNow === "on";
   const ref = col(SHEETS).doc(s.id);
-  let overwrote = null, layoutRevOut = null, filesOwedKept = false;
+  let overwrote = null, layoutRevOut = null, filesOwedKept = false, keptFull = false, membershipKept = null;
   const refused = await db.runTransaction(async tx => {
     if (FENCE) await fenceTx(tx);
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : {};
@@ -1205,6 +1213,15 @@ async function op_putSheet(b) {
         if (sets.some(d => d.exists && SetEdit.committedSet(d.data()))) for (const k of ["setId", "setSeq", "draft", "solidIncluded", "sheetIndex"]) delete doc[k];
         // (SETFIX B, Paul 17 Oct 2026) a save that puts this sheet into a FORMED set it is not in yet: refused, and nothing written, when the set would then break the owner's rules
         // (bigger than the minimum, a partial sheet in it), whichever screen sends it. Read from the records outside this transaction; the run's own assembly never adds such a sheet.
+        // (RELEASEMARK, Paul 20 Nov 2026: GF Draft 1 and 2 were never in Set 5, yet a computer that does not hold the run numbered them into it on its own copy, nextSheetSeq): a save that carries the
+        //  sheet's layout is a save of the sheet, not a join. A join is its own patch (the run's assembly, a person's set edit) and comes before its set lists the sheet; a layout save that names a
+        //  set whose record does not list the sheet, in a run of today's rules, keeps the membership the record has and the rest of it is saved: the release mark, the files and the pieces are never
+        //  refused for a set that copy made up (it used to refuse the whole save, setRules, and the full mark with it)
+        else if (want && want !== was && isId(want) && (Array.isArray(s.placements) || Array.isArray(s.charms)) && !(sets.find(d => d.id === want && d.exists) && (sets.find(d => d.id === want).data().sheetIds || []).includes(s.id)) && await modernRunOf(tx, s.runId || old.runId)) {
+          for (const k of ["setId", "setSeq", "draft", "solidIncluded", "sheetIndex"]) delete doc[k];
+          if (!old.draft && !old.setId) doc.draft = true;   // (a record that never said either way is a draft: it is in no set)
+          membershipKept = { asked: want, kept: was || null };
+        }
         else if (want && want !== was && isId(want)) {
           // (audit S1, 25 Oct 2026, R12 (a): a Rose Gold / 10K / 14K sheet goes into a set only cut, full (it takes no line) or with the person's own yes (its Include tick, solidIncluded, or the Cut Sheet
           //  yes, cutApproved). The run's own assembly saves only such sheets into a set; a save of an uncut, unticked one was taken, and the set then broke R12)
@@ -1214,6 +1231,18 @@ async function op_putSheet(b) {
           if (!r.ok) return joinRefusal(r);
         }
       }
+    }
+    /* RELEASEMARK (Paul, 20 Nov 2026: "Figure out why none of these sheets have been made into a set ... three full Gold Filled sheets"). GF Draft 1 and 2 of the Nov 12 run were drafts whose
+       records named Set 5 (setId, setSeq, sheetIndex, its day and folder), a set that never listed them, and held no release mark.
+       · A draft names no set: a save that writes the sheet as a draft writes no set, number or index, except while a person's take-out of that very set is under way (leftSet names it).
+       · KEEPFULL on the server: a sheet released full stays released whatever a page's save says. Only a person reopening it (reopen: true: the sheet window's undo of its own Make QR label,
+         a Merge into it), or a save that leaves it with nothing placed, takes the mark off. The answer says keptFull, and the page keeps the mark too. */
+    if (doc.draft === true) {
+      const named = mine("setId") ? doc.setId : old.setId, leaving = mine("leftSet") ? doc.leftSet : old.leftSet;
+      if (named && String(leaving || "") !== String(named)) { doc.setId = null; doc.setSeq = null; doc.sheetIndex = null; }
+    }
+    if (mine("releaseFull") && !doc.releaseFull && old.releaseFull === true && b.reopen !== true && !(Array.isArray(s.placements) && !s.placements.length)) {
+      delete doc.releaseFull; if (mine("topup")) delete doc.topup; keptFull = true;
     }
     if (!ex.exists) doc.createdAt = FV.serverTimestamp();
     if(CutLine.cuts(s.metal) && !old.roseStockId){const reservation=await tx.get(col('Charm_Nest_Rose_Stock').where('owner','==',s.id).limit(1));if(reservation.docs.length){doc.roseStockId=reservation.docs[0].id;doc.roseRevision=reservation.docs[0].data().revision;}}
@@ -1256,6 +1285,8 @@ async function op_putSheet(b) {
   if (layoutRevOut !== null) ans.layoutRev = layoutRevOut;   // (CLOUDALL S1, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer": any computer may change a sheet; a save made from an older copy of its layout must never overwrite a newer one)
   if (overwrote && overwrote.length) ans.overwrote = overwrote;
   if (filesOwedKept) ans.filesOwedKept = true;   // (CLOUDDRIVE P2: the files are owed again since the claim; nothing a page sends sets this)
+  if (keptFull) ans.keptFull = true;   // (RELEASEMARK: the sheet stays released full; the page keeps the mark)
+  if (membershipKept) ans.membershipKept = membershipKept;   // (RELEASEMARK: the record's own set (or none) was kept: the save named a set that does not list the sheet)
   // (OUTBOX: an answer to the outbox carries the record's revision as written, so the page's next question by revision is answered "unchanged")
   if (typeof b.mid === "string") { try { const [p] = await db.getAll(ref, { fieldMask: ["updatedAt"] }); ans.rev = revOf(p); } catch (_) {} }
   return ans;
@@ -5629,7 +5660,12 @@ OPS.sheetRevsGet = op_sheetRevsGet; OPS.computerReport = op_computerReport; OPS.
    settings … I should be able to select this on my computer and then all the other computers should comply through the cloud"): the shop's one
    Etsy switch (_etsyStop.js, EtsyApi_Config/stop). etsyStopGet → the switch; etsyResume { by } → turns it off for every function, station and computer. */
 async function op_etsyStopGet() { return { ok: true, ...(await EtsyStop.state(true)) }; }
-async function op_etsyResume(b) { const by = str(b.by, 80) || "someone"; const st = await EtsyStop.resume(by); console.warn(`[charmNestLibrary] Resume Etsy pressed by ${by}`); return { ok: true, ...st }; }
+async function op_etsyResume(b) {
+  const by = str(b.by, 80) || "someone"; const st = await EtsyStop.resume(by); console.warn(`[charmNestLibrary] Resume Etsy pressed by ${by}`);
+  // PHOTOPAUSE (Paul, 20 Nov 2026, "Yes, lift it"): the listing photos' block goes with the Resume (_etsyImageCache.js; the pauses set before it are ignored there too)
+  try { await require("./_etsyImageCache").liftBlock(); } catch (e) { console.warn("[charmNestLibrary] the photo block could not be lifted:", e && e.message); }
+  return { ok: true, ...st };
+}
 // (Paul, 20 Nov 2026: "I want you to stop it now. Don't wait."): Stop Etsy, a person's press, turns the same switch on at once, as a 429 does
 async function op_etsyStopNow(b) { const by = str(b.by, 80) || "someone"; const st = await EtsyStop.stop({ fn: "Stop Etsy", path: "", detail: `Stopped by ${by} in Settings` }); console.warn(`[charmNestLibrary] Stop Etsy pressed by ${by}`); return { ok: true, ...st }; }
 /* KEEPINSET (Paul, 20 Nov 2026: "put the sheets back where it's set and reverse all the damage on all computers" … "Back in the set"): the owner's own exception to the partial-sheet
