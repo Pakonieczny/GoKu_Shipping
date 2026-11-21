@@ -10,6 +10,8 @@ const log0 = console.log.bind(console); console.log = () => {}; console.warn = (
 let failed = 0; const ok = (n, c, d) => { log0((c ? 'OK   ' : 'FAIL ') + n + (c || d === undefined ? '' : ' :: ' + JSON.stringify(d).slice(0, 900))); if (!c) failed++; };
 const lib = F.load('charmNestLibrary.js'), spy = F.spy(lib), Drive = F.load('_charmNestDrive.js'), Lease = F.load('_charmNestLease.js'), Standby = F.load('_charmNestStandby.js');
 const Combine = F.load('_charmNestCombine.js'), CmdUnit = F.load('_charmNestCmdUnit.js'), Steps = F.load('_charmNestSteps.js');
+// (GOLDONLY, Paul 21 Nov 2026: the cloud's own combine acts on Gold Filled only; parts 1-8 test the combine's rules on both colours, so Silver is let in for them; part 10 checks the live default)
+Combine.AUTO_METALS.push('silver');
 const R = 'run-2026-11-21-combine';
 const ITEMS = [Combine.units.passItems[0], CmdUnit.units.passItems[0]];
 const STEPS = {}; for (const s of Drive.RUN_STEPS) STEPS[s] = [async () => ({ wait: 'test', why: 'the test holds the run at its step' })];
@@ -196,6 +198,15 @@ const cmdOf = id => ((F.doc('Charm_Nest_Run_Cmds/' + R) || {}).cmds || {})[id] |
     ok('5 · Empty of a GF draft holding a pinned piece: refused in words, nothing moved', cmdOf(id4).state === 'failed' && /^Not emptied: GF Draft 2 holds a piece a person pinned/.test(cmdOf(id4).text || '') && moves().length === 0, cmdOf(id4));
   }
 
+  /* ═══ 10 · GOLDONLY: by default the cloud's own combine never touches Sterling Silver drafts ═══ */
+  {
+    Combine.AUTO_METALS.splice(0, Combine.AUTO_METALS.length, 'gold');
+    world();
+    sheet('silver-g1', 'silver', 1, [[1601, 1]]); sheet('silver-g2', 'silver', 2, [[1602, 1]]);
+    await pass();
+    ok('10 · the default (Gold Filled only): two Sterling Silver drafts are left as they are', moves().length === 0 && !S('silver-g2').archived && S('silver-g1').charms.length === 1, moves());
+    Combine.AUTO_METALS.push('silver');
+  }
   /* ═══ 6 · mode "off" unchanged: the driver does not run, nothing is combined ═══ */
   {
     world({ mode: 'off' });
