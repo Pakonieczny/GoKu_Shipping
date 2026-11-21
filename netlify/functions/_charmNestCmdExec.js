@@ -586,7 +586,12 @@ async function consolidate(x) {
 }
 async function empty(x) {
   if (!lane(x.ctx, "nest")) return no("Nesting is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
+  if (x.work.waitingMove) return settleNests(x, "Nesting the moved pieces on " + (x.work.toName || "the next draft") + "…", async late => {
+    const rec = await sheetRec(x.ctx, x.work.sheets[0].id); if (!rec) return no("That draft is no longer in the cloud.");
+    return late ? no(`${x.work.n} piece(s) were moved onto ${nameOf(rec)}, but its nest did not finish (${rec.status || "waiting"})`) : ok(`${x.work.n} waiting piece(s) moved onto ${nameOf(rec)}: ${placedWords(rec)}`);
+  });
   if (x.work.stage) return moveSettled(x, true);
+  if (Array.isArray(x.a.ids) && x.a.ids.length && x.a.targetId) return moveWaiting(x);
   const src = await sheetRec(x.ctx, x.a.sheetId); if (!src || src.runId !== x.ctx.runId) return no("That sheet is not here.");
   if (FAST.has(src.metal)) {   // (COMBINEDRAFTS: a Gold Filled / Sterling Silver draft's pieces go whole onto the oldest other draft of the run that takes them all)
     if (!activeCharms(src).length) return no(`${nameOf(src)} has no pieces`);
@@ -601,6 +606,27 @@ async function empty(x) {
   const cand = ord.slice(0, Math.max(0, i)).concat(ord.slice(i + 1)).filter(p => p.id !== src.id && !cutRec(p) && !lineDrawn(p) && !inAnySet(p, sets) && !busyRec(p, now) && !(p.manualEdit && now - num(p.manualEdit.at) < 90000));
   if (!cand.length) return no(`${nameOf(src)} has no other sheet that can take its pieces.`);
   return moveAndNest(x, src, cand[0], "Empty sheet");
+}
+/* MOVEWAITING (Paul, 21 Nov 2026: "Put the 15 pieces on the next draft"): Empty with pool ids and a target: those pieces of the sheet that wait UNPLACED (never one already placed)
+   go onto the target draft of the same metal, whole orders only (an order with a piece placed on the source, or a piece not named, stays), by the sheet writer's own move
+   (finishOverflow: one transaction, the target's own checks), and the target nests them around its placed pieces. */
+async function moveWaiting(x) {
+  const src = await sheetRec(x.ctx, x.a.sheetId), t = await sheetRec(x.ctx, x.a.targetId), now = Date.now();
+  if (!src || src.runId !== x.ctx.runId || !t || t.runId !== x.ctx.runId) return no("Pick two sheets of the run.");
+  if (src.metal !== t.metal || src.id === t.id) return no("Pick two sheets of one metal.");
+  const named = new Set(x.a.ids.map(String)), placed = new Set((src.placements || []).map(p => p && String(p.id))), ordOf = c => String((c && c.order) || "").split("/")[0];
+  const live = activeCharms(src), placedOrders = new Set(live.filter(c => placed.has(String(c.id))).map(ordOf));
+  const waiting = live.filter(c => c.poolId && !placed.has(String(c.id)));
+  const unnamed = new Set(waiting.filter(c => !named.has(String(c.poolId))).map(ordOf));
+  const going = waiting.filter(c => named.has(String(c.poolId)) && !placedOrders.has(ordOf(c)) && !unnamed.has(ordOf(c)));
+  if (!going.length) return no(`None of those pieces can move: they are placed, or their order has a piece that stays on ${nameOf(src)}`);
+  const r = await put(x, { op: "finishOverflow", id: src.id, runId: x.ctx.runId, layoutBase: num(src.layoutRev), contentBase: num(src.contentRev), pieceIds: going.map(c => String(c.id)),
+    why: `moved by ${x.cmd.by || "a person"}`, to: { sheetId: t.id, layoutBase: num(t.layoutRev), contentBase: num(t.contentRev) } }, `movewaiting|${src.id}|${num(src.contentRev)}|${t.id}|${num(t.contentRev)}`);
+  if (err(r)) return no(`Not moved: ${err(r)}`);
+  if (!r.moved) return no("Nothing was moved (those pieces were already moved or taken off)");
+  const s = await startNest(x, t.id, false, `${r.moved} waiting piece(s) moved here by ${x.cmd.by || "a person"}`);
+  if (s.error) return no(`${r.moved} piece(s) were moved onto ${nameOf(t)}, but its nest could not start: ${s.error}`);
+  return wait(`Nesting ${r.moved} moved piece(s) on ${nameOf(t)}…`, { waitingMove: true, stage: "nest", n: r.moved, toName: nameOf(t), sheets: [{ id: t.id, layoutRev: num(t.layoutRev) + 1, at: now }] });
 }
 async function seat(x) {
   if (!lane(x.ctx, "nest") || !has("nestStart") || !has("roseClaim")) return no("Moving a sheet onto a partial sheet is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");

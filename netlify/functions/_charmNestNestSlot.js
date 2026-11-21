@@ -75,7 +75,9 @@ function protectedOf(rec, saved, word) {
    nest, "Nest the rest" as much as "Nest": the whole batch, oldest orders first, the 10K / 14K search, the least wasteful layout kept; only a person's pin (Manual Control: c.manual)
    holds its piece where it is. Beside those searches one slot appends to the saved layout as before (altJob), and the pick prefers the layout that keeps every piece already on the
    sheet (wholePick): laying the sheet out again never seats fewer of them. ── */
-const WHOLE_METALS = ["gold", "silver"];
+/* NOWHOLE (Paul, 21 Nov 2026: "You must remove that rule. You cannot reinstate every part on a sheet after one part comes"): NQ's whole layout is OFF for every metal. A Gold Filled or
+   Sterling Silver sheet is nested as before NQ: the pieces already on it stay where they lie and the new ones are placed around them. (The list is kept, empty, so the code above reads as it did.) */
+const WHOLE_METALS = [];
 /** Whether the cloud lays this sheet out whole (see NQ above). */
 function wholeOf(rec) {
   if (!rec || !WHOLE_METALS.includes(rec.metal)) return false;
