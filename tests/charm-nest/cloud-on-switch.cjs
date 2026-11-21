@@ -56,7 +56,8 @@ function seedComputers(now) {
     const steps = Drive.defaultSteps();
     ok('A · every run step is built in the cloud (the "engrave" step is no stub: _charmEngraveStep.js)', Drive.RUN_STEPS.every(s => Standby.isBuilt(steps, s)) && Steps.loaded.includes('./_charmEngraveStep'), Drive.RUN_STEPS.filter(s => !Standby.isBuilt(steps, s)));
     const noFiles = await Standby.readiness(F.db, { steps, lanes: realLanes(), now: Date.now() });
-    ok('A · in this branch alone the one thing still missing is the files lane (another branch builds it)', !noFiles.ok && noFiles.missing.length === 1 && /writing a sheet's files$/.test(noFiles.missing[0]), noFiles.missing);
+    // (merged with fix-fileslane, build step 7b: the files lane is built in the driver's own lanes now, so the driver's readiness misses nothing)
+    ok('A · with the files lane merged (7b), the driver\'s own steps and lanes miss nothing', noFiles.ok && noFiles.missing.length === 0, noFiles.missing);
     const r = await Standby.readiness(F.db, { steps, lanes: lanesWithFiles(), now: Date.now() });
     ok('A · with the files lane built: ready, and the seven computers closed tonight do not hold the switch', r.ok && !r.missing.length, r.missing);
     ok('A · ... they are listed for later: each loads the viewer page when it is opened', r.later.length === 1 && /not open in the last 10 minutes/.test(r.later[0]) && [0, 1, 2, 3, 4, 5, 6].every(i => r.later[0].includes('pc-SHOP' + i)) && !r.later[0].includes('pc-BKQMVHQFGA7U'), r.later);
@@ -75,7 +76,7 @@ function seedComputers(now) {
     { const { w, c } = page(); vm.runInContext(src('charm-nest-drive.js'), c); vm.runInContext(src('charm-nest-viewer.js'), c); ok('A · drive then viewer (charm-nest-1.html\'s order): the report says "viewer"', w.CharmNestDrive.caps().split(' ').includes('viewer'), w.CharmNestDrive.caps()); }
     { const { w, c, timers } = page(); vm.runInContext(src('charm-nest-viewer.js'), c); vm.runInContext(src('charm-nest-drive.js'), c); const before = w.CharmNestDrive.caps(); for (const f of timers.splice(0)) f(); ok('A · viewer then drive: the report says "viewer" too', before.split(' ').includes('viewer') && w.CharmNestDrive.caps().split(' ').includes('viewer'), { before, after: w.CharmNestDrive.caps() }); }
     const html = src('charm-nest-1.html');
-    ok('A · charm-nest-1.html loads the changed drive and viewer files under new tokens (-on1)', /charm-nest-drive\.js\?v=1120-drive1-on1"/.test(html) && /charm-nest-viewer\.js\?v=1120-v14-on1"/.test(html));
+    ok('A · charm-nest-1.html loads the changed drive and viewer files under new tokens (-on1)', /charm-nest-drive\.js\?v=1120-drive1-on1"/.test(html) && /charm-nest-viewer\.js\?v=1120-v14-on1[-\w]*"/.test(html));
   }
 
   /* ═══ B · an old page in mode "on" does no production ═══ */

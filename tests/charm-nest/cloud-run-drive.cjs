@@ -274,7 +274,7 @@ const unitsOf = (log, n = {}) => { const out = {}; for (const s of STEPS) out[s]
     let n = kickedNonce();
     ok('P12 · the press kicked the driver (driveSoon)', !!n);
     // (build step 7b built the files lane, the last lane readiness listed: a computer seen today that has not loaded the viewer build is what refuses "on" here)
-    F.seed('Charm_Nest_Computers/dev-old', { by: 'Ann', station: 'Sorting', at: Date.now() - 3600e3, drive: '' });
+    F.seed('Charm_Nest_Computers/dev-old', { by: 'Ann', station: 'Sorting', at: Date.now() - 120e3, drive: '' });   // (ONSWITCH: only a computer open now, seen in the last 10 minutes, holds the switch)
     await Drive.pass({ db: F.db, Lib: lib, nonce: n, steps, sleep: noSleep, renewMs: 0 });
     const d = F.doc('Charm_Nest_Open/drive');
     // (step 15, e1032d4, plan §4 phase 3: "Cloud carries" needs every step and lane built and every computer seen in a day on the viewer build, else it is refused in words naming
