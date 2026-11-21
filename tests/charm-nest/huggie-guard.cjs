@@ -188,11 +188,16 @@ function corpora() {
   // FALSEHOLD (Paul, 19 Oct 2026, orders 4207131438 / 4204710975): an option made only of a chain length ("Price: 20"-21"" on the longer-chain add-on) is no design question any more: the line waits on
   // what it really lacks, its SKU in a master file, instead of "option not mapped". The one corpus line this changes, read as it is now:
   const FALSEHOLD_NOW = { 'A:4171409060/5213382667': { design: 'LONGER_CHAIN_5682', src: 'transaction', problems: ['unmatchedSku'], pieces: 1 } };
-  const changed = [];
+  // CUSTOMWAIT (Paul, 20 Nov 2026: "Some orders are still not updating their vector files"): a custom line whose SKU has no design in any master file waits for its design and asks nothing
+  // (it read "unmatchedSku" before). Everything else of those lines (design, source, pieces) is as clean main read it; they are counted below.
+  const changed = [], waited = [];
   for (const [key, line, order, tables] of lines) {
-    const sp = O.interpretLine(order, JSON.parse(JSON.stringify(line)), c(tables ? OL.tables : null)), b = FALSEHOLD_NOW[key] || W.before[key]; ok(b, 'a before for ' + key);
+    const sp = O.interpretLine(order, JSON.parse(JSON.stringify(line)), c(tables ? OL.tables : null)); let b = FALSEHOLD_NOW[key] || W.before[key]; ok(b, 'a before for ' + key);
+    if (sp.waitsDesign && JSON.stringify(b.problems) === '["unmatchedSku"]') { b = Object.assign({}, b, { problems: [] }); waited.push(key.slice(0, 2) + (line.sku || '(no SKU)')); }
     if (JSON.stringify(rec(sp)) !== JSON.stringify(b)) changed.push({ key, sku: line.sku, held: !!sp.formHold, why: sp.formHold && sp.formHold.reason, before: b.design });
   }
+  eq(waited, ['A:CUSTOM-H-020-660181', 'A:CUSTOM-N-024-341231', 'A:CUSTOM-N-001-665441', 'A:CUSTOM-N-001-413361', 'A:(no SKU)', 'A:CUSTOM-H-006-478318', 'A:CUSTOM-N-125-541782',
+    'D:CUSTOM-H-020-660181', 'D:CUSTOM-N-024-341231', 'D:CUSTOM-N-001-665441', 'D:CUSTOM-N-001-413361', 'D:(no SKU)', 'D:CUSTOM-H-006-478318', 'D:CUSTOM-N-125-541782'], 'CUSTOMWAIT: the custom lines with no design wait for it, asked nothing');
   ok(lines.length >= 560, 'the corpora: ' + lines.length + ' lines (411 of the Sep 17 snapshot, the 18 option-link, 118 count, 17 font lines, 5 Greek Goddess earrings)');
   // NO line of any corpus changes: no real line crosses forms (SCHROAUDIT: Paul's order is the only one). The five Greek Goddess EARRINGS lines (a necklace pendant SKU on an earrings listing, FLAGAUDIT C069-C073) are in the corpus
   // as the proof that the earring / necklace SKU-word check is left alone: they read as clean main read them.

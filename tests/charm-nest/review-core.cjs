@@ -7,7 +7,7 @@
 //               Held, Blocked SKU, Size...), the top nav's Review badge (the production flow's "In review / On hold" orders)
 //   cards       the set of Open cards and of Resolved cards (their keys, as drawn: data-mkey), the decision queue (Review.items()), Review.openOrders()
 //   the core    the same answer twice, and whatever order the lines come in
-// Worlds: 1 questions (unknown SKUs shared by orders, an option shared by orders, missing material, blocked SKU, missing size, a custom order with questions),
+// Worlds: 1 questions (unknown SKUs shared by orders, an option shared by orders, missing material, blocked SKU, missing size, a custom order with questions, one waiting for its design),
 // 2 holds / marks / changes (held orders, covered or not, cancelled; Hold Order open and resolved; Etsy changes), 3 custom orders (waiting, on their way to
 // the laser, completed, sent, completed AND sent, a record whose line left the pull, a send under way, a monogram, a regular line completed by hand),
 // 4 answers (Release Hold, a release under way, a decision answered, a skip, sends that narrow a shared question), 5 a busy day (a seeded mix of all of it).
@@ -31,7 +31,7 @@ const one = (rid, sku, title, vars, metal, listing, d, pers) => order(rid, [line
 const KEY = rid => `${rid}_${rid}1`;
 const SILVER = [['Metal', 'Sterling Silver']];
 
-const MASTER = { OK_CHARM: {}, OK_TWO: {}, BLOCK_CHARM: { blocked: 'open outline', open: true }, SIZE_CHARM: { sizes: { '10mm': { sku: 'SIZE_CHARM 10mm' }, '12mm': { sku: 'SIZE_CHARM 12mm' } } } };
+const MASTER = { OK_CHARM: {}, OK_TWO: {}, CUSTOM_SAVED_0012: {}, BLOCK_CHARM: { blocked: 'open outline', open: true }, SIZE_CHARM: { sizes: { '10mm': { sku: 'SIZE_CHARM 10mm' }, '12mm': { sku: 'SIZE_CHARM 12mm' } } } };
 
 /** One check of a world: the page's Review, the core on the snapshot, and every number and card compared. */
 async function check(w, label, expect) {
@@ -114,19 +114,23 @@ async function act(w, list) {
     await w.page.evaluate(M => { for (const [sku, e] of Object.entries(M)) B.master.entries.set(sku, Object.assign({ sku, widthPt: 20, heightPt: 20, updatedAt: 1 }, e)); }, MASTER);
 
     /* ═══ 1 · questions ═══ */
+    // (CUSTOMWAIT, 20 Nov 2026: a custom order whose SKU has no design asks nothing, it waits on a person; the custom order WITH a question is one whose design a person saved to the
+    //  charm repository, the listing's alias naming it, and whose metal is not read)
+    await w.page.evaluate(() => { B.maps.aliases = Object.assign({}, B.maps.aliases, { 1811000012: { bySku: { CUSTOM_0012: 'CUSTOM_SAVED_0012' } } }); });
     await W.lines(w, [
       one('4301000001', 'NOPE_1', 'Unknown Charm', SILVER, 'silver', 1811000001, 1), one('4301000002', 'NOPE_1', 'Unknown Charm', SILVER, 'silver', 1811000002, 2), one('4301000003', 'NOPE_1', 'Unknown Charm', SILVER, 'silver', 1811000001, 3),   // one Unknown SKU, three orders
       one('4301000004', 'OK_CHARM', 'Ok Charm', [['Style', 'Funky Wobble']], 'silver', 1811000004, 4), one('4301000005', 'OK_CHARM', 'Ok Charm', [['Style', 'Funky Wobble']], 'silver', 1811000005, 5),   // one option question, two orders
       one('4301000006', 'OK_CHARM', 'Ok Charm', [['Finish', 'Mystery']], '', 1811000006, 6), one('4301000007', 'OK_CHARM', 'Ok Charm', [['Finish', 'Mystery']], '', 1811000006, 7), one('4301000008', 'OK_TWO', 'Ok Two', [], '', 1811000008, 8),   // material: one listing twice, another once
       one('4301000009', 'BLOCK_CHARM', 'Block Charm', SILVER, 'silver', 1811000009, 9), one('4301000010', 'BLOCK_CHARM', 'Block Charm', SILVER, 'silver', 1811000010, 10),   // a blocked SKU, two orders
       one('4301000011', 'SIZE_CHARM', 'Size Charm', [['Size', '15mm']], 'silver', 1811000011, 11),   // no design for the size
-      one('4301000012', 'CUSTOM_0012', 'CUSTOM CHARM', [['Price', '28']], '', 1811000012, 12),       // a custom order with questions
+      one('4301000012', 'CUSTOM_0012', 'CUSTOM CHARM', [['Price', '28']], '', 1811000012, 12),       // a custom order with questions (its saved design read, its metal not)
+      one('4301000016', 'CUSTOM_0016', 'CUSTOM CHARM', [['Price', '29']], '', 1811000016, 16),       // a custom order with no design yet: waits on a person, asks nothing (CUSTOMWAIT)
       one('4301000013', 'OK_CHARM', 'Ok Charm', SILVER, 'silver', 1811000013, 13),                   // nothing to ask
       order('4301000014', [line('43010000141', 'NOPE_2', 'Unknown Two', SILVER, 'silver', 1811000014), line('43010000142', 'OK_CHARM', 'Ok Charm', SILVER, 'silver', 1811000013)], 14),   // two lines, one asks
       one('4301000015', 'NOPE_9', 'Unknown Gone', SILVER, 'silver', 1811000015, 15)                  // asks, but its line left Etsy
     ]);
     await act(w, [{ do: 'gone', key: KEY('4301000015') }]);
-    await check(w, 'world 1 (questions)', got => ({ 'eight decisions open (one Unknown SKU for three orders, one option for two)': got.counts.reviewCount === 8 && got.counts.open === 8, 'Need Resolution holds Unknown SKU + Options + metal (5)': got.counts.needResolution === 5, 'a blocked SKU, a size and a custom order': got.counts.blockedSku === 1 && got.counts.missingSize === 1 && got.counts.customOrders === 1 }));
+    await check(w, 'world 1 (questions)', got => ({ 'eight decisions open (one Unknown SKU for three orders, one option for two) and a custom order waiting on a person': got.counts.reviewCount === 8 && got.counts.open === 9, 'Need Resolution holds Unknown SKU + Options + metal (5)': got.counts.needResolution === 5, 'a blocked SKU, a size and two custom orders (one asking, one waiting)': got.counts.blockedSku === 1 && got.counts.missingSize === 1 && got.counts.customOrders === 2 && got.counts.customAsk === 1 && got.counts.customWait === 1 }));
 
     /* ═══ 2 · holds, Hold Order marks, Etsy changes ═══ */
     await W.lines(w, [
@@ -177,7 +181,7 @@ async function act(w, list) {
       { do: 'release', key: '4302000002_43020000021', ago: 60000 },                           // released while its other line still asks
       { do: 'releasing', key: KEY('4301000013'), ago: 30000 },                                // a release under way
       { do: 'settle', item: 'ord:mat:1811000006\u0000' }, { do: 'override', key: KEY('4301000006') }, { do: 'override', key: KEY('4301000007') }, { do: 'release', key: KEY('4301000006'), ago: 30000 },   // the metal answered; its release is said by that answer (within 2 min)
-      { do: 'settle', item: 'ord:custom:4301000012:CUSTOM_0012' },                            // taken away, but its custom card still asks: not listed under Resolved
+      { do: 'settle', item: 'ord:custom:4301000012:CUSTOM_SAVED_0012' },                            // taken away, but its custom card still asks: not listed under Resolved
       { do: 'accept', key: KEY('4302000008') },                                               // Accept the new order (Etsy's change)
       { do: 'skip', key: KEY('4301000011') },                                                 // Skip piece
       { do: 'customSent', key: KEY('4301000002') },                                           // one order of the shared Unknown SKU sent to a sheet: the question narrows

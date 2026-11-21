@@ -268,7 +268,7 @@ async function browserChecks() {
       B.maps.customDone = Object.fromEntries(Object.entries(keep).filter(([k]) => k !== key)); Orders.interpretAll(); out.push([row.state, row.problems.length]);
       B.maps.customDone = keep; Orders.interpretAll(); out.push([row.state, row.problems.length]); Review.render(); return out;
     });
-    assert.deepEqual(flip, [['pulled', 2], ['noDesign', 0]]);
+    assert.deepEqual(flip, [['pulled', 0], ['noDesign', 0]]);   // (CUSTOMWAIT, 20 Nov 2026: reopened, the custom line with no design waits for its design and asks nothing; it asked for its metal and its SKU before)
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
     list = await rows();
     // each carries its seal, the print button in the seal's colour

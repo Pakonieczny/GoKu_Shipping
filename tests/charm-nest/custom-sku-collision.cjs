@@ -20,9 +20,10 @@ let n = 0; const ok = (c, why) => { assert(c, why); n++; };
   ok(sp.ownDesign === true, 'spec.ownDesign: the Review card draws no vector thumbnail for it');
   ok(!sp.problems.some(p => p.kind === 'needsMaterial' || p.kind === 'unknownSku' || p.kind === 'needsMapping'), 'nothing is asked about a master design that is not its own: ' + JSON.stringify(sp.problems.map(p => p.kind))); }
 
-// 2 · no master design of that name: as it always was (a rework line that asks for its metal, no own flag)
+// 2 · no master design of that name: no collision (special.own stays unset), and (CUSTOMWAIT, Paul 20 Nov 2026: "Some orders are still not updating their vector files") the rework line waits for its own
+//     design, asked nothing: no "SKU not in any master file", no metal question (it asked both before): spec.ownDesign with spec.waitsDesign, as unmatched-specials.cjs reads the live lines
 { const sp = O.interpretLine(order, line('RE_5460', REWORK), ctx(master([])));
-  ok(sp.special && sp.special.kind === 'rework' && !sp.special.own && !sp.ownDesign && sp.problems.some(p => p.kind === 'needsMaterial'), 'unchanged without a colliding design: ' + JSON.stringify(sp.special && sp.special.kind) + ' ' + sp.problems.map(p => p.kind)); }
+  ok(sp.special && sp.special.kind === 'rework' && !sp.special.own && sp.ownDesign === true && sp.waitsDesign === true && sp.problems.length === 0, 'without a colliding design: a rework waiting for its design: ' + JSON.stringify(sp.special && sp.special.kind) + ' ' + sp.problems.map(p => p.kind)); }
 
 // 3 · a person's link for the listing stands (the "Save to the charm repository and link this listing" switch, or Use this charm): never turned into "own"
 { const m = master(['RE_5460', 'FOX_4821']), al = { 1800062721: { listingId: '1800062721', bySku: { RE_5460: 'FOX_4821' }, by: 'Paul' } };

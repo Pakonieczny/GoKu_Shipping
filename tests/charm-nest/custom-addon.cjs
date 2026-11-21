@@ -43,10 +43,16 @@ const read = (title, over) => spec(Object.assign({}, HUGGIE, { title, sku: 'NEWS
   const reg = spec(HUGGIE, ctx({ aliases: { 1777293722: { listingKind: { kind: 'regular', by: 'Paul' } } } }));
   assert.equal(reg.special, undefined); assert.equal(reg.ownDesign, undefined); assert.deepEqual(reg.problems.map(p => p.kind + ':' + p.optionName), ['needsMapping:Price'], 'what it was');
   // the golden replay of the Sep 17 snapshot: every one of its 411 lines as before, the add-on lines aside
+  // (CUSTOMWAIT, Paul 20 Nov 2026: a custom line whose SKU has no design in any master file is custom work waiting for its design and asks nothing; the snapshot's seven CUSTOM-… and
+  //  custom-title lines read "unmatchedSku" before. Everything else of them is as before: the same kind and signal, still read by Claude: unmatched-specials.cjs)
+  const waits = f => !!f.before.special && !/^chainOnly\//.test(f.before.special) && f.before.problems === 'unmatchedSku';
+  const want = f => waits(f) ? Object.assign({}, f.before, { problems: '' }) : f.before;
+  assert.deepEqual(FIX.lines.filter(waits).map(f => f.sku || '(no SKU)'), ['CUSTOM-H-020-660181', 'CUSTOM-N-024-341231', 'CUSTOM-N-001-665441', 'CUSTOM-N-001-413361', '(no SKU)', 'CUSTOM-H-006-478318', 'CUSTOM-N-125-541782'], 'CUSTOMWAIT: the snapshot\'s custom lines with no design');
   const changed = [];
   for (const f of FIX.lines) {
     const s = spec(f), now = { special: s.special ? s.special.kind + '/' + s.special.signals.join(',') : null, noDesign: !!s.noDesign, readable: !!s.readable, problems: s.problems.map(p => p.kind + (p.optionName ? ':' + p.optionName : '')).sort().join(','), pieces: s.pieceCount, engrave: !!s.engraveCandidate };
-    if (JSON.stringify(now) !== JSON.stringify(f.before)) changed.push([f.rid + ' ' + f.sku, f.before, now]);
+    if (JSON.stringify(now) !== JSON.stringify(want(f))) changed.push([f.rid + ' ' + f.sku, f.before, now]);
+    if (waits(f)) assert.equal(s.ownDesign, true, f.rid + ' ' + f.sku + ': CUSTOMWAIT, custom work waiting for its design');
   }
   // (BLOCKREL, 17 Oct 2026: Compass_4682's master block is only the engraving flip check's "The charm outline is front artwork. Reload its CUT geometry before fitting engraving.": that is no block for CUTTING any more, so its line has no blockedSku question: the same case as the DRAGON11 / FLORALS2 orders)
   // (FALSEHOLD, Paul 19 Oct 2026, orders 4207131438 / 4204710975: a chain length alone, "Price: 20\"-21\"" on the longer-chain add-on, is no design question: Longer_Chain_5682 waits on its SKU, unmatchedSku, not "option Price not mapped" (huggie-guard.cjs FALSEHOLD_NOW))

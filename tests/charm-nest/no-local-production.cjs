@@ -6,7 +6,7 @@
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '../..');
 const KINDS = {
-  display: 'ce.ai ce.aidock ce.aidock.prefs ce.dock ce.eraser ce.extras ce.offsetPath ce.opts ce.view ce.xpanel cem.recent cem.start cn.activityLists.v1 cn.alphabet.pick cn.card.tab cn.ceLib.recent cn.ceLib.view cn.dsWide cn.eff.days cn.eff.key cn.eff.p.range cn.eff.view cn.emoji.recent cn.histView cn.libTab cn.listImageFraming. cn.listingPhotoPause.v2 cn.sheetwin.tab cn.settings cn.mail.tab cn.repoTab.v1',
+  display: 'ce.ai ce.aidock ce.aidock.prefs ce.dock ce.eraser ce.extras ce.offsetPath ce.opts ce.view ce.xpanel cem.recent cem.start cn.activityLists.v1 cn.alphabet.pick cn.card.tab cn.ceLib.recent cn.ceLib.view cn.dsWide cn.eff.days cn.eff.key cn.eff.p.range cn.eff.view cn.emoji.recent cn.histView cn.libTab cn.listImageFraming. cn.sheetwin.tab cn.settings cn.mail.tab cn.repoTab.v1',
   signin: 'cn.employee cn.lastEmployee cn.lastRole cn.role cn.people cn.passcode cn.repo.emp cn.repoCarry.v1 cn.repoLock.v1 cn.repoSession.v1 cn.mail.operator cn.mail.station cn.mail.pair',
   computer: 'cn.dev cn.madeThumb.dev cn.arrivals. cn.drift cn-drift:production cn.push cn-push cn.sw cn-sw-meta- cn.newver.reloads cn.sync.cursor. cn-sync: cn-sync:production cn-sync:sandbox cn-sync-once: cn-hang cn.backup.v cn.backup.w cn.mail.health cn.mail.linkTold cn.mail.told cn.mail.tr cn.mail.test cn.share.seen. cn.team.seen cn.timeline.sent cn.marks.sent. cn.laserSheetLast.v1',
   sandbox: 'cn-local.sandbox cn-custom-sandbox cn-sandbox-epoch cn.resetEpoch. cn.resetEpoch.sandbox cn.roseRehearsal.sandbox.v1 cn.sandboxAutoPull cn.sandboxHold cn.sandboxLastReset cn.sandboxPullNext cn.sandboxPulling cn.sandboxResetNote cn.sandboxWiping cn.simClock.sandbox cn.autoCancel.v1:sandbox',
@@ -16,7 +16,9 @@ const KINDS = {
   // copies of what the cloud keeps for every computer (charm-nest-cloud-share.js mirrors them into Charm_Nest_Shared): to be read from the cloud only, next
   shared: 'cn.completed.v1 cn.completed.v1: cn.flow.v1 cn.flow.v1: cn.stock cn.sheetwin.freed cn.tl.sheets cn.custom.shared: cn.ds.shared: cn.autoCancel.v1: cn.cancelIds.v1: cn.orderhold.run cn.learnedKey',
   // no page writes these any more (stage F); the copy an older page left is backed up to the cloud and removed (charm-nest-cloud-world.js backupAndClear)
-  removed: 'cn.customRead. cn.listingSkus.v1'
+  removed: 'cn.customRead. cn.listingSkus.v1',
+  // PHOTOPAUSE (Paul, 20 Nov 2026, "Yes, lift it"): the photo lookup pause is only what the cloud's latest answer says; no page writes or reads it, the copy an older page left is removed on load (charm-nest-bridge.js ListMedia)
+  cleared: 'cn.listingPhotoPause cn.listingPhotoPause.v2'
 };
 const known = new Map(); for (const [kind, list] of Object.entries(KINDS)) for (const k of list.split(/\s+/).filter(Boolean)) known.set(k, kind);
 const files = fs.readdirSync(root).filter(f => /^charm-nest-.*\.js$/.test(f) || f === 'charm-nest-1.html');

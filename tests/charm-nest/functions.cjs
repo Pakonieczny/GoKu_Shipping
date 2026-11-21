@@ -434,7 +434,14 @@ const post = async (h, body, headers = {}) => h.handler({ httpMethod: 'POST', he
   r = await post(lib, { op: 'etsyStopGet' }); assert.strictEqual(r.body.ok, true); assert.strictEqual(r.body.stopped, false, 'Etsy runs until a 429');
   await EtsyStop.stop({ fn: 'etsyOrderProxy', path: '/v3/application/shops/1/receipts/2', detail: '{"error":"Exceeded daily rate limit"}' });
   r = await post(lib, { op: 'etsyStopGet' }); assert.strictEqual(r.body.stopped, true, 'a 429 stops Etsy'); assert.strictEqual(r.body.fn, 'etsyOrderProxy'); assert(r.body.since > 0);
+  // PHOTOPAUSE (Paul, 20 Nov 2026, "Yes, lift it"): the listing photos' block, set before the Resume, is what every listingPhotos answer says (a cache-only one too) …
+  const imgBudget = db.collection('EtsyApi_Config').doc('listingImages_' + require('crypto').createHash('sha256').update(String(process.env.CLIENT_ID || 'unconfigured')).digest('hex').slice(0, 24));
+  await imgBudget.set({ attempts: [], blockedUntil: Date.now() + 86400000, blockedAt: Date.now() - 1000, updatedAt: Date.now() - 1000 });
+  r = await post(lib, { op: 'listingPhotos', listingIds: ['4100000001'] }); assert(r.body.retryAt > Date.now() + 3600000, 'PHOTOPAUSE: a cache-only answer carries the cloud\'s photo pause: ' + JSON.stringify(r.body)); assert.strictEqual(r.body.etsyCalls, 0);
   r = await post(lib, { op: 'etsyResume', by: 'Paul' }); assert.strictEqual(r.body.stopped, false); assert.strictEqual(r.body.resumedBy, 'Paul'); assert(r.body.resumedAt >= r.body.since);
+  // … and the owner's Resume Etsy clears it: the block is gone from the budget, and the next answer says no pause
+  assert.strictEqual((await imgBudget.get()).data().blockedUntil, 0, 'PHOTOPAUSE: Resume Etsy clears the photo block');
+  r = await post(lib, { op: 'listingPhotos', listingIds: ['4100000001'] }); assert.strictEqual(r.body.retryAt, 0, 'PHOTOPAUSE: after Resume Etsy the answer says no pause: ' + JSON.stringify(r.body)); assert.strictEqual(r.body.etsyCalls, 0);
   EtsyStop._clearCache(); r = await post(lib, { op: 'etsyStopGet' }); assert.strictEqual(r.body.stopped, false, 'Resume Etsy is in the cloud'); assert.strictEqual(r.body.resumedBy, 'Paul');
   // KEEPINSET: the owner puts a partial sheet back in the set that still lists it; a later save from a page on older code cannot pull it out again
   await db.collection('Charm_Nest_Sets').doc('set-kis-1').set({ setId: 'set-kis-1', seq: 1, day: '2026-11-12', sheetIds: ['silver-kis1'], runId: 'run-A' });
