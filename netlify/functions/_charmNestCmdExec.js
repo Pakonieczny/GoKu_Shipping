@@ -557,8 +557,21 @@ async function consolidate(x) {
   if (!src || !t || src.id === t.id || src.metal !== t.metal) return no("Pick two sheets of one metal.");
   if (FAST.has(src.metal)) {   // (COMBINEDRAFTS: two Gold Filled / Sterling Silver drafts of the run, judged as the cloud's own combine judges them: all the pieces fit, orders whole, pairs kept, no pin)
     if (src.runId !== x.ctx.runId || t.runId !== x.ctx.runId) return no("Both sheets must be drafts of the run the cloud carries.");
-    const j = await require("./_charmNestCombine").judgeMove(x.ctx, src.id, t.id); if (!j.ok) return no(`Not combined: ${j.why}`);
-    return moveAndNest(x, src, t, "Combine drafts", { draft: true });
+    const j = await require("./_charmNestCombine").judgeMove(x.ctx, src.id, t.id);
+    /* MERGEALL (Paul, 21 Nov 2026: "take draft 2, 3 and 4 and merge them into one sheet and then whatever's left over you put on the next draft"): a PERSON's Move all onto of two
+       Gold Filled / Sterling Silver drafts never waits on a nest, a hold the run left after old nest failures, or the room: both sheets' nests are stopped (a person's stop), every
+       piece goes onto the target, the target is nested whole, and the pieces that do not fit go on to the next draft (the sheet writer's overflow). The hard rules stay: cut, a cut
+       line, approved, in a set, released full, Manual Control, a person's pin, an order on a third sheet. */
+    const SOFT = /is being nested or written|waits for its next nest|is held by the run|is nesting|has no room|turned pieces away|already had no room/;
+    if (!j.ok && !SOFT.test(String(j.why || ""))) return no(`Not combined: ${j.why}`);
+    const live = r => !!(r && r.nestJob && ["queued", "running", "starting"].includes(String(r.nestJob.status || "")));
+    if (live(src) || live(t)) {
+      const now = Date.now(), first = num(x.work.mergeStopAt) || now;
+      if (!x.work.mergeStopAt) for (const r of [src, t]) { const id = r.nestJob && (r.nestJob.id || r.nestJob.jobId); if (id && live(r)) await put(x, { op: "stopJob", id: String(id), for: "person", by: x.cmd.by || "", why: "Move all onto: the sheets are merged, then nested whole" }, `mergestop|${id}`); }
+      if (now - first > 6 * 60000) return no(`Not combined: ${live(src) ? nameOf(src) : nameOf(t)} is still nesting after 6 minutes; press Move all onto again in a moment`);
+      return wait("Stopping the nests on both sheets, then moving every piece…", Object.assign({}, x.work, { mergeStopAt: first }));
+    }
+    return moveAndNest(x, src, t, j.ok ? "Combine drafts" : "Move all onto (what does not fit goes on to the next draft)", { draft: true });
   }
   if (!SOLID.has(src.metal)) return no("Sheets are combined by hand for 10K and 14K Gold and for Gold Filled / Sterling Silver drafts only.");
   return moveAndNest(x, src, t, "Merge sheets");

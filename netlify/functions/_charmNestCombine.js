@@ -124,8 +124,11 @@ function draftsOf(L, metal) {
   return line.map((v, i) => [v, i]).filter(([v]) => !notDraft(L.recs.get(v.sheetId), L.sets, L.run, L.now)).sort((a, b) => (num(a[0].page) - num(b[0].page)) || (a[1] - b[1])).map(([v]) => L.recs.get(v.sheetId));
 }
 /** The first combine the rules allow: { src, t, j, metal } | null, with why each pair was left (o.why). */
+/* (GOLDONLY, Paul 21 Nov 2026: "I said GOLD ONLY"): the cloud's own combine, with no person asking, acts on Gold Filled drafts only; Sterling Silver drafts are combined only when a
+   person presses Move all onto */
+const AUTO_METALS = ["gold"];
 function plan(L, why) {
-  for (const metal of FAST) {
+  for (const metal of AUTO_METALS) {
     const ds = draftsOf(L, metal); if (ds.length < 2) continue;
     for (let ti = 0; ti < ds.length - 1; ti++) {
       const t = ds[ti];
@@ -211,4 +214,4 @@ async function targetsFor(ctx, srcId) {
   return { targets, why };
 }
 
-module.exports = { units: { passItems: [{ name: "combine", lane: "nest", order: 55, unit: combineUnit }] }, combineUnit, combinedThisPass, renumberAfter, judgeMove, targetsFor, notDraft, judge, look, plan, FAST };
+module.exports = { AUTO_METALS, units: { passItems: [{ name: "combine", lane: "nest", order: 55, unit: combineUnit }] }, combineUnit, combinedThisPass, renumberAfter, judgeMove, targetsFor, notDraft, judge, look, plan, FAST };
