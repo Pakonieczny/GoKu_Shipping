@@ -9930,14 +9930,16 @@ const Engrave = window.Engrave = (() => {
         const sent = await EC.approve(job, by);
         if (sent && sent.ok) { job.approving = { at: sent.at, by, text: job.text, cloud: true }; approveSay(job, `Sent to the cloud: it saves the ${faceWord(job)} file, then the seal comes down`, null, true); try { Session.schedule(); } catch (_) {} for (const show of [render, () => Orders.render()]) try { show(); } catch (_) {} return; }
         if (!(sent && sent.local)) { notApproved(job, `Not approved: ${String((sent && sent.message) || "the cloud did not take the approval").replace(/^Not approved:\s*/i, "")}`); return; }
-      } }
+      }
+      // (VIEWAPPROVE, Paul 21 Nov 2026: a viewer writes no file and keeps no workspace, so a placed piece the cloud did not take is said in words, never tried on this browser)
+      else if (!job.editingBack && !unplacedPre(job) && window.CNViewer?.on?.()) { notApproved(job, "Not approved: the cloud could not be reached to take this approval. Press Approve again in a moment."); return; } }
     const approvedAt=Date.now();let prepared;
     jobStep(job,"file",`Making and checking the ${faceWord(job)} file…`);
     try{prepared=await approveWithin(prepareApproval(job,by,approvedAt),APPROVE_MS.file,`the ${faceWord(job)} file was not made in ${minutesOf(APPROVE_MS.file)}. Press Approve to try again`);}catch(e){notApproved(job,`Not approved: ${e.message}`);return;}
     if(job.row?.state==="gone" || typeof items==="function" && items().get(job.key)!==job){approveRefused(job,job.row?.state==="gone" ? "Not approved: this order is no longer in the run." : "stale");return;}
     if(job.fit!==prepared.fit || job.view!==prepared.view){notApproved(job,"Not approved: the placement changed while it was checked. Review it before approving.",4000);return;}
     job.approvalIntent={phase:"verified",at:approvedAt,by,text:job.text};
-    if(typeof Session!=="undefined"){
+    if(typeof Session!=="undefined" && !Session.frozen?.()){   // (VIEWAPPROVE: a viewer keeps no workspace: its approval reaches the cloud with the line's engraving work, CharmNestEngraveSync)
       jobStep(job,"checkpoint","Keeping the approval…");
       try {Session.schedule();if(await approveWithin(Session.flushNow?.(),APPROVE_MS.save,"the workspace save did not answer")===false)throw new Error("Workspace checkpoint did not complete");}
       catch(e){delete job.approvalIntent;notApproved(job,`Not approved: the approval could not be saved on this browser${e && e.stuck ? " (the workspace save did not answer in " + minutesOf(APPROVE_MS.save) + ")" : ""}. Your changes are kept: press Approve to try again.`);return;}
@@ -28668,7 +28670,7 @@ const Session = window.Session = (() => {
     try { const ch = epochChannel(); if (ch) ch.postMessage({ scope, epoch: v }); } catch (_) {}
     return v;
   }
-  return { copy, capture, restore, listen, flush, flushNow, schedule, checkpointBest, dropBest, poolSourcesInUse, ready: () => ready, failure: () => failure || bestFailure, freeze, discard, forgetScope, bumpEpoch, stale, recheck: () => stand() };
+  return { copy, capture, restore, listen, flush, flushNow, schedule, checkpointBest, dropBest, poolSourcesInUse, ready: () => ready, failure: () => failure || bestFailure, freeze, frozen: () => frozen, discard, forgetScope, bumpEpoch, stale, recheck: () => stand() };
 })();
 
 /* ═══ 24g · Cleanups — a change made on a saved sheet's record, put on this page's own copy of the sheet ═══════════════

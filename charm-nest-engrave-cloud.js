@@ -24,7 +24,11 @@
   const plain = v => { try { return v == null ? v : JSON.parse(JSON.stringify(v)); } catch (_) { return undefined; } };
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const api = (body, opts) => (root.CN && typeof root.CN.api === "function" ? root.CN.api("charmNestLibrary", body, Object.assign({ quiet: true }, opts || {})) : Promise.reject(new Error("the page's cloud calls are not ready")));
-  const runIdNow = () => safe(() => (root.B && root.B.run && root.B.run.runId) || null, null);
+  /* (VIEWAPPROVE, Paul 21 Nov 2026, Michelle's Approve refused with "the approval could not be saved on this browser": "Why is this happening?"): the run this page works in is the run it
+     HOLDS (B.run, a computer that carries it) or, on every other computer, the run it FOLLOWS (CharmNestRunFollow, as charm-nest-viewer.js followedRun reads it). With the cloud carrying
+     every run no page holds one, so the lane was never seen and Approve fell to the old save on the browser, which a viewer never makes. */
+  const runIdNow = () => safe(() => (root.B && root.B.run && root.B.run.runId) || (root.CharmNestRunFollow && typeof root.CharmNestRunFollow.state === "function" && root.CharmNestRunFollow.state().runId) || null, null);
+  const viewerOn = () => safe(() => !!(root.CNViewer && typeof root.CNViewer.on === "function" && root.CNViewer.on()), false);
   const devOf = () => safe(() => (root.CharmNestRunFollow && typeof root.CharmNestRunFollow.dev === "function" ? root.CharmNestRunFollow.dev() : ""), "");
   const say = (text, kind, ms) => { safe(() => { if (typeof root.toast === "function") root.toast(text, kind || "", ms || 6000); }); };
   const render = () => { safe(() => root.Engrave && root.Engrave.render && root.Engrave.render()); safe(() => root.Orders && root.Orders.render && root.Orders.render()); };
@@ -45,7 +49,10 @@
     return !!(id && st.runId === id && st.carrierCloud && st.drive && st.drive.mode !== "off" && st.drive.cloudSteps.includes("engrave"));
   }
   async function lane() {
-    const runId = runIdNow(); if (!runId) return false;
+    let runId = runIdNow();
+    // (VIEWAPPROVE: a viewer pressed Approve before its first look at the run, 8 s after it opened: it looks now, once)
+    if (!runId && viewerOn()) { try { const F = root.CharmNestRunFollow; if (F && typeof F.now === "function") await Promise.race([F.now("approve"), wait(8000)]); } catch (_) { /* no run seen */ } runId = runIdNow(); }
+    if (!runId) return false;
     if (st.runId !== runId || Date.now() - st.carrierAt > FRESH_MS) {
       const dev = devOf(); if (!dev) return false;
       try { noteCarrier(runId, await api({ op: "runCarrier", runId, dev, check: true })); } catch (_) { return carries(runId); }
