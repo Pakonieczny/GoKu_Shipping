@@ -112,10 +112,11 @@ function create(o) {
     const piece = PoolPieces.cleanFields(pool).side ? pool : PoolPieces.cleanFields(rc).side ? rc : null;
     let base = null;
     if (!piece && pool.oneBody === true && Number.isInteger(+pool.bodyIndex)) { const solo = await Make.soloBodies(src).catch(() => null); base = (solo && solo[+pool.bodyIndex]) || null; }   // (a cloud row says which body alone it is cut from)
-    if (!base) base = await Make.ensureBase(src, piece, rc.hash ? rc : pool).catch(() => null);
+    let baseWhy = null;   // (BODYWHY: the maker's own words when it cannot tell the body, kept for the refusal below)
+    if (!base) base = await Make.ensureBase(src, piece, rc.hash ? rc : pool).catch(e => { if (e && e.budget) throw e; baseWhy = e; return null; });   // (a spent time budget is the slot's to take up again, never "no such body")
     // (a piece cut from ONE body of a design drawn twice, whose hash a page drew: node's hash differs by an edge pixel, so the body is found by its size)
     if (base && !piece && base === src.charms[0]) { const solo = (await Make.soloBodies(src).catch(() => null)) || []; if (solo.length) { const m = byShape([src.charms[0], ...solo], rc); if (m) base = m; } }
-    if (!base) throw new Error(piece ? `its ${piece.side === "L" ? "left" : "right"} body is no longer in the design` : "its design has no such body");
+    if (!base) throw new Error(piece ? `its ${piece.side === "L" ? "left" : "right"} body is no longer in the design` : (baseWhy && baseWhy.message ? String(baseWhy.message).slice(0, 180) : "its design has no such body"));
     let c = Make.cloneCharm(base, String(rc.id));
     if (ArtEdit && typeof ArtEdit.piece === "function") c = await ArtEdit.piece(c, String(rc.poolId), pool);   // (ART EDIT: the piece's own artwork, when its pool row names one)
     c = Object.assign({}, c, { id: String(rc.id), name: rc.name || c.name || sku, sku: rc.sku || pool.sku || c.sku || null, order: pool.orderId != null ? String(pool.orderId) : String(rc.order || rc.id),

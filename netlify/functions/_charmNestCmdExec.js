@@ -575,7 +575,11 @@ async function consolidate(x) {
       if (now - first > 15 * 60000) return no(`Not combined: ${nameOf(who)} ${busyRec(who, now) || "is still nesting"} after 15 minutes; press Move all onto again in a moment`);
       return wait(`Waiting for ${nameOf(who)} to stop (${busyRec(who, now) || "nesting"}), then moving every piece…`, Object.assign({}, x.work, { mergeStopAt: first }));
     }
-    return moveAndNest(x, src, t, j.ok ? "Combine drafts" : "Move all onto (what does not fit goes on to the next draft)", { draft: true });
+    const moved = await moveAndNest(x, src, t, j.ok ? "Combine drafts" : "Move all onto (what does not fit goes on to the next draft)", { draft: true });
+    // (MERGEWAIT: a nest or a file write that began between the look above and the move is waited for too, within the same 15 minutes, never a refusal)
+    const busyNow = moved && moved.done && moved.done.ok === false && /having its files written|is nesting|is being saved|is nesting or saving/.test(String(moved.done.text || ""));
+    if (busyNow && Date.now() - (num(x.work.mergeStopAt) || Date.now()) <= 15 * 60000) return wait("Waiting for the sheets to be still, then moving every piece…", Object.assign({}, x.work, { mergeStopAt: num(x.work.mergeStopAt) || Date.now() }));
+    return moved;
   }
   if (!SOLID.has(src.metal)) return no("Sheets are combined by hand for 10K and 14K Gold and for Gold Filled / Sterling Silver drafts only.");
   return moveAndNest(x, src, t, "Merge sheets");

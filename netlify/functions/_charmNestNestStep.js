@@ -79,6 +79,8 @@ async function nestCore(ctx) {
     // (a held sheet that a person nested again: its hold is lifted, as the page's startNestReady lifts runHold)
     if (holds[rec.id] && mine.some(j => LIVE.has(j.status) && !j.auto)) hold(rec.id, null);   // (null, not a deleted key: the driver's record save merges)
     if (holds[rec.id] && revs[rec.id] && revs[rec.id] !== revOf(rec)) hold(rec.id, null);   // (HOLDTAKES: it changed since it was held)
+    // (HOLDTAKES: a hold made before holds kept their revisions is lifted once a PERSON's nest of the sheet ended done: a Nest press that finished between two passes lifted nothing)
+    if (holds[rec.id] && !revs[rec.id] && mine.some(j => !j.auto && j.status === "done")) hold(rec.id, null);
     // (build step 7b, C4 (d): the sheet writer found that the oldest order cannot fit on an empty sheet (problemStop): the run stops with those words once, as the page's overflowToNextSheet
     //  stopped it; after a person's Resume the sheet is held (the run goes on with the others) until a person nests it again)
     if (rec.problemStop && rec.problemStop.why && !(rec.placements || []).length && !mine.some(j => LIVE.has(j.status))) {
