@@ -12,7 +12,10 @@
  *      doing (handingBack, said in words, asked again every 15 s), then the run's record and sheets are read from the cloud, never from this computer's older copy; a reload
  *      while the cloud carries (or after it carried) drops this computer's saved sheets of that run and follows it (staleCheckpoint).
  *    · releasedAt (m:P3): the moment a sheet was first seen completed is kept on its record (outside "off"), so a set forms in the same order wherever it is formed.
- *    · caps(): what this page can do for the cloud, reported with the computer (charm-nest-drift.js): "standby drain" here; the viewer build (step 14) adds "viewer". */
+ *    · caps(): what this page can do for the cloud, reported with the computer (charm-nest-drift.js): "standby drain" here; the viewer build (step 14) adds "viewer".
+ *      (ONSWITCH, Paul 20 Nov 2026: every computer, the owner's freshly reloaded one too, reported "standby drain" only: charm-nest-viewer.js never said it was loaded.) caps()
+ *      now says "viewer" whenever the viewer is on this page (window.CNViewer with its build, cv()), whichever of the two files loaded first, and the viewer also says it
+ *      itself (cap("viewer")). */
 (function (root) {
   "use strict";
   const CLOUD = "cloud", REPORT_MS = 15000, ASK_MS = 15000, ASK_TRIES = 48;
@@ -164,7 +167,8 @@
     if (s.pendingRefused && s.pendingRefused.why && (!s.flippedAt || +s.pendingRefused.at > +s.flippedAt)) lines.push(`<b>Not changed</b> (${clock(s.pendingRefused.at)}): ${esc(s.pendingRefused.why)}`);
     if (s.flippedAt) lines.push(`Changed to ${esc(s.mode)} at ${clock(s.flippedAt)}${s.flippedBy ? " by " + esc(s.flippedBy) : ""}.`);
     if (s.mode !== "off") lines.push(`The cloud does: ${s.owned && s.owned.length ? esc(s.owned.join(", ")) : "nothing yet"}${(s.cloudSteps || []).filter(x => !(s.owned || []).includes(x)).length ? ` · listed but not built yet: ${esc(s.cloudSteps.filter(x => !(s.owned || []).includes(x)).join(", "))} (the run parks there, in words)` : ""}.`);
-    if (s.mode === "standby" && s.ready) lines.push(s.ready.ok ? "Cloud carries can be pressed: every step is built and every computer has the viewer build." : `<b>Before the cloud can carry every run:</b> ${esc(s.ready.missing.join(" · "))}.`);
+    if (s.mode === "standby" && s.ready) lines.push(s.ready.ok ? "Cloud carries can be pressed: every step is built and every computer that is open has the viewer build." : `<b>Before the cloud can carry every run:</b> ${esc(s.ready.missing.join(" · "))}.`);
+    if (s.mode !== "off" && s.ready && Array.isArray(s.ready.later) && s.ready.later.length) lines.push(`<b>Later:</b> ${esc(s.ready.later.join(" · "))}.`);   // (ONSWITCH: computers closed now do not hold Cloud carries)
     more.innerHTML = lines.map(l => `<div>${l}</div>`).join("");
   }
   async function refresh() {
@@ -206,6 +210,7 @@
   }
 
   const api = { build: "drive1", mode, pending: () => st.pending, note, beat, draining, holdLoop, busyWords, staleCheckpoint, takeFromCloud, releasedAt, refresh, render,
-    caps: () => [...CAPS].join(" "), cap: name => { if (name) CAPS.add(String(name).slice(0, 20)); }, state: () => Object.assign({}, st) };
+    caps: () => { if (safe(() => !!(root.CNViewer && typeof root.CNViewer.cv === "function" && root.CNViewer.cv()), false)) CAPS.add("viewer"); return [...CAPS].join(" "); },
+    cap: name => { if (name) CAPS.add(String(name).slice(0, 20)); }, state: () => Object.assign({}, st) };
   root.CharmNestDrive = api;
 })(typeof window !== "undefined" ? window : globalThis);

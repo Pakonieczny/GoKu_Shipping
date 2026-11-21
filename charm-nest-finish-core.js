@@ -12,6 +12,8 @@
  *                                                EXACTOVERLAP: the written file's own cut lines read, and the crossings cleared
  *   membershipOf(sh, host)                       NOPARTIALSET, with SETSHUT's "held" rule (a partial sheet the set already lists stays in it) and KEEPINSET (CharmNestSetRules.isPartial)
  *   record(sh, o, outputs)                       the Library record a save writes (persistSheet's record())
+ *   sheetFull, topupSettle, intakeMarks, sheetFileBase, overflowPlan (rechunkStalled), feedNext
+ *                                                build step 7b: finishNest's after-nest decisions, for the cloud's sheet writer (the page keeps its own copies, unchanged)
  *
  * Nothing here reads the DOM, the network, Firestore or a page global. What a function needs of where it runs comes in `host` (the page hands its own functions; node hands its own):
  *   buildJob     host { stockFor(metal, sh), nestItems(sh), carefulNest(sh), angleSet(), cornerPtSetting(sh), gapFilling(sh), orderRank(c), settings, CAREFUL_ANGLES?,
@@ -342,7 +344,147 @@
     };
   }
 
+  /* ═══ THE AFTER-NEST DECISIONS (cloud plan v2, build step 7b, C4): what finishNest decides once a sheet is written, ported for the cloud's one sheet writer (_charmNestFinish.js),
+     each as charm-nest-1.html has it (sheetFull, topupSettle, the intakeOptimized / intakeFinalized rules, sheetFileBase, overflowToNextSheet with rechunkStalled, feedOn). The page keeps
+     its own copies and is unchanged; these take what the page reads of its globals in `o`:
+       o { maxFill, orderKey(c), orderRank(c), inflatedArea(c), usablePt2, live, manual, topupOff, now(), log(sh, words), NS (the NOSPREAD policy, null when off), groupOf(c),
+           topupRoom(sh) (the gap fill's tries left), tag(metal), sheetName(metal, day, seq, index), today() } ═══ */
+  const TOPUP = { orders: 35, target: 0.75 };
+  const FINISHED_ENDS = ["cap", "stalled", "trials", "claude-full", "plateau", "no-room"];
+  const keyOf = o => (o && typeof o.orderKey === "function" ? o.orderKey : c => String(c.order || c.id));
+  const rankOf = o => (o && typeof o.orderRank === "function" ? o.orderRank : c => +(c && c.orderDate) || 0);
+  const areaOf = o => (o && typeof o.inflatedArea === "function" ? o.inflatedArea : c => +(c && c.areaPt2) || 0);
+  const idOfReject = r => String(r && typeof r === "object" ? r.id : r);
+  const verified = sh => !!(sh && sh.verification && sh.verification.ok);
+  const pctWord = v => `${Math.round((+v || 0) * 100)}%`;
+  /** The charms a one-by-one fill that ran out of time never reached (charm-nest-1.html untriedIds). */
+  const untriedIds = result => new Set(result && result.timedOut ? (result.rejects || []).map(idOfReject).filter(id => !(result.noRoom || []).map(String).includes(id) && !(result.capped || []).map(String).includes(id)) : []);
+  /** The fill the sheet card shows, rounded as it shows it (charm-nest-1.html shownFull). */
+  const shownFull = result => Math.round(100 * (+result.usablePt2 ? 1 - (+result.freePt2 || 0) / +result.usablePt2 : +result.density || 0)) / 100;
+  /** The charms on the sheet less those waiting for their turn (charm-nest-nest-plan.js nestItems). */
+  const nestItemsOf = sh => { const later = new Set((sh.feedWait || []).map(String)); return (sh.charms || []).filter(c => c && !c.excluded && !later.has(String(c.id))); };
+
+  /** Full, for release (charm-nest-1.html sheetFull): the ceiling is reached, or a whole order that would fit an empty sheet overflows a search that finished. */
+  function sheetFull(sh, result, items, o) {
+    o = o || {};
+    const unitKey = keyOf(o), area = areaOf(o), cap = +o.maxFill || 0.8, byId = new Map(items.map(c => [c.id, c]));
+    const finished = FINISHED_ENDS.includes(result.endedBy) || (result.endedBy === "budget" && sh.intakePhase !== "fill" && result.trials !== 0);
+    const untried = untriedIds(result), missed = (sh.rejects || []).map(idOfReject).filter(id => !untried.has(id));
+    const overflow = missed.length > 0 && ((+result.density || 0) + 1e-6 >= Math.min(0.74, cap) || finished) &&
+      [...new Set(missed.map(id => (byId.get(id) ? unitKey(byId.get(id)) : id)))].some(order => items.filter(c => unitKey(c) === order).reduce((n, c) => n + area(c), 0) <= (+result.usablePt2 || 0) * cap);
+    const passedAtDoor = !!sh._nsCheck && !!sh._nsPassed && ((+result.density || 0) + 1e-6 >= Math.min(0.74, cap - 0.004) || result.smallRoom === false); sh._nsCheck = false; sh._nsMiss = passedAtDoor;
+    return result.endedBy !== "stopped" && verified(sh) && (sh.placements || []).length > 0 && (overflow || passedAtDoor || (+result.placedPt2 || 0) / Math.max(1, +result.usablePt2 || 0) >= cap - 1e-6);
+  }
+  /** The multi-piece orders a gap fill turned away this update (charm-nest-1.html notePassed: sh.topup.passed). */
+  function notePassed(sh, o) {
+    const t = sh.topup; if (!t) return;
+    const unitKey = keyOf(o), items = nestItemsOf(sh), byId = new Map(items.map(c => [String(c.id), c])), size = new Map(); for (const c of items) size.set(unitKey(c), (size.get(unitKey(c)) || 0) + 1);
+    const seen = new Set((t.passed || []).map(String)); let fresh = 0;
+    for (const id of (sh.rejects || []).map(idOfReject)) { const c = byId.get(id); if (c && size.get(unitKey(c)) > 1 && !seen.has(unitKey(c))) { seen.add(unitKey(c)); fresh++; } }
+    if (fresh) t.passed = [...seen];
+  }
+  /** The gap fill (charm-nest-1.html topupSettle): a Gold Filled / Sterling Silver sheet whose next order missed stays first in line for the next 35 orders, until 75 % full, the ceiling, no room, or
+   *  the run stops bringing orders (o.live false). → whether the sheet is released full now; sh.topup / sh.releaseWhy are kept on the sheet. */
+  function topupSettle(sh, result, full, o) {
+    o = o || {};
+    const cap = +o.maxFill || 0.8, t = sh.topup, now = typeof o.now === "function" ? o.now() : Date.now(), log = typeof o.log === "function" ? o.log : () => {};
+    if (!["gold", "silver"].includes(sh.metal) || sh.roseProtected || result.endedBy === "stopped" || !verified(sh) || o.topupOff) return full;
+    const atCeiling = (+result.placedPt2 || 0) / Math.max(1, +result.usablePt2 || 0) >= cap - 0.004;
+    const reached = shownFull(result) + 1e-9 >= Math.min(TOPUP.target, cap);
+    const noRoom = result.smallRoom === false, live = !!o.live, rejects = sh.rejects || [];
+    if (!t) {
+      if (sh.keepRelease && sh.keepRelease.full) return full;
+      if (!full || atCeiling || reached || noRoom || (!rejects.length && !sh._nsMiss) || !live) {
+        if (full && !atCeiling && !reached) {
+          const why = noRoom ? "no room left for even the smallest charms" : !rejects.length ? "no order is waiting to try its gaps" : o.manual ? "Manual mode brings no later orders to try its gaps" : "it is not a sheet of the live Auto run, so no later orders come to try its gaps";
+          if (sh.releaseWhy !== why) { sh.releaseWhy = why; log(sh, `Released at ${pctWord(shownFull(result))} without a gap fill: ${why}`); }
+        }
+        return full;
+      }
+      delete sh.releaseWhy;
+      sh.topup = { at: now, base: +(+result.density || 0).toFixed(4), tried: [], placed: (sh.placements || []).length };
+      log(sh, `Filling its gaps at ${pctWord(result.density)}: the order that missed moves to the next sheet, and the next ${TOPUP.orders} orders try this sheet first`);
+      notePassed(sh, o);
+      return false;
+    }
+    if (t.closedAt) return full;
+    const unitKey = keyOf(o), before = new Set((sh.nestInitial || []).map(p => p.id)), tried = new Set(t.tried || []), untried = untriedIds(result), items = nestItemsOf(sh);
+    const skipped = new Set(items.filter(c => untried.has(String(c.id))).map(unitKey));
+    for (const c of items) if (!before.has(c.id) && !skipped.has(unitKey(c))) tried.add(unitKey(c));
+    t.tried = [...tried]; t.placed = (sh.placements || []).length; notePassed(sh, o);
+    if (!live || atCeiling || reached || noRoom || t.tried.length >= TOPUP.orders) {
+      t.closedAt = now; t.density = +(+result.density || 0).toFixed(4);
+      t.why = reached ? `${pctWord(shownFull(result))} full` : atCeiling ? "at the fill ceiling" : noRoom ? "no room left for even the smallest charms" : !live ? "the run stopped bringing orders" : `${TOPUP.orders} later orders tried`;
+      log(sh, `Gap fill done, ${t.why}: ${pctWord(t.base)} → ${pctWord(result.density)}, sheet released`);
+      return true;
+    }
+    return false;
+  }
+  /** The intake marks a write leaves (charm-nest-1.html finishNest: intakeOptimized once a search that is not the quick gap fill ended verified; intakeFinalized for the final phase only). */
+  function intakeMarks(sh, result, items) {
+    const out = {}, ok = result.endedBy !== "stopped" && verified(sh);
+    if (sh.intakePhase !== "fill" && ok) { out.intakeOptimized = true; out.intakeOptimizedCount = items.length; }
+    out.intakeFinalized = sh.intakePhase === "final" && ok && (sh.placements || []).length > 0;
+    return out;
+  }
+  /** A sheet's file name (charm-nest-1.html sheetFileBase): a draft, or one owed its number, is `${TAG}_working_${id}`; a sheet of a set is named by its set's day, number and place. */
+  function sheetFileBase(sh, o) {
+    o = o || {};
+    const tag = typeof o.tag === "function" ? o.tag(sh.metal) : String(sh.metal || "").toUpperCase();
+    if (sh.draft || sh.numberOwed) return `${tag}_working_${sh.sheetId || sh.id}`;
+    return o.sheetName(sh.metal, sh.setDay || (typeof o.today === "function" ? o.today() : new Date().toISOString().slice(0, 10)), sh.seq || 1, sh.sheetIndex || sh.page || 1);
+  }
+  /** rechunkStalled (charm-nest-1.html): the oldest unit turned away from an EMPTY sheet is cut in two (the NOSPREAD policy's halve) and the sheet nests again. → { chunks: { charmId: n }, words } | null */
+  function rechunkStalled(sh, moving, o) {
+    o = o || {};
+    const NS = o.NS; if (!NS || typeof NS.halve !== "function" || sh._mergeNext) return null;
+    const key = keyOf(o), rank = rankOf(o), by = new Map(); for (const c of moving) { const k = key(c); if (!by.has(k)) by.set(k, []); by.get(k).push(c); }
+    const first = [...by.values()].sort((a, b) => rank(a[0]) - rank(b[0]) || key(a[0]).localeCompare(key(b[0])))[0];
+    const halves = first ? NS.halve(first, areaOf(o), typeof o.groupOf === "function" ? o.groupOf : null, 0.5 * (+o.usablePt2 || 0) * (+o.maxFill || 0.8)) : [];
+    if (halves.length < 2) return null;
+    const base = String(first[0].order || first[0].id), units = new Map();
+    for (const c of sh.charms || []) if (c && !c.excluded && String(c.order || c.id) === base) { const k = key(c); if (!units.has(k)) units.set(k, []); units.get(k).push(c); }
+    const seq = []; for (const k of [...units.keys()].sort()) { if (k === key(first[0])) seq.push(halves[0], halves[1]); else seq.push(units.get(k)); }
+    const chunks = {}; seq.forEach((u, i) => u.forEach(c => { chunks[String(c.id)] = i + 1; }));
+    return { chunks, words: `Order ${base.split("/")[0]}: ${first.length} piece(s) did not pack into an empty sheet whole; cut in two (${halves[0].length} + ${halves[1].length}) and nested again, in order` };
+  }
+  /** overflowToNextSheet's decision (charm-nest-1.html): what the sheet turned away (sh.rejects, not placed) and what becomes of it.
+   *  → { kind: "none" } | { kind: "move", moving } (to the next sheet) | { kind: "rechunk", moving, chunks, words } | { kind: "stop", moving, why } (the oldest order cannot fit on an empty sheet) */
+  function overflowPlan(sh, o) {
+    o = o || {};
+    const ids = new Set((sh.rejects || []).map(idOfReject)), placed = new Set((sh.placements || []).map(p => String(p.id)));
+    const moving = (sh.charms || []).filter(c => c && !c.excluded && ids.has(String(c.id)) && !placed.has(String(c.id)));
+    if (!moving.length) return { kind: "none", moving };
+    if (!(sh.placements || []).length) {
+      const re = rechunkStalled(sh, moving, o); if (re) return Object.assign({ kind: "rechunk", moving }, re);
+      const gid = typeof o.groupOf === "function" ? o.groupOf : () => null, lines = new Map();
+      for (const c of moving) { const g = gid(c); if (g) { if (!lines.has(g)) lines.set(g, []); lines.get(g).push(c); } }
+      const big = [...lines.values()].sort((a, b) => b.length - a.length)[0] || [];
+      const what = big.length < 2 ? "" : big.length === 2 ? "a pair" : `a group of ${big.length} pieces`;
+      return { kind: "stop", moving, why: `The oldest order cannot fit on an empty sheet at these settings.${what ? ` It holds ${what} that must stay on one sheet, so it is not split.` : ""} Review its size or the fill ceiling before continuing.` };
+    }
+    return { kind: "move", moving };
+  }
+  /** feedOn's decision (charm-nest-1.html feedOn) for a sheet just written whose later orders waited for their turn (sh.feedWait).
+   *  → { act: "none" } | { act: "pass", pass: [charm ids] } (they go on to the next sheet) | { act: "nest" } (its next turn) | { act: "pass+nest", pass } */
+  function feedNext(sh, o) {
+    o = o || {};
+    const later = new Set((sh.feedWait || []).map(String)); if (!later.size) return { act: "none", left: [] };
+    const placed = new Set((sh.placements || []).map(p => String(p.id))), left = (sh.charms || []).filter(c => c && !c.excluded && later.has(String(c.id)) && !placed.has(String(c.id)));
+    if (!left.length || sh.problem || sh.runHold || (sh.endedBy === "stopped" && !sh.resumeWait)) return { act: "none", left };
+    if ((sh.releaseFull || !verified(sh)) && (sh.placements || []).length && sh.endedBy !== "stopped") return { act: "pass", pass: left.map(c => c.id), left };
+    if (sh.topup && !sh.topup.closedAt && (sh.placements || []).length && sh.endedBy !== "stopped") {
+      const key = keyOf(o), rank = rankOf(o), turn = (a, b) => rank(a) - rank(b) || key(a).localeCompare(key(b));
+      const order = [...new Set(left.slice().sort(turn).map(key))], room = typeof o.topupRoom === "function" ? o.topupRoom(sh) : Infinity;
+      const keep = new Set(order.slice(0, Math.max(0, room))), pass = left.filter(c => !keep.has(key(c))).map(c => c.id);
+      if (pass.length === left.length) return { act: "pass", pass, left };
+      if (pass.length) return { act: "pass+nest", pass, left };
+    }
+    return { act: "nest", left };
+  }
+
   return {
+    TOPUP, untriedIds, shownFull, sheetFull, topupSettle, intakeMarks, sheetFileBase, rechunkStalled, overflowPlan, feedNext,
     CHARM_SCALE: CHARM_SCALE_DEFAULT, CAREFUL_ANGLES: CAREFUL_ANGLES_DEFAULT, OVF_MIN_SCALE, EXACT_EPS_MM2, EXACT_MM, EXACT_MORE_SCALE,
     layoutKey, buildJob, sheetSpec, buildReport,
     exchangeHeld, overlapOnly, overlapRound, applyOverlapFixes, overlapMoved, unionArea,

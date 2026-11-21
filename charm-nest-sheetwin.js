@@ -6067,6 +6067,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
    *  re-rendered layer by layer (the independent check) with Manual Control's own check of every charm, its report and preview, uploaded to the paths it had; its record told its new
    *  files and verification; its .pdf copied again from the .ai when it had one; a set it was released in told it changed (releasedChange, as Review.inPlaceRefile says it). → true. */
   async function mcWriteStandalone(sh, st, paint) {
+    // (CLOUDDRIVE build step 7b, P9 / P1: while the cloud writes this sheet's run's files (mode "on", or its carrier is the cloud and "files" is one of the drive's lanes) the cloud's sheet writer
+    //  writes them: finishSheet is sent, the person is told in words, and nothing is written here. With the drive off this is never asked: the sheet is written here as today)
+    if (window.CNViewer && typeof CNViewer.filesGate === "function" && CNViewer.mode() !== "off") {
+      const g = await CNViewer.filesGate(sh, { reason: sh._standWord ? String(sh._standWord).slice(0, 100) : "written again from its saved record" });
+      if (g !== null) { st.state = g ? "ok" : "bad"; st.detail = g ? "the cloud writes its files" : "the cloud did not take them: see the message"; paint(); return g; }
+    }
     st.state = "now"; st.detail = "written from its saved record (its run is not open on this screen)"; paint();
     const Pd = window.CharmNestPDF, rec = (!sh._standWord && W.rec && W.rec.id === sh.sheetId ? W.rec : null) || sh._rec || {}, outs = rec.outputs || {};
     if (!Pd || typeof Pd.buildSheet !== "function" || typeof Pd.parseSource !== "function" || typeof uploadBytes !== "function") throw new Error("the sheet writer is not loaded in this page; reload it");
@@ -6584,7 +6590,21 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      of the cloud; kept in the outbox (job "mcFiles") until done, so the next page finishes what this one could not. → true when the files were written. */
   const MCF = new Map(), MCF_TRIED = new Map();   // sheetId → the job running; job → how many times this page ran it
   function mcFiles(sh, o = {}) {
-    if (window.CNViewer && CNViewer.on()) return CNViewer.filesAsk(sh);   // (CLOUDDRIVE build step 14: in mode "on" the cloud's sheet writer writes the files of a sheet changed by hand)
+    // (CLOUDDRIVE build step 7b, P9 / P1; step 14's mode "on" included: while the cloud writes this run's sheet files (mode "on", or its carrier is the cloud and "files" is one of the drive's
+    //  lanes) the files of a sheet changed by hand are the cloud's sheet writer's: finishSheet is sent, the person is told (asked, done or refused), the outbox job is the cloud's once asked,
+    //  and nothing is written here. With the drive off this is never asked: the files are made here as today)
+    if (!o.here && window.CNViewer && typeof CNViewer.filesGate === "function" && CNViewer.mode() !== "off") {
+      const id0 = sh.sheetId; if (MCF.has(id0)) return MCF.get(id0);
+      const st0 = o.files || null, lb0 = o.labels || null, paint0 = o.paint || (() => {});
+      const asked = Promise.resolve(CNViewer.filesGate(sh, { reason: "its charms were moved by hand", jobK: o.jobK })).catch(() => false).then(g => {
+        if (g === null) { if (MCF.get(id0) === asked) MCF.delete(id0); return mcFiles(sh, Object.assign({}, o, { here: true })); }
+        if (st0) { st0.state = g ? "ok" : "bad"; st0.detail = g ? "the cloud writes its files" : "the cloud did not take them: see the message"; }
+        if (lb0 && g) { lb0.state = "ok"; lb0.detail = "the cloud makes its label with its files"; }
+        tryDo(paint0); return g;
+      }).finally(() => { if (MCF.get(id0) === asked) MCF.delete(id0); });
+      MCF.set(id0, asked);
+      return asked;
+    }
     const id = sh.sheetId; if (MCF.has(id)) return MCF.get(id);
     const job = (async () => {
       const st = o.files || stepOf(""), lb = o.labels || stepOf(""), paint = o.paint || (() => {});
@@ -6624,16 +6644,20 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** The file jobs a page before this one left (or whose patch waited for the cloud): run once their patch is answered and their sheet is here, not busy and not in Manual Control. */
   function mcFilesResume() {
-    if (window.CNViewer && CNViewer.on()) return;   // (CLOUDDRIVE build step 14: no files are written here in mode "on")
+    // (CLOUDDRIVE build step 7b: while the cloud writes the files (filesGate, in any mode but off) a file job left in the outbox is sent to the cloud's sheet writer (finishSheet) by mcFiles, and
+    //  settled once asked; in mode "on" this page holds no workspace, so a job whose sheet is not here is asked with the sheet's id alone, once a page. With the drive off: as today)
+    const V = window.CNViewer, gated = !!(V && typeof V.filesGate === "function" && V.mode() !== "off");
+    if (V && V.on() && !gated) return;   // (CLOUDDRIVE build step 14: no files are written here in mode "on")
     const St = window.CharmNestStore; if (!St || typeof St.pending !== "function") return;
     for (const j of St.pending(e => e.job === "mcFiles")) {
       const sid = j.args && j.args.sheetId; if (!sid || MCF.has(sid)) continue;
       if (St.pending(e => e.mid === j.after).length) continue;   // (its patch is not answered yet)
       const sh = allSheets().find(p => p.sheetId === sid);
+      if (!sh && gated && V.on()) { if (!MCF_TRIED.get(j.k)) { MCF_TRIED.set(j.k, 1); Promise.resolve(V.filesGate({ sheetId: sid }, { reason: "its charms were moved by hand", jobK: j.k })).catch(() => {}); } continue; }
       if (!sh) { if (Date.now() - (+j.at || 0) > 7 * 86400e3) St.settle(j.k, { ok: true, answer: { dropped: true } }); continue; }
       if (busy(sh) || sh._operationStarting || (MC.on && MC.sh === sh) || HOP.writing.has(sh)) continue;
       const name = sheetWord(sh.sheetId, sh.fileBase, sh), tried = MCF_TRIED.get(j.k) || 0; if (tried >= 2) continue; MCF_TRIED.set(j.k, tried + 1);   // (twice per page at most: the next page tries again)
-      mcFiles(sh, { jobK: j.k }).then(ok => { if (!ok) toast(`${name}: its files were not made again after the charms moved by hand${sh.problem ? ": " + sh.problem : ""}. The new layout is saved; they are made again by the next page or the sheet's next save.`, "bad", 9000); });
+      mcFiles(sh, { jobK: j.k }).then(ok => { if (!ok && !(+sh._filesCloudSaid > Date.now() - 120000)) toast(`${name}: its files were not made again after the charms moved by hand${sh.problem ? ": " + sh.problem : ""}. The new layout is saved; they are made again by the next page or the sheet's next save.`, "bad", 9000); });
     }
   }
   setInterval(() => tryDo(mcFilesResume), 10000);

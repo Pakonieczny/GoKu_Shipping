@@ -17,7 +17,8 @@
    A page that learns the mode changed (to "on", or from "on" back) reloads, so it boots as the new mode says.
 
    window.CNViewer: mode() · on() · known() · ready() · boot() · holdNew() · draining() · cv() · lane(name, runId?) · wait(name, fn) · pill(e) · control(action) · startRun(o)
-                    nest(sh, fresh) · release(rid, o) · hold(rid, o) · holdPlan(rid) · takeOff(o) · state()                                                                   */
+                    nest(sh, fresh) · release(rid, o) · hold(rid, o) · holdPlan(rid) · takeOff(o) · state()
+                    filesLane(sh) · filesGate(sh, o) · filesAsk(sh, o)   (build step 7b: the files lane on a page, below)                                                                   */
 (function (root) {
   "use strict";
   const CV = "cloud14-20261120";
@@ -195,10 +196,60 @@
     return { ok: true, queued: true };
   }
 
-  /** A sheet changed by hand (Manual Control) in mode "on": its files are the cloud's sheet writer's (finishSheet, build step 7b); the record already owes them. */
-  async function filesAsk(sh) {
-    if (!sh || !sh.sheetId) return false;
-    try { const r = await api({ op: "finishSheet", sheetId: sh.sheetId, why: "changed by hand", by: who() }); return !!(r && !r.error); } catch (_) { return false; }
+  /* ── THE FILES LANE ON A PAGE (cloud plan v2, build step 7b; P9: one lane, one place; P1). DORMANT: while the drive is off nothing here reads or sends anything, and the page's sheet
+     file writers (mcFiles, mcFilesResume, mcWriteStandalone in charm-nest-sheetwin.js, writeAsPlaced in charm-nest-1.html) never ask it: they write exactly as today. While the cloud writes
+     a run's sheet files (mode "on"; or "files" is one of the drive's lanes and Charm_Nest_Run_Carrier says the cloud carries the sheet's run) they send ONE press instead, finishSheet
+     { id, reason, by }, write no file, and the person is told in words: asked, then done (the sheet's record no longer owes its files: finishGet followed every 5 s, at most 20 min),
+     or refused with the reason (the cloud's answer, or its writer's last job). ── */
+  const FILES_FOLLOW_MS = 5000, FILES_FOLLOW_MAX_MS = 20 * 60000, filesFollow = new Map();
+  const sheetName = sh => String((sh && (sh.fileBase || sh.metalLabel || sh.sheetId || sh.id)) || "This sheet");
+  /** Whether the cloud writes this sheet's files now (never in mode off; no read then). */
+  async function filesLane(sh) {
+    if (S.mode === "off" || !sh) return false;
+    if (on()) return true;
+    if (!steps().includes("files")) return false;
+    const runId = Object.prototype.hasOwnProperty.call(sh, "runId") ? sh.runId : followedRun(); if (!runId) return false;
+    const c = await carrierOf(runId).catch(() => null);
+    return !!(c && c.dev === "cloud");
+  }
+  /** The gate the page's sheet file writers ask, only when the mode is not off. → Promise: null (this page writes, as today) | true (the cloud was asked, the person told) | false (refused,
+   *  the person told why; nothing was written here). o: { reason, jobK (an outbox file job the cloud now owns: settled once asked), again } */
+  async function filesGate(sh, o) {
+    if (S.mode === "off" || !sh) return null;
+    try {
+      if (!on() && !(Date.now() - (+S.at || 0) < 60000)) await read("files").catch(() => {});   // (the switch as it is now: a lane turned on a minute ago is the cloud's)
+      if (!(await filesLane(sh))) return null;
+    } catch (_) { return null; }
+    return filesAsk(sh, o);
+  }
+  /** The press: finishSheet { id, reason, by }. → true (asked) | false (refused). Said in words either way, then followed to done. */
+  async function filesAsk(sh, o) {
+    o = o || {};
+    const id = sh && (sh.sheetId || sh.id), name = sheetName(sh), reason = String(o.reason || "asked from this page").slice(0, 120);
+    try { if (sh && typeof sh === "object") sh._filesCloudSaid = Date.now(); } catch (_) { /* a frozen copy: nothing to mark */ }
+    if (!id) { toast(`${name}: its files are the cloud's to write, and this sheet is not saved in the cloud yet: nothing was written here, and the cloud writes them once it is saved`, "bad", 9000); return false; }
+    let r = null;
+    try { r = await api({ op: "finishSheet", id, reason, by: who() || "", ...(o.again === true ? { again: true } : {}) }); } catch (e) { r = { error: (e && e.data && e.data.error) || (e && e.message) || String(e) }; }
+    if (!r || r.error || !r.ok) { toast(`${name}: refused — the cloud did not take its files (${String((r && r.error) || "no answer").replace(/\.$/, "")}). Nothing was written on this computer`, "bad", 11000); return false; }
+    toast(`${name}: asked — the cloud writes its files (${reason})`, "ok", 5000);
+    if (o.jobK) safe(() => root.CharmNestStore.settle(o.jobK, { ok: true, answer: { files: "cloud" } }));
+    filesFollowStart(id, name, Date.now());
+    return true;
+  }
+  /** Followed until the cloud's record no longer owes the files (done), or its writer's last job, newer than the press, ended without them (refused). */
+  function filesFollowStart(id, name, at) {
+    if (filesFollow.has(id)) { filesFollow.get(id).at = Math.min(filesFollow.get(id).at, at); return; }
+    const f = { at, t0: Date.now() }; filesFollow.set(id, f);
+    const next = () => setTimeout(() => { look().catch(() => next()); }, FILES_FOLLOW_MS);
+    const look = async () => {
+      if (Date.now() - f.t0 > FILES_FOLLOW_MAX_MS) { filesFollow.delete(id); toast(`${name}: the cloud has not finished its files in 20 minutes; they are still owed, and the cloud keeps at them`, "bad", 9000); return; }
+      let g = null; try { g = await api({ op: "finishGet", id }); } catch (_) { g = null; }
+      const sheet = g && g.sheet, ld = g && g.task && g.task.lastDone;
+      if (sheet && !(+sheet.filesOwed > 0) && !sheet.filesJob) { filesFollow.delete(id); toast(`${name}: done — the cloud wrote its files`, "ok", 5000); return; }
+      if (ld && (+ld.at || 0) >= f.at && ["failed", "skipped"].includes(ld.outcome)) { filesFollow.delete(id); toast(`${name}: refused — the cloud did not write its files: ${String(ld.why || ld.outcome).replace(/\.$/, "")}`, "bad", 11000); return; }
+      next();
+    };
+    next();
   }
 
   /* ── the drain (P12): the computer that carries a run hands it to the cloud only once nothing is in hand ── */
@@ -247,8 +298,12 @@
     OH.resumeHolds = async () => 0;
   });
 
-  root.CNViewer = { mode, on, known, ready: () => readyP, boot, holdNew, draining: () => S.draining, cv: () => CV, lane, carrierOf, wait, pill, control, startRun, nest, release, hold, holdPlan, takeOff, filesAsk, idleNow, read,
+  root.CNViewer = { mode, on, known, ready: () => readyP, boot, holdNew, draining: () => S.draining, cv: () => CV, lane, carrierOf, wait, pill, control, startRun, nest, release, hold, holdPlan, takeOff, filesAsk, filesLane, filesGate, idleNow, read,
     state: () => ({ known: S.known, assumed: S.assumed, mode: S.mode, at: S.at, fails: S.fails, draining: S.draining, idleAt: S.idleAt, idleWhy: S.idleWhy || "", cloudSteps: steps(), pending: (S.drive && S.drive.pending) || null }) };
+  /* (ONSWITCH, Paul 20 Nov 2026) this page is a viewer: the computer's report says so (charm-nest-drive.js caps() → charm-nest-drift.js → Charm_Nest_Computers.drive), which is what
+     "Cloud carries" reads for every computer open now. charm-nest-drive.js loads first in charm-nest-1.html; if it is not there yet, it is told as soon as it is (and its caps()
+     also looks for window.CNViewer itself), so the order the two files load in never matters. */
+  { let tries = 0; const tell = () => { const D = root.CharmNestDrive; if (D && typeof D.cap === "function") { safe(() => D.cap("viewer")); return; } if (++tries < 120) { const t = setTimeout(tell, 500); safe(() => t && typeof t.unref === "function" && t.unref()); } }; tell(); }
   // the first look as soon as the page can ask (CN.api exists once the page's script ran)
   const first = () => { if (root.CN && typeof root.CN.api === "function") read("start").catch(() => {}); else setTimeout(first, 300); };
   first();
