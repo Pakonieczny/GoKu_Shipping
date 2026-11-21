@@ -10,6 +10,7 @@
  *                           smaller sheets' orders onto the fullest, one order a minute); A12 the cut, its refusal leaving the include in its ONE set with the server's words.
  *    askUnit                a person's press (roseCutAsk: "cut" on a Rose Gold, 10K or 14K sheet; "joinFull": a full 10K / 14K sheet joins its set with its approval only), and
  *                           a line set aside by a change by hand redrawn (roseRedraw, §4.8: the line follows the charms; a recorded cut is approved again only by its own press).
+ *    joinCut (G4)           "join": a sheet whose green line is cut already joins its set by the set rules from a viewer's press, never cut again.
  *  10K and 14K are NEVER cut by themselves (the server refuses via "auto" too). RG/10K/14K sheets mix only within one set: the cut is always into the sheet's ONE set (greenHomes).
  *  OWNEROVERRIDE: a sheet whose set the owner decided is never put in or cut into another set by the cloud. Its memory (the page's autoCutTried, rgOneTried, rgOneSay,
  *  run.rgClearHeld) is Charm_Nest_Green/<runId> (greenStatePut). No Etsy call. DORMANT: autoUnit runs in the checkpoint and labels steps, askUnit as the pass item
@@ -74,6 +75,122 @@ async function undoInclude(ctx, rec, set, was) {
   await ctx.call({ op: "putSheet", sheet: { id: rec.id, draft: true, setId: null, setSeq: null, sheetIndex: null, label: null, solidIncluded: pick } }, `green-undo-sheet|${rec.id}|${set.setId}`);
 }
 
+/* ── (VIEWINCLUDE, item 7, Paul 21 Nov 2026) the In current set switch of a Rose Gold, 10K or 14K sheet pressed on a computer that follows the run (a viewer): the page's changeMembership
+   for that one sheet, from the records. include: the sheet's own yes (solidIncluded true; a take-out mark and Rose Gold's "automatic cut off" cleared), then a look at the sets: the set
+   rules (charm-nest-assembly-core.js) decide whether it joins its ONE set now or waits, and the answer says which, in their words. exclude: a sheet in an open set is taken out of it
+   (cmdLeaveSet, as the leaveset request does: a cut sheet, an order it shares with a sheet that stays, the owner's set refuse it in words); a sheet in no set loses its yes. → { ok, why } ── */
+async function member(ctx, p, ask) {
+  const rec = await readSheet(ctx.db, p.sheetId); if (!rec) return { ok: false, why: "That sheet is no longer in the Library" };
+  const name = nameOf(rec), rose = rec.metal === "rose", gold = rose || rec.metal === "gold10k" || rec.metal === "gold14k", setNow = rec.setId && !rec.draft && rec.solidIncluded !== false ? String(rec.setId) : null;
+  const setName = async id => { const s = await ctx.db.collection("Charm_Nest_Sets").doc(id).get(), d = s.exists ? s.data() || {} : {}; return d.seq ? `Set ${d.seq}` : d.name || "its set"; };
+  if (num(rec.laserDoneAt) > 0) return { ok: false, why: `${name} has been cut on the laser: its set is fixed` };
+  if (ask.kind === "include" && rec.roseCutAt && !setNow) return joinCut(ctx, p, ask);   // (G4: a cut sheet's Include is its join: never cut again, a committed set's place taken back)
+  if (ask.kind === "include") {
+    // (G3, Paul 21 Nov 2026: a Library move on a viewer names the set it was dropped on, ask.setId, or New set, ask.newSet; the switch of item 7 names none)
+    const to = ask.setId ? String(ask.setId) : null, toName = to ? await setName(to) : ask.newSet ? "a new set" : "";
+    if (setNow && (to ? to === setNow : !ask.newSet)) return { ok: true, why: `${name} is in ${await setName(setNow)} already` };
+    let left = "";
+    if (setNow) {   // (G3: between sets: out of the set it is in first, as the leaveset request does (the order rule, a cut, the owner's set refuse it in words), then in by the set rules)
+      const r = await ctx.call({ op: "cmdLeaveSet", runId: rec.runId || ctx.run.runId, setId: setNow, sheetIds: [rec.id], by: String(ask.by || "") }, `member-move|${rec.id}|${setNow}|${num(ask.seq)}`);
+      if (!ok(r)) return { ok: false, why: words(r) };
+      left = await setName(setNow);
+    }
+    const cur = left ? (await readSheet(ctx.db, rec.id)) || rec : rec;
+    const patch = Object.assign({ id: rec.id }, gold ? { solidIncluded: true } : {}, cur.leftSet ? { leftSet: null } : {}, rose && cur.autoCutOff ? { autoCutOff: false } : {});
+    if (Object.keys(patch).length > 1) {
+      const r = await ctx.call({ op: "putSheet", sheet: patch }, `member-yes|${rec.id}|${num(ask.seq)}`);
+      if (!ok(r)) return { ok: false, why: left ? `${name} was taken out of ${left}, but it could not be put in again: ${words(r)}` : words(r) };
+    }
+    await Assembly.assemblyUnit(ctx, to ? { hand: { sheetId: rec.id, setId: to } } : undefined);   // (the include is a look at the sets with the sheet's own yes, as the page's changeMembership then assemble)
+    const V = await Assembly.loadView({ db: ctx.db, run: ctx.run, now: Date.now() }), G = Core.gate(V), sh = V.pages.find(q => q.sheetId === rec.id), first = left ? `taken out of ${left}, ` : "";
+    if (sh && sh.setId && !sh.draft) {
+      const set = V.sets.find(s => s.setId === sh.setId), where = set && set.seq ? "Set " + set.seq : (set && set.name) || "its set";
+      return { ok: true, why: to && String(sh.setId) !== to ? `${name} was ${first}put in ${where} by the set rules (not ${toName})` : `${name} is in ${where} now${left ? ` (taken out of ${left} first)` : ""}` };
+    }
+    const open = G.newestOpenOf(ctx.run.runId), why = sh ? (sh.setWait || sh.cardinalHold || G.policy(sh, open ? open.seq : 0).reason || "") : "";
+    return { ok: true, why: `${name} is ${first}included: it joins ${toName && !gold ? toName : "its set"} once the set rules let it${why ? ` (${why})` : ""}` };
+  }
+  if (setNow) {
+    const r = await ctx.call({ op: "cmdLeaveSet", runId: rec.runId || ctx.run.runId, setId: setNow, sheetIds: [rec.id], by: String(ask.by || "") }, `member-out|${rec.id}|${setNow}|${num(ask.seq)}`);
+    if (!ok(r)) return { ok: false, why: words(r) };
+    return { ok: true, why: `${name} was taken out of ${await setName(setNow)}: it is a draft now and waits for the next set` };
+  }
+  if (!gold) return { ok: true, why: `${name} is in no set: there is nothing to take it out of` };   // (G3: a GF / SS sheet has no yes of its own to take off)
+  if (rec.solidIncluded !== true && !(rose && !rec.autoCutOff)) return { ok: true, why: `${name} is in no set and not included` };
+  const r = await ctx.call({ op: "putSheet", sheet: Object.assign({ id: rec.id, solidIncluded: false }, rose ? { autoCutOff: true } : {}) }, `member-no|${rec.id}|${num(ask.seq)}`);
+  if (!ok(r)) return { ok: false, why: words(r) };
+  return { ok: true, why: `${name} is not included: it stays out of every set until In current set is switched on again` };
+}
+/* ── (G4, Paul 21 Nov 2026) a Rose Gold, 10K or 14K sheet whose green line is CUT ALREADY, put into its set on a computer that follows the run (a viewer): the Library's drag into a set, the set
+   card's Approve, the In current set switch, Cut Sheet's Gate.rejoin. roseCutAsk "join" (and "include" on a cut sheet in no set), carried out from the records; NEVER cut again (no line, no claim,
+   no roseRecordCut). A sheet whose record is in its set already is said so (Gate.rejoin's case: only a page's copy lost its place; the page follows the record); a draft record a COMMITTED set
+   still lists is said in words with where it is put back (the Library's drop on that set: only the set's own edit changes a committed set); any other gets the person's own yes (solidIncluded; a take-out mark and Rose Gold's "automatic cut off" cleared, as changeMembership does for a press) and a look at the sets: the set rules
+   (charm-nest-assembly-core.js) decide whether it joins now and which set, else it waits with their words (its yes is kept: it joins by itself once they let it). OWNEROVERRIDE: a sheet whose set
+   the owner decided goes into no other set. ask.setId: the set it was dropped on, named in the answer when the rules put it elsewhere. → { ok, why } ── */
+async function joinCut(ctx, p, ask) {
+  const db = ctx.db, rec = await readSheet(db, p.sheetId); if (!rec) return { ok: false, why: "That sheet is no longer in the Library" };
+  const name = nameOf(rec), rose = rec.metal === "rose", asked = ask && ask.setId ? String(ask.setId) : null;
+  const setName = async id => { const s = await db.collection("Charm_Nest_Sets").doc(String(id)).get(), d = s.exists ? s.data() || {} : {}; return d.seq ? `Set ${d.seq}` : d.name || "its set"; };
+  const where = async id => { const n = await setName(id); return asked && asked !== String(id) ? `${n} (its set by the set rules, not ${await setName(asked)})` : n; };
+  if (!rec.roseCutAt) return { ok: false, why: `${name}: its green line is not cut yet. Press Cut Sheet (or Approve & cut green line) and it joins its set with its cut` };
+  if (num(rec.laserDoneAt) > 0) return { ok: false, why: `${name} has been cut on the laser: its set is fixed` };
+  if (rec.setId && !rec.draft && rec.solidIncluded !== false) return { ok: true, why: `${name} is in ${await where(rec.setId)} already. Its green line is cut, so nothing was cut again` };
+  let V = await Assembly.loadView({ db, run: ctx.run, now: Date.now() }), G = Core.gate(V);
+  // (Gate.rejoin) a page's copy that lost its place in a COMMITTED set while the record kept it is answered above ("in Set N already": the page follows the record). A committed set's sheets are
+  // changed only by the set's own edit (the Library's drop on that set, flowApply setMember: the cloud never writes it, and putSheet never changes a committed set's membership), so a record
+  // that is a draft while a committed set still lists it is said in words, with where it is done; never "done" when nothing changed
+  const kept = V.sets.find(s => s.committedAt && (s.sheetIds || []).includes(rec.id));
+  if (kept) return { ok: false, why: `${name} is listed by ${await setName(kept.setId)}, which was sent to the station: drop it on ${await setName(kept.setId)} in the Library to put it back there (the set's own edit). Nothing was cut` };
+  const pv = V.pages.find(q => q.sheetId === rec.id) || p, home = G.homeSetOf(pv);
+  if (rec.ownerSet && typeof rec.ownerSet === "object" && (!rec.ownerSet.setId || (home && String(rec.ownerSet.setId) !== String(home.setId)))) return { ok: false, why: `${name} stays where the owner put it (${rec.ownerSet.setId ? await setName(rec.ownerSet.setId) : "in no set"})` };
+  const patch = Object.assign({ id: rec.id, solidIncluded: true }, rec.leftSet ? { leftSet: null } : {}, rose && rec.autoCutOff ? { autoCutOff: false } : {});
+  const r = await ctx.call({ op: "putSheet", sheet: patch }, `g4-yes|${rec.id}|${num(ask && ask.seq)}`);
+  if (!ok(r)) return { ok: false, why: `${name} is not in a set: ${words(r)}` };
+  await Assembly.assemblyUnit(ctx);   // (its yes, then a look at the sets: tendSet numbers it, names its files and lists it, as the page's changeMembership then assemble)
+  V = await Assembly.loadView({ db, run: ctx.run, now: Date.now() }); G = Core.gate(V);
+  const sh = V.pages.find(q => q.sheetId === rec.id);
+  if (sh && sh.setId && !sh.draft) return { ok: true, why: `${name} is in ${await where(sh.setId)} now. Its green line was cut already, so nothing was cut again` };
+  const open = G.newestOpenOf(ctx.run.runId), why = sh ? (sh.setWait || sh.cardinalHold || G.policy(sh, open ? open.seq : 0).reason || "") : "";
+  return { ok: false, why: `${name} is not in a set yet${why ? ` (${why})` : home ? "" : ": no open set of the run takes it yet"}. Your yes is kept: it joins its set by itself once the set rules let it` };
+}
+/* ── the physical sheet and the line (RoseStock.prepare / claimLate, then RoseStock.plan with cut: true), for a cut and for the line alone. no: the words' prefix ("Not cut: ").
+   → { rec, drew } (rec as read after it), or { why } (refused, in words: nothing drawn; a fresh 10K / 14K sheet claimed stays claimed, as on the page) ── */
+async function drawLine(ctx, p, rec, no) {
+  const db = ctx.db;
+  // the physical sheet (prepare / claimLate): a 10K / 14K sheet claims a fresh one now; a Rose Gold sheet holds its own since its nest
+  if (!rec.roseStockId) {
+    if (rec.metal === "rose") return { why: no + "its physical Rose Gold sheet is not claimed: nest the sheet again" };
+    const st = rec.stock || {}, wPt = num(st.wPt) || num(st.wIn) * 72, hPt = num(st.hPt) || num(st.hIn) * 72;
+    const r = await ctx.call({ op: "roseClaim", sheetId: rec.id, metal: rec.metal, wPt, hPt, fresh: true }, `green-claim|${rec.id}`);
+    if (!ok(r)) return { why: no + words(r) };
+    rec = await readSheet(db, p.sheetId);
+    if (!rec || !rec.roseStockId) return { why: no + "its physical sheet could not be claimed" };
+  }
+  // the line (plan with cut: true), when the layout has none or changed since
+  let drew = false;
+  if (!rec.rosePlanHash || rec.roseFingerprint !== RoseStock.fingerprint(rec)) {
+    if (!(rec.verification && rec.verification.ok) || rec.saving || rec.dirty || !(rec.outputs && rec.outputs.ai) || num(rec.filesOwed) > 0) return { why: no + "nest and save this layout before preparing its contour" };
+    let shapes; try { shapes = await Shapes.forSheet(ctx, rec); } catch (e) { return { why: no + ((e && e.message) || e) }; }
+    const stock = await readStock(db, rec.roseStockId);
+    if (!stock) return { why: no + "its physical sheet is not in the cloud" };
+    const r = await ctx.call({ op: "rosePlan", sheetId: rec.id, metal: rec.metal, stockId: rec.roseStockId, revision: stock.revision, fingerprint: RoseStock.fingerprint(rec), shapesJson: JSON.stringify(shapes), allowanceMm: num(rec.roseAllowanceMm) || 0.2, cut: true }, `green-plan|${rec.id}|${RoseStock.fingerprint(rec).length}|${hashOf(RoseStock.fingerprint(rec))}`);
+    if (!ok(r)) return { why: no + words(r) };
+    drew = true;
+    rec = await readSheet(db, p.sheetId);
+  }
+  return { rec, drew };
+}
+/* ── the line alone (ITEM 4, Paul 21 Nov 2026: the Library's "Add the green dash line" pressed on a staff computer in mode "on"; RoseStock.plan with cut: true): roseCutAsk "line". The line is
+   drawn and dated for the layout as it stands; no cut is recorded (only a Cut Sheet press records one) and the sheet joins no set. A line already drawn for this layout is the answer as it is. ── */
+async function line(ctx, p) {
+  const rec = await readSheet(ctx.db, p.sheetId);
+  if (!rec) return { refused: true, why: "That sheet is no longer in the Library" };
+  if (rec.roseCutAt) return { ok: true, already: true };
+  if (num(rec.laserDoneAt) > 0) return { refused: true, why: "No green line drawn: this sheet has been cut on the laser" };
+  const d = await drawLine(ctx, p, rec, "No green line drawn: ");
+  return d.why ? { refused: true, why: d.why } : { ok: true, drew: d.drew };
+}
+
 /* ── Green.cut (RoseStock.record, rose-ui.js 250-300) ── */
 async function cut(ctx, p, set, o) {
   const db = ctx.db; let rec = await readSheet(db, p.sheetId);
@@ -92,27 +209,9 @@ async function cut(ctx, p, set, o) {
     await ctx.call({ op: "putSheet", sheet: { id: rec.id, autoMatched: set.setId } }, `green-matched|${rec.id}|${set.setId}`);
   }
   const undo = async why => { if (joined) { const now = await readSheet(db, p.sheetId); if (now && !now.roseCutAt) await undoInclude(ctx, now, set, was); } return { refused: true, why }; };
-  // the physical sheet (prepare / claimLate): a 10K / 14K sheet claims a fresh one now; a Rose Gold sheet holds its own since its nest
-  if (!rec.roseStockId) {
-    if (rec.metal === "rose") return undo("Not cut: its physical Rose Gold sheet is not claimed: nest the sheet again");
-    const st = rec.stock || {}, wPt = num(st.wPt) || num(st.wIn) * 72, hPt = num(st.hPt) || num(st.hIn) * 72;
-    const r = await ctx.call({ op: "roseClaim", sheetId: rec.id, metal: rec.metal, wPt, hPt, fresh: true }, `green-claim|${rec.id}`);
-    if (!ok(r)) return undo("Not cut: " + words(r));
-    rec = await readSheet(db, p.sheetId);
-    if (!rec || !rec.roseStockId) return undo("Not cut: its physical sheet could not be claimed");
-  }
-  // the line (plan with cut: true), when the layout has none or changed since
-  let drew = false;
-  if (!rec.rosePlanHash || rec.roseFingerprint !== RoseStock.fingerprint(rec)) {
-    if (!(rec.verification && rec.verification.ok) || rec.saving || rec.dirty || !(rec.outputs && rec.outputs.ai) || num(rec.filesOwed) > 0) return undo("Not cut: nest and save this layout before preparing its contour");
-    let shapes; try { shapes = await Shapes.forSheet(ctx, rec); } catch (e) { return undo("Not cut: " + ((e && e.message) || e)); }
-    const stock = await readStock(db, rec.roseStockId);
-    if (!stock) return undo("Not cut: its physical sheet is not in the cloud");
-    const r = await ctx.call({ op: "rosePlan", sheetId: rec.id, metal: rec.metal, stockId: rec.roseStockId, revision: stock.revision, fingerprint: RoseStock.fingerprint(rec), shapesJson: JSON.stringify(shapes), allowanceMm: num(rec.roseAllowanceMm) || 0.2, cut: true }, `green-plan|${rec.id}|${RoseStock.fingerprint(rec).length}|${hashOf(RoseStock.fingerprint(rec))}`);
-    if (!ok(r)) return undo("Not cut: " + words(r));
-    drew = true;
-    rec = await readSheet(db, p.sheetId);
-  }
+  const d = await drawLine(ctx, p, rec, "Not cut: ");
+  if (d.why) return undo(d.why);
+  rec = d.rec; const drew = d.drew;
   const r = await ctx.call({ op: "roseRecordCut", sheetId: rec.id, metal: rec.metal, stockId: rec.roseStockId, revision: rec.roseRevision, planHash: rec.rosePlanHash, by: o.by || AUTO_BY, device: "cloud", via: o.via || "cloud-press" }, `green-cut|${rec.id}|${rec.rosePlanHash}`);
   if (!ok(r) || !r.cut) {
     // NOLINE (Paul, 12 Nov 2026): a green line exists only once its cut is recorded: the line this press drew is set aside again
@@ -222,6 +321,21 @@ async function askUnit(ctx) {
       if (ask.runId && ask.runId !== run.runId) { const got = await ctx.read({ op: "runGet", runId: ask.runId }), arun = (got && got.run) || { runId: ask.runId, releasePolicy: 2, lines: {} }; actx = Object.assign({}, ctx, { run: arun, runId: arun.runId }); }
       const V = await Assembly.loadView({ db, run: actx.run, now: Date.now() }), G = Core.gate(V), p = V.pages.find(q => q.sheetId === ask.sheetId);
       if (!p) { await answer(ctx, ask, { state: "refused", why: "That sheet is not one of the run's", doneAt: Date.now() }); continue; }
+      if (ask.kind === "include" || ask.kind === "exclude") {   // (VIEWINCLUDE, item 7: a viewer's In current set switch)
+        const r = await member(actx, p, ask);
+        await answer(ctx, ask, { state: r.ok ? "done" : "refused", why: r.why, doneAt: Date.now() });
+        continue;
+      }
+      if (ask.kind === "join") {   // (G4: a cut sheet into its set by the set rules, never cut again)
+        const r = await joinCut(actx, p, ask);
+        await answer(ctx, ask, { state: r.ok ? "done" : "refused", why: r.why, doneAt: Date.now() });
+        continue;
+      }
+      if (ask.kind === "line") {   // (ITEM 4: the line alone needs no set: it is drawn where the sheet is)
+        const r = await line(actx, p);
+        await answer(ctx, ask, r.ok ? { state: "done", doneAt: Date.now() } : { state: "refused", why: r.why, doneAt: Date.now() });
+        continue;
+      }
       const set = G.homeSetOf(p);
       if (!set) { await answer(ctx, ask, { state: "refused", why: "No open set of the run takes it yet: it is cut once its set forms", doneAt: Date.now() }); continue; }
       if (ask.kind === "joinFull") {
@@ -254,6 +368,6 @@ async function askUnit(ctx) {
   return undefined;
 }
 
-module.exports = { autoUnit, askUnit, cut, include, undoInclude, greenState, AUTO_BY };
+module.exports = { autoUnit, askUnit, cut, include, undoInclude, member, joinCut, greenState, AUTO_BY };
 /* the steps file's entry (_charmNestSteps.js): the presses, as the pass item "greenAsks" of lane "rosecut"; the automatic cut by name, for the checkpoint and labels steps */
 module.exports.units = { passItems: [{ name: "greenAsks", lane: "rosecut", unit: askUnit }], named: { greenAuto: autoUnit } };

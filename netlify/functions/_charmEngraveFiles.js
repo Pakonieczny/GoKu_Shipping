@@ -97,14 +97,17 @@ function fitOpts(job, s, mask, byHand) {
 
 /* ── the line and its pieces, from the records ── */
 /** The run's line, the world's reading of it (its spec), its pool rows (loaded into the piece maker), and the row the slot rules read. null when the run has no such line. */
-async function lineContext(ctx, E, lineKey) {
-  const line = (ctx.run.lines || {})[lineKey]; if (!line) return null;
+async function lineContext(ctx, E, lineKey, other) {
+  const line = (ctx.run.lines || {})[lineKey] || other || null; if (!line) return null;
   const world = await E.worldLine(lineKey), ws = (world && world.spec) || {};
   const spec = Object.assign({ designSku: line.sku || null, quantity: line.quantity || 1, pieceCount: line.pieceCount || line.quantity || 1 }, ws);
   const row = { key: lineKey, state: line.state, poolIds: (line.poolIds || []).slice(), spec, line: { quantity: spec.quantity || line.quantity || 1, transactionId: line.transactionId || String(lineKey).split("_")[1] }, order: { receiptId: line.orderId || String(lineKey).split("_")[0] } };
   if (row.poolIds.length) await E.piece.poolRows(row.poolIds);
   return { line, row, spec, world };
 }
+/** (ITEM 9, Paul 21 Nov 2026) An approved piece EDITED from the Library sheet preview whose line the run no longer holds (its order is cut and done, its sheet an earlier run's): the line as the
+ *  edit names it, its one piece; the world's reading of the line still gives its words' setup. Only an edit's task reads it (a press of a line not in the run still ends with words). */
+const editLine = (t, lineKey) => (t && t.origin === "edit" && t.edit && t.edit.poolId ? { state: "committed", sku: t.edit.sku || null, quantity: 1, poolIds: [t.edit.poolId], orderId: String(lineKey).split("_")[0], transactionId: String(lineKey).split("_")[1] } : null);
 /** The pieces a job engraves: its slot's pieces of the line (the page's sideRow / ensureOne), less those a person took out of it (copyOverrides). */
 function copiesOf(E, lc, job) {
   const slot = Faces.parseKey(job.key).slot;
@@ -386,8 +389,11 @@ async function endInvalid(ctx, E, t, why, invalid = true) {
     } else {
       if (!(job.approving && num(job.approving.at) === num(t.at))) return { ended: "failed" };   // (a newer approval, or a decided job: it is theirs)
       delete job.approving; job.reason = why; if (invalid && !["approved", "written"].includes(job.state)) job.state = "review";
+      // (ITEM 9: an edit that could not be saved leaves the job as it was before it: its approval and file stand, the reason said)
+      const prev = t.origin === "edit" && t.edit && t.edit.prev;
+      if (prev && ["approved", "written"].includes(prev.state)) { job.state = prev.state; if (prev.text != null) job.text = prev.text; if (prev.lines) job.lines = prev.lines; if (prev.place) job.place = prev.place; }
     }
-    const lc = await lineContext(ctx, E, t.lineKey); if (lc) l.rec.engrave = lineSummary(E, lc, l.rec) || l.rec.engrave;
+    const lc = await lineContext(ctx, E, t.lineKey, editLine(t, t.lineKey)); if (lc) l.rec.engrave = lineSummary(E, lc, l.rec) || l.rec.engrave;
     const w = await writeLine(ctx, l, l.rec, `engrave-fail|${t.id}|${l.rev}`);
     if (w.ok) { await patchRunLine(ctx, t.lineKey, l.rec.engrave, `engrave-line|${t.lineKey}|${w.rev}`); return { ended: "failed" }; }
   }
@@ -404,7 +410,7 @@ async function runTask(ctx, E, t0) {
   const final = ["approved", "written"].includes(job.state) && num(job.approvedAt) === num(t.at);
   // superseded: a newer approval of this job was pressed, or its words changed since (the job no longer waits on THIS approval)
   if (t.origin === "resume" ? !final : !(job.approving && num(job.approving.at) === num(t.at)) && !final) return end(ctx, t, "superseded", "a newer approval, or a change of the words, replaced this one");
-  const lc = await lineContext(ctx, E, t.lineKey); if (!lc) return end(ctx, t, "failed", "its order line is no longer in the run");
+  const lc = await lineContext(ctx, E, t.lineKey, editLine(t, t.lineKey)); if (!lc) return end(ctx, t, "failed", "its order line is no longer in the run");
   if (O.FINISHED_LINE.has(lc.line.state) && lc.line.state !== "committed") return end(ctx, t, "failed", `its order line is ${lc.line.state}`);
   let copies = Array.isArray(t.copies) && t.copies.length ? t.copies : copiesOf(E, lc, job);
   if (!copies.length) return wait(ctx, t, "its pieces are not made yet");
@@ -491,12 +497,14 @@ async function oneCopy(ctx, E, t, lc, job, f, poolId, slot, shared) {
   }
   // the record (Charm_Pool_Back, the sheet's backPool, the order's timeline event): backPut, written once per approval of this piece (its unit key names both)
   const artAt = t.artAtBy && t.artAtBy[poolId] != null ? num(t.artAtBy[poolId]) : null;
-  const put = await ctx.call({ op: "backPut", back: artAt != null ? Object.assign({}, rec, { artAt }) : rec }, `engrave-back|${t.id}|${poolId}`);
+  const was = t.origin === "edit" && t.edit && num(t.edit.was) > 0 ? { expectedApprovedAt: num(t.edit.was) } : {};   // (ITEM 9: an edit replaces the very back it was opened from, as the page's edit did; edited elsewhere since, it is not written over)
+  const put = await ctx.call(Object.assign({ op: "backPut", back: artAt != null ? Object.assign({}, rec, { artAt }) : rec }, was), `engrave-back|${t.id}|${poolId}`);
   if (put && Array.isArray(put.staleArt) && put.staleArt.includes(poolId)) throw invalidErr("This charm's artwork changed while it was being approved — approve it again");
   if (!put || put.status >= 400) {
     const why = String((put && put.error) || "the back record was not written");
     if (/superseded/i.test(why)) throw Object.assign(new Error(why), { superseded: true });
     if (/does not contain this exact charm copy/i.test(why)) throw pendingErr("its piece moved to another sheet: the file is made again for that sheet");
+    if (/edited elsewhere/i.test(why)) throw invalidErr(why);   // (ITEM 9)
     throw new Error(why);
   }
   E.sheets.delete(sh.id);   // (its backPool moved: read again by whoever needs it)
@@ -537,7 +545,7 @@ async function poolFlags(ctx, E, t, lc, rec, job, copies) {
   const others = ((rec && rec.jobs) || []).filter(o => o && o.key !== job.key && !o.archived && copiesOf(E, lc, o).some(id => copies.includes(id)));
   const othersDone = others.every(o => ["written", "skipped", "none"].includes(o.state));
   const patch = front ? { engraveFront: true, engraveFrontApprovedBy: t.by } : { engrave: true, engraveApprovedBy: t.by };
-  if (othersDone) patch.state = "engraved";
+  if (othersDone && t.origin !== "edit") patch.state = "engraved";   // (ITEM 9: an edit of a piece already engraved, cut or packed changes its back only, never its state, as the page's edit)
   const live = copies.filter(id => { const p = E.piece.rows.get(id); return !p || !["abandoned", "superseded"].includes(p.state); });
   if (!live.length) return;
   const res = await ctx.call({ op: "poolUpdate", poolIds: live, patch }, `engrave-pool|${t.id}`);

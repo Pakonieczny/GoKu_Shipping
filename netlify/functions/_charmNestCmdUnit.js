@@ -19,7 +19,8 @@ const PASSING = /answer in time|timed out|network|HTTP 5\d\d|ECONNRESET|ETIMEDOU
 const num = v => (Number.isFinite(+v) ? +v : 0);
 const str = (v, n) => String(v == null ? "" : v).slice(0, n || 200);
 const minutes = t => Math.max(1, Math.round(t / 60000));
-const laneOn = (ctx, type) => (ctx.cloudSteps || []).includes("cmd:" + type);
+const { cmdLaneOn } = require("./_charmNestStandby");
+const laneOn = (ctx, type) => cmdLaneOn(ctx.cloudSteps || [], type);   // (GAP G2, Paul 21 Nov 2026: "cmd:<type>", or a lane on already that covers it: a hop while "cmd:seat" or "cmd:renest" is on)
 
 async function commandsUnit(ctx) {
   const { db, runId } = ctx, now = Date.now(), bucket = Math.floor(now / 60000);

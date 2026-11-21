@@ -200,7 +200,8 @@ async function workOrder(env, rid, jd, save) {
       await env.call({ op: "takeOffJournal", orderId: rid, ask: { id: aid, state: "taken" }, set: { due: true } }, `takeoff|ask|${rid}|${aid}`);
       continue;
     }
-    const key = `${a.kind}-${num(a.at)}`, job = { kind: a.kind, at: num(a.at) || now, by: str(a.by, 80) || "someone", note: str(a.note, 200), sheetId: a.sheetId || null, lineKeys: Array.isArray(a.lineKeys) ? a.lineKeys.slice(0, 50) : [], ask: aid, status: "due", tries: 0, runId: env.runId };
+    // (S5: only, the pieces the person chose, and scope, sheet or order, go with the press into its job: scopeOf takes off those pieces only)
+    const key = `${a.kind}-${num(a.at)}`, job = { kind: a.kind, at: num(a.at) || now, by: str(a.by, 80) || "someone", note: str(a.note, 200), sheetId: a.sheetId || null, lineKeys: Array.isArray(a.lineKeys) ? a.lineKeys.slice(0, 50) : [], ...(Array.isArray(a.only) && a.only.length ? { only: a.only.map(String).slice(0, 400) } : {}), ...(a.scope === "sheet" || a.scope === "order" ? { scope: a.scope } : {}), ask: aid, status: "due", tries: 0, runId: env.runId };
     await env.call({ op: "takeOffJournal", orderId: rid, job: key, create: job, ask: { id: aid, state: "taken", job: key }, set: { status: "due" } }, `takeoff|ask|${rid}|${aid}`);
     jd.jobs = Object.assign({}, jd.jobs, { [key]: (jd.jobs || {})[key] || job });
   }
@@ -213,7 +214,7 @@ async function workOrder(env, rid, jd, save) {
     catch (e) {
       if (e && (e.fenced || e.yielded || e.fatal)) throw e;
       const tries = num(job.tries) + 1, why = String((e && e.message) || e).slice(0, 300);
-      await env.call({ op: "takeOffJournal", orderId: rid, job: key, set: { status: tries >= MAX_TRIES ? "stuck" : "waiting", tries, why: tries >= MAX_TRIES ? `The cloud could not finish this take-off (${why}): press Try again, or take the pieces off on a computer` : why } }, `takeoff|fail|${rid}|${key}|${tries}`);
+      await env.call({ op: "takeOffJournal", orderId: rid, job: key, set: { status: tries >= MAX_TRIES ? "stuck" : "waiting", tries, why: tries >= MAX_TRIES ? stuckWords(env, why) : why } }, `takeoff|fail|${rid}|${key}|${tries}`);
       r = { status: "waiting" };
     }
     if (r.status === "done" || r.status === "restored") out.done++; else if (r.status === "held") out.held++; else out.waiting++;
@@ -225,24 +226,46 @@ async function workOrder(env, rid, jd, save) {
   return out;
 }
 
+/** The words of a take-off the cloud gave up on after MAX_TRIES. (S5, Paul 21 Nov 2026: "take the pieces off on a computer" is impossible in mode "on", where every page is a
+    viewer and the server refuses its production writes: there, Try again (a takeOffAsk retry, the button beside these words on every page) is the one way, and it is said so.) */
+function stuckWords(env, why) {
+  return env && env.mode === "on"
+    ? `The cloud could not finish this take-off (${why}): press Try again and the cloud starts it again`
+    : `The cloud could not finish this take-off (${why}): press Try again, or take the pieces off on a computer`;
+}
+
 /** The pieces of the order the job takes off, from its answer of getOrderPieces: { onSheets: Map sheetId → { sheet, ids }, loose: [ids], lineKeys } */
 function scopeOf(job, o, lines, rid) {
   const placement = (o && o.placement) || {}, sheets = new Map(((o && o.sheets) || []).map(s => [String(s.id), s]));
   // (an accepted change that names no line: the order's lines that wait on a change; a completed order: the lines the ledger covers)
-  const lineKeys = (job.kind === "changed" || job.kind === "completed") ? ((job.lineKeys || []).length ? job.lineKeys.slice() : job.kind === "changed" ? Object.keys(lines).filter(k => ridOf(k) === rid && lines[k] && (lines[k].changePending || lines[k].repoolChanged)) : null) : null;
-  const inScope = id => (!lineKeys || lineKeys.some(k => String(id).startsWith(k + "_"))) && String(id).startsWith(rid + "_");
+  // (S1, Paul 21 Nov 2026: a hold that names its lines, a person's Skip piece in Review on a staff computer, takes off the pieces of those lines only)
+  let lineKeys = (job.kind === "changed" || job.kind === "completed" || (job.kind === "hold" && (job.lineKeys || []).length)) ? ((job.lineKeys || []).length ? job.lineKeys.slice() : job.kind === "changed" ? Object.keys(lines).filter(k => ridOf(k) === rid && lines[k] && (lines[k].changePending || lines[k].repoolChanged)) : null) : null;
+  /* (S2, Paul 21 Nov 2026: "Accept the new order" pressed on a viewer is this job.) An accepted change names only lines that still wait on a change: the same press from a second computer,
+     or a job run again after its lines were written, moves nothing a second time. And, as the page's acceptChange: a line whose pieces were made already (written / pooled) and whose change
+     does not touch what it is made of (no repoolChanged) keeps its pieces where they are and only stops waiting (keepPlace); the others come off and are made up again. */
+  let keepPlace = null;
+  if (job.kind === "changed") {
+    lineKeys = lineKeys.filter(k => lines[k] && (lines[k].changePending || lines[k].repoolChanged));
+    keepPlace = new Set(lineKeys.filter(k => !lines[k].repoolChanged && ["written", "pooled"].includes(String(lines[k].state || ""))));
+  }
+  const moves = lineKeys && keepPlace ? lineKeys.filter(k => !keepPlace.has(k)) : lineKeys;
+  // (S5, Paul 21 Nov 2026: the sheet window's "Only this charm" / "The whole order" on a staff computer: only the pieces the person chose come off, the rest of the order stays;
+  //  scope "order" takes them off wherever they are, scope "sheet" (or none, as before) off the job's sheet only)
+  const only = Array.isArray(job.only) && job.only.length ? new Set(job.only.map(String)) : null;
+  const bySheet = !!job.sheetId && job.scope !== "order";
+  const inScope = id => (!only || only.has(String(id))) && (!moves || moves.some(k => String(id).startsWith(k + "_"))) && String(id).startsWith(rid + "_");
   const onSheets = new Map(), loose = [];
   for (const [id, p] of Object.entries(placement)) {
     if (!p || !inScope(id)) continue;
     if (p.state === "sheet" && p.sheetId) {
-      if (job.sheetId && String(p.sheetId) !== String(job.sheetId)) continue;
+      if (bySheet && String(p.sheetId) !== String(job.sheetId)) continue;
       const k = String(p.sheetId); if (!onSheets.has(k)) onSheets.set(k, { sheet: sheets.get(k) || { id: k }, ids: [], label: p.sheetLabel || k });
       onSheets.get(k).ids.push(id);
-    } else if (p.state === "waiting" && !job.sheetId) loose.push(id);
+    } else if (p.state === "waiting" && !bySheet) loose.push(id);
   }
   // (the lines the job changes: those it names, else every line of the order the run holds)
   const keys = lineKeys || Object.keys(lines).filter(k => ridOf(k) === rid);
-  return { onSheets, loose, lineKeys: keys };
+  return { onSheets, loose, lineKeys: keys, keepPlace };
 }
 
 /** One take-off job, from its first step to its last; every step can run again. → { status } */
@@ -353,13 +376,14 @@ async function patchLines(env, rid, key, job, sc, removed, kept, taken, refused,
     } else if (job.kind === "hold" || job.kind === "sheetOff") {
       const touched = ids.some(id => removed.has(id)) || (job.kind === "hold" && !job.sheetId);
       if (!touched) continue;
-      if (!rest.length && l.state !== "gone" && l.state !== "held") {
+      if (!rest.length && l.state !== "gone" && l.state !== "held" && l.state !== "skipped") {   // (S1: a skipped line stays skipped: only its pieces leave)
         const text = `Taken off ${names || "its sheet"} by ${job.by || "someone"}${job.note ? ": " + job.note : ""}`;
         Object.assign(p, { state: "held", hold: text, reason: text, heldAt: now, holdSeen: false });
       }
     } else if (job.kind === "changed") {
       const cut = ids.filter(id => kept.has(id));
-      if (cut.length || refused.length) {
+      if (sc.keepPlace && sc.keepPlace.has(k)) { if (l.changePending || l.repoolChanged) Object.assign(p, { changePending: false, repoolChanged: false }); }   // (S2: its pieces stay where they are)
+      else if (cut.length || refused.length) {
         const where = joinAnd([...new Set(refused.map(x => x.where))]), text = cut.length ? "Etsy changed this piece after it was cut: make the change by hand, then release it (the piece on that sheet is kept) or skip it" : `The new piece could not replace the old one yet (${where}): try it again, or make the change by hand`;
         Object.assign(p, { changePending: false, repoolChanged: false, state: "held", hold: text, reason: text });
       } else if (l.changePending || l.repoolChanged || ids.length) Object.assign(p, { poolIds: [], changePending: false, repoolChanged: false, state: "pulled", reason: null, hold: null });
@@ -462,4 +486,4 @@ async function due(db, S, now) {
   return { why: null, reads };
 }
 
-module.exports = { lane, due, STEPS, revalidate, noticeText, fatesOf, scopeOf, COLL, LOOK_MS };
+module.exports = { lane, due, STEPS, revalidate, noticeText, fatesOf, scopeOf, stuckWords, COLL, LOOK_MS };

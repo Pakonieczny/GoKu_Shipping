@@ -267,7 +267,7 @@ async function pool(c, o = {}) {
   const lines = run.lines || {};
   // (Gate.modern: only a run made by the cloud's runOpen, release policy 2, takes every line; an older run's release days are a computer's)
   if (+run.releasePolicy !== 2) return Object.assign(out, { wait: "intake", why: "This run keeps the release days of before the cloud (its release policy is not 2): a computer carries it" });
-  const cand = Object.entries(lines).filter(([k, l]) => l && POOL_STATES.has(l.state) && !(l.state === "held" && l.hold) && /^\w[\w\-]*_[\w\-]+$/.test(k));
+  const cand = Object.entries(lines).filter(([k, l]) => l && POOL_STATES.has(l.state) && !(l.state === "held" && l.hold) && /^\w[\w\-]*_[\w\-]+$/.test(k) && (!o.only || o.only.has(k)));   // (o.only, CUSTOMSEND: a person's Send to Sheet makes up its own lines only)
   if (!cand.length) return out;
   // the reads, together: the world's reading of each line, the run's sheets, the lines' pieces, the ledger, the cancels, the sends to sheet, the settings
   const keys = cand.map(([k]) => k), rids = [...new Set(keys.map(ridOf))];
@@ -290,7 +290,7 @@ async function pool(c, o = {}) {
   }
   if (stale) out.waitWorld = stale;
   if (!work.length) return out;
-  const H = Host.host({ db, settings: settings.settings, stockPreset: settings.stockPreset, rows: new Map(rows), listed: sh.listed, sheets: sh.sheets, cancelled, specs, run, budgetMs: Math.max(1000, num(c.budgetEnd) - Date.now()), log: c.say });
+  const H = Host.host({ db, settings: settings.settings, stockPreset: settings.stockPreset, rows: new Map(rows), listed: sh.listed, sheets: sh.sheets, cancelled, specs, run, sends, budgetMs: Math.max(1000, num(c.budgetEnd) - Date.now()), log: c.say });
   const M = H.make, B = H.B;
   // the library's records the lines name (the design, a pair's or a set's other designs), read together; the library's size only when a line names a SKU it does not hold
   const skus = []; for (const r of work) { const sp = r.spec || {}; if (sp.designSku) skus.push(sp.designSku); const pr = sp.pair || {}; for (const m of Array.isArray(pr.members) ? pr.members : []) if (m && m.sku) skus.push(m.sku); if (pr.set && Array.isArray(pr.set.designs)) skus.push(...pr.set.designs); }
@@ -304,7 +304,8 @@ async function pool(c, o = {}) {
     const rid = ridOf(row.key), sent = sends.get(row.key);
     if (cancelled.has(rid)) continue;   // (the take-off unit takes a cancelled order's pieces off; no new piece is made for it)
     // a send to sheet (Custom Orders): its pieces are its card's designs, made by its own job. KEPTWINS: unless the card's design was saved to the repository and the line reads as it
-    if (sent && !(row.spec && row.spec.customDone) && !keptFromCard(row, sent, H.Master)) continue;
+    // (CUSTOMSEND, 21 Nov 2026: a send the cloud holds as SENT is made here from the card's own designs, H.CustomSheet = _charmNestCustomMake.js; a press still pending waits, as on the page)
+    if (sent && !(row.spec && row.spec.customDone) && !keptFromCard(row, sent, H.Master) && sent.phase !== "sent") continue;
     // bridge recover: a line held for a passing failure before (no person's hold, no problem) is in progress again
     if (row.state === "held" && !row.hold && !(row.problems && row.problems.length) && M.passing(row.reason)) { row.state = "pulled"; row.reason = null; delete row.poolError; delete row.poolTry; }
     const lv = liveRows(row, B.pool.rows);

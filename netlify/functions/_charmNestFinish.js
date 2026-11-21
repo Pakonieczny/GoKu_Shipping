@@ -347,7 +347,16 @@ STEP.S7 = async X => {
       sheet.feedWait = fw.length ? fw : null;
     }
     if (rec.problemStop && sh.placements.length) { sheet.problem = null; sheet.problemStop = null; }
-    const ans = await X.call({ op: "putSheet", sheet, layoutBase: job.base.layoutRev, contentBase: job.base.contentRev, filesJobBase: job.jobId }, "record");
+    const ans = await X.call(Object.assign({ op: "putSheet", sheet, layoutBase: job.base.layoutRev, contentBase: job.base.contentRev, filesJobBase: job.jobId }, typeof W.pinKey === "string" && W.pinKey ? { pinsBase: W.pinKey } : {}), "record");
+    /* G8: a person pinned or unpinned a charm of the sheet after this layout was made (putSheet pinMoved): nothing was written; the layout is made again from the record as it is
+       now (S1: the pins merged again), three times at most, then the job ends superseded and the files stay owed. */
+    if (ans && ans.pinMoved) {
+      if (num(job.pinRedo) >= 3) throw new Stop("superseded", ans.error || "a charm was pinned while the sheet's files were made: they are made again");
+      job.pinRedo = num(job.pinRedo) + 1; X.notes.push("a charm was pinned or unpinned while the files were made: the layout is made again holding it");
+      X.rec = null; X.sh = null; X.W = null; X.byId = null; X.ai = null; X.labelled = null; X.areas = null; X.specBase = null;
+      await X.saveTask({ job });
+      return "S1";
+    }
     if (!ans || ans.status >= 400 || !ans.ok) {
       if (ans && (ans.conflict || ans.status === 409)) throw new Stop("superseded", (ans && ans.error) || "the sheet changed since its files were made: they are not written");
       throw new Stop("failed", (ans && ans.error) || "the sheet's record was not written");
@@ -559,6 +568,17 @@ async function layoutOf(X) {
   sh.placements = placements; sh.rejects = rejects; sh.nestInitial = (rec.placements || []).filter(p => p && byId.has(String(p.id))).map(norm);
   try { NP.keepOrdersWhole(sh, byId, new Set(r.pocketFilled || []), { orderKey: NP.orderKey, orderRank: c => NP.orderRank(c, X.O), groupOf: c => (c && c.groupKey && +c.groupSize > 1 ? String(c.groupKey) : null), agent: (who, kind, text) => X.notes.push(text) }); }
   catch (e) { X.notes.push("orders kept whole: " + e.message); }
+  /* G8 (Paul 21 Nov 2026): a charm a person pinned while the sheet was nested (sheetPinPatch moves no revision, so the nest never saw it) stays exactly where it is pinned: the
+     record's pins as they are now are merged into the nest's layout (_charmNestNest.js pinMerge); a piece the nest put where the pin stands makes room and is nested again around
+     it (the sheet's next nest: it is left unplaced, not turned away). The record's write says which pins this layout holds (pinsBase): one pressed after it is never written over. */
+  const Nest = require("./_charmNestNest"), pinKey = Nest.pinKeyOf(rec.charms);
+  const pm = Nest.pinMerge({ placements: sh.placements, rejects: sh.rejects, recCharms: rec.charms, recPlacements: rec.placements, has: id => byId.has(id), clearancePt: +X.S.settings.clearancePt || 0,
+    sizeOf: id => { const c = byId.get(id); return c ? { w: +c.widthPt || 0, h: +c.heightPt || 0 } : null; } });
+  if (pm.held.length) {
+    sh.placements = pm.placements; sh.rejects = pm.rejects;
+    X.notes.push(`${pm.held.length === 1 ? "A charm" : pm.held.length + " charms"} pinned while the sheet was nested ${pm.held.length === 1 ? "stays" : "stay"} where ${pm.held.length === 1 ? "it is" : "they are"} pinned${pm.lifted.length ? `; ${pm.lifted.length} piece(s) make room and are nested again around ${pm.held.length === 1 ? "it" : "them"}` : ""}`);
+  }
+  const pinned = new Set(pm.held);
   // (the 2.9 % shrink of every charm written, about its own centre; a piece already on the sheet keeps the size it was written at when the nest appended (appendOnly), a protected Rose Gold one its own; a
   //  piece resized by hand at that size; a custom design at 100 %)
   const was = new Map((rec.placements || []).map(p => [String(p.id), p])), prot = new Map(((sh.roseProtected && sh.roseProtected.placements) || []).map(p => [String(p.id), +p.scale]));
@@ -566,11 +586,12 @@ async function layoutOf(X) {
   for (const p of sh.placements) {
     const c = byId.get(p.id), w = was.get(p.id), m = NP.manualSize(c), keep = prot.get(p.id) || ((nest.appendOnly === true || (nest.appendOnly == null && same(p, w))) && w && +w.scale > 0 ? +w.scale : 0);
     p.scale = keep || (m !== 1 ? +(X.Host.CHARM_SCALE * m).toFixed(5) : X.Host.CHARM_SCALE); delete p.fixScale;
+    if (pinned.has(p.id) && w && +w.scale > 0) p.scale = +w.scale;   // (G8: a charm held where it is pinned keeps the size it is written at there)
   }
   X.CustomPool.holdSize(sh.placements, byId, sh);
   const ids = new Set(sh.placements.map(p => p.id));
   sh.nestInitial = sh.placements.filter(p => was.has(p.id)).map(p => Object.assign({}, p));   // (the saved layout as this write holds it: the checks and the fixes keep it where it lies)
-  return { placements: sh.placements, rejects: sh.rejects.filter(id => !ids.has(id)), nestInitial: sh.nestInitial, dirty: gone > 0,
+  return { placements: sh.placements, rejects: sh.rejects.filter(id => !ids.has(id)), nestInitial: sh.nestInitial, dirty: gone > 0 || pm.lifted.length > 0, pinKey,
     result: { params: r.params || {}, endedBy: r.endedBy || "complete", trials: num0(r.trials), elapsedMs: num0(r.elapsedMs), density: num0(r.density), usablePt2: num0(r.usablePt2), freePt2: num0(r.freePt2), placedPt2: num0(r.placedPt2), pocket: r.pocket || null, metrics: r.metrics || null, pocketFilled: r.pocketFilled || [],
       // (build step 7b: what sheetFull and topupSettle read of a nest's result, and the later orders it left waiting their turn, feedWait)
       rejects: (r.rejects || []).map(String), feedWait: (r.feedWait || []).map(String), ...(r.smallRoom === false || r.smallRoom === true ? { smallRoom: r.smallRoom } : {}), ...(r.timedOut ? { timedOut: true, noRoom: (r.noRoom || []).map(String), capped: (r.capped || []).map(String) } : {}) } };

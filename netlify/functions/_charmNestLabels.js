@@ -10,7 +10,8 @@
  *    finalize                              Sets.finalize (~16011-16050) merged with SetEdit.remakeFiles: the labels PDF (one 145 pt page a label, vendored pdf-lib), the manifest PDF,
  *                                          set.json, each sheet's .pdf copy (sheetPdf), then the set's record (labels, status "labelled"); a COMMITTED set's files go through
  *                                          flowApply's setFiles step (applySetFiles), as the Library's edit of a committed set does
- *  Units:  passUnit   (pass item "labels", lane "labels")   the presses (labelsAsk: relabel | setFiles | complete) and every QR label a sheet of an open set owes
+ *  Units:  passUnit   (pass item "labels", lane "labels")   the presses (labelsAsk: relabel | setFiles | complete) and every QR label a sheet of an open set owes; the presses are
+ *                     answered whether or not a run is open (G5: the item is "runless", the driver runs it in a pass with no open run too, each ask on its set's / sheet's own run's records)
  *          stepUnit   (the run's "labels" step)              behind the Etsy freshness gate (§1.8a): each open set's release check and files, or its deferral with words
  *  Every Storage write is fenced first (the pass's lease nonce read again, and the run's carrier: C7); paths, bytes, tokens and timeline ids are deterministic, so a redo writes the
  *  same thing. Rendering yields between labels (P7). No Etsy call, no world build. DORMANT: runs only while the drive is "standby" or "on" with "labels" in drive.cloudSteps.       */
@@ -252,14 +253,54 @@ async function askList(db, runId) {
   return q.docs.map(d => d.data()).filter(a => a && (a.state === "asked" || (a.state === "working" && now - num(a.at) > 10 * 60000))).sort((a, b) => (a.runId === runId ? 0 : 1) - (b.runId === runId ? 0 : 1) || num(a.at) - num(b.at));
 }
 async function answer(ctx, ask, patch) { await ctx.call({ op: "labelsAskPut", key: ask.key, seq: ask.seq, patch }, `label-ask|${ask.key}|${ask.seq}|${patch.state}`); }
-/** The run an ask belongs to: the open run's own record (ctx.run), or another run's, read (its lines too). A ctx whose run is that run. */
+/** A run's record: the open run's own (ctx.run), or another run's, read (its lines too); a run the cloud no longer has reads as an empty one of today's rules. */
+async function runRecord(ctx, runId) {
+  if (ctx.run && ctx.run.runId && runId === ctx.run.runId) return ctx.run;
+  const got = runId ? await ctx.read({ op: "runGet", runId }) : null;
+  return (got && got.run) || { runId: runId || null, releasePolicy: 2, lines: {} };
+}
+/** The run an ask belongs to. A ctx whose run is that run (G5: also when no run is open, ctx.run null). */
 async function runCtx(ctx, runId) {
-  if (!runId || runId === ctx.run.runId) return ctx;
-  const got = await ctx.read({ op: "runGet", runId }), run = (got && got.run) || { runId, releasePolicy: 2, lines: {} };
-  return Object.assign({}, ctx, { run, runId });
+  if (ctx.run && ctx.run.runId && (!runId || runId === ctx.run.runId)) return ctx;
+  return Object.assign({}, ctx, { run: await runRecord(ctx, runId), runId: runId || null });
+}
+/** (G5) The run whose records answer an ask: a sheet's ask, for a sheet in a set, is answered with its SET's run (the set, its sheets, its pair notes), the sheet itself drawn from
+ *  its own run's record (withOwnRuns); a set's ask with the set's run; a sheet in no set with its own run. */
+async function askRunId(ctx, ask) {
+  if (ask.setId || !ask.sheetId) return ask.runId || null;
+  const sd = await ctx.db.collection("Charm_Nest_Sheets").doc(String(ask.sheetId)).get(), rec = sd.exists ? sd.data() || {} : null;
+  if (!rec) return ask.runId || null;
+  if (rec.draft || !rec.setId) return rec.runId || ask.runId || null;
+  const st = await ctx.db.collection("Charm_Nest_Sets").doc(String(rec.setId)).get(), setRun = st.exists ? (st.data() || {}).runId || null : null;
+  return setRun || rec.runId || ask.runId || null;
+}
+/** (G5) Every sheet the named sets list joins the view, each drawn from ITS OWN run's record when that is not the set's run (a sheet moved in the Library from another run's
+ *  drafts into a set keeps its run): Assembly.loadView reads the set's run's sheets only, so such a sheet was missing from its set and its label could not be drawn. */
+async function withOwnRuns(ctx, V, setIds) {
+  const have = new Set(V.pages.map(p => p.sheetId)), setsById = new Map(V.sets.map(s => [String(s.setId), s])), want = new Set((setIds || []).map(String));
+  const ids = [...new Set(V.sets.filter(s => want.has(String(s.setId))).flatMap(s => s.sheetIds || []).map(String))].filter(id => id && !have.has(id));
+  if (!ids.length) return V;
+  const runs = new Map(V.run && V.run.runId ? [[String(V.run.runId), V.run]] : []);
+  for (let i = 0; i < ids.length; i += 100) for (const d of await ctx.db.getAll(...ids.slice(i, i + 100).map(id => ctx.db.collection("Charm_Nest_Sheets").doc(id)))) {
+    if (!d.exists) continue;
+    const rec = Object.assign({ id: d.id }, d.data());
+    if (rec.archived === true || !rec.runId || (V.run && rec.runId === V.run.runId)) continue;   // (one of the set's own run that the view left out is archived or gone: as before)
+    const rid = String(rec.runId);
+    if (!runs.has(rid)) runs.set(rid, await runRecord(ctx, rid));
+    V.pages.push(Core.asPage(rec, { run: runs.get(rid), setsById, now: V.now }));
+    V.records.set(rec.id, rec);
+  }
+  return V;
+}
+/** The view of a run for the labels unit: its records (Assembly.loadView), with the named sets' sheets of other runs (withOwnRuns; every set of the view when none is named: only the sheets it left out are read). */
+async function viewOf(ctx, run, setIds, o) {
+  const V = await Assembly.loadView(Object.assign({ db: ctx.db, run, now: Date.now() }, o || {}));
+  return withOwnRuns(ctx, V, setIds || V.sets.map(s => s.setId));
 }
 async function doAsk(ctx0, ask) {
-  const ctx = await runCtx(Assembly.passKeyed(ctx0), ask.runId), run = ctx.run;
+  ctx0 = Assembly.passKeyed(ctx0);
+  const open = ctx0.run && ctx0.run.runId ? ctx0.run : null;   // (G5: the open run, or none: an ask is answered either way)
+  const ctx = await runCtx(ctx0, await askRunId(ctx0, ask)), run = ctx.run;
   // (setFiles: the set's files made again, behind the Etsy freshness gate (§1.8a), fresh since the press: the mail system synced and the world was built after it. While the gate
   //  fails, the ask waits as it is, its words written once when they change)
   if (ask.kind === "setFiles") {
@@ -273,15 +314,19 @@ async function doAsk(ctx0, ask) {
     if (ask.kind === "complete") {
       const s = await ctx.read({ op: "getSheet", id: ask.sheetId }), rec = s && s.sheet ? Object.assign({ id: ask.sheetId }, s.sheet) : null;
       if (!rec) throw new Error("That sheet is no longer in the Library");
-      if (rec.setId && !rec.draft) { const V = await Assembly.loadView({ db: ctx.db, run, now: Date.now() }), sh = V.pages.find(p => p.sheetId === rec.id), set = sh && V.sets.find(x => x.setId === sh.setId);
-        if (sh && set && !set.committedAt) await drawSheet(ctx, V, sh, set); return answer(ctx, ask, { state: "done", doneAt: Date.now() }); }
-      if (rec.runId === ctx0.run.runId && ctx0.run.releasePolicy === 2) {   // (the release press is the OPEN run's: a sheet of another run gets a label of its own, ownLabel)
+      // (Paul 21 Nov 2026, item 6: the sheet window's Make QR label from a viewer: "done" only once a label was made. A sheet of a COMMITTED set (or one whose set the run no longer
+      //  lists) used to be answered "done" with nothing drawn; it gets a label of its own, as the page's own press made it, unless it already has one)
+      const inSet = !!(rec.setId && !rec.draft);
+      if (inSet && run.runId) { const V = await viewOf(ctx, run, [rec.setId]), sh = V.pages.find(p => p.sheetId === rec.id), set = sh && V.sets.find(x => x.setId === sh.setId);
+        if (sh && set && !set.committedAt) { await drawSheet(ctx, V, sh, set); return answer(ctx, ask, { state: "done", doneAt: Date.now() }); }
+        if (((rec.label && rec.label.files) || []).length) return answer(ctx, ask, { state: "done", why: "it has its QR label already", doneAt: Date.now() }); }
+      if (!inSet && open && rec.runId === open.runId && open.releasePolicy === 2) {   // (the release press is the OPEN run's: a sheet of another run gets a label of its own, ownLabel)
         // (the release press: its release mark, then a look at the sets; a draft that still does not join gets back its filling state and the reason, sheetwin doLabel)
         const wasFull = !!rec.releaseFull, top = rec.topup && !rec.topup.closedAt ? Object.assign({}, rec.topup, { closedAt: Date.now(), byHand: true }) : rec.topup || null;
         const r = await ctx.call({ op: "putSheet", sheet: { id: rec.id, releaseFull: true, topup: top } }, `complete|${rec.id}|${ask.seq}`);
         if (!r || r.status >= 400) throw new Error(words(r));
         await Assembly.assemblyUnit(ctx);
-        const V = await Assembly.loadView({ db: ctx.db, run, now: Date.now() }), sh = V.pages.find(p => p.sheetId === rec.id);
+        const V = await viewOf(ctx, run), sh = V.pages.find(p => p.sheetId === rec.id);
         if (sh && !sh.draft) { const set = V.sets.find(x => x.setId === sh.setId); if (set) await drawSheet(ctx, V, sh, set); return answer(ctx, ask, { state: "done", doneAt: Date.now() }); }
         const G = Core.gate(V), open = G.newestOpenOf(run.runId), why = sh ? (sh.setWait || sh.cardinalHold || G.policy(sh, open ? open.seq : 0).reason) : "it is not in the run";
         if (!wasFull) await ctx.call({ op: "putSheet", sheet: { id: rec.id, releaseFull: false, topup: rec.topup || null }, reopen: true }, `complete-undo|${rec.id}|${ask.seq}`);
@@ -290,7 +335,8 @@ async function doAsk(ctx0, ask) {
       await ownLabel(ctx, rec);
       return answer(ctx, ask, { state: "done", doneAt: Date.now() });
     }
-    const V = await Assembly.loadView({ db: ctx.db, run, now: Date.now() });
+    if (!run.runId) throw new Error(ask.setId ? "That set is in no run of the cloud" : "That sheet is in no set of a run");
+    const V = await viewOf(ctx, run);
     const set = ask.setId ? V.sets.find(x => x.setId === ask.setId) : (() => { const sh = V.pages.find(p => p.sheetId === ask.sheetId); return sh && sh.setId ? V.sets.find(x => x.setId === sh.setId) : null; })();
     if (!set) throw new Error(ask.setId ? "That set is not one of the run's" : "That sheet is in no set of the run");
     if (ask.kind === "relabel") {
@@ -309,13 +355,15 @@ async function doAsk(ctx0, ask) {
 }
 async function passUnit(ctx) {
   ctx = Assembly.passKeyed(ctx);
-  const run = ctx.run; if (!run || run.releasePolicy !== 2) return undefined;
-  for (const ask of await askList(ctx.db, run.runId)) { if (Date.now() > ctx.budgetEnd) return { more: true }; const r = await doAsk(ctx, ask); if (r && r.more) return { more: true }; }
+  // (G5: a person's asks first, answered whether or not a run is open and whatever the open run's rules: each on its own set's / sheet's run's records)
+  const run = ctx.run && ctx.run.runId ? ctx.run : null;
+  for (const ask of await askList(ctx.db, run ? run.runId : null)) { if (Date.now() > ctx.budgetEnd) return { more: true }; const r = await doAsk(ctx, ask); if (r && r.more) return { more: true }; }
+  if (!run || run.releasePolicy !== 2) return undefined;
   // every label an open set's sheet owes (the assembly joined it; the cloud draws its label): the run's sets first, then only the sheets its open sets list
   const sq = await ctx.db.collection("Charm_Nest_Sets").where("runId", "==", run.runId).get(), sets = sq.docs.map(d => Object.assign({ setId: d.id }, d.data()));
   const ids = [...new Set(sets.filter(s => !s.committedAt && !/^superseded/.test(String(s.status || ""))).flatMap(s => s.sheetIds || []))];
   if (!ids.length) return undefined;
-  const V = await Assembly.loadView({ db: ctx.db, run, now: Date.now(), sets, ids });
+  const V = await viewOf(ctx, run, sets.filter(s => !s.committedAt && !/^superseded/.test(String(s.status || ""))).map(s => s.setId), { sets, ids });   // (G5: a sheet of another run in an open set too)
   let drawn = 0;
   for (const set of V.sets.filter(s => !s.committedAt && (s.sheetIds || []).length)) for (const sh of sheetsOf(V, set)) {
     if (labelsReady(V, sh, set)) continue;
@@ -329,7 +377,7 @@ async function passUnit(ctx) {
 async function stepUnit(ctx) {
   ctx = Assembly.passKeyed(ctx);
   const run = ctx.run; if (!run || run.releasePolicy !== 2) return undefined;
-  const V = await Assembly.loadView({ db: ctx.db, run, now: Date.now() }), G = Core.gate(V), sets = V.sets.filter(s => (s.sheetIds || []).length && !s.committedAt);
+  const V = await viewOf(ctx, run), G = Core.gate(V), sets = V.sets.filter(s => (s.sheetIds || []).length && !s.committedAt);   // (G5: an open set's sheets of another run, from their own run's records)
   if (!sets.length) return undefined;
   const gate = await ctx.gate({ receipts: [...new Set(sets.flatMap(s => Object.keys(s.orders || {})))] });
   if (!gate.ok) return { wait: "world", why: gate.why.join("; ") };
@@ -356,7 +404,7 @@ async function stepUnit(ctx) {
   return undefined;
 }
 
-module.exports = { passUnit, stepUnit, drawSheet, ownLabel, finalize, releaseIssue, evaluate, labelPlan, labelsReady, pairNotes, fenceCheck, upload, doAsk };
+module.exports = { passUnit, stepUnit, drawSheet, ownLabel, finalize, releaseIssue, evaluate, labelPlan, labelsReady, pairNotes, fenceCheck, upload, doAsk, withOwnRuns, askRunId };
 /* the steps file's entry (_charmNestSteps.js): the pass item "labels" (lane "labels"), and the run's labels step: the automatic Rose Gold cut first (as the page's Gate.flush ran it
    before the labels), only while the lane "rosecut" is the cloud's, then each set's release check and files */
-module.exports.units = reg => ({ passItems: [{ name: "labels", lane: "labels", unit: passUnit }], labels: [ctx => ((ctx.cloudSteps || []).includes("rosecut") && typeof reg.named.greenAuto === "function" ? reg.named.greenAuto(ctx) : undefined), stepUnit] });
+module.exports.units = reg => ({ passItems: [{ name: "labels", lane: "labels", unit: passUnit, runless: true }], labels: [ctx => ((ctx.cloudSteps || []).includes("rosecut") && typeof reg.named.greenAuto === "function" ? reg.named.greenAuto(ctx) : undefined), stepUnit] });

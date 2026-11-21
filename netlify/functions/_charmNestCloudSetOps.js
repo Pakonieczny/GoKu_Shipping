@@ -9,7 +9,10 @@
  *                                  { kind: "relabel" | "setFiles" | "complete" } ("complete": the sheet window's Make QR label, the one way a person completes a partial sheet)
  *    labelsAskGet      READ        the asks of a set or a sheet (their state and words)
  *    labelsAskPut      CLOUD_ONLY  the cloud's answer to an ask (working, done, refused with words)
- *    roseCutAsk        PRESS       a person's Cut Sheet / Approve & cut green line on a Rose Gold, 10K or 14K sheet: Charm_Nest_Cut_Asks/<sheetId> { kind: "cut" | "joinFull" }
+ *    roseCutAsk        PRESS       a person's Cut Sheet / Approve & cut green line on a Rose Gold, 10K or 14K sheet: Charm_Nest_Cut_Asks/<sheetId> { kind: "cut" | "joinFull" | "line" (item 4) }; and (item 7)
+ *                                  its In current set switch pressed on a viewer { kind: "include" | "exclude" } (_charmNestGreenLine.js member); and (G3) a Library move of ANY sheet
+ *                                  of an open run on a viewer, the same kinds, with the set it was dropped on { setId?, newSet?, via: "library" }
+ *                                  is cut already put into its set on a viewer { kind: "join", setId?: the set it was dropped on } (_charmNestGreenLine.js joinCut: never cut again)
  *    roseCutAskGet     READ        those asks, for the cards
  *    roseCutAskPut     CLOUD_ONLY  the cloud's answer (working, done with the cut, refused with the server's words)
  *    runLinesRetire    PRODUCTION  the lines of the orders the run is done with leave the run's live lines once its line archive holds each of them exactly as it is (RunCtl recordOf)
@@ -22,7 +25,7 @@
 const ASSEMBLY = "Charm_Nest_Assembly", GREEN = "Charm_Nest_Green", LABEL_ASKS = "Charm_Nest_Label_Asks", CUT_ASKS = "Charm_Nest_Cut_Asks";
 const SANDBOXED_ADD = [ASSEMBLY, GREEN, LABEL_ASKS, CUT_ASKS];
 const DOC_BYTES = 900000;
-const ASK_KINDS = new Set(["relabel", "setFiles", "complete"]), CUT_KINDS = new Set(["cut", "joinFull"]);
+const ASK_KINDS = new Set(["relabel", "setFiles", "complete"]), CUT_KINDS = new Set(["cut", "joinFull", "line", "include", "exclude", "join"]);   // (VIEWINCLUDE, item 7, Paul 21 Nov 2026: include / exclude, a viewer's In current set switch; G4: join, a cut sheet into its set)
 const GREEN_METALS = new Set(["rose", "gold10k", "gold14k"]);
 
 module.exports = function (deps) {
@@ -114,18 +117,24 @@ module.exports = function (deps) {
   async function op_roseCutAsk(b) {
     const sheetId = str(b.sheetId, 80), kind = str(b.kind || "cut", 20), by = str(b.by, 80).trim(), dev = str(b.dev, 60);
     if (!isId(sheetId)) return { error: "bad sheet id", status: 400 };
-    if (!CUT_KINDS.has(kind)) return { error: "ask for cut or joinFull", status: 400 };
+    if (!CUT_KINDS.has(kind)) return { error: "ask for cut, joinFull, line, include, exclude or join", status: 400 };
+    const member = kind === "include" || kind === "exclude";   // (VIEWINCLUDE: the sheet's own yes for its set, or its take-out: a cut sheet's place is answered by the cloud's set rules, in words)
+    const join = kind === "join", want = join && isId(str(b.setId, 80)) ? str(b.setId, 80) : null;   // (G4, Paul 21 Nov 2026: a cut sheet joins its set by the set rules, never cut again)
     if (!by) return { error: "Say who is pressing Cut Sheet", status: 400 };
     const ref = col(CUT_ASKS).doc(sheetId);
     const out = await db.runTransaction(async tx => {
       const s = await tx.get(col(SHEETS).doc(sheetId)); if (!s.exists) return { error: "That sheet is no longer in the Library", status: 404 };
       const d = s.data() || {};
-      if (!GREEN_METALS.has(d.metal)) return { error: "Only a Rose Gold, 10K or 14K Gold sheet has a green line", status: 409 };
-      if (d.roseCutAt) return { error: "This sheet's green line cut is recorded already", status: 409, cut: true };
+      if (!GREEN_METALS.has(d.metal) && !member) return { error: "Only a Rose Gold, 10K or 14K Gold sheet has a green line", status: 409 };   // (G3: a Library move of any sheet of an open run is an include / exclude ask too)
+      if (d.roseCutAt && !member && !join) return { error: "This sheet's green line cut is recorded already", status: 409, cut: true };
+      if (join && !d.roseCutAt) return { error: "This sheet's green line is not cut yet: press Cut Sheet (or Approve & cut green line) and it joins its set with its cut", status: 409 };   // (G4)
       if (num(d.laserDoneAt) > 0) return { error: "This sheet has been cut on the laser", status: 409 };
       const ex = await tx.get(ref), old = ex.exists ? ex.data() || {} : null;
       if (old && (old.state === "asked" || old.state === "working")) return { ok: true, ask: old, again: true };
-      const ask = { sheetId, runId: d.runId || null, metal: d.metal, kind, by, dev, at: Date.now(), seq: num(old && old.seq) + 1, state: "asked", why: null, cutAt: null, stockId: null, revision: null };
+      const ask = { sheetId, runId: d.runId || null, metal: d.metal, kind, by, dev, at: Date.now(), seq: num(old && old.seq) + 1, state: "asked", why: null, cutAt: null, stockId: null, revision: null, setId: want };   // (setId: G4, the set a join was dropped on, for the answer's words)
+      // (G3, Paul 21 Nov 2026: a Library move on a viewer names the set it was dropped on (setId), or New set; the cloud's set rules decide, and its answer says where the sheet went)
+      if (member && kind === "include") { const to = str(b.setId, 80); if (to && isId(to)) ask.setId = to; if (b.newSet === true) ask.newSet = true; }
+      if (member && str(b.via, 20) === "library") ask.via = "library";
       tx.set(ref, Object.assign({}, ask, { updatedAt: FV.serverTimestamp() }));
       return { ok: true, ask };
     });

@@ -316,6 +316,57 @@ async function kickDriver(db, by, o = {}) {
   } catch (e) { console.warn("[nest] the driver was not told:", e && e.message); return { error: true }; }
 }
 
+/* ── G8 (Paul 21 Nov 2026: "a pin pressed while a cloud nest of that sheet is already running may be lost when that nest's result is written") ──
+   A person's pin (sheetPinPatch, item 12) marks the record's charm (manual { by, at }, pinned at the record's pose) and moves no revision, so a nest prepared before it never saw it
+   and its layout may put the charm elsewhere. The sheet writer (_charmNestFinish.js layoutOf) merges the record's CURRENT pins into the nest's layout as it applies it: a pinned charm
+   is put back exactly where it is pinned (out of the rejects too), and a piece the nest put where the pin stands makes room (it leaves the layout, not the sheet: the sheet's next
+   nest places it around the pin). The record's write carries pinsBase (pinKeyOf of the marks the layout was made with): a pin or unpin landing between the layout and the write
+   refuses that write (putSheet, pinMoved) and the writer makes the layout again from the record as it is then. A pin is never lost. */
+/** A person's pins on a record (a manual mark, never the run's own arrival pin): id -> the place it is pinned at { cxPt, cyPt, angle, scale?, wPt, hPt }. */
+function personPins(recCharms, recPlacements) {
+  const at = new Map((Array.isArray(recPlacements) ? recPlacements : []).filter(p => p && p.id != null).map(p => [String(p.id), p])), out = new Map();
+  for (const c of Array.isArray(recCharms) ? recCharms : []) {
+    if (!c || c.excluded || !c.manual || typeof c.manual !== "object" || c.arrivalPin) continue;
+    const id = String(c.id), p0 = at.get(id) || null, pin = c.pinned && Number.isFinite(+c.pinned.cxPt) && Number.isFinite(+c.pinned.cyPt) ? c.pinned : p0;
+    if (!pin || !Number.isFinite(+pin.cxPt) || !Number.isFinite(+pin.cyPt)) continue;
+    out.set(id, { cxPt: +pin.cxPt, cyPt: +pin.cyPt, angle: +pin.angle || 0, scale: p0 && +p0.scale > 0 ? +p0.scale : null, wPt: num(p0 && p0.wPt), hPt: num(p0 && p0.hPt) });
+  }
+  return out;
+}
+/** The key of a record's person marks (who, when, size, where pinned): it changes with every Pin and Unpin, and with nothing else. */
+function pinKeyOf(charms) {
+  const list = (Array.isArray(charms) ? charms : []).filter(c => c && c.manual && typeof c.manual === "object")
+    .map(c => [String(c.id), str(c.manual.by, 80), num(c.manual.at), num(c.manual.size), String(c.manual.fit || ""), c.pinned ? [num(c.pinned.cxPt), num(c.pinned.cyPt), num(c.pinned.angle), num(c.pinned.size)] : null, !!c.arrivalPin])
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  return "pk" + sha(JSON.stringify(list), 16);
+}
+/** A layout made by a nest, with the record's person pins kept: o = { placements, rejects, recCharms, recPlacements, has(id), sizeOf(id) -> { w, h }, clearancePt }.
+    -> { placements, rejects, held: [ids put back where they are pinned], lifted: [ids that made room] } (new arrays; nothing given is changed). */
+function pinMerge(o) {
+  const pins = personPins(o.recCharms, o.recPlacements), held = [], lifted = [];
+  let placements = (o.placements || []).map(p => Object.assign({}, p)), rejects = (o.rejects || []).map(String);
+  const near = (a, b) => Math.abs(+a.cxPt - b.cxPt) < 1e-3 && Math.abs(+a.cyPt - b.cyPt) < 1e-3 && Math.abs((+a.angle || 0) - b.angle) < 1e-6;
+  for (const [id, pin] of pins) {
+    if (typeof o.has === "function" && !o.has(id)) continue;
+    const i = placements.findIndex(p => p && String(p.id) === id);
+    if (i >= 0 && near(placements[i], pin)) continue;
+    const p = Object.assign({}, i >= 0 ? placements[i] : { id }, { id, cxPt: pin.cxPt, cyPt: pin.cyPt, angle: pin.angle }, pin.scale ? { scale: pin.scale } : {}, pin.wPt > 0 ? { wPt: pin.wPt } : {}, pin.hPt > 0 ? { hPt: pin.hPt } : {});
+    if (i >= 0) placements[i] = p; else placements.push(p);
+    rejects = rejects.filter(x => x !== id); held.push(id);
+  }
+  if (!held.length) return { placements, rejects, held, lifted };
+  // (the room a held pin needs: each piece's box, turned, with the clearance; a piece the nest put there makes room; a pinned piece never moves)
+  const clr = Math.max(0, num(o.clearancePt)), box = p => {
+    const z = typeof o.sizeOf === "function" ? o.sizeOf(String(p.id)) || {} : {}, w = num(p.wPt) > 0 ? num(p.wPt) : num(z.w), h = num(p.hPt) > 0 ? num(p.hPt) : num(z.h), a = (+p.angle || 0) * Math.PI / 180;
+    return { x: +p.cxPt, y: +p.cyPt, w: Math.abs(w * Math.cos(a)) + Math.abs(h * Math.sin(a)), h: Math.abs(w * Math.sin(a)) + Math.abs(h * Math.cos(a)) };
+  };
+  const hit = (a, b) => Math.abs(a.x - b.x) < (a.w + b.w) / 2 + clr && Math.abs(a.y - b.y) < (a.h + b.h) / 2 + clr;
+  const gone = new Set();
+  for (const id of held) { const a = box(placements.find(p => String(p.id) === id)); for (const q of placements) { const qid = String(q.id); if (!pins.has(qid) && !gone.has(qid) && hit(a, box(q))) gone.add(qid); } }
+  placements = placements.filter(p => !gone.has(String(p.id))); lifted.push(...gone);
+  return { placements, rejects, held, lifted };
+}
+
 module.exports = { start, pumpLanes, keepSlots, ensureSlot, kickSlot, kickDriver, slotsEnded, DEAD_MS, readSettings, readPolicy, stockFor, cornerPt, angleSet, usableArea, inflatedArea, topupRoom, groupOf, planEnv, plateOf,
-  poolRowsOf, roseStockOf, sheetsOfRun, jobsOfRun, inputKeyOf, owedNest, refusal, activeCharms, jobBase, attemptId, seedOf, inputPathOf, jobRef, slotRef,
+  poolRowsOf, roseStockOf, sheetsOfRun, jobsOfRun, inputKeyOf, owedNest, refusal, activeCharms, personPins, pinKeyOf, pinMerge, jobBase, attemptId, seedOf, inputPathOf, jobRef, slotRef,
   JOBS, SHEETS, POOL, CARRIER, OPEN, CLOUD_DEV, MAX_ATTEMPTS, AUTO_ERROR_ATTEMPTS, MAX_SLOTS, MAX_SLOT_TRIES, CLOUD_CORES, ENDED, DEFAULTS, num, str, isId, sha };

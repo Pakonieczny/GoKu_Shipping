@@ -48,7 +48,7 @@ for (const op of words(`labelsAsk roseCutAsk`)) PRESS.add(op);
 for (const op of words(`assemblyGet labelsAskGet roseCutAskGet setReadiness`)) READ.add(op);
 /* build step 13 (a person's requests done by the cloud, _charmNestCmdOps.js): the claim is the carrier's work (a page claims only while it carries, never in mode "on");
    the request's journal and its sheet writes are the cloud's own */
-PRODUCTION.add("runCmdClaim"); for (const op of words(`cmdWorkPut cmdMovePieces cmdLeaveSet cmdVacate cmdPutBack`)) CLOUD_ONLY.add(op);
+PRODUCTION.add("runCmdClaim"); for (const op of words(`cmdWorkPut cmdMovePieces cmdHopPieces cmdLeaveSet cmdVacate cmdPutBack`)) CLOUD_ONLY.add(op);   // (cmdHopPieces: ITEM 13, Paul 21 Nov 2026, a sheet hop from a viewer)
 
 /* The cloud's allowlist (section 1.4): the reads, then the writes, as they exist today. A new op joins in the build step that adds it. */
 const CLOUD_READS = words(`runGet runOpen worldGet getSheet getOrderPieces poolGet poolList cancelList cancelCheck shippedByUs masterList optionMapGet aliasGet
@@ -77,13 +77,20 @@ CLOUD_READS.push("engraveSyncGet"); CLOUD_WRITES.push("engraveSyncPut");
    (Claude only: its question is built from the line's records, never a picture, never Etsy); getAgent reads that reading back. startAgent itself stays DENIED. */
 CLOUD_WRITES.push("engraveIntentStart"); CLOUD_READS.push("getAgent");
 CLOUD_READS.push("commitGet", "setCommitCheck"); CLOUD_WRITES.push("commitJournal");   // (build step 12: sending finished sets to the Design Station)
-CLOUD_WRITES.push(...words(`runCmdClaim cmdWorkPut cmdMovePieces cmdLeaveSet cmdVacate cmdPutBack`));   // (build step 13)
+CLOUD_WRITES.push(...words(`runCmdClaim cmdWorkPut cmdMovePieces cmdHopPieces cmdLeaveSet cmdVacate cmdPutBack`));   // (build step 13)
 CLOUD_ONLY.add("finishOverflow"); CLOUD_WRITES.push("finishOverflow");   // (build step 7b: the sheet writer's overflow, what a nest turned away moved on to the next sheet: _charmNestFinishOps.js)
 const CLOUD_OPS = new Set([...CLOUD_READS, ...CLOUD_WRITES]);
 /* RELEASEHOLD (Paul, 20 Nov 2026; build step 13, live): a person's Release Hold press, done in the cloud at once (_charmNestHoldRelease.js): releaseAsk is a PRESS from a page and the cloud's own
    call when the driver's release unit finishes one a function left half done; releaseJobGet reads its journal. Neither calls Etsy. */
 PRESS.add("releaseAsk"); READ.add("releaseJobGet");
+/* (ITEM 10, Paul 21 Nov 2026): a person's "Done" on a Custom piece in the Charm Editor, and its Undo, done at once in mode "on" (_charmNestCustomDone.js): a page's press, never the cloud's */
+PRESS.add("customDone");
 CLOUD_WRITES.push("releaseAsk"); CLOUD_READS.push("releaseJobGet"); CLOUD_OPS.add("releaseAsk"); CLOUD_OPS.add("releaseJobGet");
+/* GAP G2 (Paul 21 Nov 2026): after a sheet hop the cloud asks itself for an approved set's files again (labelsAsk { kind: "setFiles" }, a press from a page; the cloud's own call from
+   _charmNestCmdExec.js hop), answered by its labels pass item. It writes only the ask; no Etsy call follows from it. */
+CLOUD_WRITES.push("labelsAsk"); CLOUD_OPS.add("labelsAsk");
+/* (S2, Paul 21 Nov 2026): Review's Resolved decisions in the cloud (_charmNestReviewSettled.js): a person's answer, and its read (the cloud world reads it through Lib.ops, not a cloud call) */
+PRESS.add("reviewSettledPut"); READ.add("reviewSettledGet");
 
 /* Never the cloud's (E5), each with its own test: they call Etsy, its image CDN or its switch, build the world (which may call Etsy), or start an agent job
    (a customRead job fetches Etsy's image CDN, _charmNestCustomRead.js). */

@@ -250,7 +250,18 @@ async function pass(env) {
     let runId = info.runId;
     if (!runId) {
       out.releases = await releasesUnit(db, call, say);   // (RELEASEHOLD: a release needs no run: its marks and its timeline step are the order's)
-      const sum = await db.collection("Charm_World").doc("summary").get(), openLines = sum.exists ? num((sum.data() || {}).live) : 0;
+      /* (G5, Paul 21 Nov 2026: staff keep full use of every input) the pass items that need no run ("runless": a person's label asks, each answered on its own set's / sheet's
+         run's records) run here too, each only while its lane is the cloud's, bounded like a unit; a failure is said and never stops anything; a fence or a hand-back ends the pass */
+      for (const item of (env.passItems || []).filter(it => it && it.runless && typeof it.unit === "function" && laneOn(cloudSteps, String(it.lane || it.name)))) {
+        if (Date.now() > budgetEnd - PASS_TAIL_MS) { out.again = true; break; }
+        live();
+        const t0 = Date.now(), itemCall = (b, u) => { if (Date.now() - t0 > UNIT_HARD_MS) throw Object.assign(new Error("the unit ran past its time: it goes on in the next pass"), { overBudget: true }); return call(b, u); };
+        try {
+          const r = await item.unit({ db, run: null, runId: null, step: "pass:" + item.name, cursor: {}, call: itemCall, read, drive, cloudSteps, state, fence, live, say, unitKey: `norun|pass|${item.name}`, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, t0 + UNIT_BUDGET_MS), gate: o => freshnessGate(db, Object.assign({ stepStartedAt: 0 }, o)), pass: true, runless: true });
+          out.units++; out.items = (out.items || 0) + 1; if (r && r.more) out.again = true;
+        } catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; if (e && e.overBudget) out.again = true; else { say(`[drive] ${item.name}: ${String((e && e.message) || e).slice(0, 300)}`); out.itemErrors = (out.itemErrors || []).concat([item.name]); } }
+      }
+      const sum =await db.collection("Charm_World").doc("summary").get(), openLines = sum.exists ? num((sum.data() || {}).live) : 0;
       if (drive.runMode === "auto" && openLines > 0 && owns("pull") && !drive.pending) {
         const made = await call({ op: "runOpen", mode: "auto", day: torontoDay(Date.now()) }, "open|" + torontoDay(Date.now()));
         out.opened = made && made.runId; say(`[drive] opened ${out.opened}`);
@@ -289,7 +300,7 @@ async function pass(env) {
     // ── take-offs (§1.6 item 2, build step 9, lane "takeoff"): cancelled, shipped at our station, completed at the Design Station, accepted changes, Hold and sheet Take off
     //    presses. Before intake and placement, so a cancelled order is never placed; while the run is stopped or resting too, as the page's AutoCancel.
     if (cloudSteps.includes("takeoff") && run.status !== "abandoned" && run.status !== "complete" && Date.now() < budgetEnd - PASS_TAIL_MS) {
-      out.takeoff = await TakeOff.lane({ db, run, runId, call, read, state, saveState, say, live, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, Date.now() + UNIT_BUDGET_MS) });
+      out.takeoff = await TakeOff.lane({ db, run, runId, call, read, state, saveState, say, live, mode: info.mode, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, Date.now() + UNIT_BUDGET_MS) });
       if (out.takeoff && out.takeoff.more) out.again = true;
     }
     // ── releases (§1.6 item 3, before intake; RELEASEHOLD): a Release Hold press releases the hold in the cloud at once (op releaseAsk); one a function left half done is finished here
@@ -485,12 +496,13 @@ async function control(run, k) {
   return { acted, stopped: stopped || run.status === "stopped" || run.status === "abandoned" };
 }
 /** A request a page sent (Charm_Nest_Run_Cmds) that the cloud cannot do yet: answered at once, in words, so it never waits for a computer that no longer carries the run.
- *  owned: the commands pass item is in this build (build step 13): a request whose lane "cmd:<type>" is the cloud's is left to it. */
+ *  owned: the commands pass item is in this build (build step 13): a request whose lane "cmd:<type>" is the cloud's is left to it (GAP G2: or a lane on already that covers it,
+ *  Standby.cmdLaneOn: a hop while "cmd:seat" or "cmd:renest" is on). */
 async function answerCommands(db, runId, cloudSteps, call, owned) {
-  const s = await db.collection(CMDS).doc(runId).get(), cmds = Object.values((s.exists && (s.data() || {}).cmds) || {}).filter(c => c && c.state === "waiting" && !(owned && cloudSteps.includes("cmd:" + c.type))).sort((a, b) => num(a.at) - num(b.at));
+  const s = await db.collection(CMDS).doc(runId).get(), cmds = Object.values((s.exists && (s.data() || {}).cmds) || {}).filter(c => c && c.state === "waiting" && !(owned && Standby.cmdLaneOn(cloudSteps, c.type))).sort((a, b) => num(a.at) - num(b.at));
   let n = 0;
   for (const c of cmds.slice(0, 10)) {
-    const lane = "cmd:" + c.type, why = cloudSteps.includes(lane) ? `The cloud carries this run and cannot do "${c.type}" yet: press Resume on a computer, then ask again` : `The cloud carries this run, and "${c.type}" is done on a computer: press Resume on a computer, then ask again`;
+    const why = Standby.cmdLaneOn(cloudSteps, c.type) ? `The cloud carries this run and cannot do "${c.type}" yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again` : `The cloud carries this run, and "${c.type}" is done by a computer in this build: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again`;
     await call({ op: "runCmdDone", runId, id: c.id, ok: false, text: why }, "cmd|" + runId + "|" + c.id); n++;
   }
   return n;
@@ -556,6 +568,12 @@ async function tick(env) {
     if (cloudCarries && cloudSteps.includes("sweeps") && now - num((S.sweeps || {}).at) >= 2 * 60000) why.push("a sweep is due");   // (build step 13: the repair sweeps' two-minute look)
   }
   if ((!runId || closed) && drive.runMode === "auto" && num(W.live) > 0 && owned.includes("pull") && !drive.pending) why.push("open orders and no run");
+  // (G5: a person's label ask waits for the cloud whether or not a run is open: one not looked at yet, one waiting with words looked at again every 2 minutes, one left working)
+  if (laneOn(cloudSteps, "labels") && !computerAlive) {
+    const lq = await db.collection("Charm_Nest_Label_Asks").where("state", "in", ["asked", "working"]).limit(20).get().catch(() => null); out.reads++;
+    const due = a => (a.state === "working" ? now - num(a.at) > 10 * 60000 && now - ms(a.updatedAt) > DISPATCH_STALE_MS : !a.why || now - ms(a.updatedAt) >= 2 * 60000);
+    if (lq && lq.docs.some(d => due(d.data() || {}))) why.push("a label ask waits");
+  }
   { const rq = await db.collection(require("./_charmNestHoldRelease").JOBS).where("state", "==", "lifting").limit(1).get().catch(() => null); out.reads++; const j = rq && !rq.empty ? rq.docs[0].data() || {} : null; if (j && now - Math.max(num(j.beatAt), num(j.at)) >= 60000) why.push("a release waits"); }   // (RELEASEHOLD: one a function left half done)
   if (L.again) why.push("asked again");
   if (run && !closed && computerAlive && Array.isArray(drive.shadow) && drive.shadow.length && now - num(S.shadowAt) > 5 * 60000) why.push("a shadow plan is due");   // (m:C7: every 5 minutes while a computer carries, and only when the owner asked for it)

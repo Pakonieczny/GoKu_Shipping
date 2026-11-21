@@ -18,7 +18,8 @@
  *       set went to the station, or (autoOnly) that holds this order alone, keeps the pieces: answered as kept, rows untouched (the page's leftWhy).
  *       sheetId null: the order's pieces that no live sheet lists (pooled, waiting): their rows only.
  *    takeOffJournal { orderId, job?, create?, set?, ask? }   (CLOUD_ONLY, fenced): the take-off journal, written before anything moves and after each step.
- *    takeOffAsk    { orderId, kind: hold | sheetOff | changed | retry, sheetId?, lineKeys?, note?, by, dev }   (a person's press; production only)
+ *    takeOffAsk    { orderId, kind: hold | sheetOff | changed | retry, sheetId?, lineKeys?, only?, scope?, note?, by, dev }   (a person's press; production only. only: the pieces
+ *                  chosen, only those come off; scope: sheet | order. → { askId, at, job }: job is the take-off the lane makes of it, for the page to follow)
  *    takeOffAck    { orderId, at?, by, dev, forget? }   (a person's "Set aside", or the cloud's "not cancelled any more": the notice goes from the shared store)
  *    takeOffGet    { orderIds }   (read: the journals, for every page's progress)                                                                                   */
 "use strict";
@@ -230,8 +231,14 @@ module.exports = function (d) {
     const rid = orderIdOf(b.orderId), kind = ASK_KINDS.has(b.kind) ? b.kind : null;
     if (!rid || !kind) return { error: "orderId and kind (hold, sheetOff, changed or retry) required" };
     const sheetId = b.sheetId ? str(b.sheetId, 80) : null; if (sheetId && !d.isId(sheetId)) return { error: "bad sheet id" };
-    if (kind === "sheetOff" && !sheetId) return { error: "which sheet the order comes off is required" };
     const lineKeys = [...new Set((Array.isArray(b.lineKeys) ? b.lineKeys : []).map(String).filter(k => k.startsWith(rid + "_") && k.length <= 80))].slice(0, 50);
+    /* (S5, Paul 21 Nov 2026: the sheet window's "Take off and hold", "Only this charm" or "The whole order", pressed on a staff computer, was refused: no sheet was sent, and the
+       pieces chosen were never kept, so "Only this charm" would have taken the whole order off that sheet.) only: the pieces chosen (piece ids of this order): only those come off,
+       the rest of the order stays where it is; scope: "sheet" (the order's pieces on that sheet) or "order" (wherever they are). Both are kept on the ask, for the lane. */
+    const only = [...new Set((Array.isArray(b.only) ? b.only : []).map(String).filter(id => d.isPoolId(id) && ridOfPiece(id) === rid))].slice(0, 400);
+    if (Array.isArray(b.only) && b.only.length && !only.length) return { error: `None of the pieces named is a piece of order ${rid}. Nothing was changed` };
+    const scope = b.scope === "sheet" || b.scope === "order" ? b.scope : null;
+    if (kind === "sheetOff" && !sheetId && !only.length) return { error: "which sheet the order comes off, or which of its pieces, is required" };
     const drive = await d.drive().catch(() => null), mode = drive && (drive.mode === "standby" || drive.mode === "on") ? drive.mode : "off", steps = drive && Array.isArray(drive.cloudSteps) ? drive.cloudSteps.map(String) : [];
     if (mode === "off" || !steps.includes("takeoff")) return { error: "The cloud does not take pieces off yet: this computer does it. Nothing was changed", status: 409, notCloud: true };
     const by = str(b.by, 80), dev = str(b.dev, 60), note = str(b.note, 200), now = Date.now(), id = "a" + now.toString(36) + crypto.randomBytes(3).toString("hex");
@@ -239,8 +246,9 @@ module.exports = function (d) {
       const s = await tx.get(jref(rid)), x = s.exists ? s.data() || {} : {};
       const waiting = Object.values(x.asks || {}).filter(a => a && a.state === "waiting");
       if (waiting.length >= 20) return { error: `Order ${rid} has 20 requests waiting for the cloud already: wait for them`, status: 409 };
-      tx.set(jref(rid), { rid, updatedAt: now, due: true, asks: { [id]: { kind, sheetId: sheetId || null, lineKeys, note, by, dev, at: now, state: "waiting" } } }, { merge: true });
-      return { ok: true, orderId: rid, askId: id, kind };
+      tx.set(jref(rid), { rid, updatedAt: now, due: true, asks: { [id]: { kind, sheetId: sheetId || null, lineKeys, ...(only.length ? { only } : {}), ...(scope ? { scope } : {}), note, by, dev, at: now, state: "waiting" } } }, { merge: true });
+      // (job: the key of the take-off the lane makes of this press, so the page follows it and says the cloud's answer; a "Try again" makes none: it starts the order's own again)
+      return { ok: true, orderId: rid, askId: id, kind, at: now, job: kind === "retry" ? null : `${kind}-${now}`, ...(only.length ? { only: only.length } : {}), ...(scope ? { scope } : {}) };
     });
     if (out && out.ok) d.feedOrders(b, [[rid]], "o");
     return out;

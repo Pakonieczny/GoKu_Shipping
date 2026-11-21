@@ -9,7 +9,7 @@
  *    record only   reorder · delete · leaveset · setrebuild · unkeep · repicture
  *    pieces        placewaiting · pairnow · sendhome · remakeline · keepsync · remake · skuonce · release
  *    nest          renest · consolidate · empty · seat
- *    in words      customsend (it needs its own design: a card's sent designs are made into pieces only on a computer today; the command says so)
+ *    pieces        customsend (CUSTOMSEND, 21 Nov 2026: a card's sent designs made into pieces by the cloud's intake and placed by its placement)
  *
  *  What it needs of the other steps, by op name (an op that is not the cloud's in this build makes the request answer in words, never wait): nestStart (build step 6),
  *  placeOnSheet (step 5), releaseAsk (Release Hold in the cloud), roseClaim (step 6), roseRelease, runLinesRetire (step 10a). The lanes a request needs must be in
@@ -164,7 +164,7 @@ async function unkeep(x) {
   return ok(`${letGo.length} shipped order(s) let go; ${gone} of them were shipped at our stations or cancelled: ${off}`);
 }
 async function repicture(x) {
-  if (!lane(x.ctx, "files")) return no("A sheet's picture is drawn by the cloud's sheet writer, which is not on yet: press Resume on a computer, then ask again");
+  if (!lane(x.ctx, "files")) return no("A sheet's picture is drawn by the cloud's sheet writer, which is not on yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
   if (!x.work.stage) {
     const p = await sheetRec(x.ctx, x.a.sheetId); if (!p || p.archived) return no("That sheet is not in the cloud.");
     if (cutRec(p)) return no(`${nameOf(p)} was cut: its picture stays as it was cut`);
@@ -235,7 +235,8 @@ async function placedNow(ctx, keys) {
   out.names = [...out.names]; return out;
 }
 async function placewaiting(x) {
-  if (!lane(x.ctx, "nest")) return no("Placing pieces is not the cloud's yet: press Resume on a computer, then ask again");
+  if (!lane(x.ctx, "nest")) return no("Placing pieces is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
+  if ((x.a.ids || []).length) return customPlace(x);   // (CESEND: a custom piece a viewer sent to a sheet)
   if (!x.work.stage) {
     const fix = await strandedFix(x);   // (a person's request: no journal of earlier tries, so nothing waits out the sweep's 30 minutes)
     if (!fix.keys.length && !fix.contended.length) return ok("No piece stands outside a sheet.");
@@ -245,8 +246,43 @@ async function placewaiting(x) {
   if (!v.open || Date.now() - num(x.work.at) > PLACE_MS) return ok(v.pieces ? `${v.placed} of ${Math.max(v.pieces, x.work.pieces || 0)} stranded piece(s) (${x.work.lines} order line(s)) went onto a sheet${v.open && v.waiting.length ? " · " + v.waiting[0] : ""}` : "No piece stands outside a sheet.");
   return wait(`Placing the pieces that stand on no sheet… ${v.placed} of ${v.pieces || "?"} placed`, x.work, v.pieces ? Math.round(100 * v.placed / v.pieces) : null);
 }
+/* CESEND (21 Nov 2026: the Charm Editor's Send to sheet on a staff computer in mode "on": "Replace on the order…", another order, no order, a custom line). The page wrote the piece's rows
+   (customPiecePut, cloudPlace, this run) and asks: placewaiting { ids: the new pool ids, and "off:<pool id>" for the piece it replaces }. The cloud takes the replaced piece off its sheet
+   (cloudTakeOff sheetOff, that one piece: a cut sheet keeps it, and says so), then places the new piece by the placement unit's own rules (only those rows), and answers in words where
+   it went, or why not. The nest step nests the sheet that took it (nestOwed). */
+async function customPlace(x) {
+  const ctx = x.ctx, all = (x.a.ids || []).map(String), off = (all.find(s => s.startsWith("off:")) || "").slice(4), ids = all.filter(s => !s.startsWith("off:"));
+  if (!ids.length) return no("No piece was named");
+  const w = x.work;
+  if (!w.stage) {
+    const rows = await pools(ctx, ids);
+    const bad = ids.filter(id => { const r = rows.get(id); return !r || !r.custom || r.cloudPlace !== true || r.runId !== ctx.runId; });
+    if (bad.length) return no(`The piece ${bad[0]} is not a custom piece sent for the run the cloud carries: nothing was placed`);
+    w.stage = "off"; w.at = Date.now(); w.offText = "";
+  }
+  if (w.stage === "off") {
+    if (off) {
+      const r = (await pools(ctx, [off])).get(off), sheets = await runSheets(ctx), on = listedBy(sheets).get(off), sid = on ? on.id : (r && r.sheetId) || null, rid = ridOf(off) || String((r && r.orderId) || "");
+      if (!r) w.offText = `the piece it replaces (${off}) is not in the cloud`;
+      else if (!lane(ctx, "takeoff") || !has("cloudTakeOff")) w.offText = `the piece it replaces stays on ${on ? nameOf(on) : "its sheet"} (the cloud's take-off is not on): take it off in the sheet window`;
+      else {
+        const t = await put(x, { op: "cloudTakeOff", orderId: rid, sheetId: sid, ids: [off], kind: "sheetOff", at: Date.now(), who: x.cmd.by || "someone", note: "Replaced: made again from the Charm Editor (Send to sheet)" }, `ceoff|${off}`);
+        if (err(t)) { if (t && t.waiting && Date.now() - num(w.at) < PLACE_MS) return wait(`Taking the replaced piece off ${on ? nameOf(on) : "its sheet"}… ${err(t)}`, w); w.offText = `the piece it replaces stays on ${on ? nameOf(on) : "its sheet"}: ${err(t)}`; }
+        else if (t && (t.kept || []).length) w.offText = `the piece it replaces stays on ${on ? nameOf(on) : "its sheet"} (${t.keptWhy || "kept"})`;
+        else w.offText = `the piece it replaces was taken off ${on ? nameOf(on) : "the pool"}`;
+      }
+    }
+    w.stage = "place";
+  }
+  const res = await require("./_charmNestPlaceUnit").placeAll(Object.assign({}, ctx, { customIds: ids }));
+  const on = listedBy(await runSheets(ctx)), names = [...new Set(ids.map(id => on.get(id)).filter(Boolean).map(nameOf))], n = ids.filter(id => on.has(id)).length;
+  const tail = w.offText ? ` · ${w.offText}` : "";
+  if (n === ids.length) return ok(`${plural(n, "custom piece")} placed on ${and(names)} (the cloud nests it there)${tail}`);
+  if (Date.now() - num(w.at) > PLACE_MS) return n ? ok(`${n} of ${ids.length} custom pieces placed on ${and(names)}; the rest is not placed: ${res.why || "no sheet took it"}${tail}`) : no(`Not placed: ${res.why || "no sheet took it"}${tail}`);
+  return wait(`Placing the custom piece… ${res.why || ""}`.trim(), w, Math.round(100 * n / ids.length));
+}
 async function pairnow(x) {
-  if (!lane(x.ctx, "nest")) return no("Placing pieces is not the cloud's yet: press Resume on a computer, then ask again");
+  if (!lane(x.ctx, "nest")) return no("Placing pieces is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
   if (!x.work.stage) {
     const L = lines(x.ctx), keys = [...new Set((x.a.ids || []).map(String))].filter(k => { const l = L[k]; return l && l.state === "waiting" && l.wait && l.wait.kind === "pair" && !l.hold; });
     if (!keys.length) return no("That line does not wait for a sheet to fill.");
@@ -262,7 +298,7 @@ async function pairnow(x) {
   return wait("Placing the waiting piece…", x.work);
 }
 async function sendhome(x) {
-  if (!lane(x.ctx, "nest") || !has("placeOnSheet")) return no("Moving a piece between sheets is not the cloud's yet: press Resume on a computer, then ask again");
+  if (!lane(x.ctx, "nest") || !has("placeOnSheet")) return no("Moving a piece between sheets is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
   const ctx = x.ctx;
   if (!x.work.stage) {
     const L = lines(ctx), sheets = await runSheets(ctx), on = listedBy(sheets), why = [], moves = [];
@@ -309,7 +345,7 @@ async function settleNests(x, text, fin) {
      nest     the sheets settle. A sheet that is cut, behind a green line or in a committed set keeps its pieces as they are (said in the answer). */
 async function inplace(x, label) {
   const ctx = x.ctx, w = x.work, now = Date.now();
-  if (!lane(ctx, "nest") || !lane(ctx, "pool")) return no(`${label} is not the cloud's yet (pieces are made and placed on a computer): press Resume on a computer, then ask again`);
+  if (!lane(ctx, "nest") || !lane(ctx, "pool")) return no(`${label} is not the cloud's yet (in this build pieces are made and placed by a computer): with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again`);
   if (!w.stage) return wait("Waiting for the next reading of the orders…", { stage: "world", asked: num(x.cmd.at) || now, at: now });
   if (w.stage === "world") {
     const at = await worldAt(ctx);
@@ -423,7 +459,7 @@ async function skuonce(x) {
     const e = await ctx.db.collection(MASTER).doc(sku).get(); if (!e.exists) return no(`${sku} is not in the charm repo`);
     if ((e.data() || {}).blocked || (e.data() || {}).block) return no(`${sku} is blocked in the master, so it cannot be cut`);
     const was = String((l.skuOverride && l.skuOverride.sku) || l.sku || ""); if (was.toUpperCase() === sku) return ok(`This piece is ${sku} already`);
-    if ((l.poolIds || []).length && (!lane(ctx, "nest") || !lane(ctx, "pool"))) return no("Changing a placed piece is not the cloud's yet (pieces are made and placed on a computer): press Resume on a computer, then ask again");
+    if ((l.poolIds || []).length && (!lane(ctx, "nest") || !lane(ctx, "pool"))) return no("Changing a placed piece is not the cloud's yet (in this build pieces are made and placed by a computer): with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
     const at = Date.now(), who = String(x.cmd.by || "").trim() || "a person", say = `Just this order: ${was || "no SKU"} → ${sku} (the listing and Etsy are not changed)`;
     let r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: { [key]: { skuOverride: { sku, by: who, at, was }, repoolChanged: (l.poolIds || []).length > 0 } } }, `once|${key}|${sku}`); if (err(r)) return no(err(r));
     r = await put(x, { op: "timelineAdd", events: [{ orderId: ridOf(key), type: "decided", id: `${key}.once.${at}`, at, by: who, station: "sorter", text: `Decided by ${who} · ${say}`.slice(0, 200), data: { sku, once: true, was: was || null } }] }, `once|tl|${key}|${sku}`);
@@ -439,7 +475,7 @@ async function skuonce(x) {
 async function release(x) {
   const ctx = x.ctx, rid = String((x.a.ids || [])[0] || "").replace(/\D/g, "");
   if (!rid) return no("not ready");
-  if (!has("releaseAsk")) return no("Release Hold is not in the cloud in this build: press Resume on a computer, then ask again");
+  if (!has("releaseAsk")) return no("Release Hold is not in the cloud in this build: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
   if (!x.work.stage) {
     const r = await put(x, { op: "releaseAsk", orderId: rid, runId: ctx.runId, note: x.cmd.by ? `asked by ${x.cmd.by}` : "" }, `release|${rid}`);
     if (err(r)) return no(err(r));
@@ -455,7 +491,7 @@ async function release(x) {
 
 /* ═══ nest ═══ */
 async function renest(x) {
-  if (!lane(x.ctx, "nest") || !has("nestStart")) return no("Nesting is not the cloud's yet: press Resume on a computer, then ask again");
+  if (!lane(x.ctx, "nest") || !has("nestStart")) return no("Nesting is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
   if (!x.work.stage) {
     const p = await sheetRec(x.ctx, x.a.sheetId), sets = await runSets(x.ctx), now = Date.now();
     if (!p || p.archived || p.runId !== x.ctx.runId) return no("That sheet is not on the run the cloud carries.");
@@ -486,7 +522,7 @@ async function moveSettled(x, empty) {
   });
 }
 async function consolidate(x) {
-  if (!lane(x.ctx, "nest")) return no("Nesting is not the cloud's yet: press Resume on a computer, then ask again");
+  if (!lane(x.ctx, "nest")) return no("Nesting is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
   if (x.work.stage) return moveSettled(x, false);
   const src = await sheetRec(x.ctx, x.a.sourceId), t = await sheetRec(x.ctx, x.a.targetId);
   if (!src || !t || src.id === t.id || src.metal !== t.metal) return no("Pick two sheets of one metal.");
@@ -494,7 +530,7 @@ async function consolidate(x) {
   return moveAndNest(x, src, t, "Merge sheets");
 }
 async function empty(x) {
-  if (!lane(x.ctx, "nest")) return no("Nesting is not the cloud's yet: press Resume on a computer, then ask again");
+  if (!lane(x.ctx, "nest")) return no("Nesting is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
   if (x.work.stage) return moveSettled(x, true);
   const src = await sheetRec(x.ctx, x.a.sheetId); if (!src || src.runId !== x.ctx.runId) return no("That sheet is not here.");
   if (!SOLID.has(src.metal)) return no("Sheets are emptied by hand for 10K and 14K Gold only.");
@@ -505,7 +541,7 @@ async function empty(x) {
   return moveAndNest(x, src, cand[0], "Empty sheet");
 }
 async function seat(x) {
-  if (!lane(x.ctx, "nest") || !has("nestStart") || !has("roseClaim")) return no("Moving a sheet onto a partial sheet is not the cloud's yet: press Resume on a computer, then ask again");
+  if (!lane(x.ctx, "nest") || !has("nestStart") || !has("roseClaim")) return no("Moving a sheet onto a partial sheet is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
   if (x.work.stage) return settleNests(x, "Nesting the pieces…", async late => {
     const rec = await sheetRec(x.ctx, x.work.sheets[0].id); if (!rec) return no("The sheet is no longer in the cloud.");
     const n = x.work.n, k = (rec.placements || []).length;
@@ -519,19 +555,126 @@ async function seat(x) {
   const n = activeCharms(p).length; if (!n) return no("This sheet has no pieces to move yet.");
   const ids = (Array.isArray(x.a.partialIds) && x.a.partialIds.length ? x.a.partialIds : [x.a.partialId]).filter(Boolean).map(String).slice(0, 8);
   if (!ids.length) return no("Choose the sheet to move onto.");
-  if (ids[0] === p.roseStockId) return no("This sheet already sits on that partial sheet.");
-  const ss = await x.ctx.db.collection(STOCK).doc(ids[0]).get(), st = ss.exists ? ss.data() || {} : null;
+  // (Paul 21 Nov 2026, item 11: the id a person picks is the PARTIAL SHEET's record (Charm_Nest_Remnants/<stockId>-<revision>), not its physical sheet: the stock is the one that
+  //  record names, claimed with the record, as the page's partialClaim does; an id with no record is taken as a physical sheet, as before)
+  const rs = await x.ctx.db.collection("Charm_Nest_Remnants").doc(ids[0]).get(), rem = rs.exists ? rs.data() || {} : null, stockId = rem && rem.stockId ? String(rem.stockId) : ids[0];
+  if (rem ? rem.status === "inUse" && rem.inUseBySheetId === p.id : ids[0] === p.roseStockId) return no("This sheet already sits on that partial sheet.");
+  const ss = await x.ctx.db.collection(STOCK).doc(stockId).get(), st = ss.exists ? ss.data() || {} : null;
   if (!st || (st.metal && st.metal !== p.metal) || (st.status && st.status !== "available" && st.owner !== p.id)) return no("That partial sheet is not available any more. Choose another.");
-  const r = await put(x, { op: "roseClaim", sheetId: p.id, metal: p.metal, wPt: st.wPt, hPt: st.hPt, stockId: ids[0], revision: st.revision, nesting: true, exact: true, partialId: ids[0], swap: !!(p.roseStockId || p.roseCutAt || p.rosePlanJson || p.roseProtectedJson) }, `seat|${p.id}|${ids[0]}`);
+  const r = await put(x, { op: "roseClaim", sheetId: p.id, metal: p.metal, wPt: st.wPt, hPt: st.hPt, stockId, revision: rem ? +rem.revision : st.revision, nesting: true, exact: true, partialId: ids[0], swap: !!(p.roseStockId || p.roseCutAt || p.rosePlanJson || p.roseProtectedJson) }, `seat|${p.id}|${ids[0]}`);
   if (err(r) || !r.stock) return no("That partial sheet could not be reserved: " + (err(r) || "no answer"));
   if (ids.length > 1) await put(x, { op: "putSheet", sheet: { id: p.id, partialChain: ids.slice(1) } }, `chain|${p.id}|${ids.join(",")}`);
   const s = await startNest(x, p.id, true, `moved onto a partial sheet, asked by ${x.cmd.by || "a person"}`); if (s.error) return no(`The partial sheet is reserved, but the nest could not start: ${s.error}`);
   const mm = v => Math.round(+v / 72 * 25.4 * 10) / 10, label = st.wPt && st.hPt ? `the partial sheet ${mm(st.wPt)} × ${mm(st.hPt)} mm` : "the partial sheet you chose";
-  return wait(`${nameOf(p)}'s ${n} pieces are being nested on the sheet you chose`, { stage: "nest", sheets: [{ id: p.id, layoutRev: num(p.layoutRev), at: now }], name: nameOf(p), n, label, freed: p.roseStockId && p.roseStockId !== ids[0] ? p.roseStockId : null });
+  return wait(`${nameOf(p)}'s ${n} pieces are being nested on the sheet you chose`, { stage: "nest", sheets: [{ id: p.id, layoutRev: num(p.layoutRev), at: now }], name: nameOf(p), n, label, freed: p.roseStockId && p.roseStockId !== stockId ? p.roseStockId : null });
 }
-async function customsend() {
-  return no("A card's sent designs are made into pieces only on a computer for now (Send custom needs its own cloud design): press Resume on a computer, then send it again");
+/* ═══ by hand: the sheet hop (ITEM 13, Paul 21 Nov 2026) ═══ a charm dragged onto the next or previous 10K / 14K sheet on any computer: ONE request. Its pieces go to the target
+   where they were put (cmdHopPieces: pinned there, every other piece of both sheets where it is, both owing their files, no nest); a green line on either sheet is set aside first
+   (roseReopen) and drawn again once the files are written (roseRedraw). A dry run first, so no line is set aside for a move that would be refused. */
+async function hop(x) {
+  const a = x.a, by = x.cmd.by || "", froms = [...new Set([a.sourceId].concat(a.sourceIds || []).filter(Boolean))].slice(0, 4);
+  const body = { op: "cmdHopPieces", runId: x.ctx.runId, from: froms, to: Object.assign({ sheetId: a.targetId }, typeof a.layoutBase === "number" ? { layoutBase: a.layoutBase } : {}), poses: a.poses || [], free: a.free === true, ...(a.fill === true ? { fill: true } : {}), by, person: by };   // (fill: GAP G1, the sheet window's Fill the freed room / Place from a viewer)
+  const dry = await put(x, Object.assign({}, body, { dry: true }), "hop-dry"); if (err(dry)) return no(`Not moved: ${err(dry)}`);
+  const redraw = [];
+  for (const id of [a.targetId].concat(froms)) {
+    const r = await sheetRec(x.ctx, id); if (!r || !SOLID.has(r.metal) || !(r.roseCutAt || lineDrawn(r) || r.rosePlanHash)) continue;
+    const g = await put(x, { op: "roseReopen", sheetId: id, by: by || undefined }, `hop-reopen|${id}`); if (err(g)) return no(`Not moved: ${nameOf(r)}'s green line could not be set aside (${err(g)})`);
+    redraw.push({ sheetId: id, cut: !!r.roseCutAt });
+  }
+  const r = await put(x, Object.assign({}, body, { redraw }), "hop");
+  if (err(r)) { for (const z of redraw) await put(x, { op: "putSheet", sheet: { id: z.sheetId, roseRedraw: { at: Date.now(), by, line: true, cut: z.cut }, filesOwed: Date.now() } }, `hop-back|${z.sheetId}`); return no(`Not moved: ${err(r)}`); }
+  const refiled = await hopRefile(x, [a.targetId].concat(froms));
+  const rid = [...new Set((a.poses || []).map(p => ridOf(p.poolId)).filter(Boolean))].join(", "), n = r.moved, src = (r.from || []).map(f => f.name);
+  const sets = refiled.length ? ` ${and(refiled.map(z => z.name))} ${refiled.length === 1 ? "was" : "were"} already approved: ${refiled.every(z => z.ok) ? `${refiled.length === 1 ? "its" : "their"} QR labels, labels PDF, manifest and set.json are written again${lane(x.ctx, "labels") ? "" : " once the cloud's labels lane is on"}` : `not all asked again (${refiled.filter(z => !z.ok).map(z => `${z.name}: ${z.why}`).join("; ")})`}.` : "";
+  // (GAP G1: the freed room filled from a viewer: the same move, said as what the person pressed)
+  if (a.fill === true) return ok(`${rid.includes(",") ? "Orders" : "Order"} ${rid}: ${n === 1 ? "the charm" : n + " pieces"} moved from ${and(src)} into the freed room on ${r.to.name}, where ${n === 1 ? "it was" : "they were"} planned; every other charm stayed where it was and no sheet was nested again. ${lane(x.ctx, "files") ? "The cloud writes the sheets' files again" : "The sheets owe their files"}${redraw.length ? "; the green line is drawn again once they are written" : ""}.${sets}`);
+  return ok(`Order ${rid}: ${n === 1 ? "the charm" : n + " pieces"} moved from ${and(src)} to ${r.to.name} where ${n === 1 ? "it was" : "they were"} put; every other charm stayed where it was. ${lane(x.ctx, "files") ? "The cloud writes both sheets' files again" : "Both sheets owe their files"}${redraw.length ? "; the green line is drawn again once they are written" : ""}.${sets}${r.free ? ` ${n === 1 ? "It does" : "They do"} not fit there yet: red until resized or moved clear.` : ""}`);
+}
+/* GAP G2 (Paul 21 Nov 2026): after a hop, a set already approved (approved for laser cutting, its labels made: released) whose sheet changed has its files written again, as the page's
+   hop did (sheetwin goldAfter → Review.inPlaceRefile). The cloud's way: ONE labelsAsk { kind: "setFiles" } a set, answered by the labels pass item (_charmNestLabels.js doAsk: each
+   sheet's QR label that no longer says its orders is drawn again, then the labels PDF, manifest and set.json, status kept), behind the Etsy freshness gate as every setFiles ask.
+   The sheet's own card says its set changed once its files are written (the files lane, _charmNestFinish.js S8 releasedChange). A set sent to the laser station never gets here
+   (cmdHopPieces refuses a hop on its sheets). → [{ setId, name, ok, why }] */
+const releasedSet = (s, rec) => !!(s && (s.committedAt || s.processReady || s.laserSetPending || s.status === "labelled" || (s.labels && s.labels.pdf) || (rec && (rec.processReady || rec.laserSetPending))));
+async function hopRefile(x, ids) {
+  const out = [];
+  let sets = []; try { sets = (await runSets(x.ctx)).filter(s => !/^superseded/.test(String(s.status || ""))); } catch (_) { sets = []; }
+  for (const id of [...new Set(ids.filter(Boolean).map(String))]) {
+    const rec = await sheetRec(x.ctx, id).catch(() => null); if (!rec || rec.archived) continue;
+    const s = sets.find(z => (z.sheetIds || []).map(String).includes(id)) || (rec.setId && !rec.draft ? sets.find(z => z.setId === rec.setId) : null);
+    if (!s || out.some(z => z.setId === s.setId) || !releasedSet(s, rec)) continue;
+    const name = SetEdit && SetEdit.setWord ? SetEdit.setWord(s) : s.name || (s.seq ? `Set ${s.seq}` : "Its set");
+    const q = await put(x, { op: "labelsAsk", kind: "setFiles", setId: s.setId, by: x.cmd.by || "Cloud" }, `hop-setfiles|${s.setId}`);
+    out.push({ setId: s.setId, name, ok: !err(q) && !(q && q.error), why: err(q) || str(q && q.error, 200) });
+  }
+  return out;
+}
+/* CUSTOMSEND (Paul, 21 Nov 2026: Send to Sheet and Monogram Approve on a staff computer in mode "on"): a card's sent designs made into pieces and placed BY THE CLOUD, the port of the
+   carrier's applyRemote (charm-nest-bridge.js). The send is read from the cloud's own record (Charm_Custom_Sheet, phase "sent"); each of its open lines whose pieces are not these designs
+   yet has its old pieces taken off their sheet (cmdVacate: the pieces' records say superseded; the kept place is let go at once, cmdPutBack release) and goes back to the intake
+   (pulled, its hold lifted: the send IS the release), which makes its pieces from the card's designs (_charmNestCustomMake.js), and the placement unit puts them on a sheet. Answered
+   done once every new piece is listed on a sheet; refused in words when a sheet keeps what it holds (cut, behind a green line, in a set sent to the station) or a design cannot be made.
+   Asking twice changes nothing: a line whose pieces already are these designs is left as it is. */
+const CUSTOM_MS = 12 * 60000, TAKEN = new Set(["abandoned", "superseded"]);
+async function customsend(x) {
+  const ctx = x.ctx, w = x.work, now = Date.now(), ck = str(x.a.ck, 200);
+  if (!lane(ctx, "nest") || !lane(ctx, "pool")) return no("A card's sent designs are made and placed by the cloud's intake and placement, which are not on yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then send it again");
+  if (!w.stage) {
+    if (!ck) return no("No card was named.");
+    const got = await ctx.read({ op: "customSheetGet", keys: [ck] }).catch(() => null), rec = got && got.records && got.records[ck];
+    if (!rec || !rec.sent || !rec.sent.lines || rec.phase !== "sent") return no("The send is not recorded in the cloud yet: send it again");
+    const L = lines(ctx), keys = Object.keys(rec.sent.lines).filter(k => (rec.sent.lines[k] || []).some(pc => pc && !pc.removed)), rid = String(rec.rid || ridOf(keys[0]) || "");
+    const cc = await ctx.read({ op: "cancelCheck", orderIds: [rid] }).catch(() => null), cx = cc && (cc.cancelled || cc.orders);
+    if (Array.isArray(cx) ? cx.map(String).includes(rid) : !!(cx && typeof cx === "object" && cx[rid])) return no(`Order ${rid} was cancelled.`);
+    const open = keys.filter(k => OPEN_LINE(L[k]));
+    if (!open.length) return no(`Order ${rid} is not in the run the cloud carries.`);
+    const paths = new Set((rec.files || []).map(F => F && F.cloud && F.cloud.path).filter(Boolean));
+    const sheets = await runSheets(ctx), sets = await runSets(ctx), on = listedBy(sheets), patch = {};
+    let swapped = 0;
+    for (const k of open) {
+      const l = L[k], ids = (l.poolIds || []).map(String), rows = ids.length ? await pools(ctx, ids) : new Map();
+      if (ids.length && ids.every(id => { const r = rows.get(id); return r && r.custom && !TAKEN.has(r.state) && paths.has(String(r.aiPath || "")); })) continue;   // (already these designs)
+      const bySheet = new Map(); for (const id of ids) { const s = on.get(id); if (s) (bySheet.get(s) || bySheet.set(s, []).get(s)).push(id); }
+      const keeps = [...bySheet.keys()].find(s => cutRec(s) || lineDrawn(s) || committedSheet(s, sets));
+      if (keeps) return no(`Order ${rid}: ${nameOf(keeps)} ${cutRec(keeps) ? "was already cut" : lineDrawn(keeps) ? "is behind a green line" : "is in a set sent to the station"}: its piece stays as it is and the new design was not placed`);
+      const busy = [...bySheet.keys()].find(s => busyRec(s, now));
+      if (busy) { if (now - (num(x.cmd.at) || now) > CUSTOM_MS) return no(`Order ${rid}: ${nameOf(busy)} ${busyRec(busy, now)}; nothing was changed`); return wait(`Waiting for ${nameOf(busy)} to be free…`, {}); }
+      for (const [s, part] of bySheet) {
+        const r = await put(x, { op: "cmdVacate", runId: ctx.runId, lineKey: k, rid, sheetId: s.id, poolIds: part, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "", why: "Send to Sheet: the sent design replaces it" }, `cs-vacate|${k}|${s.id}|${num(s.contentRev)}`);
+        if (err(r)) return no(`Order ${rid}: the old piece could not be taken off ${nameOf(s)}: ${err(r)}`);
+        await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, sheetId: s.id, release: true }, `cs-release|${k}|${s.id}`);
+        swapped += part.length;
+      }
+      patch[k] = { state: "pulled", poolIds: [], repoolChanged: true, wait: null, reason: null, hold: null, vacated: null };
+    }
+    if (Object.keys(patch).length) { const r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: patch }, `cs-lines|${Object.keys(patch).sort().join(",").slice(0, 400)}`); if (err(r)) return no(`Order ${rid}: not sent: ${err(r)}`); }
+    return wait("Making the new pieces from the sent designs…", { stage: "placing", keys: open, rid, swapped, at: now });
+  }
+  if (w.stage === "placing") {
+    // (its own lines only, now: a person's send is not a new order waiting at the intake's gate (run mode, the run's step); the intake makes them from the card's designs and the placement puts them on a sheet)
+    const got = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), fresh = got && got.run;
+    if (fresh && fresh.lines) {
+      const only = new Set(w.keys || []), run = Object.assign({}, fresh, { runId: ctx.runId });
+      const Intake = require("./_charmNestIntake"), PlaceUnit = require("./_charmNestPlaceUnit");
+      await Intake.pool({ db: ctx.db, run, runId: ctx.runId, call: ctx.call, read: ctx.read, drive: ctx.drive || {}, cloudSteps: ctx.cloudSteps || [], fence: ctx.fence, say: ctx.say || (() => {}), budgetEnd: num(ctx.budgetEnd) || Date.now() + 45000, settings: null, stockPreset: null }, { step: true, only });
+      await PlaceUnit.placeAll(Object.assign({}, ctx, { run, only }));
+    }
+    const back = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (back && back.run && back.run.lines) || lines(ctx), on = listedBy(await runSheets(ctx));
+    let pieces = 0, listed = 0; const names = new Set(), stuck = [];
+    for (const k of w.keys || []) {
+      const l = L[k]; if (!l || !OPEN_LINE(l)) continue;
+      if (["held", "oversize", "unmatched", "noDesign"].includes(l.state) && !(l.poolIds || []).length) { stuck.push(String(l.reason || l.state)); continue; }
+      for (const id of l.poolIds || []) { pieces++; const s = on.get(String(id)); if (s) { listed++; names.add(nameOf(s)); } }
+      if (!(l.poolIds || []).length) pieces++;
+    }
+    const off = w.swapped ? ` (the old piece${w.swapped === 1 ? " was" : "s were"} taken off)` : "";
+    if (stuck.length) return no(`Order ${w.rid}: the new piece is not on a sheet: ${stuck[0]}`.slice(0, 380));
+    if (pieces && listed === pieces) return ok(`${pieces === 1 ? "its new piece is" : `its ${pieces} new pieces are`} on ${and([...names])}${off}`);
+    if (now - num(w.at) > CUSTOM_MS) return no(`Order ${w.rid}: ${listed} of ${pieces} new piece(s) on a sheet so far; the rest go on with the run's next placement`);
+    return wait(listed ? `Placing the new pieces… ${listed} of ${pieces} on a sheet` : "Making the new pieces from the sent designs…", w, pieces ? Math.round(100 * listed / pieces) : null);
+  }
+  return no("The request lost its place: send it again");
 }
 
-const EXEC = { reorder, delete: del, leaveset, setrebuild, unkeep, repicture, placewaiting, pairnow, sendhome, remakeline, keepsync, remake, skuonce, release, renest, consolidate, empty, seat, customsend };
+const EXEC = { reorder, delete: del, leaveset, setrebuild, unkeep, repicture, placewaiting, pairnow, sendhome, remakeline, keepsync, remake, skuonce, release, renest, consolidate, empty, seat, customsend, hop };
 module.exports = { EXEC, strandedFix, placedNow, staleLines, runSheets, runSets, sheetRec, nameOf, cutRec, lineDrawn, listedBy, seated, has, lane, WORK };

@@ -5,7 +5,11 @@
  *  What there was: a computer that only FOLLOWS the run asked the computer that CARRIES it (runCmdPut release) and waited for it, up to twenty minutes (charm-nest-order-release.js relayRelease);
  *  the hold stayed in the cloud until that computer had made the order's pieces up again, and every other computer kept showing the order held. Now the press itself releases the hold in the cloud:
  *
- *    releaseAsk { orderId, by, dev, runId?, seal?, lines?: { lineKey: { releaseAnyway?, blockOverride? } }, note?, resume? }
+ *    releaseAsk { orderId, by, dev, runId?, seal?, lines?: { lineKey: { releaseAnyway?, blockOverride? } }, note?, resume?, queue? }
+ *      queue (ITEM 8, Paul 21 Nov 2026): Release Hold pressed on a viewer for an order with NO line on hold (a blocked SKU cut anyway, a question set aside: the Review card's
+ *                   "Release to nesting queue"). The lines it names (keys) that carry something set aside (lines) are taken too, held or not: what was set aside, the front of the queue,
+ *                   the seal; a line the reading stopped (held, unmatched, oversize, no pieces) is "pulled" again, so the cloud's intake makes it up with what was set aside and the
+ *                   placement places it. The page that pressed writes the order's timeline step (as it always did for such a press): none is written here unless a hold was lifted.
  *      1  journal   Charm_Nest_Release_Jobs/<orderId> is written first: { state: "lifting", frontAt, by, seal, ... }. A press within ten minutes of an unfinished one is that same release (its
  *                   front time and its timeline id); the driver's unit finishes one a function that died left "lifting" (resume: true).
  *      2  marks     the order's pool rows a HOLD took off their sheet (abandoned, on no sheet, heldAt/heldBy, no cancel mark, not made live again: _charmNestPlacement.takenOff for a hold) get
@@ -77,14 +81,18 @@ function make(d) {
       if (had.length) { const docs = await Promise.all(had.map(x => tx.get(d.col(RUN_LIVE).doc(x)))); if (docs.some(s => !s.exists)) throw new Error("the run was saved while its lines were read: try again"); for (const s of docs) Object.assign(lines, JSON.parse(s.data().json || "{}")); }
       else lines = Object.assign({}, old.lines || {});
       const at = Date.now(), changed = [], out = {};
+      let holds = 0;
       for (const k of Object.keys(lines)) {
         if (!k.startsWith(rid + "_")) continue;
         const cur = lines[k]; if (!cur || typeof cur !== "object") continue;
         const held = !!cur.hold || o.heldKeys.has(k) || (o.askKeys.has(k) && String(cur.state || "") === "held");
-        if (!held) { out[k] = pick(cur); continue; }
+        const named = !held && !!o.queue && o.askKeys.has(k) && Object.keys(cleanAside(o.asides[k])).length > 0;   // (ITEM 8: a line the press set something aside on, not held)
+        if (!held && !named) { out[k] = pick(cur); continue; }
+        if (cur.hold || o.heldKeys.has(k)) holds++;
         const next = Object.assign({}, cur), was = String(cur.state || "");
         next.hold = null; next.heldAt = null; next.holdSeen = false;
         if (was === "held") { next.state = Array.isArray(cur.poolIds) && cur.poolIds.length ? "pooled" : "pulled"; next.reason = null; }
+        else if (named && ["unmatched", "oversize"].includes(was) && !(Array.isArray(cur.poolIds) && cur.poolIds.length)) { next.state = "pulled"; next.reason = null; }
         else if (cur.reason != null && cur.hold != null && String(cur.reason) === String(cur.hold)) next.reason = null;
         next.frontAt = o.frontAt; next.releasedAt = o.frontAt; next.releasedBy = o.by;
         if (o.seal) next.releaseHold = { at: o.seal.at, by: o.seal.by, id: o.seal.id };
@@ -93,14 +101,14 @@ function make(d) {
         next._lp = { at, dev: CLOUD_DEV, by: o.by };
         lines[k] = next; changed.push(k); out[k] = pick(next);
       }
-      if (!changed.length) return { runId, changed, lines: out, at: 0 };
+      if (!changed.length) return { runId, changed, lines: out, at: 0, holds };
       const parts = d.liveParts(runId, lines);
       if (parts.some(p => p.bytes > 1000000)) throw new Error("a piece of this run is too large to save");
       const keep = new Set(parts.map(p => p.id)), have = new Set(had);
       for (const p of parts) if (!have.has(p.id)) tx.set(d.col(RUN_LIVE).doc(p.id), { runId, json: p.json, bytes: p.bytes, lines: p.lines, seq: p.seq, createdAt: FV.serverTimestamp() });
       for (const x of had) if (!keep.has(x)) tx.delete(d.col(RUN_LIVE).doc(x));
       tx.set(ref, { liveLines: { ids: parts.map(p => p.id), lines: parts.reduce((n, p) => n + p.lines, 0), bytes: parts.reduce((n, p) => n + p.bytes, 0) }, lines: FV.delete(), lineEditAt: at, updatedAt: FV.serverTimestamp() }, { merge: true });
-      return { runId, changed, lines: out, at };
+      return { runId, changed, lines: out, at, holds };
     });
   }
 
@@ -118,7 +126,7 @@ function make(d) {
       if (resume && !(o && o.state === "lifting")) return null;   // (the driver's unit: nothing left to finish)
       const j = same || resume ? Object.assign({}, o, { state: "lifting", error: null, tries: num(o.tries) + 1, beatAt: now }) : { rid, state: "lifting", at: now, frontAt: now, by: by || "Cloud", dev, seal: cleanSeal(b.seal), tries: 1, beatAt: now, runId: null, error: null, note: str(b.note, 300),
         asides: b.lines && typeof b.lines === "object" && !Array.isArray(b.lines) ? Object.fromEntries(Object.keys(b.lines).filter(k => LINE_KEY.test(k) && k.startsWith(rid + "_")).slice(0, 40).map(k => [k, cleanAside(b.lines[k])])) : {},
-        askKeys: Array.isArray(b.keys) ? b.keys.map(k => str(k, 80)).filter(k => LINE_KEY.test(k) && k.startsWith(rid + "_")).slice(0, 40) : [] };
+        askKeys: Array.isArray(b.keys) ? b.keys.map(k => str(k, 80)).filter(k => LINE_KEY.test(k) && k.startsWith(rid + "_")).slice(0, 40) : [], queue: b.queue === true };
       tx.set(jref, j);
       return j;
     });
@@ -144,13 +152,13 @@ function make(d) {
       }
       // 3 · the run's lines
       const runId = await runOf(b.runId || job.runId);
-      const lineRes = runId ? await releaseLines(runId, rid, { heldKeys, askKeys: new Set(job.askKeys || []), frontAt, by, seal: job.seal || null, asides: job.asides || {} }) : { runId: null, changed: [], lines: {}, at: 0 };
+      const lineRes = runId ? await releaseLines(runId, rid, { heldKeys, askKeys: new Set(job.askKeys || []), frontAt, by, seal: job.seal || null, asides: job.asides || {}, queue: job.queue === true }) : { runId: null, changed: [], lines: {}, at: 0 };
       // (what steps 2 and 3 did is kept in the journal before the timeline step: a press sent again, or the driver's unit, finds nothing held any more and still knows this release released something)
       const pieces = held.length + num(job.pieces), linesDone = [...new Set((Array.isArray(job.lines) ? job.lines : []).concat(lineRes.changed))];
       if (held.length || lineRes.changed.length) await db.runTransaction(async tx => { await d.fenceTx(tx); tx.set(jref, { pieces, lines: linesDone, runId: lineRes.runId || job.runId || null, beatAt: Date.now() }, { merge: true }); });
       const released = pieces > 0 || linesDone.length > 0;
       // 4 · the timeline (only for a release that released something: an order the cloud does not hold on hold gets no "released" step)
-      if (released) {
+      if (released && !(job.queue === true && !held.length && !num(lineRes.holds))) {   // (ITEM 8: a press with no hold lifted: the page that pressed writes its own step)
         const seal = job.seal;
         await d.stamp([{ orderId: rid, type: "released", id: `oh-rel-${rid}-${frontAt}`, at: frontAt, by, station: "sorter", device: str(job.dev, 40) || "charm-nest-1",
           text: (`Released from hold by ${by} · front of the queue` + (job.note ? ` · ${job.note}` : "")).slice(0, 200),

@@ -1137,6 +1137,9 @@ async function op_putSheet(b) {
   const refused = await db.runTransaction(async tx => {
     if (FENCE) await fenceTx(tx);
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : {};
+    // (G8, Paul 21 Nov 2026: the cloud's sheet writer says which person pins its layout holds (pinsBase, _charmNestNest.js pinKeyOf): a Pin / Unpin pressed since (sheetPinPatch moves no
+    //  revision) refuses the write, nothing written, and the writer makes the layout again holding it: a pin is never written over)
+    if (typeof b.pinsBase === "string" && b.pinsBase && NestLane.pinKeyOf(old.charms) !== b.pinsBase) return { error: `${Placement.labelOf(old) || "Sheet " + s.id}: a charm was pinned or unpinned on it since this layout was made: nothing was overwritten, the layout is made again holding it`, status: 409, conflict: true, pinMoved: true };
     // (CLOUDDRIVE P1/P2: the bases the cloud's sheet writer sends, each checked only when present; no page sends them)
     if (typeof b.contentBase === "number" && Number.isFinite(b.contentBase) && b.contentBase !== (num(old.contentRev) || 0)) return { error: `${Placement.labelOf(old) || "Sheet " + s.id} was changed (by hand or its artwork) since this save was made: nothing was overwritten`, status: 409, conflict: true, contentRev: num(old.contentRev) || 0 };
     if (Object.prototype.hasOwnProperty.call(b, "filesJobBase") && str(b.filesJobBase, 120) !== str(old.filesJob && old.filesJob.jobId, 120)) return { error: `${Placement.labelOf(old) || "Sheet " + s.id}: another job writes its files now: nothing was overwritten`, status: 409, conflict: true, filesJob: old.filesJob || null };
@@ -1383,6 +1386,8 @@ async function op_sheetLayoutPatch(b) {
   if (!isId(b.id)) return { error: "bad sheet id" };
   const tab = str(b.tab, 40).trim(), by = str(b.by, 80).trim() || "operator", now = Date.now();
   const poses = b.poses && typeof b.poses === "object" ? b.poses : {}, ids = Object.keys(poses).filter(id => /^[\w\-:.~]{1,120}$/.test(id)).slice(0, 400);   // (a placement's id, as the nest names its charms)
+  if (!ids.length && !Object.keys(poses).length && b.pins && typeof b.pins === "object") return sheetPinPatch(b, tab, by, now);   // (Paul 21 Nov 2026, item 12: a Pin / Unpin alone)
+  if (!ids.length && !Object.keys(poses).length && !b.pins && b.charms && typeof b.charms === "object" && !Array.isArray(b.charms)) return sheetCharmPatch(b, tab, by, now);   // (S3: Exclude / Include / Move to <metal> of a piece of no order)
   if (!ids.length) return { error: "no pose to write" };
   for (const id of ids) { const q = poses[id]; if (!q || !["cxPt", "cyPt", "angle"].every(k => Number.isFinite(+q[k]))) return { error: `bad pose for ${id}` }; }
   revTouch(b, ["s:" + b.id]);
@@ -1435,6 +1440,131 @@ async function op_sheetLayoutPatch(b) {
   });
   if (out && out.ok && roseRedraw) { try { await ref.set({ roseRedraw }, { merge: true }); } catch (_) { /* the line is drawn at its next Cut Sheet press */ } }   // (CLOUD STEP 10b, mode "on" only)
   if (out && out.ok) { try { const [p] = await db.getAll(ref, { fieldMask: ["updatedAt"] }); out.rev = revOf(p); } catch (_) {} }   // (the record's revision as written: the page keeps it, and its next question by revision answers "unchanged")
+  return out;
+}
+/* (Paul 21 Nov 2026, item 12: "Pin" in a sheet card's piece dialog, on a staff computer while the cloud carries every run): the pin lived in that page's memory only (a viewer
+   writes no workspace and saves no sheet), so it was gone after a reload and the cloud's nest never held the charm. A Pin / Unpin is a person's press now, the narrowest one:
+     sheetLayoutPatch { id, by, tab?, pins: { <placement id>: { pinned: true | false } } }   (no poses)
+   Pinned: the charm stays EXACTLY where the record has it (its pose is the record's, never the page's), with the record's own mark of a person's pin, `manual` { by, at }
+   (the cloud's nest holds such a charm where it is and places the rest around it, _charmNestNestSlot.js prepare; every computer's card reads it from the record), and
+   `pinned` at that pose. Unpinned: both taken off; a charm resized by hand (its mark carries a size) keeps its mark: refused in words, as its size is what holds it.
+   Nothing moves, so no file is owed and no revision of the layout or contents moves. Refused in words as a move is: the laser cut it, another screen holds the sheet in
+   Manual Control, the charm left the sheet. → { ok, id, pinned: [ids], unpinned: [ids], rev } | 409 { refused, error } */
+async function sheetPinPatch(b, tab, by, now) {
+  const pins = b.pins, ids = Object.keys(pins).filter(id => /^[\w\-:.~]{1,120}$/.test(id) && pins[id] && typeof pins[id] === "object" && typeof pins[id].pinned === "boolean").slice(0, 400);
+  if (!ids.length) return { error: "no pin to write" };
+  revTouch(b, ["s:" + b.id]);
+  const ref = col(SHEETS).doc(b.id);
+  const out = await db.runTransaction(async tx => {
+    const snap = await tx.get(ref); if (!snap.exists) return { error: "This sheet is no longer in the Library.", status: 409, refused: "gone" };
+    const old = snap.data() || {}, name = Placement.labelOf(old) || `Sheet ${b.id}`;
+    if (num(old.laserDoneAt) > 0) return { error: `${name} has been cut on the laser: its charms can no longer change.`, status: 409, refused: "cut" };
+    const cur = old.manualEdit && typeof old.manualEdit === "object" && old.manualEdit.tab ? old.manualEdit : null;
+    if (cur && cur.tab !== tab && now - num(cur.at) < MANUAL_STALE_MS) return { error: `${str(cur.by, 80) || "Someone"} is moving ${name}'s charms by hand on another screen: the pin was not saved.`, status: 409, refused: "held", held: { by: str(cur.by, 80), at: num(cur.at) } };
+    const placements = Array.isArray(old.placements) ? old.placements : [], charms = (Array.isArray(old.charms) ? old.charms : []).map(c => (c && typeof c === "object" ? Object.assign({}, c) : c));
+    const missing = ids.filter(id => !placements.some(p => p && p.id === id) || !charms.some(c => c && c.id === id));
+    if (missing.length) return { error: `${missing.length === 1 ? "That charm" : missing.length + " of those charms"} is no longer placed on ${name}: nothing was pinned or unpinned.`, status: 409, refused: "gone", missing: missing.slice(0, 20) };
+    const pinned = [], unpinned = [];
+    for (const id of ids) {
+      const p = placements.find(z => z && z.id === id), c = charms.find(z => z && z.id === id), m = c.manual && typeof c.manual === "object" ? c.manual : null;
+      if (pins[id].pinned === true) {
+        c.manual = m ? Object.assign({}, m, { by: str(m.by, 80) || by, at: num(m.at) || now }) : { by, at: now };
+        c.pinned = Object.assign({ cxPt: +p.cxPt, cyPt: +p.cyPt, angle: +p.angle || 0 }, m && Number.isFinite(+m.size) && +m.size > 0 && +m.size !== 1 ? { size: +m.size } : {});
+        delete c.arrivalPin; pinned.push(id);
+      } else {
+        if (m && ((Number.isFinite(+m.size) && +m.size > 0 && +m.size !== 1) || m.fit === "inplace")) return { error: `${c.name || "That charm"} was resized by hand: its size is what holds it in place on ${name}. Open the sheet and change it in Manual Control. Nothing was unpinned.`, status: 409, refused: "sized" };
+        delete c.manual; delete c.pinned; delete c.arrivalPin; unpinned.push(id);
+      }
+    }
+    tx.set(ref, { charms, updatedAt: FV.serverTimestamp(), _w: Mutations.stampFields(old._w, ids.map(id => "pin:" + id), by, b.mid, now) }, { merge: true });
+    return { ok: true, id: b.id, pinned, unpinned };
+  });
+  if (out && out.ok) { try { const [p] = await db.getAll(ref, { fieldMask: ["updatedAt"] }); out.rev = revOf(p); } catch (_) {} }
+  return out;
+}
+/* S3 (21 Nov 2026: the charm window of a sheet card on a staff computer in mode "on": "Exclude from nest", "Include in nest" and "Move to <metal>" of a piece that belongs to no order
+   changed only that page's memory: a viewer saves no sheet, so nothing reached the cloud, its nest never honoured it, and no other computer saw it). Each is a person's press now,
+   saved on the sheet's record, which the cloud's nest reads and every computer's card shows:
+     sheetLayoutPatch { id, by, tab?, dev?, charms: { <pool id or charm id>: { excluded: true | false } | { metal: <key> } } }   (no poses, no pins)
+   · excluded true: the charm stays on the record, marked excluded (the cloud's nest leaves it out: _charmNestNestPieces.js rebuild, _charmNestNest.js activeCharms), its place is
+     taken off the layout, and the sheet is marked changed (dirty: the nest step nests it again as it stands, its files written without it);
+   · excluded false: the mark is taken off and a nest is owed (nestOwed): the cloud places it in the room the sheet has;
+   · metal: a piece of no order the cloud cuts from its own file (a custom row: artwork added by hand, or a custom design of no order) leaves this sheet's record (its charm, its pool id,
+     its place) and its row takes the new metal, on no sheet, for the cloud to place (cloudPlace, the record's run); a request is queued in the same press (runCmdPut placewaiting
+     { ids: [the pool id] }), so the cloud places it on a sheet of that metal and says where in words (the page follows that request: cmdId).
+   Refused in words, nothing changed: an order's piece (Hold or Take off acts on an order), the laser cut the sheet, its green line cut is recorded, another screen moves its pieces by
+   hand, the piece left the sheet, a piece dropped on a computer before the cloud carried the run (no pool row: the cloud cannot cut it; Exclude is still taken) asked back in or moved.
+   → { ok, id, excluded: [ids], included: [ids], moved: [{ poolId, metal, name }], cmdId?, cmdError?, rev } | 409 { refused, error } */
+const S3_METALS = new Set(["gold", "silver", "rose", "gold10k", "gold14k"]);
+const S3_LABEL = { gold: "Gold Filled", silver: "Sterling Silver", rose: "Rose Gold", gold10k: "10K Gold", gold14k: "14K Gold" };
+async function sheetCharmPatch(b, tab, by, now) {
+  const want = b.charms, keys = Object.keys(want).filter(k => /^[\w\-:.~]{1,160}$/.test(k) && want[k] && typeof want[k] === "object").slice(0, 20);
+  if (!keys.length) return { error: "no piece to change" };
+  for (const k of keys) { const w = want[k]; if (typeof w.excluded !== "boolean" && !(typeof w.metal === "string" && S3_METALS.has(w.metal))) return { error: `nothing to change on ${k}: say excluded (true or false) or a metal` }; }
+  revTouch(b, ["s:" + b.id]);
+  const ref = col(SHEETS).doc(b.id);
+  /* (as a move by hand does, CLOUD STEP 10b, mode "on" only): a 10K / 14K sheet whose green line is drawn has it set aside first; the cloud draws it again once the sheet is written */
+  let roseRedraw = null;
+  if (!MARKED && !PREFIX && (await cloudMode()) === "on") {
+    const cs = await ref.get(), od = cs.exists ? cs.data() || {} : {};
+    if (["gold10k", "gold14k"].includes(od.metal) && !od.roseCutAt && (od.rosePlanJson || od.rosePlanHash) && !(num(od.laserDoneAt) > 0)) {
+      try { await OPS.roseReopen({ sheetId: b.id, by }); } catch (e) { return { error: String((e && e.message) || e), status: 409, refused: "line" }; }
+      roseRedraw = { at: now, by, line: true, cut: false };
+    }
+  }
+  const out = await db.runTransaction(async tx => {
+    const snap = await tx.get(ref); if (!snap.exists) return { error: "This sheet is no longer in the Library: nothing was changed.", status: 409, refused: "gone" };
+    const old = snap.data() || {}, name = Placement.labelOf(old) || `Sheet ${b.id}`;
+    if (num(old.laserDoneAt) > 0) return { error: `${name} has been cut on the laser: its charms can no longer change.`, status: 409, refused: "cut" };
+    if (old.roseCutAt) return { error: `${name}'s green line cut is recorded: its charms can no longer change. Nothing was changed.`, status: 409, refused: "line" };
+    const cur = old.manualEdit && typeof old.manualEdit === "object" && old.manualEdit.tab ? old.manualEdit : null;
+    if (cur && cur.tab !== tab && now - num(cur.at) < MANUAL_STALE_MS) return { error: `${str(cur.by, 80) || "Someone"} is moving ${name}'s charms by hand on another screen: nothing was changed.`, status: 409, refused: "held", held: { by: str(cur.by, 80), at: num(cur.at) } };
+    let charms = (Array.isArray(old.charms) ? old.charms : []).map(c => (c && typeof c === "object" ? Object.assign({}, c) : c)), placements = (Array.isArray(old.placements) ? old.placements : []).slice();
+    let poolIds = (Array.isArray(old.poolIds) ? old.poolIds : []).map(String);
+    const found = keys.map(k => ({ k, c: charms.find(c => c && (String(c.poolId || "") === k || String(c.id) === k)) }));
+    const gone = found.filter(x => !x.c); if (gone.length) return { error: `That piece is no longer on ${name}: nothing was changed.`, status: 409, refused: "gone", missing: gone.map(x => x.k) };
+    const rowRefs = found.filter(x => x.c.poolId).map(x => col(POOL).doc(String(x.c.poolId))), rowSnaps = rowRefs.length ? await txGetAll(tx, rowRefs) : [], rows = new Map(rowSnaps.filter(s => s.exists).map(s => [s.id, s.data() || {}]));
+    const excluded = [], included = [], moved = [], rowWrites = [];
+    for (const { k, c } of found) {
+      const w = want[k], nm = c.name || "That piece", row = c.poolId ? rows.get(String(c.poolId)) : null;
+      if (c.poolId && !(row && row.custom === true && (row.orderless === true || row.hand === true))) return { error: `${nm} is a piece of an order: an order's piece is held or taken off from its order, not left out by hand. Nothing was changed.`, status: 409, refused: "line" };
+      const legacy = !c.poolId;
+      const why = `${nm} was dropped on a computer before the cloud carried the run: the cloud cannot cut it from this sheet. Drop its file again (it then goes to the cloud), or leave it out. Nothing was changed.`;
+      if (typeof w.metal === "string") {
+        if (w.metal === old.metal) continue;
+        if (legacy) return { error: why, status: 409, refused: "legacy" };
+        if (!row.aiPath) return { error: `${nm} has no file of its own in the cloud: it cannot be moved to another metal. Nothing was changed.`, status: 409, refused: "nofile" };
+        charms = charms.filter(x => x !== c); placements = placements.filter(p => !(p && String(p.id) === String(c.id))); poolIds = poolIds.filter(id => id !== String(c.poolId));
+        rowWrites.push([col(POOL).doc(String(c.poolId)), { sheetId: null, material: w.metal, state: "ready", cloudPlace: true, runId: old.runId || row.runId || null, movedBy: by, movedAt: now, movedFrom: b.id, updatedAt: FV.serverTimestamp() }]);
+        moved.push({ poolId: String(c.poolId), metal: w.metal, name: nm });
+      } else if (w.excluded === true) {
+        if (c.excluded === true) continue;
+        c.excluded = true; c.excludedBy = by; c.excludedAt = now; delete c.pinned; delete c.manual; delete c.arrivalPin;
+        placements = placements.filter(p => !(p && String(p.id) === String(c.id))); excluded.push(String(c.poolId || c.id));
+      } else {
+        if (c.excluded !== true) continue;
+        if (legacy) return { error: why, status: 409, refused: "legacy" };
+        c.excluded = false; delete c.excludedBy; delete c.excludedAt; included.push(String(c.poolId || c.id));
+      }
+    }
+    if (!excluded.length && !included.length && !moved.length) return { ok: true, id: b.id, excluded, included, moved, same: true };
+    const doc = { charms, placements, poolIds, charmCount: charms.length, dirty: true, layoutRev: num(old.layoutRev) + 1, contentRev: num(old.contentRev) + 1, updatedAt: FV.serverTimestamp(),
+      _w: Mutations.stampFields(old._w, keys.map(k => "charm:" + k), by, b.mid, now) };
+    if (included.length) doc.nestOwed = { at: now, n: included.length, by, why: "included by hand" };
+    if (old.filesOwed) doc.filesOwed = null;   // (the nest owed now writes the files: owedNest nests a changed sheet that owes no files)
+    if (old.rosePlanJson || old.rosePlanHash) Object.assign(doc, { rosePlanJson: null, rosePlanHash: null, roseFingerprint: null });
+    tx.set(ref, doc, { merge: true });
+    for (const [r, patch] of rowWrites) tx.set(r, patch, { merge: true });
+    return { ok: true, id: b.id, runId: old.runId || null, name, excluded, included, moved };
+  });
+  if (out && out.ok && roseRedraw && !out.same) { try { await ref.set({ roseRedraw }, { merge: true }); } catch (_) { /* the line is drawn at its next Cut Sheet press */ } }
+  if (out && out.ok && (out.moved || []).length) {
+    // (the move's own request: the cloud places the piece on a sheet of its new metal and answers in words; a request lane that is not on says so there, in words)
+    const runId = out.runId, ids = out.moved.map(m => m.poolId), to = S3_LABEL[out.moved[0].metal] || out.moved[0].metal;
+    let q = null; try { q = runId ? await op_runCmdPut({ runId, dev: str(b.dev, 60) || "dviewer", by, cmd: { type: "placewaiting", ids, label: `Move ${out.moved[0].name} to ${to}`.slice(0, 150) } }) : { error: "the sheet belongs to no run" }; } catch (e) { q = { error: (e && e.message) || String(e) }; }
+    if (q && q.ok) out.cmdId = q.id; else out.cmdError = String((q && q.error) || "no answer");
+  }
+  if (out && out.ok) { try { const [p] = await db.getAll(ref, { fieldMask: ["updatedAt"] }); out.rev = revOf(p); } catch (_) {} }
   return out;
 }
 async function op_getSheet(b) {
@@ -2324,6 +2454,17 @@ async function op_customPiecePut(b) {
   const n2 = v => (Number.isFinite(+v) ? Math.round(+v * 1000) / 1000 : null), fx = p.fixes && typeof p.fixes === "object" && !Array.isArray(p.fixes) ? p.fixes : null;
   const piece = { designId, version: Math.max(0, Math.floor(+p.version) || 0), designHash: str(p.designHash, 80) || null, geomHash, widthMm: n2(p.widthMm), heightMm: n2(p.heightMm), name: name || null, by,
     ...(fx ? { fixes: { orderId: str(fx.orderId, 30) || null, poolId: str(fx.poolId, 80) || null, causedBy: str(fx.causedBy, 80) || null } } : {}) };
+  /* CESEND (21 Nov 2026: Send to sheet from a staff computer in mode "on"): a viewer cannot put the piece on a sheet itself, so its rows say the cloud places them (cloudPlace, on the run
+     the cloud carries, runId given) and carry the piece's size in points (the cloud's sheet choice reads it, _charmNestPlaceUnit.js geometryOf) and its pen hash (the frozen check) */
+  const cloudPlace = p.cloudPlace === true && !!str(p.runId, 80), pt = v => (Number.isFinite(+v) && +v > 0 ? Math.round(+v * 1000) / 1000 : null);
+  if (cloudPlace && !(pt(p.widthPt) && pt(p.heightPt) && pt(p.areaPt2))) return { error: "a piece the cloud places needs its size (widthPt, heightPt, areaPt2)", status: 400 };
+  if (cloudPlace && p.penHash) piece.penHash = str(p.penHash, 64);
+  /* S3 (21 Nov 2026: artwork added by hand, a dropped or chosen .ai / .pdf / .zip, on a staff computer in mode "on"): each design of the file is its own one-charm file
+     (charmnest/charms/<hash>.ai) and goes as a piece of no order the cloud places and nests (cloudPlace). hand: it is a person's artwork, not a design of the design library:
+     it is never frozen at a size (the cloud nests it as a hand-dropped charm is nested on a page), and its sheet's card offers Exclude / Include and Move to <metal> */
+  const hand = p.hand === true;
+  if (hand && (!cloudPlace || rid)) return { error: "artwork added by hand goes to the cloud as a piece of no order (cloudPlace, no order id)", status: 400 };
+  if (hand) piece.hand = true;
   return db.runTransaction(async tx => {
     const cref = col(COUNTERS).doc("custom-" + ymd), cs = await tx.get(cref), c = cs.exists ? cs.data() : {}, reqs = c.reqs && typeof c.reqs === "object" ? c.reqs : {};
     const had = Math.floor(+reqs[req]) || 0, n = had || (num(c.n) || 0) + 1, customId = `CUSTOM-${ymd}-${n}`, serial = ymd + String(n).padStart(4, "0"), orderId = rid || customId;
@@ -2333,7 +2474,8 @@ async function op_customPiecePut(b) {
     tx.set(cref, { day, n: Math.max(n, num(c.n) || 0), reqs: Object.fromEntries(keep), updatedAt: FV.serverTimestamp() }, { merge: true });
     const at = Date.now(), pools = poolIds.map((poolId, i) => ({ poolId, orderId, transactionId: serial, lineKey: `${orderId}_${serial}`, copy: i + 1, quantity: qty, sku: "CUSTOM", material: metal, size: null, form: null, chain: null,
       runId: str(p.runId, 80) || null, setId: str(p.setId, 80) || null, sheetId: null, charmHash: str(p.charmHash, 120) || null, masterHash: null, aiPath: str(p.aiPath, 300) || null, engrave: false, state: "ready",
-      custom: true, customId, customName: name || null, orderless: !rid, customPiece: piece, orderDate: at, arrivedAt: at, by }));
+      custom: true, customId, customName: name || null, orderless: !rid, customPiece: piece, orderDate: at, arrivedAt: at, by,
+      ...(cloudPlace ? { cloudPlace: true, widthPt: pt(p.widthPt), heightPt: pt(p.heightPt), areaPt2: pt(p.areaPt2) } : {}), ...(hand ? { hand: true } : {}) }));   // (CESEND; S3: hand)
     for (const r of pools) tx.set(col(POOL).doc(r.poolId), Object.assign({}, r, { createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() }));
     return { ok: true, customId, orderId, orderless: !rid, serial, poolIds, pools };
   });
@@ -3891,6 +4033,18 @@ const LINE_PATCH_FIELDS = ["state", "poolIds", "reason", "hold", "heldAt", "hold
 const CLOUD_LINE_FIELDS = ["poolProblems", "designHold", "changedAt", "changedWhy"];
 const LINE_PATCH_CLOUD = LINE_PATCH_FIELDS.concat(["groupSize", "sides", "pieceCount", "material", "sku", "quantity", "noDesign", "poolProblems", "designHold", "releasing", "releaseAnyway", "releaseHold", "blockOverride", "skuOverride", "etsyClosed", "shippedAt", "changePending", "repoolChanged", "changedAt", "changedWhy", "arrivedAt", "activityAt"]);
 LINE_PATCH_CLOUD.splice(LINE_PATCH_CLOUD.length, 0, "vacated");   // (CLOUDDRIVE build step 13, INPLACE: a line whose pieces left their sheet to be made again in that place; the cloud's placement leaves it to the request)
+/* S1 (Paul, 21 Nov 2026: a Review answer made on a staff computer in cloud mode "on" stayed in that page's memory; the cloud never saw it). A person's Review answer is a press: a page's patch
+   sent with decision: true may also carry the answer's own fields (a material, a size: the cloud's world reads the line again with them, READ_FACTS, and the intake makes it), and, on each line,
+   `decided` { type: decided | skipped, id, at, by, text, data }: the answer's step on the order's timeline, written here once (its id), for the lines the run still holds. The answer comes back
+   whole (lines: what each line now says), so the page shows the cloud's answer, not its own. A patch without decision writes exactly what it wrote before. */
+const LINE_PATCH_DECISION = ["materialOverride", "sizeOverride"];
+const DECIDED_TYPES = new Set(["decided", "skipped"]);
+function decisionOk(k, p) {
+  if (p.materialOverride != null && !/^[a-z0-9_]{2,20}$/.test(String(p.materialOverride))) return `${k}: not a material`;
+  if (p.sizeOverride != null && !(typeof p.sizeOverride === "string" && p.sizeOverride.length <= 40)) return `${k}: not a size`;
+  if (p.state != null && !["skipped", "pulled", "held"].includes(p.state)) return `${k}: a person's answer does not set "${str(p.state, 20)}"`;
+  return "";
+}
 async function op_runLinesPatch(b) {
   const id = str(b.runId, 80); if (!isId(id)) return { error: "bad run id" };
   const set = b.lines && typeof b.lines === "object" && !Array.isArray(b.lines) ? b.lines : null;
@@ -3898,7 +4052,10 @@ async function op_runLinesPatch(b) {
   if (!keys.length) return { error: "no lines to change" };
   const at = Date.now(), dev = str(b.dev, 40) || "", by = str(b.by, 80) || "", ref = col(RUNS).doc(id);
   let applied = [];
-  const fields = MARKED ? LINE_PATCH_CLOUD : LINE_PATCH_FIELDS;   // (CLOUDDRIVE §1.9: the wider list for the cloud's own calls only)
+  const decision = !MARKED && b.decision === true;   // (S1: a person's Review answer from a page)
+  if (decision) for (const k of keys) { const why = decisionOk(k, set[k] && typeof set[k] === "object" ? set[k] : {}); if (why) return { error: why, status: 400 }; }
+  const fields = MARKED ? LINE_PATCH_CLOUD : decision ? LINE_PATCH_FIELDS.concat(LINE_PATCH_DECISION) : LINE_PATCH_FIELDS;   // (CLOUDDRIVE §1.9: the wider list for the cloud's own calls only)
+  const after = {};
   const refused = await db.runTransaction(async tx => {
     if (FENCE) await fenceTx(tx);   // (CLOUDDRIVE P7/C7)
     const ex = await tx.get(ref); if (!ex.exists) return { error: "that run is not in the cloud", status: 404 };
@@ -3911,7 +4068,9 @@ async function op_runLinesPatch(b) {
       const cur = lines[k]; if (!cur || typeof cur !== "object") continue;
       const patch = set[k] && typeof set[k] === "object" ? set[k] : {}, next = Object.assign({}, cur);
       for (const f of fields) if (Object.prototype.hasOwnProperty.call(patch, f)) next[f] = patch[f];
+      if (decision) for (const f of LINE_PATCH_DECISION) if (next[f] === null) delete next[f];   // (S1: an answer taken back leaves no field behind)
       next._lp = { at, dev, by }; lines[k] = next; applied.push(k);
+      if (decision) after[k] = Object.fromEntries(["state", "reason", "hold", "heldAt", "poolIds", "materialOverride", "sizeOverride", "_lp"].map(f => [f, next[f] === undefined ? null : next[f]]));
     }
     if (!applied.length) return null;
     const parts = liveParts(id, lines);
@@ -3924,6 +4083,17 @@ async function op_runLinesPatch(b) {
   });
   if (refused) return refused;
   if (applied.length) { revTouch(b, ["r:" + id]); feedOrders(b, [applied]); }   // (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud" / "Make Firebase and Etsy cheaper without losing any real-time function"): its orders, never p:* (no pool row or sheet moved)
+  if (decision && applied.length) {   // (S1: the answer's step on each order's timeline, once per answer: its id)
+    const events = [];
+    for (const k of applied) {
+      const d = set[k] && set[k].decided; if (!d || typeof d !== "object" || !DECIDED_TYPES.has(d.type)) continue;
+      const eid = str(d.id, 160); if (!eid) continue;
+      let data = d.data && typeof d.data === "object" && !Array.isArray(d.data) ? d.data : {}; try { if (JSON.stringify(data).length > 1500) data = { kind: str(data.kind, 40) || null, from: "review" }; } catch (_) { data = {}; }
+      events.push({ orderId: orderOfKey(k), type: d.type, id: eid, at: num(d.at) > 1e12 ? Math.round(num(d.at)) : at, by: str(d.by, 80) || by || "someone", station: "sorter", lineKey: k, transactionId: String(k).split("_")[1] || "", text: str(d.text, 200), data: Object.assign({}, data, { cloud: true }) });
+    }
+    if (events.length) await stamp(events, "a Review answer");
+    return { ok: true, runId: id, applied, at, lines: after, decided: events.length };
+  }
   return { ok: true, runId: id, applied, at };
 }
 /* ── (CLOUDALL S3, Paul 13 Nov 2026: "New orders. They join the run only on that computer" -> any computer that reads new orders writes them into the cloud run) ──
@@ -5753,6 +5923,11 @@ OPS.worldGet = op_worldGet; OPS.worldBuild = op_worldBuild; ["worldGet", "worldB
    learns of it from the feed (p:<order>, r:<run>) and the world built again (worldSoon, as after runLinesPatch); the computer that carries the run makes the pieces up through its intake. */
 { const HoldRelease = require("./_charmNestHoldRelease").make({ db, FV, col, prefix: () => PREFIX, marked: () => MARKED, fenceTx: tx => fenceTx(tx), liveParts, stamp, revTouch, feedOrders });
   OPS.releaseAsk = HoldRelease.releaseAsk; OPS.releaseJobGet = HoldRelease.releaseJobGet; NO_GEN_BUMP.add("releaseJobGet"); WORLD_TRIGGERS.add("releaseAsk"); }
+/* (S2, Paul 21 Nov 2026: "staff keep FULL use of every input, saved in the cloud, seen on every computer"): Review's Resolved decisions, kept in the cloud (_charmNestReviewSettled.js):
+   reviewSettledPut, a person's answer (PRESS), named in the feed (g:review-settled) and read into the cloud world's Review (its settled list: the world is built again soon);
+   reviewSettledGet, the list (READ). A viewer (mode "on") writes the decisions answered on it and draws the cloud's list; nothing else changes. */
+{ const ReviewSettled = require("./_charmNestReviewSettled")({ db, col, revTouch });
+  SANDBOXED.add(ReviewSettled.COLL); Object.assign(OPS, ReviewSettled.ops); NO_GEN_BUMP.add("reviewSettledPut"); NO_GEN_BUMP.add("reviewSettledGet"); WORLD_TRIGGERS.add("reviewSettledPut"); }
 /* (RUNCARRIER, Paul 14 Nov 2026: "You must put all this in the cloud ... make sure that all computers have equal access"). The run is carried by ONE computer at a time, any computer: the run record's `carrier` { dev, by, at, since } says which, renewed by that computer every 20 s.
    runCarrier { runId, dev, by, take?, check? }: check only reads; the carrier itself renews it; another computer becomes the carrier when nobody carries it or the carrier has not been
    seen for 90 s (closed, asleep, offline), or when a person there chose to take it over (take). → { ok, mine, alive, carrier } */
@@ -5820,7 +5995,7 @@ OPS.runCarrier = op_runCarrier; NO_GEN_BUMP.add("runCarrier");
    runCmdPut { runId, cmd: { type: reorder | consolidate | empty | delete, metal, ids?, sourceId?, targetId?, sheetId? }, by, dev } adds it to ONE document (Charm_Nest_Run_Cmds/<run>, the newest 30 kept) and touches the run's feed key r:<run>;
    runCmdList { runId } -> { cmds } newest first; runCmdDone { runId, id, ok, text, dev } is the carrier's answer. None of them writes anything a placement answer is made from (NO_GEN_BUMP). */
 const CMDS = "Charm_Nest_Run_Cmds"; SANDBOXED.add(CMDS);
-const CMD_TYPES = new Set(["reorder", "consolidate", "empty", "delete", "repicture", "seat", "renest", "remake", "unkeep", "placewaiting", "customsend", "setrebuild", "pairnow", "leaveset", "sendhome", "remakeline", "keepsync", "release", "skuonce"]);   /* (FOLLOWRELEASE, Paul 18 Nov 2026: "this order was released by a user and then it disappeared ... and reappeared under Review": a Release Hold pressed on a computer that only follows the run is done by the computer that carries it: release { ids: [order id] }) */   /* (REMOTENEST, Paul 15 Nov 2026: "you re-nest it": a draft sheet nested again on the computer that carries the run, asked from another) */   // (ONEGRID, Paul 15 Nov 2026: "move already partially and fully nested sheets onto new nested sheets and all those charms should move over": seat = a nested sheet's pieces onto a physical sheet)
+const CMD_TYPES = new Set(["reorder", "consolidate", "empty", "delete", "repicture", "seat", "renest", "remake", "unkeep", "placewaiting", "customsend", "setrebuild", "pairnow", "leaveset", "sendhome", "remakeline", "keepsync", "release", "skuonce", "hop"]);   /* (ITEM 13, Paul 21 Nov 2026: a sheet hop from a viewer: hop { sourceId, sourceIds?, targetId, ids, poses, free?, layoutBase? }, done by the cloud, _charmNestCmdExec.js hop) */   /* (FOLLOWRELEASE, Paul 18 Nov 2026: "this order was released by a user and then it disappeared ... and reappeared under Review": a Release Hold pressed on a computer that only follows the run is done by the computer that carries it: release { ids: [order id] }) */   /* (REMOTENEST, Paul 15 Nov 2026: "you re-nest it": a draft sheet nested again on the computer that carries the run, asked from another) */   // (ONEGRID, Paul 15 Nov 2026: "move already partially and fully nested sheets onto new nested sheets and all those charms should move over": seat = a nested sheet's pieces onto a physical sheet)
 async function op_runCmdPut(b) {
   const runId = str(b.runId, 80), dev = str(b.dev, 60) || "", by = str(b.by, 80) || ""; if (!isId(runId) || !dev) return { error: "bad run or computer" };
   const c = b.cmd && typeof b.cmd === "object" ? b.cmd : null; if (!c || !CMD_TYPES.has(c.type)) return { error: "unknown command" };
@@ -5828,6 +6003,15 @@ async function op_runCmdPut(b) {
   const args = { metal, ...(Array.isArray(c.ids) ? { ids: c.ids.slice(0, 80).map(x => str(x, 80)).filter(Boolean) } : {}), ...(c.sourceId ? { sourceId: str(c.sourceId, 80) } : {}), ...(c.targetId ? { targetId: str(c.targetId, 80) } : {}), ...(c.sheetId ? { sheetId: str(c.sheetId, 80) } : {}), ...(c.partialId ? { partialId: str(c.partialId, 120) } : {}), ...(c.label ? { label: str(c.label, 160) } : {}), ...(c.type === "customsend" && c.ck ? { ck: str(c.ck, 300) } : {}), ...(c.type === "setrebuild" && c.setId ? { setId: str(c.setId, 80) } : {}), ...(c.type === "skuonce" && c.sku ? { sku: str(c.sku, 80).toUpperCase() } : {}) };   // (ANYWHERE: skuonce = "Just this order", asked from a computer that follows the run)   // (REMOTESEND: the card whose sent designs the carrier places)
   // MOVESHOW, Paul 15 Nov 2026: "I also don't see any ability to choose which sheet I want to be first which sheet I want to be second for overflow": a seat may carry the physical sheets in the order chosen (partialIds, 8 at most, 80 characters each); partialId stays the first of them
   if (Array.isArray(c.partialIds)) { const pids = c.partialIds.slice(0, 8).map(x => str(x, 80)).filter(Boolean); if (pids.length) { args.partialIds = pids; if (!args.partialId) args.partialId = pids[0]; } }
+  /* ITEM 13 (Paul 21 Nov 2026): a sheet hop names where each piece goes on the target (the place it was dropped, or the nearest free place the page's fit test found): 60 pieces at
+     most, a pose each { poolId, cxPt, cyPt, angle, wPt?, hPt?, size? }; free: it was put where it was let go, overlapping (MCFREE); layoutBase: the target's layout as the page saw it */
+  if (c.type === "hop") {
+    const fin = v => Number.isFinite(+v) ? Math.round(+v * 1000) / 1000 : null;
+    const poses = (Array.isArray(c.poses) ? c.poses : []).slice(0, 60).map(p => p && typeof p === "object" ? { poolId: str(p.poolId, 120), cxPt: fin(p.cxPt), cyPt: fin(p.cyPt), angle: fin(p.angle), ...(fin(p.wPt) > 0 ? { wPt: fin(p.wPt) } : {}), ...(fin(p.hPt) > 0 ? { hPt: fin(p.hPt) } : {}), ...(fin(p.size) > 0 && fin(p.size) !== 1 ? { size: fin(p.size) } : {}) } : null);
+    if (!args.targetId || !args.sourceId || !poses.length || poses.some(p => !p || !p.poolId || p.cxPt == null || p.cyPt == null || p.angle == null)) return { error: "a move between sheets names the two sheets and where each piece goes" };
+    args.poses = poses; if (c.free === true) args.free = true; if (c.fill === true) args.fill = true;   /* (fill: GAP G1, Paul 21 Nov 2026, the sheet window's Fill the freed room / Place from a viewer: the pieces go into the freed room where the page planned them) */ if (Number.isFinite(+c.layoutBase) && c.layoutBase !== null) args.layoutBase = +c.layoutBase;
+    if (Array.isArray(c.sourceIds)) { const s = c.sourceIds.slice(0, 4).map(x => str(x, 80)).filter(Boolean); if (s.length) args.sourceIds = s; }
+  }
   if (c.type === "customsend" && !args.ck) return { error: "a send names its card" };
   if (c.type === "seat" && (!args.sheetId || !args.partialId)) return { error: "a seat names the sheet and the physical sheet" };
   const ref = col(CMDS).doc(runId), now = Date.now(), id = "c" + now.toString(36) + Math.random().toString(36).slice(2, 6).padEnd(4, "0");
@@ -6442,6 +6626,9 @@ async function applySetMembers(step, by, device, via) {
     if (!r.ok) return joinRefusal(r);
   }
   const at = Date.now();
+  // (G3, Paul 21 Nov 2026: in mode "on" the cloud makes every open set, so "its run is open on another screen" is never true: a page's move of such a set's sheets is the cloud's request
+  //  (charm-nest-flow.js asks it: roseCutAsk include / exclude), and a page that still sends it here is told so in those words)
+  const cloudCarries = !PREFIX && driveModeOf(await driveDoc()) === "on";
   const res = await db.runTransaction(async tx => {
     const rec = new Map(), setDoc = new Map();
     const readSheets = async (list, mask) => { for (let i = 0; i < list.length; i += 100) for (const d of await txGetAll(tx, list.slice(i, i + 100).map(id => col(SHEETS).doc(id)), mask)) rec.set(d.id, d.exists ? { ...d.data(), id: d.id } : null); };
@@ -6457,7 +6644,7 @@ async function applySetMembers(step, by, device, via) {
     await readSheets(near.filter(id => !rec.has(id)), SHARED_FIELDS);
     for (const m of moves) { const e = expect[m.id]; if (e && typeof e === "object" && Object.prototype.hasOwnProperty.call(e, "setId") && (e.setId || null) !== (SetEdit.inSetOf(rec.get(m.id)) || null)) return { error: "The sheet changed since this move was planned: nothing was changed. Try the move again", status: 409 }; }
     const sets = {}; for (const [id, d] of setDoc) sets[id] = { doc: d, members: d ? (Array.isArray(d.sheetIds) ? d.sheetIds : []).map(i => rec.get(String(i))).filter(r => r && !r.archived) : [] };
-    const verify = meta => SetEdit.verifyMoves({ moves: moves.map(m => ({ id: m.id, to: m.to, cut: m.cut })), recs: Object.fromEntries(moves.map(m => [m.id, rec.get(m.id)])), sets, others: [...rec.values()].filter(Boolean), runs, owned, engravings, ...(meta ? { meta } : {}) });
+    const verify = meta => SetEdit.verifyMoves({ moves: moves.map(m => ({ id: m.id, to: m.to, cut: m.cut })), recs: Object.fromEntries(moves.map(m => [m.id, rec.get(m.id)])), sets, others: [...rec.values()].filter(Boolean), runs, owned, engravings, ...(cloudCarries ? { cloud: true } : {}), ...(meta ? { meta } : {}) });
     let v = verify();
     // a refusal for shared orders says WHAT the pieces are (a left and a right earring, two earrings, n discs): one small read of at most 24 pool rows, only here (never on a move that goes through)
     if (!v.ok && v.shared && v.shared.length) { const meta = await pieceMeta(tx, v.shared); if (meta) v = verify(meta); }
@@ -6756,6 +6943,9 @@ const PAGE_DEV = /^d[0-9a-z]{4,14}$/;
 const ENGRAVE_DECISION = { engrave: "boolean", engraveFront: "boolean", engraveSkippedBy: "string", engraveFrontSkippedBy: "string" };
 const engraveDecision = b => {
   if (b.op === "backInvalidate") return true;
+  // (VIEWAPPROVE 2, Paul 21 Nov 2026: "check if anything else is restricted from other computers"): the order's timeline, what a person did on it (an approval, a note, a hold, words
+  //  changed), is history, not the run's work: a viewer runs no loop of its own, so what it records is a person's; every event keeps its own id, kept once
+  if (b.op === "timelineAdd") return true;
   if (b.op !== "poolUpdate") return false;
   const p = b.patch; if (!p || typeof p !== "object" || Array.isArray(p)) return false;
   const keys = Object.keys(p); return keys.length > 0 && keys.every(k => Object.prototype.hasOwnProperty.call(ENGRAVE_DECISION, k) && typeof p[k] === ENGRAVE_DECISION[k]);
@@ -6857,6 +7047,12 @@ OPS.engraveIntentStart = async b => {
   return op_startAgent({ mode: "engraveIntent", payload, sourceName: "cloud classify" });
 };
 NO_GEN_BUMP.add("engraveIntentStart");
+/* (ITEM 10, Paul 21 Nov 2026: the Charm Editor's "Done" on a Custom piece, and its Undo, refused on every viewer: "The cloud carries every run now: poolUpdate…"): a person's press, done here
+   at once in mode "on" (_charmNestCustomDone.js): the custom piece off every sheet that lists it, in one transaction with its rows (as the cloud's own take-off edits a sheet), or nothing */
+OPS.customDone = require("./_charmNestCustomDone")({ db, col, FV, txGetAll, isId, isPoolId, MANUAL_STALE_MS, stamp, poolEvents, revTouch, feedOrders, setEdit: () => SetEdit, prefix: () => PREFIX,
+  driveMode: async () => driveModeOf(await driveDoc()), names: { POOL, SHEETS, BACK, SETS, RUNS },
+  drive: async () => driveDoc(), cmdPut: body => op_runCmdPut(body) }).ops.customDone;   // (G7: an Undo of Done puts the piece back where it was, or asks the run to place it: placewaiting)
+DRIVE_TRIGGERS.add("customDone");   // (the sheet it left owes its files and its nest: the driver is told now)
 /* (CLOUDDRIVE build step 12, hard-parts §2; DORMANT): the commit journal (Charm_Nest_Commits/<runId>~<setId>: the cloud's memory of sending a set to the Design Station,
    written first; _charmNestCommitOps.js) and the set's completion check asked before it. Only the cloud's commit unit writes a journal; a person's Undo of one is commitUndoAsk. */
 SANDBOXED.add("Charm_Nest_Commits"); Object.assign(OPS, require("./_charmNestCommitOps")({ db, col, fenceTx, isId, str, num, fenceNonce: () => (FENCE ? FENCE.nonce : null) }), { setCommitCheck: op_setCommitCheck }); ["commitJournal", "commitGet", "commitUndoAsk", "setCommitCheck"].forEach(op => NO_GEN_BUMP.add(op)); DRIVE_TRIGGERS.add("commitUndoAsk");
@@ -6873,7 +7069,9 @@ function call(body, o = {}) {
     const b = Object.assign({}, body && typeof body === "object" ? body : {}), op = b.op;
     if (!OpClass.isCloudOp(op)) return { status: 403, error: "not a cloud op", op: typeof op === "string" ? op.slice(0, 60) : null };
     if (OpClass.CLOUD_BODY[op]) OpClass.CLOUD_BODY[op](b);
-    delete b.sandbox; delete b.passcode; b.dev = CLOUD_DEV; b.by = "Cloud";
+    // (ITEM 4, Paul 21 Nov 2026: a person's Cut Sheet done by the cloud is recorded with THAT person's name, as the page's press recorded it: roseRecordCut keeps the by its ask named)
+    const pressBy = op === "roseRecordCut" && typeof b.by === "string" && b.by.trim() ? str(b.by, 80) : "";
+    delete b.sandbox; delete b.passcode; b.dev = CLOUD_DEV; b.by = pressBy || "Cloud";
     if (cloudReads(op, b)) delete b.mid;
     else {
       if (typeof o.unit !== "string" || !o.unit) throw new Error(`the cloud's ${op} names no unit: a write is never sent without its mid`);

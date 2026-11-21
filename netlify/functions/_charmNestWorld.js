@@ -16,7 +16,8 @@
  *       interpretAll, Master.entryFor / looseFor / likeFor / sharedFor), and the pure part of interpretAll after it (overrides, Release Anyway, sends).
  *    5. Charm_World_Lines/<lineKey>: the full line (the order, the Etsy line, the reading, the problems with every detail, the run's state and every
  *       decision) written only when it changed; a line that left is written `gone`. Charm_World/summary: the counts, the open keys' hash, when.
- *    6. Review: charm-nest-review-core.js builds the cards and every count from those lines and records; kept in Charm_World/review.
+ *    6. Review: charm-nest-review-core.js builds the cards and every count from those lines and records; kept in Charm_World/review. In drive mode "on" its Resolved
+ *       decisions are the cloud's list (Charm_Nest_Review_Settled, _charmNestReviewSettled.js: S2, Paul 21 Nov 2026).
  *  Production only for now (the sandbox's orders come from Charm_Sandbox: a later step). Nothing a page shows is changed by this file yet: the pages
  *  are compared with it first (Settings → Computers), then switched to draw from it.                                                              */
 "use strict";
@@ -54,6 +55,7 @@ async function feedToken(db) { const ds = await db.getAll(...['library', 'feed-p
 /* Etsy's daily limit, as the mail sync records it when Etsy refuses for the day (EtsyMail_Config/syncState): no Etsy call until it resets */
 async function etsyLocked(db) { try { const s = await db.collection('EtsyMail_Config').doc('syncState').get(), d = s.exists ? s.data() || {} : {}, t = d.etsyDailyLimitResetAt; const ms = t && t.toMillis ? t.toMillis() : +t || 0; return ms > Date.now() ? ms : 0; } catch (_) { return 0; } }
 /* (CLOUDDRIVE: whether the cloud drive is in standby or on: Charm_Nest_Open/drive; absent, "off" or unreadable is off) */
+async function driveMode(db) { try { const s = await db.collection("Charm_Nest_Open").doc("drive").get(), m = s.exists ? (s.data() || {}).mode : null; return m === "standby" || m === "on" ? m : "off"; } catch (_) { return "off"; } }
 async function driveOn(db) { try { const s = await db.collection("Charm_Nest_Open").doc("drive").get(), m = s.exists ? (s.data() || {}).mode : null; return m === "standby" || m === "on"; } catch (_) { return false; } }
 const CANCEL_STATUS = /cancel|fully refunded/i;
 
@@ -455,7 +457,11 @@ async function build(opts) {
   if (ReviewCore && typeof ReviewCore.build === "function") {
     try {
       const customSent = {}; for (const [k, v] of Object.entries(Object.assign({}, customKept, customDone))) if (v && v.sent && typeof v.sent === "object") customSent[k] = v.sent;
-      review = ReviewCore.build({ now, lines: rows.map(coreLine), customDone, customKept, reviewMarks, customSheet: coreSends(customSheet), customSent, cancelled: [...cancelled], settled: [], engraving });
+      // (S2, Paul 21 Nov 2026: Review's Resolved decisions are the cloud's in mode "on" (_charmNestReviewSettled.js, written where Review.remove answers a decision), so every computer lists the
+      //  same; in any other mode the list stays the carrying page's own, as before)
+      let settled = [];
+      if (ops.reviewSettledGet && await driveMode(db) === "on") { try { const g = await ops.reviewSettledGet({}); settled = (g && Array.isArray(g.settled) ? g.settled : []).slice(0, 500); } catch (e) { errors.push("settled: " + String(e.message || e).slice(0, 160)); } }
+      review = ReviewCore.build({ now, lines: rows.map(coreLine), customDone, customKept, reviewMarks, customSheet: coreSends(customSheet), customSent, cancelled: [...cancelled], settled, engraving });
       // (the flow, with Review's Open and the engraving still to settle as the page's flowCtx reads them)
       let flow = null;
       if (flowIn) {

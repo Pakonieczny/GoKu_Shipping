@@ -120,6 +120,8 @@ function host(o) {
   const listed = o.listed instanceof Set ? o.listed : new Set(), sheets = o.sheets instanceof Map ? o.sheets : new Map(), cancelled = o.cancelled instanceof Set ? o.cancelled : new Set();
   const specs = o.specs instanceof Map ? o.specs : new Map();
   const missing = new Set();
+  /* CUSTOMSEND (21 Nov 2026): a line sent from its card (o.sends: lineKey → its Charm_Custom_Sheet record) is made from the card's own designs, as the page's CustomSheet.prepare */
+  const custom = o.sends instanceof Map ? require("./_charmNestCustomMake").create({ sends: o.sends, pdf, bytes: p => bytesAt(theBucket(), "gs:" + String(p || "")), settings, stockFor: m => stockFor(settings, stockPreset, m) }) : null;
   const M = {
     entryFor: sku => entries.get(upper(sku)) || null,
     /* the page's fetchEntry: a SKU no master file can hold is no design (not a failed read); one asked once and missing is not asked again in this pass */
@@ -190,12 +192,12 @@ function host(o) {
     return { oneBody: false };
   }
   const H = {
-    window: { CharmNestPair: Pair },
+    window: Object.assign({ CharmNestPair: Pair }, custom ? { CustomSheet: true } : {}),
     get S() { return S; }, get B() { return B; }, get O() { return O; }, get P() { return pdf(); }, get MM() { return MM; }, get Master() { return M; }, get PoolPieces() { return PoolPieces; },
     agent: (_where, kind, text) => { try { log(`[pieces] ${kind}: ${String(text).slice(0, 300)}`); } catch (_) { /* a note only */ } return null; },
     api: async (fn, body) => { if (fn === "charmNestOutput" && body && body.op === "url" && body.path) return { url: "gs:" + String(body.path) }; throw new Error("the cloud's piece maker calls no function: " + String(fn)); },
     stockFor: m => stockFor(settings, stockPreset, m), labelOf: m => METAL_LABEL[m] || m, now: () => Date.now(),
-    CharmNestAssets: () => ({ bytes: url => bytesAt(theBucket(), url) }), Orders: () => Orders, Review: () => Review, CustomPrint: () => null, CustomSheet: () => null, ArtEdit: () => undefined,
+    CharmNestAssets: () => ({ bytes: url => bytesAt(theBucket(), url) }), Orders: () => Orders, Review: () => Review, CustomPrint: () => null, CustomSheet: () => custom, ArtEdit: () => undefined,
     keptMaster, keepMaster, pinPooled, charmOf: id => (listed.has(String(id)) ? { poolId: String(id) } : null), greenHeld, cancelled: rid => cancelled.has(String(rid)),
     cloud: true, pace: typeof o.pace === "function" ? o.pace : PoolMake.pace({ budgetMs: o.budgetMs || 45000 }), bodyOf
   };

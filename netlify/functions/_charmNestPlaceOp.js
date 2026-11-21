@@ -28,7 +28,7 @@ const sha16 = s => crypto.createHash("sha256").update(String(s)).digest("hex").s
 const MADE = new Set(["committed", "engraved", "labelled"]);
 const ROW_FIELDS = ["state", "sheetId", "runId", "material", "metal", "orderId", "heldAt", "removedAt", "heldBy", "removedBy", "repooledAt", "side", "mirror", "custom"];
 const SHEET_PIECE_KEYS = ["id", "hash", "name", "sourceId", "sourceName", "index", "order", "layer", "poolId", "custom", "sku", "metal", "lineKey", "areaPt2", "widthPt", "heightPt", "aiPath", "orderDate", "arrivedAt", "frontAt",
-  "excluded", "open", "side", "mirror", "bodyIndex", "groupKey", "groupSize", "oneBody", "chunk", "placedBy", "placedAt"];
+  "excluded", "open", "side", "mirror", "bodyIndex", "groupKey", "groupSize", "oneBody", "chunk", "placedBy", "placedAt", "hand"];   // (hand: S3, artwork a person added by hand)
 
 /** deps: { db, col, FV, txGetAll, Placement, fenceTx, revTouch, feedOrders, isPoolId, isId, orderOfKey, SHEETS, SETS, POOL, RUNS, SHEET_DOC_BYTES, marked(), fenced(), sandbox() } */
 module.exports = function placeOp(d) {
@@ -36,8 +36,15 @@ module.exports = function placeOp(d) {
   /** A charm as the cloud sends it, kept to the fields a sheet record's charm has (finish-core record()) and the cloud's own marks; the pair fields are kept only when sound. */
   function cleanPiece(c) {
     const out = {}; for (const k of SHEET_PIECE_KEYS) if (c[k] !== undefined) out[k] = c[k];
+    if (c.custom === true && c.frozen && typeof c.frozen === "object" && !Array.isArray(c.frozen)) out.frozen = frozenOf(c.frozen);   // (CESEND: a custom piece keeps its exact size and hash on the sheet)
     out.poolId = String(c.poolId); out.order = str(c.order || orderOfKey(c.poolId), 40); out.id = str(c.id || "cloud:" + c.poolId, 200); out.excluded = false;
     return Placement.cleanPiece(out);
+  }
+  /** CESEND: a custom piece's frozen fields, flat and bounded (charm-nest-custom-pool.js frozen). */
+  function frozenOf(f) {
+    const out = {}; for (const k of ["designId", "designHash", "geomHash", "penHash", "customId", "name", "by"]) if (f[k] != null) out[k] = str(f[k], 120);
+    for (const k of ["version", "widthMm", "heightMm", "at"]) if (Number.isFinite(+f[k])) out[k] = +f[k];
+    out.orderless = f.orderless === true; return out;
   }
   async function placeOnSheet(b) {
     if (!d.marked()) return { error: "only the cloud places a piece on a sheet", status: 403 };
@@ -114,7 +121,10 @@ module.exports = function placeOp(d) {
       // (a charm the record already names but does not list, written by a page before the cloud carried the run, is that piece: it is named once, and what the page traced of it is kept)
       for (const x of adding) { const c = cleanPiece(Object.assign({}, sent.find(p => String(p.poolId) === x), { placedBy: "Cloud", placedAt: now })), i = keep.findIndex(k => k && String(k.poolId) === x); if (i >= 0) keep[i] = Object.assign({}, c, keep[i], { placedBy: "Cloud", placedAt: now, excluded: false }, c.chunk ? { chunk: c.chunk } : {}); else keep.push(c); }
       const poolIds = (old.poolIds || []).map(String).concat(adding), layoutRev = num(old.layoutRev) + 1, contentRev = num(old.contentRev) + 1;
-      const patch = { id, runId, metal, charms: keep, poolIds, charmCount: keep.length, nestOwed: now, dirty: true, layoutRev, contentRev, cloudPlaced: { at: now, n: adding.length }, archived: false, updatedAt: FV.serverTimestamp() };
+      // (CESEND: a custom piece's design file joins the record's sources, so the cloud's nest makes the piece from it: _charmNestNestPieces.js charmOf)
+      const srcs = Array.isArray(old.sources) ? old.sources.slice() : [], srcAdd = [];
+      for (const x of adding) { const c = sent.find(p => String(p.poolId) === x), s0 = c && c.custom === true && c.source && typeof c.source === "object" ? c.source : null; if (s0 && s0.id && s0.path && !srcs.concat(srcAdd).some(z => z && z.id === String(s0.id))) srcAdd.push({ id: str(s0.id, 300), name: str(s0.name, 160), path: str(s0.path, 300), custom: true }); }
+      const patch = { id, runId, metal, charms: keep, poolIds, charmCount: keep.length, ...(srcAdd.length ? { sources: srcs.concat(srcAdd) } : {}), nestOwed: now, dirty: true, layoutRev, contentRev, cloudPlaced: { at: now, n: adding.length }, archived: false, updatedAt: FV.serverTimestamp() };
       if (create) Object.assign(patch, { page: Math.max(1, Math.floor(num(create.page)) || 1), draft: true, setId: null, setSeq: null, sheetIndex: null, placements: [], orders: [], placedCount: 0, status: "ready", current: true,
         cardStartedAt: now, createdAt: FV.serverTimestamp(), createdBy: "Cloud", day: str(create.day, 20) || null, ...(create.greenLeftover && typeof create.greenLeftover === "object" ? { greenLeftover: { stockId: str(create.greenLeftover.stockId, 120), revision: num(create.greenLeftover.revision), partialId: str(create.greenLeftover.partialId, 160), from: str(create.greenLeftover.from, 120) || null } } : {}) });
       const bytes = Buffer.byteLength(JSON.stringify(Object.assign({}, old, patch)));

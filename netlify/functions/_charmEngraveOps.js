@@ -10,6 +10,10 @@
  *          · the task Charm_Engrave_Files/<jobKey>@<at> is created (create(): the same press sent again finds it and answers it, nothing twice).
  *        The cloud's driver is kicked (DRIVE_TRIGGERS has engraveApprove; never while the drive is off). The page that sent it shows the task and, when the record says
  *        "written", the seal. Refused in the sandbox, without a signed-in name, for an unplaced or undecided face, and while the drive is off (`local: true`).
+ *        EDIT (ITEM 9, Paul 21 Nov 2026): `edit` { poolId, sheetId, was, sku, copy } is an approved face changed from the Library sheet preview (charm-nest-bridge.js openBack, the
+ *        editingBack job) and approved again. The change IS the reopening: in the same transaction the line's job (approved or written) takes the new words and place and waits in
+ *        `approving`, exactly as a press; its task writes that one piece's file (copies: [poolId], origin "edit", the back it replaces named by `was`), and what the job said before
+ *        (`edit.prev`) is put back if the file cannot be saved.
  *    engraveFilesGet  (READ)   { runId } | { lineKeys: [...] } | { jobKeys: [...] }  → { tasks: [{ id, lineKey, jobKey, face, at, by, state, stage, note, why, done, total, endedAt }] }
  *        What the cloud's back-file tasks are doing (the page's "Saving the back file…" and its reason when it stopped). No staged record and no token is answered.
  *  Nothing here calls Etsy; nothing writes a sheet, a pool row or a file (the cloud's task does that, fenced, in its pass).                                              */
@@ -37,6 +41,13 @@ module.exports = function engraveOps(D) {
     return out;
   }
   const plain = v => { try { return v === undefined ? undefined : JSON.parse(JSON.stringify(v)); } catch (_) { return undefined; } };
+  /** (ITEM 9) An edit of one approved piece of the line: its pool id (a piece of THIS line), the sheet it was opened from, the approval it replaces. null when it names no piece of the line. */
+  function cleanEdit(e, lineKey) {
+    if (!e || typeof e !== "object") return null;
+    const poolId = str(e.poolId, 120);
+    if (!poolId || !isPoolId(poolId) || !poolId.startsWith(lineKey + "_")) return null;
+    return { poolId, sheetId: str(e.sheetId, 120) || null, was: fin(+e.was) && +e.was > 0 ? +e.was : null, sku: str(e.sku, 80) || null, copy: fin(+e.copy) && +e.copy > 0 ? +e.copy : null };
+  }
   /** JSON with its keys in order (a map read back from Firestore need not keep the order it was written in). */
   const stable = v => (v === null || typeof v !== "object" ? JSON.stringify(v === undefined ? null : v) : Array.isArray(v) ? "[" + v.map(stable).join(",") + "]" : "{" + Object.keys(v).filter(k => v[k] !== undefined).sort().map(k => JSON.stringify(k) + ":" + stable(v[k])).join(",") + "}");
   const isPoolId = D.isPoolId || (s => /^(?:\d{5,20}|CUSTOM-\d{8}-\d{1,6})_\d{5,20}_\d{1,3}$/.test(String(s || "")));
@@ -50,6 +61,9 @@ module.exports = function engraveOps(D) {
     if (!by) return { error: "Not approved: sign in first (an approval is kept with the name of the person who made it)", status: 400 };
     const place = cleanPlace(b.place); if (!place) return { error: "Not approved: the words are not placed on the charm yet", status: 400 };
     const text = typeof b.text === "string" ? b.text.slice(0, 2000) : "";
+    // (ITEM 9, Paul 21 Nov 2026: an approved engraving edited from the Library sheet preview on a viewer was built on the browser and never saved; it comes here as an edit of one piece of this line)
+    const edit = b.edit == null ? null : cleanEdit(b.edit, lineKey);
+    if (b.edit != null && !edit) return { error: "Not approved: this edit does not name a piece of that order line", status: 400 };
     // the lane (P9): the cloud writes a run's engraving files only while it carries the run and "engrave" is one of its lanes; otherwise the page does, as today
     const drive = await D.driveDoc(15000), mode = D.driveModeOf(drive), steps = drive && Array.isArray(drive.cloudSteps) ? drive.cloudSteps.map(String) : [];
     if (mode === "off" || !steps.includes("engrave")) return { error: "The cloud does not write engraving files now: this computer saves the approval", status: 409, local: true };
@@ -70,14 +84,18 @@ module.exports = function engraveOps(D) {
       if (!Array.isArray(rec.jobs)) rec.jobs = [];
       let job = rec.jobs.find(j => j && j.key === jobKey);
       if (!job) { const k = Faces.parseKey(jobKey); job = Object.assign({ key: jobKey }, k.face === "front" ? { face: "front" } : {}, k.slot ? { slot: k.slot, rowKey: lineKey } : {}); rec.jobs.push(job); }
+      if (edit && ["approved", "written"].includes(job.state) && num(job.approvedAt) >= at) return { error: "Not approved: this engraving was approved again after it was opened here. Open it again from the sheet, then change it", status: 409 };
       if (["approved", "written"].includes(job.state) && num(job.approvedAt) >= at) return { ok: true, already: true, at: num(job.approvedAt), state: job.state };
-      if (["approved", "written"].includes(job.state)) return { error: "Not approved: it is approved already. Change the words or the place first, then approve again", status: 409 };
+      if (["approved", "written"].includes(job.state) && !edit) return { error: "Not approved: it is approved already. Change the words or the place first, then approve again", status: 409 };   // (an EDIT is that change: the job is reopened below)
       if (["none", "skipped"].includes(job.state)) return { error: "Not approved: this face is set to no engraving", status: 409 };
       // the same approval pressed again while its file is being written: that one stands
       const live = active.docs.map(d => Object.assign({ id: d.id }, d.data() || {})).filter(t => ACTIVE.includes(t.state));
       const same = live.find(t => t.text === text && stable(t.place) === stable(place));
       if (same) return { ok: true, taskId: same.id, at: num(same.at), state: same.state, same: true };
-      Object.assign(job, fields, { text, lines: place.lines ? place.lines.slice() : job.lines, place, state: "review", reason: null, approving: { at, by, text, task: taskId } });
+      // (ITEM 9: what the job said before the edit, put back by the task if the edited file cannot be saved; a piece an earlier edit on a computer took out of the job (copyOverrides) is its own again)
+      const prev = edit ? plain({ state: job.state || null, text: job.text == null ? null : job.text, lines: job.lines || null, place: job.place || null }) : null;
+      if (edit && Array.isArray(job.copyOverrides)) job.copyOverrides = job.copyOverrides.filter(id => id !== edit.poolId);
+      Object.assign(job, fields, { text, lines: place.lines ? place.lines.slice() : job.lines, place, state: "review", reason: null, approving: Object.assign({ at, by, text, task: taskId }, edit ? { edit: true } : {}) });
       if (place.fontKey) job.fontKey = place.fontKey;
       if (Array.isArray(fields.lineInput)) job.lineInput = fields.lineInput;
       const json = JSON.stringify(rec);
@@ -87,7 +105,7 @@ module.exports = function engraveOps(D) {
       tx.set(ref, { key: lineKey, order: lineKey.split("_")[0], rec: json, at: now, by, dev, sig: null, rev, updatedAt: FV.serverTimestamp() });
       const k = Faces.parseKey(jobKey);
       tx.create(tref, { id: taskId, runId, lineKey, jobKey, face: k.face === "front" ? "front" : "back", slot: k.slot || null, at, by, dev, text, place, fields, artAtBy: Object.keys(artAtBy).length ? artAtBy : null,
-        origin: "press", state: "waiting", stage: "check", note: "waiting for the cloud's next pass", copies: null, done: {}, staged: {}, files: {}, sheets: {}, errors: 0, createdAt: now, updatedAt: now,
+        origin: edit ? "edit" : "press", ...(edit ? { edit: Object.assign({}, edit, { prev }) } : {}), state: "waiting", stage: "check", note: "waiting for the cloud's next pass", copies: edit ? [edit.poolId] : null, done: {}, staged: {}, files: {}, sheets: {}, errors: 0, createdAt: now, updatedAt: now,
         expireAt: new Date(now + 30 * 86400000) });
       return { ok: true, taskId, at, rev, superseded: live.map(t => t.id) };
     });
