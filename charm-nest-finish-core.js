@@ -472,7 +472,9 @@
     const later = new Set((sh.feedWait || []).map(String)); if (!later.size) return { act: "none", left: [] };
     const placed = new Set((sh.placements || []).map(p => String(p.id))), left = (sh.charms || []).filter(c => c && !c.excluded && later.has(String(c.id)) && !placed.has(String(c.id)));
     if (!left.length || sh.problem || sh.runHold || (sh.endedBy === "stopped" && !sh.resumeWait)) return { act: "none", left };
-    if ((sh.releaseFull || !verified(sh)) && (sh.placements || []).length && sh.endedBy !== "stopped") return { act: "pass", pass: left.map(c => c.id), left };
+    /* NOFLEE (Paul, 21 Nov 2026: 77 Gold Filled pieces left the merged draft for a new one): a sheet whose layout missed the gap check (verification not ok) no longer sends its waiting
+       orders on: it nests again, as a sheet that passed would; only a sheet released full passes them */
+    if (sh.releaseFull && (sh.placements || []).length && sh.endedBy !== "stopped") return { act: "pass", pass: left.map(c => c.id), left };
     if (sh.topup && !sh.topup.closedAt && (sh.placements || []).length && sh.endedBy !== "stopped") {
       const key = keyOf(o), rank = rankOf(o), turn = (a, b) => rank(a) - rank(b) || key(a).localeCompare(key(b));
       const order = [...new Set(left.slice().sort(turn).map(key))], room = typeof o.topupRoom === "function" ? o.topupRoom(sh) : Infinity;
