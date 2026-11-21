@@ -1,0 +1,1371 @@
+{
+ "about": "CUSTOMWAIT: the 10 open lines the cloud world showed \"unmatched\" on 20 Nov 2026 (Charm_World_Lines, read with worldGet), buyer names replaced. live = the world record; run = the run record it carries; read = Claude's stored reading as the world record kept it.",
+ "lines": [
+  {
+   "key": "4227548630_5284742388",
+   "order": {
+    "receiptId": "4227548630",
+    "orderNumber": "4227548630",
+    "shipBy": 1795194000,
+    "updateTs": 1795202934,
+    "createTs": 1794240971,
+    "buyer": {
+     "name": "Buyer 1",
+     "country": "US",
+     "city": ""
+    },
+    "buyerMessage": "",
+    "isGift": false,
+    "giftMessage": "",
+    "attention": false,
+    "hydrated": true,
+    "staffNote": "",
+    "hasNote": false,
+    "hasMessages": true,
+    "messages": [
+     {
+      "senderName": "Staff",
+      "text": "QA1",
+      "at": 1795207309241,
+      "imageUrl": null
+     }
+    ],
+    "lockedBy": null,
+    "selectedHere": false,
+    "claimed": null,
+    "completed": false,
+    "metals": {
+     "14k": 1,
+     "10k": 0,
+     "rose": 0,
+     "silver": 0,
+     "gold": 0
+    },
+    "lines": [
+     {
+      "transactionId": "5284742388",
+      "listingId": "4613239278",
+      "productId": "35624836865",
+      "sku": "CUSTOM-N-095-149299",
+      "title": "Custom 14k Solid Gold Necklace Right Half Piece, Reorder of Approved Proof, Made for Buyer1",
+      "quantity": 1,
+      "metalKey": "14k",
+      "metalLabel": "14K",
+      "personalization": [],
+      "buyerMessage": "",
+      "expectedShipDate": 1795194000,
+      "isPersonalized": false,
+      "variations": []
+     }
+    ]
+   },
+   "line": {
+    "transactionId": "5284742388",
+    "listingId": "4613239278",
+    "productId": "35624836865",
+    "sku": "CUSTOM-N-095-149299",
+    "title": "Custom 14k Solid Gold Necklace Right Half Piece, Reorder of Approved Proof, Made for Buyer1",
+    "quantity": 1,
+    "metalKey": "14k",
+    "metalLabel": "14K",
+    "personalization": [],
+    "buyerMessage": "",
+    "expectedShipDate": 1795194000,
+    "isPersonalized": false,
+    "variations": []
+   },
+   "read": {
+    "summary": "Reorder of approved custom half-heart necklace design for Buyer1",
+    "at": 1794275605594,
+    "relatedOrder": "4086281356",
+    "evidence": [
+     "SKU starts with CUSTOM",
+     "title: Reorder of Approved Proof, Made for Buyer1",
+     "buyer conversation confirms custom half-heart reorder",
+     "photo shows generic design proof not product photo"
+    ],
+    "kind": "custom",
+    "confidence": 0.97,
+    "model": "claude-sonnet-5",
+    "hash": "df154cee022f746a",
+    "key": "4227548630_5284742388"
+   },
+   "decided": null,
+   "run": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "poolIds": [],
+    "hold": null,
+    "crh": "df154cee022f746a"
+   },
+   "live": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "special": "customNecklace",
+    "ownDesign": false,
+    "readable": true,
+    "problems": [
+     {
+      "kind": "unmatchedSku",
+      "reason": "not in any master file",
+      "sku": "CUSTOM-N-095-149299"
+     }
+    ]
+   }
+  },
+  {
+   "key": "4237886510_5297938140",
+   "order": {
+    "receiptId": "4237886510",
+    "orderNumber": "4237886510",
+    "shipBy": 1795669140,
+    "updateTs": 1795002143,
+    "createTs": 1795002127,
+    "buyer": {
+     "name": "Buyer 2",
+     "country": "US",
+     "city": ""
+    },
+    "buyerMessage": "",
+    "isGift": false,
+    "giftMessage": "",
+    "attention": false,
+    "hydrated": true,
+    "staffNote": "",
+    "hasNote": false,
+    "hasMessages": false,
+    "messages": [],
+    "lockedBy": null,
+    "selectedHere": false,
+    "claimed": null,
+    "completed": false,
+    "metals": {
+     "14k": 0,
+     "10k": 0,
+     "rose": 0,
+     "silver": 0,
+     "gold": 1
+    },
+    "lines": [
+     {
+      "transactionId": "5297938140",
+      "listingId": "4619738356",
+      "productId": "36221768242",
+      "sku": "CUSTOM-N-144-876573",
+      "title": "Custom Gold Filled Charms for Buyer2 Buyer2",
+      "quantity": 1,
+      "metalKey": "gold",
+      "metalLabel": "Gold",
+      "personalization": [],
+      "buyerMessage": "",
+      "expectedShipDate": 1795669140,
+      "isPersonalized": false,
+      "variations": []
+     }
+    ]
+   },
+   "line": {
+    "transactionId": "5297938140",
+    "listingId": "4619738356",
+    "productId": "36221768242",
+    "sku": "CUSTOM-N-144-876573",
+    "title": "Custom Gold Filled Charms for Buyer2 Buyer2",
+    "quantity": 1,
+    "metalKey": "gold",
+    "metalLabel": "Gold",
+    "personalization": [],
+    "buyerMessage": "",
+    "expectedShipDate": 1795669140,
+    "isPersonalized": false,
+    "variations": []
+   },
+   "read": {
+    "summary": "Custom gold filled charm necklace made for named buyer Buyer2 Buyer2",
+    "at": 1795002252588,
+    "relatedOrder": null,
+    "evidence": [
+     "SKU starts with CUSTOM",
+     "title: Custom Gold Filled Charms for Buyer2 Buyer2",
+     "description: custom order made for a specific buyer, not stock",
+     "photo: generic custom handcrafted jewelry graphic"
+    ],
+    "kind": "custom",
+    "confidence": 0.98,
+    "model": "claude-sonnet-5",
+    "hash": "198d8da249008ad2",
+    "key": "4237886510_5297938140"
+   },
+   "decided": null,
+   "run": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "poolIds": [],
+    "hold": null,
+    "crh": "198d8da249008ad2"
+   },
+   "live": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "special": "customNecklace",
+    "ownDesign": false,
+    "readable": true,
+    "problems": [
+     {
+      "kind": "unmatchedSku",
+      "reason": "not in any master file",
+      "sku": "CUSTOM-N-144-876573"
+     }
+    ]
+   }
+  },
+  {
+   "key": "4237977693_5298851614",
+   "order": {
+    "receiptId": "4237977693",
+    "orderNumber": "4237977693",
+    "shipBy": 1795669140,
+    "updateTs": 1795039296,
+    "createTs": 1795039280,
+    "buyer": {
+     "name": "Buyer 3",
+     "country": "US",
+     "city": ""
+    },
+    "buyerMessage": "",
+    "isGift": false,
+    "giftMessage": "",
+    "attention": false,
+    "hydrated": true,
+    "staffNote": "",
+    "hasNote": false,
+    "hasMessages": false,
+    "messages": [],
+    "lockedBy": null,
+    "selectedHere": false,
+    "claimed": null,
+    "completed": false,
+    "metals": {
+     "14k": 0,
+     "10k": 0,
+     "rose": 0,
+     "silver": 0,
+     "gold": 1
+    },
+    "lines": [
+     {
+      "transactionId": "5298851614",
+      "listingId": "4620522680",
+      "productId": "36247799506",
+      "sku": "CUSTOM-N-080-512879",
+      "title": "Custom 14mm 14k Gold Filled Dumpster Fire Necklace Charm, Set of 2, Back Engraved, Charm Only",
+      "quantity": 1,
+      "metalKey": "gold",
+      "metalLabel": "Gold",
+      "personalization": [],
+      "buyerMessage": "",
+      "expectedShipDate": 1795669140,
+      "isPersonalized": false,
+      "variations": []
+     }
+    ]
+   },
+   "line": {
+    "transactionId": "5298851614",
+    "listingId": "4620522680",
+    "productId": "36247799506",
+    "sku": "CUSTOM-N-080-512879",
+    "title": "Custom 14mm 14k Gold Filled Dumpster Fire Necklace Charm, Set of 2, Back Engraved, Charm Only",
+    "quantity": 1,
+    "metalKey": "gold",
+    "metalLabel": "Gold",
+    "personalization": [],
+    "buyerMessage": "",
+    "expectedShipDate": 1795669140,
+    "isPersonalized": false,
+    "variations": []
+   },
+   "read": {
+    "relatedOrder": null,
+    "kind": "custom",
+    "confidence": 0.95,
+    "model": "claude-sonnet-5",
+    "hash": "78539e973b3af349",
+    "key": "4237977693_5298851614",
+    "summary": "Two 14mm Dumpster Fire charms, gold filled, back engraved Buyer3 and Mom",
+    "at": 1795039636976,
+    "evidence": [
+     "SKU starts with CUSTOM",
+     "photo shows generic custom charm graphic",
+     "buyer message specifies custom size and engraving",
+     "conversation confirms custom order details"
+    ]
+   },
+   "decided": null,
+   "run": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "poolIds": [],
+    "hold": null,
+    "crh": "78539e973b3af349"
+   },
+   "live": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "special": "customNecklace",
+    "ownDesign": false,
+    "readable": true,
+    "problems": [
+     {
+      "kind": "unmatchedSku",
+      "reason": "not in any master file",
+      "sku": "CUSTOM-N-080-512879"
+     }
+    ]
+   }
+  },
+  {
+   "key": "4238209249_5299152766",
+   "order": {
+    "receiptId": "4238209249",
+    "orderNumber": "4238209249",
+    "shipBy": 1795669140,
+    "updateTs": 1795053626,
+    "createTs": 1795053611,
+    "buyer": {
+     "name": "Buyer 4",
+     "country": "US",
+     "city": ""
+    },
+    "buyerMessage": "",
+    "isGift": false,
+    "giftMessage": "",
+    "attention": false,
+    "hydrated": true,
+    "staffNote": "",
+    "hasNote": false,
+    "hasMessages": false,
+    "messages": [],
+    "lockedBy": null,
+    "selectedHere": false,
+    "claimed": null,
+    "completed": false,
+    "metals": {
+     "14k": 0,
+     "10k": 0,
+     "rose": 0,
+     "silver": 1,
+     "gold": 0
+    },
+    "lines": [
+     {
+      "transactionId": "5299152766",
+      "listingId": "4620529340",
+      "productId": "36247998404",
+      "sku": "CUSTOM-H-020-993702",
+      "title": "Custom Sterling Silver Boot Spur Huggie Charm Pair, Flat Star Wheel Design, Charms Only Without Hoops",
+      "quantity": 1,
+      "metalKey": "silver",
+      "metalLabel": "Silver",
+      "personalization": [],
+      "buyerMessage": "",
+      "expectedShipDate": 1795669140,
+      "isPersonalized": false,
+      "variations": []
+     }
+    ]
+   },
+   "line": {
+    "transactionId": "5299152766",
+    "listingId": "4620529340",
+    "productId": "36247998404",
+    "sku": "CUSTOM-H-020-993702",
+    "title": "Custom Sterling Silver Boot Spur Huggie Charm Pair, Flat Star Wheel Design, Charms Only Without Hoops",
+    "quantity": 1,
+    "metalKey": "silver",
+    "metalLabel": "Silver",
+    "personalization": [],
+    "buyerMessage": "",
+    "expectedShipDate": 1795669140,
+    "isPersonalized": false,
+    "variations": []
+   },
+   "read": {
+    "relatedOrder": null,
+    "kind": "custom",
+    "confidence": 0.95,
+    "model": "claude-sonnet-5",
+    "hash": "34cfac9a4faf170c",
+    "key": "4238209249_5299152766",
+    "summary": "Make spur charm pair as huggie charms without hoops, sterling silver",
+    "at": 1795054379033,
+    "evidence": [
+     "SKU starts CUSTOM",
+     "photo generic custom charm graphic",
+     "buyer conversation requesting spur design as huggie charm set",
+     "staff confirms custom listing created"
+    ]
+   },
+   "decided": null,
+   "run": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "poolIds": [],
+    "hold": null,
+    "crh": "34cfac9a4faf170c"
+   },
+   "live": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "special": "customHuggies",
+    "ownDesign": false,
+    "readable": true,
+    "problems": [
+     {
+      "kind": "unmatchedSku",
+      "reason": "not in any master file",
+      "sku": "CUSTOM-H-020-993702"
+     }
+    ]
+   }
+  },
+  {
+   "key": "4239955602_5301568585",
+   "order": {
+    "receiptId": "4239955602",
+    "orderNumber": "4239955602",
+    "shipBy": 1795841940,
+    "updateTs": 1795131543,
+    "createTs": 1795131526,
+    "buyer": {
+     "name": "Buyer 5",
+     "country": "US",
+     "city": ""
+    },
+    "buyerMessage": "",
+    "isGift": false,
+    "giftMessage": "",
+    "attention": false,
+    "hydrated": true,
+    "staffNote": "",
+    "hasNote": false,
+    "hasMessages": false,
+    "messages": [],
+    "lockedBy": null,
+    "selectedHere": false,
+    "claimed": null,
+    "completed": false,
+    "metals": {
+     "14k": 0,
+     "10k": 0,
+     "rose": 0,
+     "silver": 0,
+     "gold": 1
+    },
+    "lines": [
+     {
+      "transactionId": "5301568585",
+      "listingId": "4621020722",
+      "productId": "35890275577",
+      "sku": "CUSTOM-N-144-077292",
+      "title": "Custom 14K Gold Filled Necklace with Pine Tree, Fox, and Clover Charms, Engraved F F C on Back, 4B Chain",
+      "quantity": 1,
+      "metalKey": "gold",
+      "metalLabel": "Gold",
+      "personalization": [],
+      "buyerMessage": "",
+      "expectedShipDate": 1795841940,
+      "isPersonalized": false,
+      "variations": []
+     }
+    ]
+   },
+   "line": {
+    "transactionId": "5301568585",
+    "listingId": "4621020722",
+    "productId": "35890275577",
+    "sku": "CUSTOM-N-144-077292",
+    "title": "Custom 14K Gold Filled Necklace with Pine Tree, Fox, and Clover Charms, Engraved F F C on Back, 4B Chain",
+    "quantity": 1,
+    "metalKey": "gold",
+    "metalLabel": "Gold",
+    "personalization": [],
+    "buyerMessage": "",
+    "expectedShipDate": 1795841940,
+    "isPersonalized": false,
+    "variations": []
+   },
+   "read": {
+    "relatedOrder": null,
+    "kind": "custom",
+    "confidence": 0.98,
+    "model": "claude-sonnet-5",
+    "hash": "a1501ca160c83179",
+    "key": "4239955602_5301568585",
+    "summary": "Custom necklace with pine tree, fox lover, clover charms, engraved F F C, 4B chain",
+    "at": 1795131973817,
+    "evidence": [
+     "SKU CUSTOM-N-144-077292",
+     "buyer message selecting specific charms and engravings",
+     "shop confirming custom listing price",
+     "photo: generic custom charm graphic"
+    ]
+   },
+   "decided": null,
+   "run": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "poolIds": [],
+    "hold": null,
+    "crh": "a1501ca160c83179"
+   },
+   "live": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "special": "customNecklace",
+    "ownDesign": false,
+    "readable": true,
+    "problems": [
+     {
+      "kind": "unmatchedSku",
+      "reason": "not in any master file",
+      "sku": "CUSTOM-N-144-077292"
+     }
+    ]
+   }
+  },
+  {
+   "key": "4241324766_5302266048",
+   "order": {
+    "receiptId": "4241324766",
+    "orderNumber": "4241324766",
+    "shipBy": 1795841940,
+    "updateTs": 1795221218,
+    "createTs": 1795221203,
+    "buyer": {
+     "name": "Buyer 6",
+     "country": "US",
+     "city": ""
+    },
+    "buyerMessage": "",
+    "isGift": false,
+    "giftMessage": "",
+    "attention": false,
+    "hydrated": true,
+    "staffNote": "",
+    "hasNote": false,
+    "hasMessages": false,
+    "messages": [],
+    "lockedBy": null,
+    "selectedHere": false,
+    "claimed": null,
+    "completed": false,
+    "metals": {
+     "14k": 0,
+     "10k": 0,
+     "rose": 0,
+     "silver": 1,
+     "gold": 0
+    },
+    "lines": [
+     {
+      "transactionId": "5302266048",
+      "listingId": "4618554602",
+      "productId": "35807185185",
+      "sku": "CUSTOM-H-014-433731",
+      "title": "Custom Single Silver Hawk Huggie Earring Replacement, One Earring Only, Made to Match Original Pair",
+      "quantity": 1,
+      "metalKey": "silver",
+      "metalLabel": "Silver",
+      "personalization": [],
+      "buyerMessage": "",
+      "expectedShipDate": 1795841940,
+      "isPersonalized": false,
+      "variations": []
+     }
+    ]
+   },
+   "line": {
+    "transactionId": "5302266048",
+    "listingId": "4618554602",
+    "productId": "35807185185",
+    "sku": "CUSTOM-H-014-433731",
+    "title": "Custom Single Silver Hawk Huggie Earring Replacement, One Earring Only, Made to Match Original Pair",
+    "quantity": 1,
+    "metalKey": "silver",
+    "metalLabel": "Silver",
+    "personalization": [],
+    "buyerMessage": "",
+    "expectedShipDate": 1795841940,
+    "isPersonalized": false,
+    "variations": []
+   },
+   "read": {
+    "summary": "Make single replacement silver hawk huggie earring to match original lost pair",
+    "at": 1795221903723,
+    "relatedOrder": null,
+    "evidence": [
+     "buyer: lost one earring, needs replacement to match original pair",
+     "description: replacement for lost earring, match original design",
+     "SKU CUSTOM prefix",
+     "title: Replacement, Made to Match Original Pair"
+    ],
+    "kind": "rework",
+    "confidence": 0.85,
+    "model": "claude-sonnet-5",
+    "hash": "1ba98df37954619b",
+    "key": "4241324766_5302266048"
+   },
+   "decided": null,
+   "run": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "poolIds": [],
+    "hold": null,
+    "crh": "1ba98df37954619b"
+   },
+   "live": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "special": "rework",
+    "ownDesign": false,
+    "readable": true,
+    "problems": [
+     {
+      "kind": "unmatchedSku",
+      "reason": "not in any master file",
+      "sku": "CUSTOM-H-014-433731"
+     }
+    ]
+   }
+  },
+  {
+   "key": "4240119336_5300745672",
+   "order": {
+    "receiptId": "4240119336",
+    "orderNumber": "4240119336",
+    "shipBy": 1796187540,
+    "updateTs": 1795141678,
+    "createTs": 1795141658,
+    "buyer": {
+     "name": "Buyer 7",
+     "country": "US",
+     "city": ""
+    },
+    "buyerMessage": "",
+    "isGift": false,
+    "giftMessage": "",
+    "attention": true,
+    "hydrated": true,
+    "staffNote": "",
+    "hasNote": false,
+    "hasMessages": false,
+    "messages": [],
+    "lockedBy": null,
+    "selectedHere": false,
+    "claimed": null,
+    "completed": false,
+    "metals": {
+     "14k": 0,
+     "10k": 0,
+     "rose": 0,
+     "silver": 6,
+     "gold": 0
+    },
+    "lines": [
+     {
+      "transactionId": "5301778457",
+      "listingId": "1801921096",
+      "productId": "23079717352",
+      "sku": "SEA TURTLE 3",
+      "title": "Sea Turtle Charm Gold Pendant Beach Jewelry Good Luck Charm Wedding Add On Charm Tortoise Charm Animal Lover Gift Birthday Gift for Mom",
+      "quantity": 1,
+      "metalKey": "silver",
+      "metalLabel": "Sterling Silver",
+      "personalization": [
+       "everything hangs on the circle in this order: black diamond crystal, fox, bow, amethyst crystal, ballerina shoes, sea turtle, angel wing, then a crystal."
+      ],
+      "buyerMessage": "",
+      "expectedShipDate": 1796187540,
+      "isPersonalized": false,
+      "variations": [
+       {
+        "name": "Metal Choice",
+        "value": "Sterling Silver",
+        "propertyId": "514",
+        "valueId": "105592264230"
+       },
+       {
+        "name": "Charm Type",
+        "value": "Necklace CHARM",
+        "propertyId": "513",
+        "valueId": "1317778745316"
+       },
+       {
+        "name": "Personalization",
+        "value": "everything hangs on the circle in this order: black diamond crystal, fox, bow, amethyst crystal, ballerina shoes, sea turtle, angel wing, then a crystal.",
+        "propertyId": "54",
+        "valueId": null
+       }
+      ]
+     },
+     {
+      "transactionId": "5301778453",
+      "listingId": "4403743824",
+      "productId": "27838938567",
+      "sku": "Dancing_68569",
+      "title": "Ballerina Shoes Charm: Sterling Silver, Gold Filled, Rose Gold Ballet Charm Jewelry Gift",
+      "quantity": 1,
+      "metalKey": "silver",
+      "metalLabel": "Sterling Silver",
+      "personalization": [
+       "everything hangs on the circle in this order: black diamond crystal, fox, bow, amethyst crystal, ballerina shoes, sea turtle, angel wing, then a crystal."
+      ],
+      "buyerMessage": "",
+      "expectedShipDate": 1796187540,
+      "isPersonalized": false,
+      "variations": [
+       {
+        "name": "Metal Choice",
+        "value": "Sterling Silver",
+        "propertyId": "514",
+        "valueId": "58414820869"
+       },
+       {
+        "name": "Charm Type",
+        "value": "Necklace CHARM",
+        "propertyId": "513",
+        "valueId": "1317760658165"
+       },
+       {
+        "name": "Personalization",
+        "value": "everything hangs on the circle in this order: black diamond crystal, fox, bow, amethyst crystal, ballerina shoes, sea turtle, angel wing, then a crystal.",
+        "propertyId": "54",
+        "valueId": null
+       }
+      ]
+     },
+     {
+      "transactionId": "5301778451",
+      "listingId": "4457240028",
+      "productId": "29706240888",
+      "sku": "Tied_94977",
+      "title": "Tied Ribbon Bow Charm: Sterling Silver, Gold Filled, Rose Gold, 14K Solid Gold Dainty Charm Jewelry",
+      "quantity": 1,
+      "metalKey": "silver",
+      "metalLabel": "Sterling Silver",
+      "personalization": [
+       "everything hangs on the circle in this order: black diamond crystal, fox, bow, amethyst crystal, ballerina shoes, sea turtle, angel wing, then a crystal."
+      ],
+      "buyerMessage": "",
+      "expectedShipDate": 1796187540,
+      "isPersonalized": false,
+      "variations": [
+       {
+        "name": "Metal Choice",
+        "value": "Sterling Silver",
+        "propertyId": "514",
+        "valueId": "58414820869"
+       },
+       {
+        "name": "Charm Type",
+        "value": "Necklace CHARM",
+        "propertyId": "513",
+        "valueId": "1317760658165"
+       },
+       {
+        "name": "Personalization",
+        "value": "everything hangs on the circle in this order: black diamond crystal, fox, bow, amethyst crystal, ballerina shoes, sea turtle, angel wing, then a crystal.",
+        "propertyId": "54",
+        "valueId": null
+       }
+      ]
+     },
+     {
+      "transactionId": "5301778449",
+      "listingId": "1801929168",
+      "productId": "23079899096",
+      "sku": "ORIGAMI ANIMAL 9",
+      "title": "Origami Fox Charm Geometric Fox Charm Add On Charm Fox Pendant Animal Jewelry Birthday Gift Animal Lover Gift Origami Jewelry",
+      "quantity": 1,
+      "metalKey": "silver",
+      "metalLabel": "Sterling Silver",
+      "personalization": [
+       "everything hangs on the circle in this order: black diamond crystal, fox, bow, amethyst crystal, ballerina shoes, sea turtle, angel wing, then a crystal."
+      ],
+      "buyerMessage": "",
+      "expectedShipDate": 1796187540,
+      "isPersonalized": false,
+      "variations": [
+       {
+        "name": "Metal Choice",
+        "value": "Sterling Silver",
+        "propertyId": "514",
+        "valueId": "105592264230"
+       },
+       {
+        "name": "Charm Type",
+        "value": "Necklace CHARM",
+        "propertyId": "513",
+        "valueId": "1317778745316"
+       },
+       {
+        "name": "Personalization",
+        "value": "everything hangs on the circle in this order: black diamond crystal, fox, bow, amethyst crystal, ballerina shoes, sea turtle, angel wing, then a crystal.",
+        "propertyId": "54",
+        "valueId": null
+       }
+      ]
+     },
+     {
+      "transactionId": "5300745676",
+      "listingId": "4494142913",
+      "productId": "31550458233",
+      "sku": "Angel_80431",
+      "title": "Angel Wing Charm: Solid Gold 10K, 14K, Sterling Silver Faith Jewelry, Memorial Gift for Her",
+      "quantity": 1,
+      "metalKey": "silver",
+      "metalLabel": "Sterling Silver",
+      "personalization": [
+       "everything hangs on the circle in this order: black diamond crystal, fox, bow, amethyst crystal, ballerina shoes, sea turtle, angel wing, then a crystal."
+      ],
+      "buyerMessage": "",
+      "expectedShipDate": 1796187540,
+      "isPersonalized": false,
+      "variations": [
+       {
+        "name": "Metal Choice",
+        "value": "Sterling Silver",
+        "propertyId": "514",
+        "valueId": "58414820869"
+       },
+       {
+        "name": "Charm Type",
+        "value": "Necklace CHARM",
+        "propertyId": "513",
+        "valueId": "1317760658165"
+       },
+       {
+        "name": "Personalization",
+        "value": "everything hangs on the circle in this order: black diamond crystal, fox, bow, amethyst crystal, ballerina shoes, sea turtle, angel wing, then a crystal.",
+        "propertyId": "54",
+        "valueId": null
+       }
+      ]
+     },
+     {
+      "transactionId": "5300745674",
+      "listingId": "1096331450",
+      "productId": "8515608612",
+      "sku": "Dainty_1450",
+      "title": "Dainty Circle Choker Necklace, Gold Ring Necklace, Gift for Her, Dainty Necklace, Choker Necklace, Custom Handmade Necklace, Circle Necklace",
+      "quantity": 1,
+      "metalKey": "silver",
+      "metalLabel": "Silver - 16\"",
+      "personalization": [],
+      "buyerMessage": "",
+      "expectedShipDate": 1796187540,
+      "isPersonalized": false,
+      "variations": [
+       {
+        "name": "Metal Choice / Necklace Length",
+        "value": "Silver - 16\"",
+        "propertyId": "514",
+        "valueId": "108677363413"
+       }
+      ]
+     },
+     {
+      "transactionId": "5300745672",
+      "listingId": "198504822",
+      "productId": "2021465840",
+      "sku": "Add_4822",
+      "title": "Add a Swarovski Crystal To Your Jewelry! (add on to existing order)",
+      "quantity": 3,
+      "metalKey": "",
+      "metalLabel": "",
+      "personalization": [
+       "all vertical- amethyst, black diamond, crystal,"
+      ],
+      "buyerMessage": "",
+      "expectedShipDate": 1796187540,
+      "isPersonalized": false,
+      "variations": [
+       {
+        "name": "Personalization",
+        "value": "all vertical- amethyst, black diamond, crystal,",
+        "propertyId": "54",
+        "valueId": null
+       }
+      ]
+     }
+    ]
+   },
+   "line": {
+    "transactionId": "5300745672",
+    "listingId": "198504822",
+    "productId": "2021465840",
+    "sku": "Add_4822",
+    "title": "Add a Swarovski Crystal To Your Jewelry! (add on to existing order)",
+    "quantity": 3,
+    "metalKey": "",
+    "metalLabel": "",
+    "personalization": [
+     "all vertical- amethyst, black diamond, crystal,"
+    ],
+    "buyerMessage": "",
+    "expectedShipDate": 1796187540,
+    "isPersonalized": false,
+    "variations": [
+     {
+      "name": "Personalization",
+      "value": "all vertical- amethyst, black diamond, crystal,",
+      "propertyId": "54",
+      "valueId": null
+     }
+    ]
+   },
+   "read": null,
+   "decided": null,
+   "run": {
+    "state": "held",
+    "reason": "needs material (none)",
+    "poolIds": [],
+    "hold": null,
+    "crh": "412aa53463a5bab0"
+   },
+   "live": {
+    "state": "held",
+    "reason": "needs material (none)",
+    "special": null,
+    "ownDesign": false,
+    "readable": true,
+    "problems": [
+     {
+      "kind": "needsMaterial",
+      "reason": null,
+      "sku": null
+     },
+     {
+      "kind": "unmatchedSku",
+      "reason": "not in any master file",
+      "sku": "ADD_4822"
+     }
+    ]
+   }
+  },
+  {
+   "key": "4233443264_5293578979",
+   "order": {
+    "receiptId": "4233443264",
+    "orderNumber": "4233443264",
+    "shipBy": 1795237140,
+    "updateTs": 1794697906,
+    "createTs": 1794697890,
+    "buyer": {
+     "name": "Buyer 8",
+     "country": "US",
+     "city": ""
+    },
+    "buyerMessage": "",
+    "isGift": false,
+    "giftMessage": "",
+    "attention": false,
+    "hydrated": true,
+    "staffNote": "",
+    "hasNote": false,
+    "hasMessages": false,
+    "messages": [],
+    "lockedBy": null,
+    "selectedHere": false,
+    "claimed": null,
+    "completed": false,
+    "metals": {
+     "14k": 0,
+     "10k": 0,
+     "rose": 0,
+     "silver": 0,
+     "gold": 1
+    },
+    "lines": [
+     {
+      "transactionId": "5293578979",
+      "listingId": "483654613",
+      "productId": "1618264294",
+      "sku": "Gold_4613",
+      "title": "Gold Bar Bracelet, Handwritten Bar Bracelet, Your Handwritting or Text, Personalized Bar Bracelet, Sterling Silver, Gold, Jewelry For Her",
+      "quantity": 1,
+      "metalKey": "gold",
+      "metalLabel": "GOLD-FRONT &amp; BACK",
+      "personalization": [],
+      "buyerMessage": "",
+      "expectedShipDate": 1795237140,
+      "isPersonalized": false,
+      "variations": [
+       {
+        "name": "Color / Engraving",
+        "value": "GOLD-FRONT & BACK",
+        "propertyId": "514",
+        "valueId": "129966348571"
+       },
+       {
+        "name": "Bracelet Length",
+        "value": "8.5 inches",
+        "propertyId": "513",
+        "valueId": "54984648579"
+       },
+       {
+        "name": "Send us your photo for handwriting here:",
+        "value": "https://example.invalid/handwriting-photo.png",
+        "propertyId": "54",
+        "valueId": "8859965136"
+       }
+      ]
+     }
+    ]
+   },
+   "line": {
+    "transactionId": "5293578979",
+    "listingId": "483654613",
+    "productId": "1618264294",
+    "sku": "Gold_4613",
+    "title": "Gold Bar Bracelet, Handwritten Bar Bracelet, Your Handwritting or Text, Personalized Bar Bracelet, Sterling Silver, Gold, Jewelry For Her",
+    "quantity": 1,
+    "metalKey": "gold",
+    "metalLabel": "GOLD-FRONT &amp; BACK",
+    "personalization": [],
+    "buyerMessage": "",
+    "expectedShipDate": 1795237140,
+    "isPersonalized": false,
+    "variations": [
+     {
+      "name": "Color / Engraving",
+      "value": "GOLD-FRONT & BACK",
+      "propertyId": "514",
+      "valueId": "129966348571"
+     },
+     {
+      "name": "Bracelet Length",
+      "value": "8.5 inches",
+      "propertyId": "513",
+      "valueId": "54984648579"
+     },
+     {
+      "name": "Send us your photo for handwriting here:",
+      "value": "https://example.invalid/handwriting-photo.png",
+      "propertyId": "54",
+      "valueId": "8859965136"
+     }
+    ]
+   },
+   "read": null,
+   "decided": null,
+   "run": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "poolIds": [],
+    "hold": null,
+    "crh": "58f0f8de7373b92e"
+   },
+   "live": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "special": null,
+    "ownDesign": false,
+    "readable": true,
+    "problems": [
+     {
+      "kind": "unmatchedSku",
+      "reason": "not in any master file",
+      "sku": "GOLD_4613"
+     }
+    ]
+   }
+  },
+  {
+   "key": "4235317593_5296459037",
+   "order": {
+    "receiptId": "4235317593",
+    "orderNumber": "4235317593",
+    "shipBy": 1795496340,
+    "updateTs": 1794850738,
+    "createTs": 1794850721,
+    "buyer": {
+     "name": "Buyer 9",
+     "country": "US",
+     "city": ""
+    },
+    "buyerMessage": "",
+    "isGift": false,
+    "giftMessage": "",
+    "attention": true,
+    "hydrated": true,
+    "staffNote": "",
+    "hasNote": false,
+    "hasMessages": false,
+    "messages": [],
+    "lockedBy": null,
+    "selectedHere": false,
+    "claimed": null,
+    "completed": false,
+    "metals": {
+     "14k": 0,
+     "10k": 0,
+     "rose": 0,
+     "silver": 0,
+     "gold": 2
+    },
+    "lines": [
+     {
+      "transactionId": "5296459037",
+      "listingId": "1871836213",
+      "productId": "23961606823",
+      "sku": "CHAPPARAL LOWERCASE",
+      "title": "Initial Letter Charm Gold Letter Pendant Add On Charm Personalized Jewelry Initial Disc Charm Bridesmaid Jewelry Charm Gift for Mom",
+      "quantity": 1,
+      "metalKey": "gold",
+      "metalLabel": "Gold Filled",
+      "personalization": [
+       "I’d like the letter “t” please."
+      ],
+      "buyerMessage": "",
+      "expectedShipDate": 1795496340,
+      "isPersonalized": false,
+      "variations": [
+       {
+        "name": "Metal Choice",
+        "value": "Gold Filled",
+        "propertyId": "514",
+        "valueId": "61425802009"
+       },
+       {
+        "name": "Charm Type",
+        "value": "Huggie CHARM SET",
+        "propertyId": "513",
+        "valueId": "1317760658573"
+       },
+       {
+        "name": "Personalization",
+        "value": "I’d like the letter “t” please.",
+        "propertyId": "54",
+        "valueId": null
+       }
+      ]
+     },
+     {
+      "transactionId": "5295079752",
+      "listingId": "1801920956",
+      "productId": "24332091527",
+      "sku": "Bolt 2",
+      "title": "Thunderbolt Charm Lightning Bolt Charm 14k Gold Filled Jewelry Jewelry Gift Sterling Silver Lightning Bolt Charm Add on Charm",
+      "quantity": 1,
+      "metalKey": "gold",
+      "metalLabel": "Gold Filled",
+      "personalization": [],
+      "buyerMessage": "",
+      "expectedShipDate": 1795496340,
+      "isPersonalized": false,
+      "variations": [
+       {
+        "name": "Metal Choice",
+        "value": "Gold Filled",
+        "propertyId": "514",
+        "valueId": "61425802009"
+       },
+       {
+        "name": "Charm Type",
+        "value": "Huggie CHARM SET",
+        "propertyId": "513",
+        "valueId": "1317760658573"
+       }
+      ]
+     }
+    ]
+   },
+   "line": {
+    "transactionId": "5296459037",
+    "listingId": "1871836213",
+    "productId": "23961606823",
+    "sku": "CHAPPARAL LOWERCASE",
+    "title": "Initial Letter Charm Gold Letter Pendant Add On Charm Personalized Jewelry Initial Disc Charm Bridesmaid Jewelry Charm Gift for Mom",
+    "quantity": 1,
+    "metalKey": "gold",
+    "metalLabel": "Gold Filled",
+    "personalization": [
+     "I’d like the letter “t” please."
+    ],
+    "buyerMessage": "",
+    "expectedShipDate": 1795496340,
+    "isPersonalized": false,
+    "variations": [
+     {
+      "name": "Metal Choice",
+      "value": "Gold Filled",
+      "propertyId": "514",
+      "valueId": "61425802009"
+     },
+     {
+      "name": "Charm Type",
+      "value": "Huggie CHARM SET",
+      "propertyId": "513",
+      "valueId": "1317760658573"
+     },
+     {
+      "name": "Personalization",
+      "value": "I’d like the letter “t” please.",
+      "propertyId": "54",
+      "valueId": null
+     }
+    ]
+   },
+   "read": null,
+   "decided": null,
+   "run": {
+    "state": "unmatched",
+    "reason": "Letter charm: the personalisation says “I’d like the letter “t” please.”, which letter?",
+    "poolIds": [],
+    "hold": null,
+    "crh": null
+   },
+   "live": {
+    "state": "unmatched",
+    "reason": "Letter charm: the personalisation says “I’d like the letter “t” please.”, which letter?",
+    "special": null,
+    "ownDesign": false,
+    "readable": false,
+    "problems": [
+     {
+      "kind": "unmatchedSku",
+      "reason": "Letter charm: the personalisation says “I’d like the letter “t” please.”, which letter?",
+      "sku": "CHAPPARAL LOWERCASE (HUGGIE)"
+     }
+    ]
+   }
+  },
+  {
+   "key": "4240305483_5301911864",
+   "order": {
+    "receiptId": "4240305483",
+    "orderNumber": "4240305483",
+    "shipBy": 1795841940,
+    "updateTs": 1795206183,
+    "createTs": 1795206165,
+    "buyer": {
+     "name": "Buyer 10",
+     "country": "CH",
+     "city": ""
+    },
+    "buyerMessage": "",
+    "isGift": false,
+    "giftMessage": "",
+    "attention": false,
+    "hydrated": true,
+    "staffNote": "",
+    "hasNote": false,
+    "hasMessages": false,
+    "messages": [],
+    "lockedBy": null,
+    "selectedHere": false,
+    "claimed": null,
+    "completed": false,
+    "metals": {
+     "14k": 0,
+     "10k": 0,
+     "rose": 0,
+     "silver": 0,
+     "gold": 2
+    },
+    "lines": [
+     {
+      "transactionId": "5301911866",
+      "listingId": "1712300774",
+      "productId": "26455781197",
+      "sku": "Cat 1- Sitting Cat",
+      "title": "Sitting Cat Earrings, Cat Earrings, Handmade Jewelry, Animal Jewelry, 14k Gold Fill, Sterling Silver, 14k Rose Gold Fill, Cat Studs",
+      "quantity": 1,
+      "metalKey": "gold",
+      "metalLabel": "Gold Filled",
+      "personalization": [],
+      "buyerMessage": "",
+      "expectedShipDate": 1795841940,
+      "isPersonalized": false,
+      "variations": [
+       {
+        "name": "Metal Choice",
+        "value": "Gold Filled",
+        "propertyId": "513",
+        "valueId": "59616202048"
+       }
+      ]
+     },
+     {
+      "transactionId": "5301911864",
+      "listingId": "1468785670",
+      "productId": "16774290562",
+      "sku": "ST054",
+      "title": "Small Single CZ stud Earrings, Dainty CZ Flat Back Studs, Simple Gold Earrings, Push Pin Earrings,",
+      "quantity": 1,
+      "metalKey": "gold",
+      "metalLabel": "Gold",
+      "personalization": [],
+      "buyerMessage": "",
+      "expectedShipDate": 1795841940,
+      "isPersonalized": false,
+      "variations": [
+       {
+        "name": "Single or Pair",
+        "value": "Pair",
+        "propertyId": "513",
+        "valueId": "64119844857"
+       }
+      ]
+     }
+    ]
+   },
+   "line": {
+    "transactionId": "5301911864",
+    "listingId": "1468785670",
+    "productId": "16774290562",
+    "sku": "ST054",
+    "title": "Small Single CZ stud Earrings, Dainty CZ Flat Back Studs, Simple Gold Earrings, Push Pin Earrings,",
+    "quantity": 1,
+    "metalKey": "gold",
+    "metalLabel": "Gold",
+    "personalization": [],
+    "buyerMessage": "",
+    "expectedShipDate": 1795841940,
+    "isPersonalized": false,
+    "variations": [
+     {
+      "name": "Single or Pair",
+      "value": "Pair",
+      "propertyId": "513",
+      "valueId": "64119844857"
+     }
+    ]
+   },
+   "read": null,
+   "decided": null,
+   "run": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "poolIds": [],
+    "hold": null,
+    "crh": "8e593e6a5b94329c"
+   },
+   "live": {
+    "state": "unmatched",
+    "reason": "not in any master file",
+    "special": null,
+    "ownDesign": false,
+    "readable": true,
+    "problems": [
+     {
+      "kind": "unmatchedSku",
+      "reason": "not in any master file",
+      "sku": "ST054"
+     }
+    ]
+   }
+  }
+ ]
+}
