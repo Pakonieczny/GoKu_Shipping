@@ -305,6 +305,13 @@ async function pass(env) {
     }
     // ── releases (§1.6 item 3, before intake; RELEASEHOLD): a Release Hold press releases the hold in the cloud at once (op releaseAsk); one a function left half done is finished here
     out.releases = await releasesUnit(db, call, say);
+    // ── (NESTNOW, Paul 21 Nov 2026: a Nest press waited while the run stood at another step) a person's Nest / "Nest the rest" (nestStart from a page) is a job queued at once; it used
+    //    to start only when the run reached its own "nest" step, so with the run waiting at commit or labels (the Etsy freshness gate) a person's nest never ran. Every pass now starts
+    //    the oldest queued job of each free lane and keeps running ones alive (Nest.pumpLanes: one lane per run and metal, as the nest step does). Nothing new is asked here.
+    if (cloudSteps.includes("nest") && run.status !== "abandoned" && run.status !== "complete" && !ctlDone.stopped && Date.now() < budgetEnd - PASS_TAIL_MS) {
+      try { const NestQ = require("./_charmNestNest"), live = (await NestQ.jobsOfRun(db, runId)).filter(j => j && (j.status === "queued" || j.status === "running")); if (live.length) { await NestQ.pumpLanes(db, live, { by: "drive" }); out.nestPumped = live.length; } }
+      catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; say("[drive] queued nests: " + String((e && e.message) || e).slice(0, 200)); }
+    }
     // ── the intake (§1.6 item 5, build step 4): new orders join the run, and behind the gate (C5) become pool pieces, before the run's own step (_charmNestIntake.js; only for "pull" / "pool" in cloudSteps)
     if (run.status !== "abandoned" && run.status !== "complete" && !ctlDone.stopped) {
       const ik = await Intake.passIntake({ db, run, runId, drive, cloudSteps, call, read, fence, say, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, Date.now() + UNIT_BUDGET_MS) });
