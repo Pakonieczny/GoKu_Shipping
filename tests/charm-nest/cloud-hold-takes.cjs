@@ -27,10 +27,17 @@ const Place = require('../../charm-nest-place.js');
   try { await units[0]({ db: F.db, run: r, runId: R, budgetEnd: Date.now() + 600000, call: async () => ({ ok: true }), say: () => {}, cursor: {} }); } catch (e) { err = String(e && e.stack || e); }
   ok('5 · a held sheet that changed since its hold is no longer held', !err && r.sheetHolds['gold14k-b'] === null, err || r.sheetHolds);
   ok('6 · a held sheet with no change stays held', r.sheetHolds['gold14k-c'] === 'old', r.sheetHolds);
+  const r2 = { runId: R, sheetHolds: { 'gold14k-c': 'old, no revisions' } };
+  F.seed('Charm_Nest_Jobs/nest-person-done', { id: 'nest-person-done', kind: 'nest', cloud: true, status: 'done', sheetId: 'gold14k-c', runId: R, auto: false, lane: R + '~gold14k', createdMs: T0 });
+  try { await units[0]({ db: F.db, run: r2, runId: R, budgetEnd: Date.now() + 600000, call: async () => ({ ok: true }), say: () => {}, cursor: {} }); } catch (e) { err = String(e && e.stack || e); }
+  ok('6b · an old hold (no revisions) is lifted once a person\'s nest of the sheet ended done', !err && r2.sheetHolds['gold14k-c'] === null, err || r2.sheetHolds);
+  const pieces = fs.readFileSync(path.join(__dirname, '../../netlify/functions/_charmNestNestPieces.js'), 'utf8');
+  ok('6c · BODYWHY: a piece the cloud cannot make says the maker\'s own words, and a spent time budget is thrown on, never "no such body"', /baseWhy = e; return null/.test(pieces) && /if \(e && e\.budget\) throw e; baseWhy/.test(pieces));
   const src = fs.readFileSync(path.join(__dirname, '../../netlify/functions/_charmNestCmdExec.js'), 'utf8');
   ok('7 · MERGEALL waits for a file write (busyRec) and stops every live nest each pass', /MERGEWAIT/.test(src) && /const still = r => !live\(r\) && !busyRec\(r, Date\.now\(\)\)/.test(src) && /is having its files written/.test(src));
   const drive = fs.readFileSync(path.join(__dirname, '../../netlify/functions/_charmNestDrive.js'), 'utf8');
   ok('8 · the driver saves the holds\' revisions with the run', /"sheetHolds", "sheetHoldRevs"/.test(drive));
+  ok('10 · MERGEWAIT: a file write that began just before the move is waited for, not refused', /const busyNow = moved && moved\.done && moved\.done\.ok === false/.test(src));
   const ops = fs.readFileSync(path.join(__dirname, '../../netlify/functions/_charmNestCmdOps.js'), 'utf8');
   ok('9 · moving pieces off a sheet with no rejects / feedWait writes null, never undefined (Firestore refused it)', /NOUNDEF/.test(ops) && /rec\.feedWait == null \? null : rec\.feedWait/.test(ops) && /rec\.rejects == null \? null : rec\.rejects/.test(ops));
   log0(failed ? `FAIL cloud-hold-takes (${failed})` : 'PASS cloud-hold-takes'); process.exit(failed ? 1 : 0);
