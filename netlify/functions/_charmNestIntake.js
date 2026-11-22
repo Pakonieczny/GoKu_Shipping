@@ -209,9 +209,11 @@ function poolGate(run, drive, sheets, o = {}) {
   if (operatorStop(run)) return "the run was stopped by the operator: new orders wait for Resume";
   /* NOWCMD (Paul 21 Nov 2026): a run that merely WAITS at revalidate, labels or commit (the Etsy freshness gate can hold it there for a long time) makes new orders up too: their pieces go on drafts only
      (the placement keeps SETSHUT: a set being labelled or committed takes no new order); closed while a sheet of the run is nested or written (below) and after an operator's stop (above) */
-  const ok = run.status === "processed" || (run.status === "review" && run.step === "engrave") || (o.checkpoint && run.status === "running" && run.step === "checkpoint") || parkedAt(run, "checkpoint") || waitsAtEnd(run);
+  /* FLOWNOW (Paul, 21 Nov 2026: "fix the fact that the new orders are not being nested"; 26 lines waited at "pulled" from 18:04 while the run stood at its nest step behind one nest that kept
+     failing): new orders are made up while the run is at its nest step too; that step's own placement puts the new pieces on the drafts with room, and its nest asks their nests */
+  const ok = run.status === "processed" || (run.status === "review" && run.step === "engrave") || (o.checkpoint && run.status === "running" && run.step === "checkpoint") || parkedAt(run, "checkpoint") || waitsAtEnd(run) || (run.status === "running" && run.step === "nest");
   if (!ok) return `the run is ${run.status || "?"} at ${run.step || "?"}: new orders are made up at its next checkpoint`;
-  for (const s of (sheets ? sheets.values() : [])) if (busySheet(s)) return `${s.fileBase || s.id} is being nested or written: new orders are made up when it is done`;
+  // (NOBUSY / FLOWNOW: a sheet being nested or written no longer holds every new order; making pieces touches no sheet, and the placement waits for a busy sheet by itself)
   return "";
 }
 
@@ -528,7 +530,9 @@ async function passIntake(env) {
         const p = await pool(c, {}); Object.assign(summary, { made: p.made, pooled: p.pooled, held: p.held, settled: p.settled, patched: p.patched }); if (p.wait) summary.poolWaits = p.why; if (p.more) summary.more = true;
         /* NOWCMD: at revalidate / labels / commit no nest step follows, so the new pieces are placed now (the placement unit's own rules: drafts only, SETSHUT) and each sheet that took one is asked to
            nest (the pass's NESTNOW pump starts it) */
-        if (waitsAtEnd(run) && cs.includes("nest") && (p.pooled || p.made)) {
+        /* FLOWNOW: pieces made earlier and still on no sheet (a line "pooled") are placed too, at every pass the run waits at revalidate / labels / commit, not only in the pass that made them */
+        const waitingPieces = Object.values(run.lines || {}).some(l => l && l.state === "pooled" && Array.isArray(l.poolIds) && l.poolIds.length);
+        if (waitsAtEnd(run) && cs.includes("nest") && (p.pooled || p.made || waitingPieces)) {
           const got = await c.read({ op: "runGet", runId: c.runId }).catch(() => null), fr = got && got.run;
           if (fr && fr.lines) {
             const pl = await require("./_charmNestPlaceUnit").placeAll(Object.assign({}, env, { run: Object.assign({}, fr, { runId: c.runId }) }));

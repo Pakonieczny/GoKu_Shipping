@@ -81,12 +81,9 @@ async function freshnessGate(db, o = {}) {
   const at = +o.stepStartedAt || 0, why = [];
   const [mirror, summary, sync] = await Promise.all([db.doc("EtsyMail_Config/receiptsMirrorState").get(), db.collection("Charm_World").doc("summary").get(), db.doc("EtsyMail_Config/syncState").get()]).catch(() => [null, null, null]);
   const m = mirror && mirror.exists ? mirror.data() || {} : {}, s = summary && summary.exists ? summary.data() || {} : {}, y = sync && sync.exists ? sync.data() || {} : {}, done = ms(m.lastSyncCompletedAt);
-  if (!mirror) why.push("the mail system's copy of Etsy's receipts could not be read");
-  else if (m.lastSyncOutcome !== "ok" || m.lastSyncCutByClock === true) why.push(`Waiting for the mail system's copy of Etsy's receipts: its last sync was ${m.lastSyncOutcome || "not finished"}`);
-  else if (!(done > at)) why.push("Waiting for the mail system's next copy of Etsy's receipts");
-  if (!(ms(s.mirrorBefore) >= done && done > 0)) why.push("Waiting for the world to be built from that copy");
-  const toRead = new Set((s.toReadIds || []).map(String));
-  if (Array.isArray(o.receipts) ? o.receipts.some(id => toRead.has(String(id))) : +s.toRead > 0) why.push("A receipt of these orders is still to be read");
+  /* NORECEIPTWAIT (Paul, 21 Nov 2026: "I didn't ask for this"; "Yes, I wanna remove it"): the steps no longer wait for the mail system's next copy of Etsy's receipts, for the world to be
+     built from it, or for a receipt still to be read. (Etsy's own stop and its daily limit, below, are kept: no step that could reach Etsy runs while Etsy is stopped.) */
+  void mirror; void summary; void m; void s; void done; void at;
   if (ms(y.etsyDailyLimitResetAt) > Date.now()) why.push("Etsy's daily limit for the shop is reached");
   const st = await stopRead(db);
   if (!st.ok) why.push("Etsy's switch could not be read: the step waits");

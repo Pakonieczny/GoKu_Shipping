@@ -133,7 +133,17 @@ async function prepare(ctx) {
   const env = Nest.planEnv(S, { agent: (scope, kind, text) => ctx.log(`[nest ${job.id}] ${kind}: ${text}`) });
   // the turn of orders this nest places (a big batch on a Gold or Silver sheet: three orders at a time, oldest first; the rest wait their turn on the sheet)
   // (NQ: a draft laid out whole takes its whole batch in one search, as 10K and 14K do: no turn of three orders)
-  const all = NestPlan.activeCharms(view), items = whole ? all : NestPlan.feedTurn(view, all, env);
+  const all = NestPlan.activeCharms(view);
+  let items = whole ? all : NestPlan.feedTurn(view, all, env);
+  /* ONEPIECE (Paul, 21 Nov 2026: "they go on one piece at a time"): every nest places exactly ONE waiting piece next to the pieces already on the sheet (they stay where they lie); the others
+     wait for the next nests, one at a time (feedWait). One piece is a search of seconds: no nest ever runs out of time or loses its work. A piece of an order already on the sheet goes first. */
+  { const placedIds = new Set((view.placements || []).map(p => String(p.id))), key = c => String((c && c.order) || "").split("/")[0], onSheet = new Set(all.filter(c => placedIds.has(String(c.id))).map(key));
+    const waiting = items.filter(c => !placedIds.has(String(c.id))).map((c, i) => [c, i]).sort((a, b) => (onSheet.has(key(b[0])) ? 1 : 0) - (onSheet.has(key(a[0])) ? 1 : 0) || a[1] - b[1]).map(x => x[0]);
+    if (!whole && waiting.length > 1) {
+      const one = waiting[0], later = waiting.slice(1).map(c => String(c.id));
+      items = items.filter(c => placedIds.has(String(c.id)) || c === one);
+      view.feedWait = [...new Set((view.feedWait || []).map(String).concat(later))];
+    } }
   const onSheet = new Set(items.map(c => c.id)), kept = view.placements.filter(p => onSheet.has(p.id));
   view.nestInitial = kept.length ? kept.map(p => Object.assign({}, p)) : null;
   view.appendOnly = view.intakeAppend = !!view.nestInitial;   // (a saved layout that takes new pieces places them around itself, as the page's intake appends)
