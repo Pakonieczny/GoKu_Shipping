@@ -13288,7 +13288,14 @@ const Engrave = window.Engrave = (() => {
         const ta = typing && typing.key === focus.key && c.querySelector('[data-f="words"]');
         if (ta) { const n = ta.value.length; ta.focus({ preventScroll: true }); ta.setSelectionRange(Math.min(typing.start, n), Math.min(typing.end, n)); }
       }
-      else { EG.card = null; EG.cardKey = null; q.innerHTML = emptyWhy(jobs, words.length, nDone); q.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { const g = b.dataset.go; if (g === "hist") RunHistory.show(); else if (g === "words") { EG.tab = "words"; EG.chosen = true; render(); } else { setMode(g); if (g === "review") Review.render(); } }); }
+      else {
+        /* SEARCHEMPTY (Paul, 22 Nov 2026: "Fix in Design & Engrave" on order 4242358457 opened an empty tab that said "10 pieces need a decision before anything can be engraved."):
+           with a search in the box, an empty list is about the search: it says nothing matches and offers to clear it, never the run's or Review's reasons */
+        EG.card = null; EG.cardKey = null;
+        const sq = String(EG.q || "").trim();
+        q.innerHTML = sq ? `<div class="libEmpty egNone" role="status"><b>Nothing here matches “${esc(sq)}”.</b><button class="btn ghost sm" data-eg-clear>Clear search</button></div>` : emptyWhy(jobs, words.length, nDone);
+        const clr = q.querySelector("[data-eg-clear]"); if (clr) clr.onclick = () => clearEgSearch();
+        q.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { const g = b.dataset.go; if (g === "hist") RunHistory.show(); else if (g === "words") { EG.tab = "words"; EG.chosen = true; render(); } else { setMode(g); if (g === "review") Review.render(); } }); }
       // what is coming: the order and the words, so the list and the picture are the same thing
       const rail = v.querySelector("#egNext");
       const rest = queue.filter(j2 => j2 !== focus);
