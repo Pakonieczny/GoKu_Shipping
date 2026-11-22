@@ -144,8 +144,11 @@ async function prepare(ctx) {
   { const placedIds = new Set((view.placements || []).map(p => String(p.id))), key = c => String((c && c.order) || "").split("/")[0], onSheet = new Set(all.filter(c => placedIds.has(String(c.id))).map(key));
     const waiting = items.filter(c => !placedIds.has(String(c.id))).map((c, i) => [c, i]).sort((a, b) => (onSheet.has(key(b[0])) ? 1 : 0) - (onSheet.has(key(a[0])) ? 1 : 0) || a[1] - b[1]).map(x => x[0]);
     if (!whole && !released && waiting.length > 1) {
-      const one = waiting[0], later = waiting.slice(1).map(c => String(c.id));
-      items = items.filter(c => placedIds.has(String(c.id)) || c === one);
+      /* PAIRTOGETHER (Paul, 22 Nov 2026: "why are earrings only nesting a single piece"; the Dachshund pair 4243337038 was split, its Right on GF Draft 3 and its Left alone on a new
+         draft): the unit of a nest is ONE ORDER, never one piece: the first waiting piece and every other waiting piece of its order (a pair's two earrings, every piece of a
+         multi-piece order) are nested together, so they are placed together or turned away together (keepOrdersWhole moves them on as one) */
+      const one = waiting[0], unit = new Set(waiting.filter(c => key(c) === key(one)).map(c => String(c.id))), later = waiting.filter(c => !unit.has(String(c.id))).map(c => String(c.id));
+      items = items.filter(c => placedIds.has(String(c.id)) || unit.has(String(c.id)));
       view.feedWait = [...new Set((view.feedWait || []).map(String).concat(later))];
     } }
   const onSheet = new Set(items.map(c => c.id)), kept = view.placements.filter(p => onSheet.has(p.id));

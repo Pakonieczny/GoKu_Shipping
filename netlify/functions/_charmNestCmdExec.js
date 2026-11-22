@@ -650,6 +650,18 @@ async function moveWaiting(x) {
   if (src.metal !== t.metal || src.id === t.id) return no("Pick two sheets of one metal.");
   const named = new Set(x.a.ids.map(String)), placed = new Set((src.placements || []).map(p => p && String(p.id))), ordOf = c => String((c && c.order) || "").split("/")[0];
   const live = activeCharms(src), placedOrders = new Set(live.filter(c => placed.has(String(c.id))).map(ordOf));
+  /* REUNITE (Paul, 22 Nov 2026: "check all earrings … ensure all of them have the required pairs"): named pieces that are each one half of a pair whose other half lies on the
+     target go to it, placed or not (cmdMovePieces with those pool ids: their place on this sheet is let go), and the target nests them beside their halves */
+  const tGroups = new Set((t.charms || []).filter(c => c && !c.excluded && c.groupKey).map(c => String(c.groupKey)));
+  const halves = live.filter(c => named.has(String(c.poolId)) && c.groupKey && tGroups.has(String(c.groupKey)));
+  if (halves.length && halves.length === named.size) {
+    const r = await put(x, { op: "cmdMovePieces", runId: x.ctx.runId, from: { sheetId: src.id, layoutBase: num(src.layoutRev), contentBase: num(src.contentRev) }, to: { sheetId: t.id, layoutBase: num(t.layoutRev), contentBase: num(t.contentRev) },
+      poolIds: halves.map(c => String(c.poolId)), by: x.cmd.by || "", why: "a pair put back together" }, `reunite|${src.id}|${num(src.contentRev)}|${t.id}|${num(t.contentRev)}`);
+    if (err(r)) return no(`Not moved: ${err(r)}`);
+    const s = await startNest(x, t.id, false, `the other half of a pair moved here by ${x.cmd.by || "a person"}`);
+    if (s.error) return no(`${r.moved} piece(s) were moved onto ${nameOf(t)}, but its nest could not start: ${s.error}`);
+    return wait(`Nesting the pair's other half on ${nameOf(t)}…`, { waitingMove: true, stage: "nest", n: r.moved, toName: nameOf(t), sheets: [{ id: t.id, layoutRev: num(t.layoutRev) + 1, at: now }] });
+  }
   const waiting = live.filter(c => c.poolId && !placed.has(String(c.id)));
   const unnamed = new Set(waiting.filter(c => !named.has(String(c.poolId))).map(ordOf));
   const going = waiting.filter(c => named.has(String(c.poolId)) && !placedOrders.has(ordOf(c)) && !unnamed.has(ordOf(c)));
