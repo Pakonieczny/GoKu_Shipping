@@ -92,12 +92,7 @@ async function sweepsUnit(ctx) {
 
   // ── gather (ONEFILL, PAIRFIX, COMBINEDRAFTS): the combine's own unit (one rule, one move); it does nothing when the combine pass item already combined in this pass.
   //    (It checked Place.pairFits, which charm-nest-place.js never exported at its top: it never ran.)
-  if (due("gather") && Exec.lane(ctx, "nest") && !(run.settings && run.settings.onesheet === "off")) await guard("gather", async () => {
-    const Combine = require("./_charmNestCombine");
-    if (Combine.combinedThisPass(ctx)) return "";
-    const r = await Combine.combineUnit(ctx);
-    return r && r.cursor && r.cursor.moved ? str(r.cursor.last, 200) : "";
-  });
+  // NOAUTOCOMBINE (Paul, 21 Nov 2026: "Nothing can engage this automatically … The system is not allowed to have access to this option"): the gather sweep no longer combines drafts
 
   // ── upkeep (Upkeep: a day past done)
   if (due("upkeep") && OpClassHas("runLinesRetire")) await guard("upkeep", async () => {

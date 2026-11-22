@@ -574,11 +574,15 @@ async function moveSettled(x, empty) {
   });
 }
 async function consolidate(x) {
-  return no("Merging sheets was removed: a sheet is never put onto another (Paul, 21 Nov 2026)");   // (NOMERGE: nobody merges sheets, by any button or request)
+  /* COMBINE10K14K (Paul, 21 Nov 2026: "allow that but only for the 10k and 14 K under the manual options menu … Nothing can engage this automatically … only the user can do this inside
+     the options modal"): the ONLY combine is a person's drag of one 10K / 14K run sheet onto another in the options window (via "options", a person's name). Gold Filled / Sterling Silver
+     sheets are never combined by a request (NOMERGE), and nothing in the cloud sends this request */
+  if (!SOLID.has(x.a.metal) || x.a.via !== "options" || !String(x.cmd.by || "").trim() || /^cloud$/i.test(String(x.cmd.by).trim())) return no("Combining sheets is a person's choice, for 10K and 14K Gold only, in the options window");
   if (!lane(x.ctx, "nest")) return no("Nesting is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
   if (x.work.stage) return moveSettled(x, false);
   const src = await sheetRec(x.ctx, x.a.sourceId), t = await sheetRec(x.ctx, x.a.targetId);
   if (!src || !t || src.id === t.id || src.metal !== t.metal) return no("Pick two sheets of one metal.");
+  if (!SOLID.has(src.metal) || src.metal !== x.a.metal) return no("Combining sheets is for 10K and 14K Gold only.");
   if (FAST.has(src.metal)) {   // (COMBINEDRAFTS: two Gold Filled / Sterling Silver drafts of the run, judged as the cloud's own combine judges them: all the pieces fit, orders whole, pairs kept, no pin)
     if (src.runId !== x.ctx.runId || t.runId !== x.ctx.runId) return no("Both sheets must be drafts of the run the cloud carries.");
     const j = await require("./_charmNestCombine").judgeMove(x.ctx, src.id, t.id);
@@ -629,6 +633,12 @@ async function empty(x) {
   const sets = await runSets(x.ctx), ord = inOrder(await runSheets(x.ctx, src.metal)), i = ord.findIndex(p => p.id === src.id), now = Date.now();
   const cand = ord.slice(0, Math.max(0, i)).concat(ord.slice(i + 1)).filter(p => p.id !== src.id && !cutRec(p) && !lineDrawn(p) && !inAnySet(p, sets) && !busyRec(p, now) && !(p.manualEdit && now - num(p.manualEdit.at) < 90000));
   if (!cand.length) return no(`${nameOf(src)} has no other sheet that can take its pieces.`);
+  /* (MOVETO, Paul 21 Nov 2026: "move the 10K piece from Draft 7 to Draft 4"): a target the person names is used, when it may take the pieces; none named: the first, as before */
+  if (x.a.targetId) {
+    const named = cand.find(p => p.id === x.a.targetId), tn = ord.find(p => p.id === x.a.targetId);
+    if (!named) return no(`${tn ? nameOf(tn) : "That sheet"} cannot take ${nameOf(src)}'s pieces now (cut, a green line drawn, in a set, busy or open by hand)`);
+    return moveAndNest(x, src, named, "Empty sheet");
+  }
   return moveAndNest(x, src, cand[0], "Empty sheet");
 }
 /* MOVEWAITING (Paul, 21 Nov 2026: "Put the 15 pieces on the next draft"): Empty with pool ids and a target: those pieces of the sheet that wait UNPLACED (never one already placed)
