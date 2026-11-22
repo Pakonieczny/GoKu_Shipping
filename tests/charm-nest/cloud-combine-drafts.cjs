@@ -264,6 +264,11 @@ const cmdOf = id => ((F.doc('Charm_Nest_Run_Cmds/' + R) || {}).cmds || {})[id] |
     sheet('gold-h1', 'gold', 1, [[3401, 1]]); sheet('gold-h2', 'gold', 2, [[3402, 1]]);
     await pass([SW]);
     ok('8 · NOAUTOCOMBINE: the gather sweep alone combines nothing', moves().length === 0 && S('silver-h2').archived !== true && S('gold-h2').archived !== true && !logs.some(t => /sweeps: gather: \d+ piece/.test(t)), { moves: moves().length, logs: logs.filter(t => /gather/.test(t)) });
+    /* NOREOPEN (Paul, 21 Nov 2026: "None of the sheets should be reopened"): the sweeps never take a full mark off, whatever the sheet's fill */
+    world({ steps: ['nest', 'sweeps'] });
+    sheet('gold10k-m1', 'gold10k', 1, [[3501, 1]], { rec: { releaseFull: true, density: 0.21 } });
+    await pass([SW]);
+    ok('8 · NOREOPEN: a 21% draft marked full keeps its mark through the sweeps; no piece moved', S('gold10k-m1').releaseFull === true && moves().length === 0, { m1: S('gold10k-m1').releaseFull });
     const Reg = F.load('_charmNestSteps.js');
     ok('8 · NOAUTOCOMBINE: the cloud\'s pass items hold no combine (nothing in the cloud combines drafts by itself)', Array.isArray(Reg.passItems) && Reg.passItems.length > 0 && !Reg.passItems.some(it => it && it.name === 'combine'), (Reg.passItems || []).map(it => it && it.name));
   }

@@ -68,13 +68,18 @@ const nestCalls = (X, id) => X.calls.filter(b => b.op === 'nestStart' && b.sheet
     const sh = { sheetId: 'sheetA', metal: 'gold', runId: RUN, charms: A.charms, placements: A.placements, rejects: A.rejects.slice(), verification: { ok: true }, topup: null, nestInitial: [] };
     const S = { settings: { maxFill: 0.8, clearancePt: 0, nospread: 'on' } }, X = writerX('sheetA', {});
     const m = await Finish.afterNestMarks(X, sh, { endedBy: 'cap', density: 0.78, usablePt2: 20000, placedPt2: 15600, freePt2: 4400, trials: 9, rejects: A.rejects }, A.charms, { FC, NP, rec: Object.assign({}, A, { releaseFull: false }), S });
-    ok('1 · after-nest marks: a finished search that turned away whole orders that fit an empty sheet releases the sheet full (sheetFull, the gap fill not started at 78 %)', m.releaseFull === true && m.intakeOptimized === true && m.intakeFinalized === false, m);
+    // (FULLAFTER5, Paul 21 Nov 2026: a draft is full once 5 different orders in a row had no room on it, or at the fill line: three orders turned away at 78 % do not make it full)
+    ok('1 · FULLAFTER5: a draft that turned away 3 orders at 78 % is not full; the 3 orders are counted', m.releaseFull === false && Array.isArray(m.noRoomRun) && m.noRoomRun.length === 3 && m.intakeOptimized === true && m.intakeFinalized === false, m);
+    const m1b = await Finish.afterNestMarks(X, Object.assign({}, sh, { rejects: A.rejects.slice() }), { endedBy: 'cap', density: 0.78, usablePt2: 20000, placedPt2: 15600, freePt2: 4400, trials: 9, rejects: A.rejects }, A.charms, { FC, NP, rec: Object.assign({}, A, { releaseFull: false, noRoomRun: ['5006', '5007'] }), S });
+    ok('1 · FULLAFTER5: two orders turned away before and three now (5 in a row, no piece seated in between) release the draft full at 78 %', m1b.releaseFull === true && m1b.noRoomRun.length === 5, m1b);
     const sh2 = Object.assign({}, sh, { placements: A.placements.slice(0, 1), rejects: [] });
     const m2 = await Finish.afterNestMarks(X, sh2, { endedBy: 'stopped', density: 0.2, usablePt2: 20000, placedPt2: 4000, freePt2: 16000, trials: 1 }, A.charms, { FC, NP, rec: Object.assign({}, A, { releaseFull: true }), S });
     ok('1 · RELEASEMARK: a released sheet stays released whatever a later nest says (only a person reopens it)', m2.releaseFull === true, m2);
     const sh3 = Object.assign({}, sh, { rejects: ['5003_1_1'] });
-    const m3 = await Finish.afterNestMarks(X, sh3, { endedBy: 'cap', density: 0.70, usablePt2: 20000, placedPt2: 14000, freePt2: 6000, trials: 9, rejects: ['5003_1_1'] }, A.charms, { FC, NP, rec: Object.assign({}, A, { releaseFull: false }), S });
-    ok('1 · topupSettle: a sheet full below 75 % on the open Auto run starts its gap fill instead of releasing (the order that missed moves on)', m3.releaseFull === false && m3.topup && m3.topup.tried && m3.topup.tried.length === 0, m3);
+    const m3 = await Finish.afterNestMarks(X, sh3, { endedBy: 'cap', density: 0.70, usablePt2: 20000, placedPt2: 14000, freePt2: 6000, trials: 9, rejects: ['5003_1_1'] }, A.charms, { FC, NP, rec: Object.assign({}, A, { releaseFull: false, noRoomRun: ['5006', '5007', '5008', '5009'] }), S });
+    ok('1 · topupSettle: a draft full below 75 % (its 5th order in a row turned away) on the open Auto run starts its gap fill instead of releasing (the order that missed moves on)', m3.releaseFull === false && m3.topup && m3.topup.tried && m3.topup.tried.length === 0, m3);
+    const m4 = await Finish.afterNestMarks(X, Object.assign({}, sh, { rejects: ['5003_1_1'], topup: null }), { endedBy: 'cap', density: 0.70, usablePt2: 20000, placedPt2: 14000, freePt2: 6000, trials: 9, rejects: ['5003_1_1'] }, A.charms, { FC, NP, rec: Object.assign({}, A, { releaseFull: false }), S });
+    ok('1 · FULLAFTER5: one order turned away at 70 % neither releases the draft nor starts a gap fill', m4.releaseFull === false && !m4.topup, m4);
   }
   {
     const X = writerX('sheetA', { nestJobId: 'nest-sheetA-1', written: { layoutRev: 3, contentRev: 3 }, doneWhy: 'written: GF_working_shA.ai' });
