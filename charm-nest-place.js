@@ -214,7 +214,7 @@
     /** A released sheet takes its own order's late pieces: not cut, not recalled, not in a set approved for laser cutting, sent or cut, not held by a person, by a replaced piece,
         by a problem, or for ANOTHER order's change. */
     function reopensHome(p, run, rid) {
-      if (!p || !PAIR_OF[p.metal] || p.recalled || p.roseCutAt || +p.laserDoneAt > 0 || p.processReady || p._manualHold || p._inplaceHold || p.problem) return false;   // (HOLDTAKES)
+      if (!p || !PAIR_OF[p.metal] || p.recalled || p.roseCutAt || +p.laserDoneAt > 0 || p.processReady || p._manualHold || p.problem) return false;   // (HOLDTAKES; NOBUSY: a sheet being nested or written is never closed for that)
       if (run && p.runId && p.runId !== run.runId) return false;
       if (H.holding && H.holding(p) && !(rid != null && p.keepRelease && p.keepRelease.rid === String(rid).split("/")[0])) return false;   // (kept for another order's change)
       return !(H.fixedSet && H.fixedSet(p));
@@ -393,7 +393,9 @@
     /* HOLDTAKES (Paul, 21 Nov 2026: a held sheet split CAMP_0903 onto a new 14K draft): a hold stops a sheet's NEST only; it still takes pieces, and the new pieces lift the hold
        (_charmNestNestStep.js) */
     if (!greenPlanned(s) && s.intakeFinalized) return true;
-    if (manualAlive(s.manualEdit, now) || jobRunning(s.nestJob, now) || jobRunning(s.filesJob, now)) return true;
+    /* NOBUSY (Paul, 21 Nov 2026: "there's no sheet that should ever be blocked just because it's busy"): a sheet whose nest or files are running takes its pieces all the same (they wait
+       for that nest and go on with the next one); it no longer sends them to a new draft. A person's Manual Control still holds it. */
+    if (manualAlive(s.manualEdit, now)) return true;
     if (s.setId && !s.draft) return true;
     const id = idOf(s);
     return !!id && (sets || []).some(x => x && (x.sheetIds || []).includes(id));
@@ -401,7 +403,7 @@
   /** reopensHome on a RECORD (placeOnSheet's check of `home`, inside its transaction): a GF / SS sheet that takes its own order's late pieces although it is closed. */
   function reopensHomeRec(s, sets, run, now) {
     now = now || Date.now();
-    if (!s || !PAIR_OF[s.metal] || s.archived || s.roseCutAt || num(s.laserDoneAt) > 0 || s.processReady || manualAlive(s.manualEdit, now) || jobRunning(s.nestJob, now) || jobRunning(s.filesJob, now) || s.problem) return false;   // (HOLDTAKES)
+    if (!s || !PAIR_OF[s.metal] || s.archived || s.roseCutAt || num(s.laserDoneAt) > 0 || s.processReady || manualAlive(s.manualEdit, now) || s.problem) return false;   // (HOLDTAKES; NOBUSY)
     if (run && run.runId && s.runId && s.runId !== run.runId) return false;
     return !fixedSetOf(s, sets);
   }
@@ -514,7 +516,7 @@
     const stillFilling = p => !!p && (p.charms || []).length > 0 && !(p.setId && !p.draft) && !p.releaseFull && !p.topup && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled && !p.problem && !p.cardinalPull && !p.intakeFinalized && !p._ownLine && !(p.label && p.label.own);
     function fillingPage(metal, x = {}) {
       if (!FAST.includes(metal) || settings.onesheet === "off") return null;
-      const rid = run.runId || null, held = p => !!p._manualHold || !!p._inplaceHold || closedV(p);
+      const rid = run.runId || null, held = p => !!p._manualHold || closedV(p);   // (NOBUSY: a draft being nested is still the draft filling)
       return pagesOf(metal).find(p => p !== x.except && (!rid || !p.runId || p.runId === rid) && stillFilling(p) && !held(p)) || null;
     }
     /* PAIRFIX: the sheet still filling only when it keeps the rule the caller needs (x.ok); else x.wait → null (the caller's pieces wait for it), and without x.wait a new draft */
@@ -523,7 +525,7 @@
        new draft was made, and the second draft, with its room, was passed over. */
     function fillingPages(metal, x = {}) {
       if (!FAST.includes(metal) || settings.onesheet === "off") return [];
-      const rid = run.runId || null, held = p => !!p._manualHold || !!p._inplaceHold || closedV(p);
+      const rid = run.runId || null, held = p => !!p._manualHold || closedV(p);   // (NOBUSY: a draft being nested is still the draft filling)
       return pagesOf(metal).filter(p => p !== x.except && (!rid || !p.runId || p.runId === rid) && stillFilling(p) && !held(p)).sort((a, b) => num(a.page) - num(b.page));
     }
     function addPage(metal, x = {}) {
