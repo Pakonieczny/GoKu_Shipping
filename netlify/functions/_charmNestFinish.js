@@ -494,8 +494,12 @@ async function afterNestMarks(X, sh, result, items, o = {}) {
   sh._nsCheck = false;
   const env = { maxFill: +S.settings.maxFill || 0.8, orderKey: NP.orderKey, orderRank: c => NP.orderRank(c, O), inflatedArea: c => Nest.inflatedArea(S, c), live, manual: !!run && run.mode === "manual", topupOff: S.settings.topup === "off",
     now: () => Date.now(), log: (s, w) => X.notes.push(w) };
-  const full = FC.topupSettle(sh, result, FC.sheetFull(sh, result, items, env), env) || !!rec.releaseFull;
-  return Object.assign({ releaseFull: !!full, topup: sh.topup || null }, sh.releaseWhy ? { releaseWhy: sh.releaseWhy } : {}, FC.intakeMarks(sh, result, items));
+  // (FULLAFTER5, Paul 21 Nov 2026: "the same rule for all percentage sheets … all partial draft sheets only and moving forward": a DRAFT is full once 5 different orders in a row had no
+  //  room on it, at any fill, or when it reaches the fill line; a new piece seated starts the count again. A sheet already marked full stays full: none is reopened)
+  const missRun = rec.draft ? FC.noRoomRunOf(sh, result, rec.placements || [], items, rec.noRoomRun, env) : [];
+  const fiveMissed = !!rec.draft && missRun.length >= FC.FULL_AFTER_ORDERS && (sh.placements || []).length > 0 && !!(sh.verification && sh.verification.ok);
+  const full = FC.topupSettle(sh, result, FC.sheetFull(Object.assign(sh, { draft: !!rec.draft }), result, items, env) || fiveMissed, env) || !!rec.releaseFull;
+  return Object.assign({ releaseFull: !!full, topup: sh.topup || null, noRoomRun: missRun.length ? missRun : null }, sh.releaseWhy ? { releaseWhy: sh.releaseWhy } : {}, fiveMissed && !rec.releaseFull ? { releaseWhy: `${missRun.length} different orders in a row had no room on it` } : {}, FC.intakeMarks(sh, result, items));
 }
 /* The fields of finish-core's record() the writer sends (persistSheet's record, less what is not the writer's: membership (P4), the sheet's name, day and folder once it has one,
    its pieces' list, orders and listings (they change only with its pieces), its label, backs, release marks (build step 7b) and the page's own marks). */

@@ -134,12 +134,16 @@ async function prepare(ctx) {
   // the turn of orders this nest places (a big batch on a Gold or Silver sheet: three orders at a time, oldest first; the rest wait their turn on the sheet)
   // (NQ: a draft laid out whole takes its whole batch in one search, as 10K and 14K do: no turn of three orders)
   const all = NestPlan.activeCharms(view);
-  let items = whole ? all : NestPlan.feedTurn(view, all, env);
+  /* OWNTOGETHER (Paul, 21 Nov 2026: Set-2's GF Sheet 1, put back with 56 of its 60 pieces): a sheet released full takes no new piece, so what waits on it is its OWN orders' pieces; they are
+     nested together in one nest around the pieces already placed (which stay where they lie), never one at a time: a released sheet passes waiting pieces on (feedNext), which would
+     split those orders off the sheet */
+  const released = !!rec.releaseFull;
+  let items = whole || released ? all : NestPlan.feedTurn(view, all, env);
   /* ONEPIECE (Paul, 21 Nov 2026: "they go on one piece at a time"): every nest places exactly ONE waiting piece next to the pieces already on the sheet (they stay where they lie); the others
      wait for the next nests, one at a time (feedWait). One piece is a search of seconds: no nest ever runs out of time or loses its work. A piece of an order already on the sheet goes first. */
   { const placedIds = new Set((view.placements || []).map(p => String(p.id))), key = c => String((c && c.order) || "").split("/")[0], onSheet = new Set(all.filter(c => placedIds.has(String(c.id))).map(key));
     const waiting = items.filter(c => !placedIds.has(String(c.id))).map((c, i) => [c, i]).sort((a, b) => (onSheet.has(key(b[0])) ? 1 : 0) - (onSheet.has(key(a[0])) ? 1 : 0) || a[1] - b[1]).map(x => x[0]);
-    if (!whole && waiting.length > 1) {
+    if (!whole && !released && waiting.length > 1) {
       const one = waiting[0], later = waiting.slice(1).map(c => String(c.id));
       items = items.filter(c => placedIds.has(String(c.id)) || c === one);
       view.feedWait = [...new Set((view.feedWait || []).map(String).concat(later))];
