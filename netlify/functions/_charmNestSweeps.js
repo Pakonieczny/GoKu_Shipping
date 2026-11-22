@@ -46,6 +46,42 @@ async function sweepsUnit(ctx) {
     return fix.keys.length || fix.contended.length ? `${fix.keys.length} order line(s) (${fix.pieces} piece(s)) stood on no sheet and go to the placement; ${fix.contended.length} asked for again` : "";
   });
 
+  // ── oldmarks (OLDMARKS, Paul 22 Nov 2026: "Fix all the old error messages … These are old errors and aren't relevant and clean them out"): ONCE, the marks left by old failures
+  //    are cleared; no sheet, piece, layout or file changes. (1) "owing files" on a sheet whose last file attempt failed because its old pieces could not be made again (its files
+  //    stand as they are) and that task's failed record; (2) the run's old error log; (3) a hold on a sheet that no longer exists; (4) failed requests in the request history.
+  if (!num(st.oldMarksAt)) await guard("oldmarks", async () => {
+    next.oldMarksAt = now;
+    const db = ctx.db, said = [], runRef = db.collection("Charm_Nest_Runs").doc(String(ctx.runId)), sheets = await Exec.runSheets(ctx), byId = new Map(sheets.map(r => [r.id, r]));
+    let owed = 0;
+    for (const r of sheets) {
+      if (r.archived || !(num(r.filesOwed) > 0)) continue;
+      const tref = db.collection("Charm_Nest_Finish").doc(r.id), ts = await tref.get(), t = ts.exists ? ts.data() || {} : {}, ld = t.lastDone || {};
+      if (ld.outcome !== "failed" || !/could not be made again from the library/.test(String(ld.why || ""))) continue;
+      const a = await put({ op: "putSheet", sheet: { id: r.id, filesOwed: null } }, `oldmarks|owed|${r.id}|${num(r.filesOwed)}`); if (err(a)) continue;
+      await tref.set({ lastDone: Object.assign({}, ld, { outcome: "cleared", why: "An old failure, cleared (Paul, 22 Nov 2026): " + String(ld.why || "").slice(0, 200) }), outcome: "cleared" }, { merge: true });
+      owed++;
+    }
+    if (owed) said.push(`${owed} old "owing files" mark(s) off`);
+    const rs = await runRef.get(), run0 = rs.exists ? rs.data() || {} : {};
+    const errs = Array.isArray(run0.errors) ? run0.errors.length : 0, holds = run0.sheetHolds || {}, gone = Object.keys(holds).filter(k => holds[k] && (!byId.get(k) || byId.get(k).archived));
+    if (errs || gone.length) {
+      const patch = {}; if (errs) patch.errors = [];
+      if (gone.length) { patch.sheetHolds = {}; patch.sheetHoldRevs = {}; for (const k of gone) { patch.sheetHolds[k] = null; patch.sheetHoldRevs[k] = null; } }
+      await runRef.set(patch, { merge: true });
+      // (the pass writes its own copy of the run back at its end: that copy says the same, or it would put the old marks back)
+      if (ctx.run) { if (errs) ctx.run.errors = []; if (gone.length) { ctx.run.sheetHolds = Object.assign({}, ctx.run.sheetHolds || {}); ctx.run.sheetHoldRevs = Object.assign({}, ctx.run.sheetHoldRevs || {}); for (const k of gone) { ctx.run.sheetHolds[k] = null; ctx.run.sheetHoldRevs[k] = null; } } }
+      if (errs) said.push(`${errs} old run error(s) cleared`); if (gone.length) said.push(`${gone.length} hold(s) on sheets that no longer exist taken off`);
+    }
+    const cref = db.collection("Charm_Nest_Run_Cmds").doc(String(ctx.runId));
+    const dropped = await db.runTransaction(async tx => {
+      const cs = await tx.get(cref); if (!cs.exists) return 0; const d = cs.data() || {}, cmds = Object.assign({}, d.cmds || {});
+      const old = Object.keys(cmds).filter(k => cmds[k] && ["failed", "refused"].includes(String(cmds[k].state)) && num(cmds[k].at) < now - 60000);
+      if (!old.length) return 0; for (const k of old) delete cmds[k]; tx.update(cref, { cmds }); return old.length;
+    });
+    if (dropped) said.push(`${dropped} old failed request(s) taken off the history`);
+    return said.join("; ");
+  });
+
   // ── leftovers (GHOSTS, Paul 21 Nov 2026: "implement all of the updates"; GF Nov 20 Set-1 Sheet 2 showed 52/71: 19 entries for pieces placed on GF Draft 2): an entry of a sheet's
   //    piece list that the sheet's own pool list does not name, that is not placed on it, and that ANOTHER live sheet names is a leftover: it is taken off this sheet's list. The piece
   //    stays where it lives; no layout, file or nest changes.
