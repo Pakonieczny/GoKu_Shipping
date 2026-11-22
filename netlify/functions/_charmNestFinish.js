@@ -178,6 +178,13 @@ STEP.S0 = async X => {
     let report = null; try { const rp = rec.outputs && rec.outputs.report && rec.outputs.report.path; if (rp) { const [b] = await X.bucket.file(rp).download(); report = JSON.parse(b.toString("utf8")); } } catch (_) { report = null; }
     const was = new Set(((report && report.placements) || []).filter(p => p && p.id != null).map(key)), now = new Set((rec.placements || []).filter(p => p && p.id != null).map(key));
     const changed = !report || was.size !== now.size || [...now].some(k => !was.has(k));
+    /* FILESCURRENT (Paul, 21 Nov 2026: "implement all of the updates"): the files already show the sheet's layout exactly, so nothing is owed and its picture stands for the layout
+       as it is: the owed mark comes off and the picture's version is the layout's (putSheet stamps previewRev when the save carries the picture). Only those two labels change:
+       nothing is written to the files, nothing is nested (the files lane's own check could not see it: this skip comes before the job records the sheet's version) */
+    if (report && !changed && rec.outputs && rec.outputs.preview && rec.outputs.preview.url && (num(rec.filesOwed) > 0 || num(rec.previewRev) < num(rec.layoutRev))) {
+      try { await X.call({ op: "putSheet", sheet: { id: X.sheetId, filesOwed: null, outputs: rec.outputs } }, `files-current|${num(rec.layoutRev)}|${num(rec.contentRev)}|${num(rec.filesOwed)}`); X.notes.push("its files already show its layout: the owed mark is off and its picture is current"); }
+      catch (e) { if (e && e.fenced) throw e; }
+    }
     if (!report || !changed) throw new Stop("skipped", "No new nest and no piece added, removed or moved since its files were written: the sheet and its files stay exactly as they are");
   }
   if (!nest && !(num(rec.filesOwed) > 0)) throw new Stop("skipped", "Nothing is owed: the sheet's files stand as they are");
