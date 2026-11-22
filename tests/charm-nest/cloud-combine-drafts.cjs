@@ -269,6 +269,13 @@ const cmdOf = id => ((F.doc('Charm_Nest_Run_Cmds/' + R) || {}).cmds || {})[id] |
     sheet('gold10k-m1', 'gold10k', 1, [[3501, 1]], { rec: { releaseFull: true, density: 0.21 } });
     await pass([SW]);
     ok('8 · NOREOPEN: a 21% draft marked full keeps its mark through the sweeps; no piece moved', S('gold10k-m1').releaseFull === true && moves().length === 0, { m1: S('gold10k-m1').releaseFull });
+    /* GHOSTS: an entry of a sheet's piece list that its pool list does not name and another live sheet does is taken off; the piece stays where it lives, nothing else changes */
+    world({ steps: ['nest', 'sweeps'] });
+    sheet('gold-l1', 'gold', 1, [[3601, 1]], { rec: { draft: false, setId: 'set-l', releaseFull: true } }); F.seed('Charm_Nest_Sets/set-l', { setId: 'set-l', runId: R, sheetIds: ['gold-l1'], status: 'formed', seq: 1 });
+    sheet('gold-l2', 'gold', 2, [[3602, 1]]);
+    { const l1 = F.doc('Charm_Nest_Sheets/gold-l1'), l2 = F.doc('Charm_Nest_Sheets/gold-l2'); l1.charms = l1.charms.concat([Object.assign({}, l2.charms[0])]); F.seed('Charm_Nest_Sheets/gold-l1', l1); }
+    await pass([SW]);
+    ok('8 · GHOSTS: the leftover entry is taken off the set sheet; its own piece and placements stay; the piece stays on the draft that lists it', (S('gold-l1').charms || []).length === 1 && (S('gold-l1').placements || []).length === 1 && (S('gold-l2').charms || []).length === 1 && (S('gold-l2').placements || []).length === 1 && moves().length === 0, { l1: (S('gold-l1').charms || []).map(c => c.poolId), l2: (S('gold-l2').charms || []).map(c => c.poolId) });
     const Reg = F.load('_charmNestSteps.js');
     ok('8 · NOAUTOCOMBINE: the cloud\'s pass items hold no combine (nothing in the cloud combines drafts by itself)', Array.isArray(Reg.passItems) && Reg.passItems.length > 0 && !Reg.passItems.some(it => it && it.name === 'combine'), (Reg.passItems || []).map(it => it && it.name));
   }
