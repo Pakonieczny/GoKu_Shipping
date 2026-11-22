@@ -552,7 +552,7 @@ async function layoutOf(X) {
   const rec = X.rec, job = X.task.job, sh = X.sh, byId = X.byId, NP = X.NP, num0 = v => num(v);
   const norm = p => ({ id: String(p.id), cxPt: +p.cxPt, cyPt: +p.cyPt, angle: +p.angle || 0, scale: +p.scale > 0 ? +p.scale : 1, wPt: num0(p.wPt), hPt: num0(p.hPt), ...(+p.fixScale > 0 && +p.fixScale < 1 ? { fixScale: +p.fixScale } : {}) });
   let nest = X.nest || null;
-  if (!nest && job.nestJobId) { const js = await X.db.collection(JOBS).doc(job.nestJobId).get(), j = js.exists ? js.data() || {} : null, r = j && (j.result || j.best); if (r && Array.isArray(r.placements)) nest = { jobId: job.nestJobId, result: r, appendOnly: job.appendOnly }; }
+  if (!nest && job.nestJobId) { const js = await X.db.collection(JOBS).doc(job.nestJobId).get(), j = js.exists ? js.data() || {} : null, r = j && j.status === "done" && !j.stopRequested ? (j.result || j.best) : null; /* NOSTOPWIPE (Paul, 21 Nov 2026: GF Draft 2 wiped at 19:18:51): a nest that was stopped or did not finish never lays out the sheet */ if (r && Array.isArray(r.placements)) nest = { jobId: job.nestJobId, result: r, appendOnly: job.appendOnly }; }
   if (!nest) {
     // (the record as it stands: written again with the pieces where they lie, writeAsPlaced / mcWriteStandalone)
     /* NOWIPE (Paul, 21 Nov 2026: GF Draft 2 at 18:45 and SS Draft 1 at 19:03 were written with 0 placed): a placed piece the writer could not match to a piece it made again is never
