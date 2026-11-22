@@ -50,7 +50,7 @@ const body = new Node('libBody'), pending = new Node('laserAreaItems'), ready = 
 const area = (key, list) => { const a = new Node('laserSection'); a.dataset.laserArea = key; a.empty = new Node('laserEmpty'); a.querySelector = s => s === '.laserEmpty' ? a.empty : s === '.laserAreaItems > :not(.laserDayRule)' ? list.children.find(c => !c.classList.contains('laserDayRule')) || null : null; return a; };
 const areas = [area('ready', ready), area('pending', pending)];
 body.children.push(...areas); areas.forEach(a => { a.parent = body; });
-const styles = []; const document = { getElementById: id => id === 'libBody' ? body : null, head: { appendChild: n => styles.push(n) }, querySelectorAll: s => s === '#libBody .laserAreaItems' ? [ready, pending] : s === '[data-laser-area]' ? areas : [], createElement: () => new Node() };
+const styles = []; const document = { getElementById: id => id === 'libBody' ? body : null, head: { appendChild: n => styles.push(n) }, querySelectorAll: s => s === '#libBody [data-laser-area="pending"] .laserAreaItems' ? [pending] : s === '[data-laser-area]' ? areas : [], querySelector: s => s === '#libBody [data-laser-area="ready"] .laserAreaItems' ? ready : null, createElement: () => new Node() };
 const card = st => { const c = new Node('setCard'); c._laserSet = st; c._laserSheets = []; return c; };
 // the 11 Nov list, with one of its sets (10 Nov, Set-3) READY: it stands in the other area
 for (const st of shot) (st.setId === 'b' ? ready : pending).appendChild(card(st));
@@ -60,10 +60,13 @@ const ctx = { document, CNListActivity: A, records: new Map(), esc: s => String(
 vm.createContext(ctx);
 vm.runInContext(bridge.slice(a0, a1) + '\nthis.arrange = arrange;', ctx);
 // what is DRAWN, top to bottom: the Library's row of cards (the rules, then each area's cards) by `order`
-const drawn = () => [...body.children.filter(n => n.classList.contains('laserDayRule')), ...ready.children, ...pending.children].sort((x, y) => +x.style.order - +y.style.order).map(n => n.classList.contains('laserDayRule') ? `[${n.dataset.day} ${n.dataset.n}]` : name(n._laserSet));
+// (LASERBOX, Paul 22 Nov 2026: Laser cutting is its own box at the top; the one list by day below it is everything else)
+const drawn = () => [...body.children.filter(n => n.classList.contains('laserDayRule')), ...pending.children].sort((x, y) => +x.style.order - +y.style.order).map(n => n.classList.contains('laserDayRule') ? `[${n.dataset.day} ${n.dataset.n}]` : name(n._laserSet));
+const boxed = () => ready.children.map(n => name(n._laserSet));
 A.set('library', { direction: 'desc' });
 ctx.arrange(); ctx.arrange(true);
-assert.deepEqual(drawn(), ['[2026-11-11 1]', '11-11#2', '[2026-11-10 3]', '11-10#1', '11-10#2', '11-10#3', '[loose 2]', 'loose-new', 'loose-old'], 'newest first: every set by day (a ready set among the others), each day opens with ONE rule, the drafts last');
+assert.deepEqual(boxed(), ['11-10#3'], 'LASERBOX: the ready set is in the Laser cutting box, not in the list below');
+assert.deepEqual(drawn(), ['[2026-11-11 1]', '11-11#2', '[2026-11-10 2]', '11-10#1', '11-10#2', '[loose 2]', 'loose-new', 'loose-old'], 'newest first: every other set by day, each day opens with ONE rule, the drafts last');
 assert.equal(body.classList.contains('laserOne'), true, 'the Library is one row of cards'); assert.equal(styles.length, 1, 'with its one style');
 assert.equal(body.children.find(n => n.classList.contains('laserDayRule')).attrs['aria-label'], 'Wed, Nov 11, 2026, 1 set', 'the rule names the day and its sets');
 assert(ready.children.every(n => !n.classList.contains('laserDayRule')) && pending.children.every(n => !n.classList.contains('laserDayRule')), 'no rule is kept inside an area');
@@ -72,17 +75,17 @@ assert.equal(areas[1].hidden, false, 'In progress shows');
 moves = 0; ctx.arrange(); assert.equal(moves, 0, 'a second pass moves nothing');
 // flipped: oldest day first, Set-1 up inside a day, the drafts still last
 A.set('library', { direction: 'asc' }); ctx.arrange();
-assert.deepEqual(drawn(), ['[2026-11-10 3]', '11-10#1', '11-10#2', '11-10#3', '[2026-11-11 1]', '11-11#2', '[loose 2]', 'loose-old', 'loose-new'], 'oldest first: the same, the other way, the drafts last');
+assert.deepEqual(drawn(), ['[2026-11-10 2]', '11-10#1', '11-10#2', '[2026-11-11 1]', '11-11#2', '[loose 2]', 'loose-old', 'loose-new'], 'oldest first: the same, the other way, the drafts last');
 A.set('library', { direction: 'desc' });
 // a set that is touched or moves keeps the order; one more day's set opens its own rule
 pending.children.find(n => n._laserSet && n._laserSet.setId === 'd')._laserSet.activityAt = 999;
 pending.appendChild(card(set('e', '2026-11-12', 1, 1)));
 ctx.arrange();
-assert.deepEqual(drawn().slice(0, 8), ['[2026-11-12 1]', '11-12#1', '[2026-11-11 1]', '11-11#2', '[2026-11-10 3]', '11-10#1', '11-10#2', '11-10#3']);
+assert.deepEqual(drawn().slice(0, 7), ['[2026-11-12 1]', '11-12#1', '[2026-11-11 1]', '11-11#2', '[2026-11-10 2]', '11-10#1', '11-10#2']);
 // only loose sheets: nothing to separate
 const solo = new Node('laserAreaItems'); solo.appendChild(card({ key: 'w', working: true, activityAt: 1 }));
-document.querySelectorAll = s => s === '#libBody .laserAreaItems' ? [solo] : [];
+document.querySelectorAll = s => s === '#libBody [data-laser-area="pending"] .laserAreaItems' ? [solo] : []; document.querySelector = () => null;
 for (const r of body.children.filter(n => n.classList.contains('laserDayRule'))) r.remove();
 ctx.arrange(); assert.equal(body.children.filter(n => n.classList.contains('laserDayRule')).length, 0, 'a list of loose sheets alone has no rule');
 
-console.log('Library set order OK: every set in one list by day (both ways), Set-1 up inside a day, one rule a day, the drafts and loose sheets last; a second pass moves nothing');
+console.log('Library set order OK: Laser cutting in its own box; every other set in one list by day (both ways), Set-1 up inside a day, one rule a day, the drafts and loose sheets last; a second pass moves nothing');

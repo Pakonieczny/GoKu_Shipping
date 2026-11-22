@@ -195,6 +195,20 @@ const cmdOf = id => ((F.doc('Charm_Nest_Run_Cmds/' + R) || {}).cmds || {})[id] |
       const ck = cmdOf(idk), srcIds = S(args.sourceId).poolIds || [], tgtIds = S(args.targetId).poolIds || [], piece = args.metal === 'gold10k' ? '1402_gold10k_1' : '1502_gold_1';
       ok('5k · ' + label, moved ? tgtIds.includes(piece) && !srcIds.includes(piece) : srcIds.includes(piece) && !tgtIds.includes(piece) && ck.state === 'failed' && /Combining sheets is a person's choice/.test(ck.text || ''), { ck: { state: ck.state, text: ck.text || ck.step }, srcIds, tgtIds });
     }
+    /* REUNITE (Paul, 22 Nov 2026): a split pair's half, placed on another draft, is moved onto the draft that holds its other half and nested there; the rest of both sheets stays */
+    {
+      world({ steps: ['cmd:consolidate', 'cmd:empty', 'nest'] });
+      const r1 = sheet('gold-r1', 'gold', 1, [[3801, 1], [3803, 1]]), r2 = sheet('gold-r2', 'gold', 2, [[3802, 1], [3804, 1]]);
+      const L = r1.charms.find(c => c.order === '3801'), R = r2.charms.find(c => c.order === '3802');
+      Object.assign(L, { groupKey: '3801:1', groupSize: 2, side: 'L' }); Object.assign(R, { poolId: '3801_gold_2', order: '3801', groupKey: '3801:1', groupSize: 2, side: 'R', id: 'pool:T_gold:3801_gold_2' });
+      r2.placements.find(p => p.id === 'pool:T_gold:3802_gold_1').id = R.id; r2.poolIds = r2.charms.map(c => c.poolId);
+      F.seed('Charm_Nest_Sheets/gold-r1', r1); F.seed('Charm_Nest_Sheets/gold-r2', r2);
+      F.seed('Charm_Pool/3801_gold_2', { poolId: '3801_gold_2', state: 'pooled', sheetId: 'gold-r2', runId: R, orderId: '3801', material: 'gold', lineKey: '3801_gold' });
+      const idr = putCmd('empty', { metal: '', sheetId: 'gold-r2', targetId: 'gold-r1', ids: ['3801_gold_2'] });
+      await pass();
+      const a = S('gold-r1'), b = S('gold-r2'), mv = moves();
+      ok('5r · REUNITE: the placed Right earring moves onto the draft holding its Left (that one piece only), and that draft is asked to nest', (a.poolIds || []).includes('3801_gold_2') && !(b.poolIds || []).includes('3801_gold_2') && (b.poolIds || []).includes('3804_gold_1') && (b.placements || []).length === 1 && mv.length === 1, { a: a.poolIds, b: b.poolIds, bPlaced: (b.placements || []).length, moves: mv, cmd: cmdOf(idr) });
+    }
     // Empty of a GF draft: onto the oldest other draft that takes all its pieces (the full one is passed over)
     world();
     sheet('gold-e1', 'gold', 1, [[1301, 4]], { rec: { usablePt2: 2200, freePt2: 600 } });   // (full: 0.8 × 2200 − 1600 = 160 pt²)
