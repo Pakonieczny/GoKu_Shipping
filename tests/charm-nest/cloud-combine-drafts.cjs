@@ -58,7 +58,7 @@ function putCmd(type, args) { const id = 'c' + type + Math.random().toString(36)
 const cmdOf = id => ((F.doc('Charm_Nest_Run_Cmds/' + R) || {}).cmds || {})[id] || {};
 
 (async () => {
-  ok('0 · the combine is a pass item of the cloud driver (lane "nest", order 55), registered in _charmNestSteps.js', Steps.passItems.some(i => i.name === 'combine' && i.lane === 'nest' && i.order === 55) && Steps.loaded.includes('./_charmNestCombine'), Steps.passItems.map(i => i.name));
+  ok('0 · NOAUTOCOMBINE: the combine is NOT a pass item of the cloud driver (only a person combines or empties sheets)', !Steps.passItems.some(i => i.name === 'combine') && !Steps.loaded.includes('./_charmNestCombine'), Steps.passItems.map(i => i.name));
 
   /* ═══ 1 · SS Draft 2 (6) + SS Draft 3 (5) → Draft 2 (11), nested fresh, Draft 3 archived; GF Draft 4 (12) onto the older GF draft with room in the NEXT pass (one a pass) ═══ */
   {
@@ -172,7 +172,7 @@ const cmdOf = id => ((F.doc('Charm_Nest_Run_Cmds/' + R) || {}).cmds || {})[id] |
     const id = putCmd('consolidate', { sourceId: 'silver-x2', targetId: 'silver-x1' });
     await pass();
     const c = cmdOf(id), x1 = S('silver-x1');
-    ok('5 · NOMERGE: a person\'s Combine (consolidate) of two drafts is refused in words; nothing moved', c.state === 'failed' && /Merging sheets was removed/.test(c.text || ''), c);
+    ok('5 · NOMERGE: a person\'s Combine (consolidate) of two drafts is refused in words; nothing moved', c.state === 'failed' && /Combining sheets is a person's choice, for 10K and 14K Gold only/.test(c.text || ''), c);
     ok('5 · the request moved nothing itself (what moved is the cloud\'s own combine of two drafts, which only adds)', moves().length <= 1);
     // refused: the target is in a set
     world();
@@ -180,7 +180,21 @@ const cmdOf = id => ((F.doc('Charm_Nest_Run_Cmds/' + R) || {}).cmds || {})[id] |
     sheet('silver-y2', 'silver', 2, [[1202, 1]]);
     const id2 = putCmd('consolidate', { sourceId: 'silver-y2', targetId: 'silver-y1' });
     await pass();
-    ok('5 · Combine onto an SS sheet in a set: refused in words, nothing moved', cmdOf(id2).state === 'failed' && /Merging sheets was removed|in a set/.test(cmdOf(id2).text || '') && moves().length === 0, cmdOf(id2));
+    ok('5 · Combine onto an SS sheet in a set: refused in words, nothing moved', cmdOf(id2).state === 'failed' && /Combining sheets is a person's choice|in a set/.test(cmdOf(id2).text || '') && moves().length === 0, cmdOf(id2));
+    /* COMBINE10K14K (Paul, 21 Nov 2026): the only combine is a person's drag of a 10K / 14K run sheet onto another in the options window; never without it, never by the cloud, never GF / SS */
+    for (const [label, args, by, moved] of [
+      ['a person\'s 10K combine from the options window moves the pieces', { metal: 'gold10k', sourceId: 'gold10k-k2', targetId: 'gold10k-k1', via: 'options' }, 'Ann', true],
+      ['a 10K combine not asked in the options window is refused', { metal: 'gold10k', sourceId: 'gold10k-k2', targetId: 'gold10k-k1' }, 'Ann', false],
+      ['a 10K combine sent as the cloud is refused', { metal: 'gold10k', sourceId: 'gold10k-k2', targetId: 'gold10k-k1', via: 'options' }, 'Cloud', false],
+      ['a Gold Filled combine, even from the options window, is refused', { metal: 'gold', sourceId: 'gold-k2', targetId: 'gold-k1', via: 'options' }, 'Ann', false]]) {
+      world({ steps: ['cmd:consolidate', 'cmd:empty', 'nest'] });
+      sheet('gold10k-k1', 'gold10k', 1, [[1401, 1]]); sheet('gold10k-k2', 'gold10k', 2, [[1402, 1]]);
+      sheet('gold-k1', 'gold', 1, [[1501, 1]], { rec: { setId: 'set-k', draft: false } }); sheet('gold-k2', 'gold', 2, [[1502, 1]], { rec: { setId: 'set-k', draft: false } });
+      const idk = putCmd('consolidate', args); { const cur = F.doc('Charm_Nest_Run_Cmds/' + R); cur.cmds[idk].by = by; F.seed('Charm_Nest_Run_Cmds/' + R, cur); }
+      await pass();
+      const ck = cmdOf(idk), srcIds = S(args.sourceId).poolIds || [], tgtIds = S(args.targetId).poolIds || [], piece = args.metal === 'gold10k' ? '1402_gold10k_1' : '1502_gold_1';
+      ok('5k · ' + label, moved ? tgtIds.includes(piece) && !srcIds.includes(piece) : srcIds.includes(piece) && !tgtIds.includes(piece) && ck.state === 'failed' && /Combining sheets is a person's choice/.test(ck.text || ''), { ck: { state: ck.state, text: ck.text || ck.step }, srcIds, tgtIds });
+    }
     // Empty of a GF draft: onto the oldest other draft that takes all its pieces (the full one is passed over)
     world();
     sheet('gold-e1', 'gold', 1, [[1301, 4]], { rec: { usablePt2: 2200, freePt2: 600 } });   // (full: 0.8 × 2200 − 1600 = 160 pt²)
@@ -249,7 +263,9 @@ const cmdOf = id => ((F.doc('Charm_Nest_Run_Cmds/' + R) || {}).cmds || {})[id] |
     sheet('silver-h1', 'silver', 1, [[3301, 1]]); sheet('silver-h2', 'silver', 2, [[3302, 1]]);
     sheet('gold-h1', 'gold', 1, [[3401, 1]]); sheet('gold-h2', 'gold', 2, [[3402, 1]]);
     await pass([SW]);
-    ok('8 · the gather sweep alone combines (one a pass): it runs now', moves().length === 1 && (S('silver-h2').archived === true) !== (S('gold-h2').archived === true) && logs.some(t => /sweeps: gather: 1 piece of/.test(t)), { moves: moves().length, logs: logs.filter(t => /sweeps/.test(t)) });
+    ok('8 · NOAUTOCOMBINE: the gather sweep alone combines nothing', moves().length === 0 && S('silver-h2').archived !== true && S('gold-h2').archived !== true && !logs.some(t => /sweeps: gather: \d+ piece/.test(t)), { moves: moves().length, logs: logs.filter(t => /gather/.test(t)) });
+    const Reg = F.load('_charmNestSteps.js');
+    ok('8 · NOAUTOCOMBINE: the cloud\'s pass items hold no combine (nothing in the cloud combines drafts by itself)', Array.isArray(Reg.passItems) && Reg.passItems.length > 0 && !Reg.passItems.some(it => it && it.name === 'combine'), (Reg.passItems || []).map(it => it && it.name));
   }
 
   /* ═══ 9 · the page (charm-nest-bridge.js): Merge drafts for GF / SS on a viewer, sent to the cloud; never on a computer that carries a run ═══ */
