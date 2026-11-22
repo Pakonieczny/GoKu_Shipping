@@ -19,6 +19,7 @@ const Nest = require("./_charmNestNest");
 const CutLine = require("../../charm-nest-rose.js");
 const { num, str } = Nest;
 const LIVE = new Set(["queued", "running"]);
+const FINISH = "Charm_Nest_Finish";   // (the sheet writer's task of each sheet, _charmNestFinish.js: its lastDone names the nest it finished)
 /** An answer that passes by itself (the store busy, a time-out, the network): the sheet is asked again at the next pass, never held for a person. */
 const PASSING = /ABORTED|DEADLINE|UNAVAILABLE|RESOURCE_EXHAUSTED|contention|timed out|answer in time|ECONNRESET|ETIMEDOUT|socket hang up|network|HTTP 5\d\d/i;
 const passing = res => !res || (res.status >= 500 && PASSING.test(String(res.error || "")));
@@ -111,7 +112,19 @@ async function nestCore(ctx) {
   await Nest.pumpLanes(db, live, { by: "drive" });
   // the layouts made and not yet applied to their sheet (the sheet writer, build step 7a: it applies a job's layout with layoutBase and contentBase and marks nestJob "applied")
   const bySheet = new Map(sheets.map(s => [s.id, s]));
-  const unapplied = jobs.filter(j => j.status === "done" && (rec => rec && num(j.layoutBase) === num(rec.layoutRev) && num(j.contentBase) === num(rec.contentRev) && !(rec.nestJob && rec.nestJob.id === j.id && rec.nestJob.status === "applied"))(bySheet.get(j.sheetId)));
+  let unapplied = jobs.filter(j => j.status === "done" && (rec => rec && num(j.layoutBase) === num(rec.layoutRev) && num(j.contentBase) === num(rec.contentRev) && !(rec.nestJob && rec.nestJob.id === j.id && rec.nestJob.status === "applied"))(bySheet.get(j.sheetId)));
+  /* NESTSETTLED (Paul, 22 Nov 2026: every sheet stood at "Nesting · step 1 of 5"; the run waited at its nest step from 11:55 on GF_working_d-134110ec148dde3f): nothing marks a
+     nest "applied". A nest that changed the layout moves the sheet's layoutRev past its base, so it leaves this list; a nest that changed NOTHING (the writer's shortcut: "the layout
+     and its saved files stand as they are") leaves the revisions as they were, and the run waited for it for good. A nest the sheet writer has finished (its task's lastDone names it,
+     the very sign its own lane reads, _charmNestFinishLane.js finishedNest) is settled: it is never waited for again. */
+  if (unapplied.length) {
+    const ids = [...new Set(unapplied.map(j => j.sheetId))], done = new Set();
+    for (let i = 0; i < ids.length; i += 100) for (const d of await db.getAll(...ids.slice(i, i + 100).map(id => db.collection(FINISH).doc(id)))) {
+      const t = d.exists ? d.data() || {} : null, ld = t && t.lastDone;
+      if (ld && ld.nestJobId) done.add(String(ld.nestJobId));
+    }
+    unapplied = unapplied.filter(j => !done.has(String(j.id)));
+  }
   const jobIds = live.concat(unapplied).map(j => j.id).slice(0, 60);
   if (live.length || unapplied.length) {
     const names = list => [...new Set(list.map(j => j.sheetName || j.sheetId))].slice(0, 4).join(", ");
