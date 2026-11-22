@@ -14,6 +14,7 @@
 const Exec = require("./_charmNestCmdExec");
 
 const CMDS = "Charm_Nest_Run_Cmds", CLOUD_DEV = "cloud";
+const NOW_TYPES = new Set(["skuonce", "remakeline", "keepsync", "remake"]);   // (SKUNOW: the requests that make order lines again go through their steps at once)
 const LONG = new Set(["release", "skuonce"]), AGE_MS = 10 * 60000, LONG_AGE_MS = 6 * 3600000, STALE_MS = 10 * 60000, WORK_MAX_MS = 8 * 3600000;
 const PASSING = /answer in time|timed out|network|HTTP 5\d\d|ECONNRESET|ETIMEDOUT|socket hang up|is being written already|try again|DEADLINE_EXCEEDED|UNAVAILABLE|ABORTED/i;
 const num = v => (Number.isFinite(+v) ? +v : 0);
@@ -49,7 +50,7 @@ async function commandsUnit(ctx) {
     }
     const cl = await ctx.call({ op: "runCmdClaim", runId, id: c.id }, key(c, "claim|" + bucket));
     if (!cl || !cl.claimed) continue;   // (another computer holds it and is alive: that one answers it)
-    const ws = await db.collection(Exec.WORK).doc(c.id).get(), work = ws.exists ? ws.data() || {} : {};
+    const ws = await db.collection(Exec.WORK).doc(c.id).get(); let work = ws.exists ? ws.data() || {} : {};
     if (work.state === "done") { await ctx.call({ op: "runCmdDone", runId, id: c.id, ok: !!work.ok, text: str(work.text, 400) || "Done" }, key(c, "done")); n++; continue; }   // (answered in its journal; the answer itself is sent again)
     if (num(work.firstAt) && now - num(work.firstAt) > WORK_MAX_MS) { await answer(c, false, `Stopped: it was still at "${str(work.text || c.step, 80)}" after ${Math.round((now - num(work.firstAt)) / 3600000)} hours. Ask again.`); n++; continue; }
     const ex = Exec.EXEC[c.type];
@@ -61,6 +62,26 @@ async function commandsUnit(ctx) {
       const why = str((e && e.message) || e, 300);
       if (PASSING.test(why) && now - num(c.at) < 30 * 60000) { ctx.say && ctx.say(`[drive] request ${c.type} ${c.id}: ${why} — tried again in the next pass`); continue; }
       r = { done: { ok: false, text: why } };
+    }
+    /* SKUNOW (Paul, 22 Nov 2026: "This process needs to happen in real-time … should take priority when users are doing this process"; a Change SKU took one step a pass, a minute
+       each): a request that makes order lines again (Change SKU, Just this order, a remake) goes on through its steps in this same pass: when a step moves it on it is run again at once.
+       It never sleeps in the pass: when a step waits on another part of the pass (the reading of the orders, a sheet's nest or files), the driver looks at the requests again between
+       units (NOWCMD), so it goes on as soon as that part has run. Every step is still saved as it is reached (cmdWorkPut), so a pass that ends midway loses nothing. */
+    if (r && r.wait && NOW_TYPES.has(c.type)) {
+      const firstAt = num(work.firstAt) || now;
+      let cur = Object.assign({}, work), hops = 0;
+      while (r && r.wait && hops < 12 && Date.now() < ctx.budgetEnd - 20000) {
+        const nextWork = Object.assign({}, r.wait.work || {});
+        if (String(nextWork.stage || "") === String(cur.stage || "")) break;   // (not moved on: saved below, and looked at again between units or in the next pass)
+        await ctx.call({ op: "cmdWorkPut", runId, cmdId: c.id, patch: Object.assign({}, nextWork, { state: "working", text: r.wait.text || "", type: c.type, firstAt }) }, key(c, "work|now|" + hops));
+        if (r.wait.text && r.wait.text !== c.step) { await ctx.call(Object.assign({ op: "runCmdStep", runId, id: c.id, text: str(r.wait.text, 160) }, r.wait.pct == null ? {} : { pct: r.wait.pct }), key(c, "step|now|" + hops)); c.step = r.wait.text; }
+        cur = nextWork; hops++;
+        try { r = await ex({ ctx, cmd: c, a: c.args || {}, work: Object.assign({}, cur), now: Date.now() }); }
+        catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; if (e && e.overBudget) return { more: true, done: n }; r = null; break; }
+      }
+      if (r && r.done) { await answer(c, r.done.ok, r.done.text, r.done.freed); n++; continue; }
+      if (!r) continue;
+      work = Object.assign({}, cur, { firstAt });
     }
     if (r && r.done) { await answer(c, r.done.ok, r.done.text, r.done.freed); n++; continue; }
     if (r && r.wait) {

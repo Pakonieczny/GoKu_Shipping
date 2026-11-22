@@ -20,6 +20,7 @@ const Standby = require("./_charmNestStandby");   // (build steps 8 and 15: what
 const TakeOff = require("./_charmNestTakeOff");   // (build step 9: the take-off lane and the revalidate step)
 
 const DRIVE = "Charm_Nest_Drive", OPEN = "Charm_Nest_Open", CARRIER = "Charm_Nest_Run_Carrier", RUNS = "Charm_Nest_Runs", CMDS = "Charm_Nest_Run_Cmds";
+const NOW_CMD_TYPES = new Set(["skuonce", "remakeline", "keepsync", "remake"]);   // (SKUNOW, Paul 22 Nov 2026: the requests that make order lines again, as _charmNestCmdUnit.js NOW_TYPES)
 const LEASE_PATH = DRIVE + "/lease";
 const CLOUD_DEV = "cloud", CLOUD_BY = "Cloud";
 const COMPUTER_FRESH_MS = 90000, CLOUD_FRESH_MS = 180000, DISPATCH_STALE_MS = 2 * 60000;
@@ -349,14 +350,14 @@ async function pass(env) {
     const cmdNow = async where => {
       if (["abandoned", "complete"].includes(run.status) || Date.now() > budgetEnd - PASS_TAIL_MS) return 0;
       let waiting = [];
-      try { const s = await db.collection(CMDS).doc(runId).get(); waiting = Object.values((s.exists && (s.data() || {}).cmds) || {}).filter(c => c && c.id && c.type && c.state === "waiting"); } catch (_) { return 0; }
+      try { const s = await db.collection(CMDS).doc(runId).get(); waiting = Object.values((s.exists && (s.data() || {}).cmds) || {}).filter(c => c && c.id && c.type && (c.state === "waiting" || (c.state === "running" && c.claim && c.claim.dev === "cloud" && NOW_CMD_TYPES.has(c.type)))); } catch (_) { return 0; }   // (SKUNOW: a Change SKU / remake the cloud is doing is looked at again too, so it goes on as soon as the step it waits on has run)
       const now = Date.now(); waiting = waiting.filter(c => now - num(cmdTried.get(c.id)) > 15000);   // (one the commands item left waiting, a passing failure or another computer's live claim, is looked at again 15 s on, not before every unit)
       if (!waiting.length) return 0;
       live();
       for (const c of waiting) cmdTried.set(c.id, now);
       const ours = c => !!cmdItem && Standby.cmdLaneOn(cloudSteps, c.type);
       let n = 0;
-      if (waiting.some(c => !ours(c))) { const a = await answerCommands(db, runId, cloudSteps, call, (env.passItems || []).some(i => i && i.name === "commands")); out.answered = (out.answered || 0) + a; n += a; }
+      if (waiting.some(c => c.state === "waiting" && !ours(c))) { const a = await answerCommands(db, runId, cloudSteps, call, (env.passItems || []).some(i => i && i.name === "commands")); out.answered = (out.answered || 0) + a; n += a; }
       if (waiting.some(ours)) { say(`[drive] NOWCMD: ${waiting.filter(ours).length} request(s) put while the pass runs, taken up now (${where})`); const r = await runItem(cmdItem); if (r !== false) n++; }
       if (n) out.cmdNow = (out.cmdNow || []).concat([where]).slice(-20);
       return n;
