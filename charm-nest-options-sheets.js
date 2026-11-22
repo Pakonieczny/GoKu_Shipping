@@ -291,7 +291,7 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
   }
   async function doCombine(M, srcId, tgtId, label) {
     const S = M.sheetsUI, mv = startMove(M, { id: srcId, tiles: [srcId, tgtId], pulse: tgtId, title: label, kind: 'combine' }); if (!mv) return;
-    if (relayed(M)) { if (!(await send(M, { type: 'consolidate', sourceId: srcId, targetId: tgtId }, label, mv))) endMove(M, mv); return; }
+    if (relayed(M)) { if (!(await send(M, { type: 'consolidate', sourceId: srcId, targetId: tgtId, via: 'options' }, label, mv))) endMove(M, mv); return; }   // (COMBINE10K14K: asked in the options window)
     const r = await G().consolidate(srcId, tgtId); if (r && r.ok === false && r.why) fail(M, srcId, r.why);
     finishMove(M, mv, { text: (r && (r.text || r.why)) || 'Done', bad: !!(r && r.ok === false) });
   }
@@ -550,8 +550,10 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     if (mode && mode.startsWith('refused:')) return fail(M, st.id, mode.slice(8));
     const src = st.rows.find(r => r.id === st.id);
     if (mode === 'seat') return void planOpen(M, src, overId);   // (MOVESHOW: the move plan opens; Move them is pressed there)
-    if (mode === 'onto') return fail(M, st.id, 'Combining sheets was removed: a sheet is never put onto another');   // (NOMERGE, Paul 21 Nov 2026)
-    if (false) {
+    /* COMBINE10K14K (Paul, 21 Nov 2026: "allow that but only for the 10k and 14 K under the manual options menu"): a person's drag of a 10K / 14K run sheet onto another, confirmed here;
+       nothing else anywhere combines sheets */
+    if (mode === 'onto' && !solid(M.m)) return fail(M, st.id, 'Combining sheets is for 10K and 14K Gold only');
+    if (mode === 'onto') {
       const tgt = st.rows.find(r => r.id === overId);
       S.ask = { src, tgt };
       return ask(M, `Combine ${plural(src.pieces)} from ${esc(src.name)} onto ${esc(tgt.name)}? What does not fit goes on to the next sheets, then stays on ${esc(src.name)}. ${esc(src.name)} is kept, empty, until you delete it.${src.relay ? (root.CNViewer && root.CNViewer.on() ? ' The cloud does it.' : ' The computer that carries the run does it.') : ''}`, a => doCombine(M, a.src.id, a.tgt.id, `Combine ${src.name} onto ${tgt.name}`), 'Combine');

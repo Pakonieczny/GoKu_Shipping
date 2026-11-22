@@ -238,7 +238,9 @@
       const home = orderId != null && pages.find(p => open(p) && (fast || !(p.rosePlan || p.roseProtected)) && p.charms.some(c => String(c.order) === String(orderId)));
       if (home) return home;
       if (fast && orderId != null) { const back = orderHome(m, run, orderId, { skip: pieces }); if (back) return back; }
-      if (!fast) return newest;
+      /* CUTDRAFTFILL (Paul, 21 Nov 2026: a 10K order opened 10K Draft 7 for one piece while 10K Draft 4 held three): a Rose Gold / 10K / 14K order tries every open draft of its metal,
+         oldest first, before the newest; the green-line rules that follow (greenFits, RGC1) still decide, and a sheet planned or protected for its cut is passed over */
+      if (!fast) return pages.find(p => open(p) && !p.recalled && !(p.rosePlan || p.roseProtected)) || newest;
       const room = p => hasRoom(p) && (!pieces || !H.topupTakes || H.topupTakes(p, pieces, order));
       const pairs = p => orderId == null || pairFits(p, [orderId], run);
       const pick = pages.find(p => p !== newest && open(p) && pairs(p) && room(p)) || newest;
@@ -363,7 +365,9 @@
       const takes = p => { if (typeof o.admitted !== "function") return true; const ok = o.admitted(p, units); return [...units.keys()].every(k => ok.has(k)); };
       const oids = [...new Set(moving.map(orderOf).filter(Boolean))], keeps = p => lineFits(p, oids, run, { skip: new Set(moving) });
       const inLineNext = () => { const after = line.slice(i + 1).filter(p => !shutOf(p) && takes(p)); return after.find(keeps) || after[0] || null; };
-      let next = inLine ? inLineNext() : (() => { const last = line.length - 1 > i ? line[line.length - 1] : null; return last && keeps(last) ? last : null; })();
+      /* (CUTDRAFTFILL: what a Rose Gold / 10K / 14K nest passes on goes to the oldest open draft of its metal that keeps the rule, before the newest and before a new draft) */
+      const cutOpen = () => line.find(p => p !== sh && p.charms.length && (!run || !p.runId || p.runId === run.runId) && !shutOf(p) && !busy(p) && !p.recalled && !(p.rosePlan || p.roseProtected) && keeps(p) && takes(p)) || null;
+      let next = inLine ? inLineNext() : (cutOpen() || (() => { const last = line.length - 1 > i ? line[line.length - 1] : null; return last && keeps(last) ? last : null; })());
       if (!next || shutOf(next) || (!inLine && busy(next))) next = H.addPage(metal, { except: sh, ok: keeps });
       return next;
     }
