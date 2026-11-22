@@ -276,6 +276,20 @@ const cmdOf = id => ((F.doc('Charm_Nest_Run_Cmds/' + R) || {}).cmds || {})[id] |
     { const l1 = F.doc('Charm_Nest_Sheets/gold-l1'), l2 = F.doc('Charm_Nest_Sheets/gold-l2'); l1.charms = l1.charms.concat([Object.assign({}, l2.charms[0])]); F.seed('Charm_Nest_Sheets/gold-l1', l1); }
     await pass([SW]);
     ok('8 · GHOSTS: the leftover entry is taken off the set sheet; its own piece and placements stay; the piece stays on the draft that lists it', (S('gold-l1').charms || []).length === 1 && (S('gold-l1').placements || []).length === 1 && (S('gold-l2').charms || []).length === 1 && (S('gold-l2').placements || []).length === 1 && moves().length === 0, { l1: (S('gold-l1').charms || []).map(c => c.poolId), l2: (S('gold-l2').charms || []).map(c => c.poolId) });
+    /* OLDMARKS: once, the old failure marks are cleared; no sheet's pieces or layout change */
+    world({ steps: ['nest', 'sweeps'] });
+    sheet('gold-o1', 'gold', 1, [[3701, 1]], { rec: { filesOwed: T0 - 5 * 86400e3 } });
+    sheet('gold-o2', 'gold', 2, [[3702, 1]], { rec: { filesOwed: T0 - 3600e3 } });
+    F.seed('Charm_Nest_Finish/gold-o1', { sheetId: 'gold-o1', runId: R, lastDone: { outcome: 'failed', why: '9 pieces of GF Sheet 1 could not be made again from the library: X · Y: its right body is no longer in the design', at: T0 - 5 * 86400e3 } });
+    F.seed('Charm_Nest_Runs/' + R, Object.assign(F.doc('Charm_Nest_Runs/' + R), { errors: [{ t: 1, why: 'Failed to fetch' }, { t: 2, why: 'HTTP 429' }], sheetHolds: { 'd-gone': 'This sheet: its nest was stopped by Cloud', 'gold-o2': null } }));
+    putCmd('consolidate', { sourceId: 'x', targetId: 'y' }); { const cur = F.doc('Charm_Nest_Run_Cmds/' + R); for (const k of Object.keys(cur.cmds)) { cur.cmds[k].state = 'failed'; cur.cmds[k].at = T0 - 3600e3; } F.seed('Charm_Nest_Run_Cmds/' + R, cur); }
+    const p1 = JSON.stringify(S('gold-o1').placements), p2 = JSON.stringify(S('gold-o2').placements);
+    await pass([SW]);
+    const runAfter = F.doc('Charm_Nest_Runs/' + R) || {}, cmdsAfter = (F.doc('Charm_Nest_Run_Cmds/' + R) || {}).cmds || {};
+    ok('8 · OLDMARKS: the old "owing files" (failed redraw) is off and its task cleared; a sheet owed for another reason keeps its mark; old errors, a hold on a missing sheet and failed requests are gone; no layout changed',
+      !S('gold-o1').filesOwed && (F.doc('Charm_Nest_Finish/gold-o1') || {}).lastDone.outcome === 'cleared' && !!S('gold-o2').filesOwed && (runAfter.errors || []).length === 0 && !(runAfter.sheetHolds || {})['d-gone'] && Object.keys(cmdsAfter).length === 0
+      && JSON.stringify(S('gold-o1').placements) === p1 && JSON.stringify(S('gold-o2').placements) === p2,
+      { o1: S('gold-o1').filesOwed, o2: S('gold-o2').filesOwed, errors: runAfter.errors, holds: runAfter.sheetHolds, cmds: Object.keys(cmdsAfter), logs: logs.filter(t => /oldmarks/.test(t)) });
     const Reg = F.load('_charmNestSteps.js');
     ok('8 · NOAUTOCOMBINE: the cloud\'s pass items hold no combine (nothing in the cloud combines drafts by itself)', Array.isArray(Reg.passItems) && Reg.passItems.length > 0 && !Reg.passItems.some(it => it && it.name === 'combine'), (Reg.passItems || []).map(it => it && it.name));
   }
