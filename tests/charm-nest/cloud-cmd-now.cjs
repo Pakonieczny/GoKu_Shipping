@@ -293,6 +293,8 @@ async function partW() {
     ok('W1 the request answered done, in words, while the run still waits behind the gate', al.http === 200 && done && c.state === 'done' && /made again/.test(c.text || '') && atCommit(), { c, view: view() });
     ok('W1 the new pieces (the NEW design) are on a sheet, seated once, the sheet written again', after.length === before.length && after.every(p => p.sku === NEW && p.seated === 1 && p.saved), after);
     ok('W1 it never sat at "0 of N made" waiting for the intake\'s gate', ![...steps].some(s => /0 of \d+ made/.test(s)), [...steps]);
+    // (FIXBACK, Paul 22 Nov 2026: "that should've gone back to the original sheet"): the new pieces went back on the very sheet the old ones were on, never placed as new pieces elsewhere
+    ok('W1 FIXBACK: the new pieces are back on the sheet the old ones were on, never "placed as a new piece"', !/placed as a new piece|not described yet/.test(c.text || '') && after.every((p, i) => p.sheet && p.sheet === (before[i] || {}).sheet), { text: c.text, before: before.map(p => p.sheet), after: after.map(p => p.sheet) });
   }
   /* W2 */
   {
