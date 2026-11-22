@@ -14653,14 +14653,20 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
      Laser cutting (Nov 15, Nov 12) and then In progress (Nov 18, 16, 13, and Nov 12 again): each block was in date order by itself, so the dates started over where the blocks met and one day stood in both): every set of both areas
      goes in ONE list by its day (newest first, or oldest first when flipped; Set-1, Set-2, ... inside a day, as SETORDER), one date line for each day, and the groups of loose sheets and drafts after them. The cards stay in the area
      that says where they stand (Approve, the drops, the step rail read it): only where they are DRAWN is one list (the two areas are drawn as no box of their own, their cards take their place in the Library's one row of cards by `order`). */
-  const oneListCss=()=>{if(document.getElementById('laserOneCss'))return;const st=document.createElement('style');st.id='laserOneCss';
-    st.textContent='#libBody.laserOne{display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px 12px}#libBody.laserOne>.laserSection{display:contents}#libBody.laserOne>.laserSection>h2,#libBody.laserOne>.laserSection>.laserEmpty{display:none}#libBody.laserOne>.laserSection>.laserAreaItems{display:contents}#libBody.laserOne>.laserDayRule{flex:0 0 100%;width:100%}';document.head.appendChild(st);};
+  /* LASERBOX (Paul, 22 Nov 2026: "Where is the Laser cutting section. It went missing. The laser cutting section needs to be clearly marked and clearly segregated from all the other
+     sections in the library tab"): Laser cutting (the ready area) is its own box at the top of the Library, with its heading, its own cards and its empty note; ONELIST's one list by date
+     is everything else (In progress, drafts, loose sheets) below it */
+  const oneListCss=()=>{if(document.getElementById('laserOneCss2'))return;const st=document.createElement('style');st.id='laserOneCss2';
+    st.textContent='#libBody.laserOne{display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px 12px}#libBody.laserOne>.laserSection[data-laser-area="pending"]{display:contents}#libBody.laserOne>.laserSection[data-laser-area="pending"]>h2,#libBody.laserOne>.laserSection[data-laser-area="pending"]>.laserEmpty{display:none}#libBody.laserOne>.laserSection[data-laser-area="pending"]>.laserAreaItems{display:contents}#libBody.laserOne>.laserDayRule{flex:0 0 100%;width:100%}'
+      +'#libBody.laserOne>.laserSection[data-laser-area="ready"]{order:0;flex:0 0 100%;width:100%;box-sizing:border-box;margin:0 0 10px;padding:14px 16px 16px;border:2px solid #b8902f;border-radius:14px;background:rgba(184,144,47,.07)}#libBody.laserOne>.laserSection[data-laser-area="ready"]>h2{display:block;margin:0 0 12px;font-size:20px}#libBody.laserOne>.laserSection[data-laser-area="ready"]>h2>span{margin-left:8px;font-size:13px;opacity:.7}#libBody.laserOne>.laserSection[data-laser-area="ready"]>.laserAreaItems{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}#libBody.laserOne>.laserSection[data-laser-area="ready"]>.laserEmpty{margin:0;opacity:.75}';document.head.appendChild(st);};
   function arrange(areas){
     if(!areas){
-      const body=document.getElementById('libBody'),lists=[...document.querySelectorAll('#libBody .laserAreaItems')];if(!body || !lists.length)return;
+      const body=document.getElementById('libBody'),lists=[...document.querySelectorAll('#libBody [data-laser-area="pending"] .laserAreaItems')],ready=document.querySelector('#libBody [data-laser-area="ready"] .laserAreaItems');if(!body || (!lists.length && !ready))return;
       oneListCss();body.classList.add('laserOne');
       const value=card=>({...card._laserSet,sheets:(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean)}),dir=CNListActivity.state('library').direction;
-      for(const l of lists)for(const r of [...l.children])if(isDayRule(r))r.remove();   // (the date lines are the Library's, one for each day: below)
+      for(const l of lists.concat(ready?[ready]:[]))for(const r of [...l.children])if(isDayRule(r))r.remove();   // (the date lines are the Library's, one for each day: below)
+      // (LASERBOX: the Laser cutting box keeps its own cards, in the same day order, inside it)
+      if(ready){const rs=[...ready.children].sort((a,b)=>CNListActivity.compareDays(value(a),value(b),dir));rs.forEach((c,i)=>{if(ready.children[i]!==c)ready.insertBefore(c,ready.children[i] || null);c.style.order='';});}
       const sorted=lists.flatMap(l=>[...l.children]).sort((a,b)=>CNListActivity.compareDays(value(a),value(b),dir));   // (actual sets first by day and number, then the groups of loose sheets and drafts: charm-nest-activity.js)
       for(const l of lists){const mine=sorted.filter(c=>c.parentElement===l);mine.forEach((c,i)=>{if(l.children[i]!==c)l.insertBefore(c,l.children[i] || null);});}
       const keys=sorted.map(c=>{const v=value(c);return CNListActivity.isSet(v)?(CNListActivity.setDay(v) || 'nodate'):'loose';}),count=new Map();
