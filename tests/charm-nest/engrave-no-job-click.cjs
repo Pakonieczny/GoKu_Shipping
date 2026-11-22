@@ -123,6 +123,16 @@ const check = (ok, msg) => { if (ok) { pass++; console.log('  ✓ ' + msg); } el
     const cleared = await listState(), vc = await view();
     check(cleared.rows === list1.rows && cleared.box === '' && vc.q === '' && !cleared.none, 'Clear search puts the whole list back and empties the search box (' + JSON.stringify(cleared) + ')');
 
+    // ── 4b · SEARCHEMPTY (Paul, 22 Nov 2026, order 4242358457): the tab opened on ONE piece (not the list), with a search that finds nothing, says the search found nothing,
+    //         never "N pieces need a decision before anything can be engraved." (the run's or Review's reason) ──
+    await page.evaluate(() => { try { OrderWin.close(); } catch (_) {} Engrave.restoreView({ tab: 'place', focus: null, list: false, chosen: true, q: '9999999999', openDone: null }); CN.setMode('engrave'); Engrave.render(); });
+    await R.settle(page, 500);
+    const one = await page.evaluate(() => { const q = document.querySelector('#egQueue'); return { text: q ? q.textContent : '', btn: !!(q && q.querySelector('[data-eg-clear]')), list: !!(q && q.querySelector('.egPlacementList')) }; });
+    check(/Nothing here matches “9999999999”/.test(one.text) && one.btn && !/need a decision|needs a decision|Nothing to engrave yet|No run is open/.test(one.text), 'a piece view whose search finds nothing says so and offers Clear search, never Review\'s or the run\'s reason (' + one.text.trim().slice(0, 140) + ')');
+    await page.click('#egQueue [data-eg-clear]');
+    await R.settle(page, 400);
+    check((await view()).q === '', 'its Clear search empties the search (' + JSON.stringify(await view()) + ')');
+
     // ── 5 · one row that throws does not stop the rest ──
     await page.evaluate(k => { const S = window.CNEngravingSeals; window.__list = S.list; S.list = function (j) { if (j && j.key === k) throw new Error('boom (test)'); return window.__list.apply(this, arguments); }; }, made.back.jobs[0].key);
     await toGo('');
