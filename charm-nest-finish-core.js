@@ -222,6 +222,7 @@
     const h = host, { byId, st, result } = o; let { aiBytes, labelledBytes } = o, specBase = null, changed = false;
     const shared = (a, b) => exactShared(a, b, h.Vector);
     const job = h.buildJob(sh), locked = new Set((job.protectedRose?.placements || []).map(p => p.id)), saved = new Map((sh.nestInitial || []).map(p => [p.id, p]));
+    if (typeof h.lockIds === "function") for (const id of h.lockIds(sh) || []) locked.add(id);   // (NOREWRITE, the cloud: a piece already placed is never moved or shrunk)
     for (const id of exchangeHeld(sh, byId, result)) locked.add(id);   // (INPLACEHOLD: after a piece was exchanged in place only that piece may be shrunk or moved, never a neighbour)
     const inset = h.insetFor(sh), H = st.hPt, W = st.wPt;
     const fixes = [];
