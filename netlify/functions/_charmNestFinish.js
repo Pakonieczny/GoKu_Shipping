@@ -171,7 +171,15 @@ STEP.S0 = async X => {
   }
   /* NOREWRITE (Paul, 21 Nov 2026: "There are no rewrites allowed"; "Even new pieces are not allowed to rewrite"): with no new nest there is nothing new to add, so nothing is written:
      the sheet and its files stay exactly as they are (this is the path that wrote GF Draft 2, SS Draft 1 and four drafts with 0 placed: it saved its work from a blank copy) */
-  if (!nest) throw new Stop("skipped", "No new nest: nothing new to add, the sheet and its files stay exactly as they are");
+  /* (Paul, 21 Nov 2026: "Users can also be allowed to remove not only add pieces"): with no new nest the sheet is written only when its pieces changed since its files were written
+     (a person or a cancellation took a piece off, or a person moved one): the files then show exactly that change. A sheet whose pieces are as its files show is never written again. */
+  if (!nest) {
+    const key = p => `${p.id}@${Math.round(+p.cxPt * 100)},${Math.round(+p.cyPt * 100)},${Math.round((+p.angle || 0) * 100)}`;
+    let report = null; try { const rp = rec.outputs && rec.outputs.report && rec.outputs.report.path; if (rp) { const [b] = await X.bucket.file(rp).download(); report = JSON.parse(b.toString("utf8")); } } catch (_) { report = null; }
+    const was = new Set(((report && report.placements) || []).filter(p => p && p.id != null).map(key)), now = new Set((rec.placements || []).filter(p => p && p.id != null).map(key));
+    const changed = !report || was.size !== now.size || [...now].some(k => !was.has(k));
+    if (!report || !changed) throw new Stop("skipped", "No new nest and no piece added, removed or moved since its files were written: the sheet and its files stay exactly as they are");
+  }
   if (!nest && !(num(rec.filesOwed) > 0)) throw new Stop("skipped", "Nothing is owed: the sheet's files stand as they are");
   if (!(rec.placements || []).length && !(nest && nest.result.placements.length)) throw new Stop("skipped", "The sheet places no piece: there is nothing to write");
   const jobId = "fin-" + sha([X.sheetId, num(rec.layoutRev), num(rec.contentRev), nest ? nest.jobId : "", num(want.at)].join("|"), 20);
@@ -526,7 +534,7 @@ async function ready(X, o = {}) {
     // the work state: made at S1, read back from the work folder after it
     const saved = o.fresh ? null : await getWork(X.bucket, X.dir + "/state.json");
     if (saved) X.W = JSON.parse(saved.toString("utf8"));
-    else if (o.fresh || job.step === "S1" || job.step === "S2") { X.W = await layoutOf(X); await saveW(X); }
+    else if (o.fresh || job.step === "S1" || job.step === "S2") { X.W = await layoutOf(X); applyW(X); await saveW(X); }   // (NOBLANK, Paul 21 Nov 2026: the pieces are copied onto the sheet BEFORE the work notes are saved: saved from the blank copy, every write without a nest wrote 0 placed)
     else throw new Error("the job's work state is not in the work folder: the job starts again");
     applyW(X);
   }
@@ -599,10 +607,6 @@ async function layoutOf(X) {
     if (pinned.has(p.id) && w && +w.scale > 0) p.scale = +w.scale;   // (G8: a charm held where it is pinned keeps the size it is written at there)
   }
   X.CustomPool.holdSize(sh.placements, byId, sh);
-  /* NOREWRITE: every piece already placed comes out of this layout exactly where it lies (position, turn and size); a nest that moved or dropped one is not written at all */
-  { const now0 = new Map(sh.placements.map(p => [String(p.id), p])), off = (a, b) => Math.abs(+a - +b);
-    const bad = (rec.placements || []).filter(p => p && byId.has(String(p.id))).filter(p => { const q = now0.get(String(p.id)); return !q || off(q.cxPt, p.cxPt) > 0.01 || off(q.cyPt, p.cyPt) > 0.01 || off(q.angle || 0, p.angle || 0) > 0.01 || (+p.scale > 0 && off(q.scale || 1, p.scale) > 1e-4); });
-    if (bad.length) throw new Stop("failed", `${rec.fileBase || rec.id}: this nest would move or drop ${bad.length} piece(s) already placed; nothing was written and the sheet stays as it is`); }
   const ids = new Set(sh.placements.map(p => p.id));
   sh.nestInitial = sh.placements.filter(p => was.has(p.id)).map(p => Object.assign({}, p));   // (the saved layout as this write holds it: the checks and the fixes keep it where it lies)
   return { placements: sh.placements, rejects: sh.rejects.filter(id => !ids.has(id)), nestInitial: sh.nestInitial, dirty: gone > 0 || pm.lifted.length > 0, pinKey,

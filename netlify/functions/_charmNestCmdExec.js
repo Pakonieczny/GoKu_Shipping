@@ -561,7 +561,8 @@ async function moveAndNest(x, src, t, words, o = {}) {
   if (err(r)) return no(err(r));
   let gone = "";
   if (o.draft && num(r.from && r.from.left) === 0) { const a = await put(x, { op: "archiveEmptySheet", id: src.id, runId: x.ctx.runId }, `archive|${src.id}`); gone = err(a) ? `${nameOf(src)} stays, empty (${err(a)})` : `${nameOf(src)} was left empty and archived`; if (!err(a)) { const re = await require("./_charmNestCombine").renumberAfter(x.ctx, src, k => `${x.ctx.runId}|cmd|${x.cmd.id}|${k}`); if (re.length) gone += `; ${re.join(", ")}`; } }
-  const s = await startNest(x, t.id, !!o.draft, `${words}, asked by ${x.cmd.by || "a person"}`); if (s.error) return no(`The pieces were moved onto ${nameOf(t)}, but its nest could not start: ${s.error}`);
+  /* NOWHOLE (Paul, 21 Nov 2026: "nothing can rewrite an entire sheet"): after a merge the pieces already placed on the target stay where they lie; the moved ones are added around them */
+  const s = await startNest(x, t.id, false, `${words}, asked by ${x.cmd.by || "a person"}`); if (s.error) return no(`The pieces were moved onto ${nameOf(t)}, but its nest could not start: ${s.error}`);
   return wait(`Nesting ${r.moved} piece(s) on ${nameOf(t)}…`, { stage: "nest", sheets: [{ id: t.id, layoutRev: num(r.to.layoutRev), at: Date.now() }], moved: (src.poolIds || []).map(String), from: nameOf(src), to: nameOf(t), n: r.moved, gone });
 }
 async function moveSettled(x, empty) {
@@ -573,6 +574,7 @@ async function moveSettled(x, empty) {
   });
 }
 async function consolidate(x) {
+  return no("Merging sheets was removed: a sheet is never put onto another (Paul, 21 Nov 2026)");   // (NOMERGE: nobody merges sheets, by any button or request)
   if (!lane(x.ctx, "nest")) return no("Nesting is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
   if (x.work.stage) return moveSettled(x, false);
   const src = await sheetRec(x.ctx, x.a.sourceId), t = await sheetRec(x.ctx, x.a.targetId);

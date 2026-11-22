@@ -190,7 +190,7 @@ async function combineUnit(ctx) {
     if (!err(a)) { const re = await renumberAfter(ctx, src, k => `${ctx.runId}|combine|${src.id}|${k}`); if (re.length) done.push(re.join(", ")); }
   } else done.push(`${sn} kept ${plural(num(mv.from && mv.from.left), "piece")}`);
   if (OpClass.isCloudOp("nestStart")) {
-    const s = await ctx.call({ op: "nestStart", runId: ctx.runId, sheetId: t.id, fresh: true, why: str(words, 120) }, `${ctx.runId}|combine|nest|${t.id}|${num(mv.to && mv.to.layoutRev)}|${num(mv.to && mv.to.contentRev)}`);
+    const s = await ctx.call({ op: "nestStart", runId: ctx.runId, sheetId: t.id, fresh: false, why: str(words, 120) }   /* NOWHOLE: the merged draft keeps its placed pieces where they lie */, `${ctx.runId}|combine|nest|${t.id}|${num(mv.to && mv.to.layoutRev)}|${num(mv.to && mv.to.contentRev)}`);
     done.push(err(s) ? `its nest waits (${err(s)}); the nest step nests it` : `${tn} is nested again from scratch`);
   } else done.push(`the nest step nests ${tn}`);
   const text = `${done.join("; ")} · ${j.orders.length} order(s) moved whole`;
