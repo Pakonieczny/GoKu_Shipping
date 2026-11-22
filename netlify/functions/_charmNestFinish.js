@@ -169,6 +169,9 @@ STEP.S0 = async X => {
         intakePhase: j.auto && String(j.mode || "auto") !== "fresh" ? "fill" : null };   // (build step 7b: the cloud's own ask of a nest is the page's live intake, its quick gap fill: phase "fill")
     }
   }
+  /* NOREWRITE (Paul, 21 Nov 2026: "There are no rewrites allowed"; "Even new pieces are not allowed to rewrite"): with no new nest there is nothing new to add, so nothing is written:
+     the sheet and its files stay exactly as they are (this is the path that wrote GF Draft 2, SS Draft 1 and four drafts with 0 placed: it saved its work from a blank copy) */
+  if (!nest) throw new Stop("skipped", "No new nest: nothing new to add, the sheet and its files stay exactly as they are");
   if (!nest && !(num(rec.filesOwed) > 0)) throw new Stop("skipped", "Nothing is owed: the sheet's files stand as they are");
   if (!(rec.placements || []).length && !(nest && nest.result.placements.length)) throw new Stop("skipped", "The sheet places no piece: there is nothing to write");
   const jobId = "fin-" + sha([X.sheetId, num(rec.layoutRev), num(rec.contentRev), nest ? nest.jobId : "", num(want.at)].join("|"), 20);
@@ -254,6 +257,7 @@ STEP.S5 = async X => {
     if (!sh.roseCutAt && F && typeof F.plan === "function" && W.ovf.round < 3 && render && FC.overlapOnly(render, geom) && render.areas && render.page) {
       const res = render.res || verifyRes(X), job = X.buildJob(sh), locked = new Set(((job.protectedRose && job.protectedRose.placements) || []).map(p => p.id));
       for (const id of FC.exchangeHeld(sh, X.byId, W.result)) locked.add(id);
+      for (const p of sh.nestInitial || []) locked.add(p.id);   // (NOREWRITE: a piece already placed is never nudged or shrunk)
       const kept = new Set((sh.nestInitial || []).map(p => p.id)), saved = new Map((sh.nestInitial || []).map(p => [p.id, p]));
       if (!W.ovf.before) W.ovf.before = sh.placements.map(p => ({ id: p.id, cxPt: p.cxPt, cyPt: p.cyPt, scale: p.scale || 1 }));
       const gm = geomCheck(X, true);
@@ -517,7 +521,7 @@ async function ready(X, o = {}) {
     X.specHost = { sourceOf: id => X.sources[id], labelOf: m => X.Host.labelOf(m), charmScale: X.Host.CHARM_SCALE };
     X.buildJob = s => X.NP.buildJob(s, { settings: X.S.settings, stockFor: (m, z) => X.Host.stockFor(m, z, X.S), cornerPt: z => X.Host.cornerPtSetting(z, X.S), angleSet: () => angleSet(X.S), carefulAngles: X.NP.CAREFUL_ANGLES,
       nestItems: z => (z.charms || []).filter(c => !c.excluded), orderRank: c => X.NP.orderRank(c, X.O), Solver: X.Solver, Rose: X.Rose, cores: 4 });
-    X.exactHost = { buildJob: s => X.buildJob(s), insetFor: s => X.Host.insetFor(s, X.S), isFrozen: c => X.CustomPool.isFrozen(c), Vector: X.Vector, Export: X.Export, PDF: X.P,
+    X.exactHost = { lockIds: s => (s.nestInitial || []).map(p => p.id) /* NOREWRITE */, buildJob: s => X.buildJob(s), insetFor: s => X.Host.insetFor(s, X.S), isFrozen: c => X.CustomPool.isFrozen(c), Vector: X.Vector, Export: X.Export, PDF: X.P,
       sheetSpec: (s, byId, st, result) => X.FC.sheetSpec(s, byId, st, result, X.specHost), buildSheet: spec => X.P.buildSheet(spec), progress: () => {}, log: (s, msg) => { (s.log || (s.log = [])).push(msg); X.notes.push(msg); }, agent: (who, kind, text) => X.notes.push(text), now: () => Date.now() };
     // the work state: made at S1, read back from the work folder after it
     const saved = o.fresh ? null : await getWork(X.bucket, X.dir + "/state.json");
@@ -595,6 +599,10 @@ async function layoutOf(X) {
     if (pinned.has(p.id) && w && +w.scale > 0) p.scale = +w.scale;   // (G8: a charm held where it is pinned keeps the size it is written at there)
   }
   X.CustomPool.holdSize(sh.placements, byId, sh);
+  /* NOREWRITE: every piece already placed comes out of this layout exactly where it lies (position, turn and size); a nest that moved or dropped one is not written at all */
+  { const now0 = new Map(sh.placements.map(p => [String(p.id), p])), off = (a, b) => Math.abs(+a - +b);
+    const bad = (rec.placements || []).filter(p => p && byId.has(String(p.id))).filter(p => { const q = now0.get(String(p.id)); return !q || off(q.cxPt, p.cxPt) > 0.01 || off(q.cyPt, p.cyPt) > 0.01 || off(q.angle || 0, p.angle || 0) > 0.01 || (+p.scale > 0 && off(q.scale || 1, p.scale) > 1e-4); });
+    if (bad.length) throw new Stop("failed", `${rec.fileBase || rec.id}: this nest would move or drop ${bad.length} piece(s) already placed; nothing was written and the sheet stays as it is`); }
   const ids = new Set(sh.placements.map(p => p.id));
   sh.nestInitial = sh.placements.filter(p => was.has(p.id)).map(p => Object.assign({}, p));   // (the saved layout as this write holds it: the checks and the fixes keep it where it lies)
   return { placements: sh.placements, rejects: sh.rejects.filter(id => !ids.has(id)), nestInitial: sh.nestInitial, dirty: gone > 0 || pm.lifted.length > 0, pinKey,
