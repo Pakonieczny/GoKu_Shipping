@@ -17,7 +17,7 @@ const O = require("../../charm-nest-orders.js");
 const Exec = require("./_charmNestCmdExec");
 const { busyRec } = require("./_charmNestCmdOps");
 
-const EVERY = { stranded: 2 * 60000, pictures: 5 * 60000, names: 5 * 60000, sentrel: 5 * 60000, gather: 60000, upkeep: 30 * 60000 };
+const EVERY = { stranded: 2 * 60000, pictures: 5 * 60000, names: 5 * 60000, sentrel: 5 * 60000, gather: 60000, upkeep: 30 * 60000, leftovers: 10 * 60000 };
 const GRACE = 24 * 3600000, TRIED_MS = 30 * 60000, CLOSED_SEEN_MAX = 3000;
 const num = v => (Number.isFinite(+v) ? +v : 0);
 const str = (v, n) => String(v == null ? "" : v).slice(0, n || 200);
@@ -44,6 +44,24 @@ async function sweepsUnit(ctx) {
     for (const k of fix.keys) tried[k] = now;
     next.tried = pairsOut(tried, 300);
     return fix.keys.length || fix.contended.length ? `${fix.keys.length} order line(s) (${fix.pieces} piece(s)) stood on no sheet and go to the placement; ${fix.contended.length} asked for again` : "";
+  });
+
+  // ── leftovers (GHOSTS, Paul 21 Nov 2026: "implement all of the updates"; GF Nov 20 Set-1 Sheet 2 showed 52/71: 19 entries for pieces placed on GF Draft 2): an entry of a sheet's
+  //    piece list that the sheet's own pool list does not name, that is not placed on it, and that ANOTHER live sheet names is a leftover: it is taken off this sheet's list. The piece
+  //    stays where it lives; no layout, file or nest changes.
+  if (due("leftovers")) await guard("leftovers", async () => {
+    const sheets = (await Exec.runSheets(ctx)).filter(r => !r.archived), owner = Exec.listedBy(sheets), fixed = [];
+    for (const r of sheets) {
+      if (busyRec(r, now) || Exec.cutRec(r)) continue;
+      const own = new Set((r.poolIds || []).map(String)), placed = new Set((r.placements || []).map(p => p && String(p.id)));
+      const ghost = (r.charms || []).filter(c => c && c.poolId && !own.has(String(c.poolId)) && !placed.has(String(c.id)) && owner.get(String(c.poolId)) && owner.get(String(c.poolId)).id !== r.id);
+      if (!ghost.length) continue;
+      const gone = new Set(ghost.map(c => String(c.poolId))), kept = (r.charms || []).filter(c => !(c && c.poolId && gone.has(String(c.poolId)) && !placed.has(String(c.id))));
+      const a = await put({ op: "putSheet", sheet: { id: r.id, charms: kept, charmCount: kept.length }, layoutBase: num(r.layoutRev), contentBase: num(r.contentRev) }, `leftovers|${r.id}|${num(r.contentRev)}`);
+      if (!err(a)) fixed.push(`${Exec.nameOf(r)} (${ghost.length})`);
+      if (fixed.length >= 5) break;
+    }
+    return fixed.length ? `leftover entries of pieces that live on other sheets taken off: ${fixed.join(", ")}` : "";
   });
 
   // ── pictures (PICTUREKEEP)

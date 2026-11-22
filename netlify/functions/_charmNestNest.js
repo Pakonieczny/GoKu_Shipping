@@ -194,14 +194,18 @@ function refusal(rec) {
     (nestOwed), or one that changed since it was nested and owes no files written as it stands). → { owed, why } | { owed: false, wait?, why? } */
 function owedNest(rec, run, now) {
   if (refusal(rec)) return { owed: false };
-  if (rec.releaseFull) return { owed: false };   // (a sheet released full takes no new piece: one taken off it is written as it stands, the files lane)
+  /* OWNNEST (Paul, 21 Nov 2026: "implement all of the updates including … those two small earrings"): a sheet released full takes no NEW order, but a piece of its own order the
+     placement sent home to it (R16) is nested on it: its waiting pieces that its own piece list names, together, the placed ones held where they lie (_charmNestNestSlot.js
+     OWNTOGETHER). A piece turned away, or an entry its piece list does not name, never asks a nest. Nothing else of a full sheet is nested again. */
+  const released = !!rec.releaseFull, listed = new Set((Array.isArray(rec.poolIds) ? rec.poolIds : []).map(String));
   const holds = (run && run.sheetHolds) || {}; if (holds[rec.id]) return { owed: false, held: String(holds[rec.id]) };
   // (Gate.nestable: a 10K or 14K sheet in a set nests only when that solid metal is picked for the run, or the sheet's own Include tick; a draft of the run always nests)
   if (["gold10k", "gold14k"].includes(rec.metal) && rec.setId && !rec.draft && rec.solidIncluded !== true && !(run && run.solidIncluded && run.solidIncluded[rec.metal] === true)) return { owed: false };
   const name = rec.fileBase || rec.metalLabel || rec.id;
   if (rec.manualEdit && now - num(rec.manualEdit.at) < MANUAL_STALE_MS) return { owed: false, wait: true, why: `${name}: a person is moving its pieces by hand` };
   const placed = new Set((rec.placements || []).map(p => p && String(p.id))), rejected = new Set((rec.rejects || []).map(r => String(r && typeof r === "object" ? r.id : r)));
-  const fresh = activeCharms(rec).filter(c => !placed.has(String(c.id)) && !rejected.has(String(c.id)));
+  const fresh = activeCharms(rec).filter(c => !placed.has(String(c.id)) && !rejected.has(String(c.id)) && (!released || (c.poolId && listed.has(String(c.poolId)))));
+  if (released) return fresh.length && (rec.placements || []).length ? { owed: true, why: `${name}: ${fresh.length} piece(s) of its own orders wait to be nested` } : { owed: false };
   // (placeOnSheet's nestOwed mark is read as the reason only: what owes the nest is a piece not placed and not turned away, which no write of a layout leaves behind,
   //  and a change since the last nest (dirty), which nestStart clears as the page's startNestReady does: a mark nobody clears never nests a sheet over and over)
   if (fresh.length) return { owed: true, why: rec.nestOwed ? `${name}: pieces were placed on it` : `${name}: ${fresh.length} piece(s) wait to be nested` };

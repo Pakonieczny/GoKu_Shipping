@@ -40,7 +40,16 @@ async function driveUnit(ctx) {
     if (!owed && !nest && !going) continue;
     const ld = t && t.lastDone;
     // (a job that ended failed, skipped or waiting for its nest on exactly this sheet as it is now is not asked again until the sheet, its owed mark or its nest changes: no loop)
-    if (!nest && !going && ld && ["failed", "skipped", "waiting"].includes(ld.outcome) && ld.base && num(ld.base.layoutRev) === num(s.layoutRev) && num(ld.base.contentRev) === num(s.contentRev) && num(ld.owedAt) === num(s.filesOwed)) continue;
+    if (!nest && !going && ld && ["failed", "skipped", "waiting"].includes(ld.outcome) && ld.base && num(ld.base.layoutRev) === num(s.layoutRev) && num(ld.base.contentRev) === num(s.contentRev) && num(ld.owedAt) === num(s.filesOwed)) {
+      /* FILESCURRENT (Paul, 21 Nov 2026: "implement all of the updates"): the writer skipped because the sheet's files already show its layout exactly (NOREWRITE: no piece added,
+         removed or moved since they were written). Then nothing is owed and the picture stands for the layout as it is: the owed mark comes off and the picture's version is the
+         layout's (putSheet stamps previewRev when the save carries the picture). Nothing is written to the files, nothing is nested. Only the record's two labels change. */
+      if (ld.outcome === "skipped" && /^No new nest and no piece added, removed or moved/.test(String(ld.why || "")) && (owed || num(s.previewRev) < num(s.layoutRev)) && s.outputs && s.outputs.preview && s.outputs.preview.url) {
+        const r = await ctx.call({ op: "putSheet", sheet: { id: s.id, filesOwed: null, outputs: s.outputs }, contentBase: num(s.contentRev), layoutBase: num(s.layoutRev) }, ["filescurrent", runId, s.id, num(s.layoutRev), num(s.contentRev), num(s.filesOwed)].join("|"));
+        if (r && r.status < 400 && r.ok) say(`[drive] files: ${s.fileBase || s.id}: its files already show its layout: the owed mark is off and its picture is current`);
+      }
+      continue;
+    }
     const reason = nest ? "nest" : going ? "resume" : "owed";
     // (the unit names what the sheet and its task are now: the same look at the same sheet is written once (the ledger); a sheet that changed, or a task dispatched since, is a new one)
     const unit = ["files", runId, s.id, reason, nest || "", num(s.layoutRev), num(s.contentRev), num(s.filesOwed), going ? t.job.jobId : "", t ? t.nonce || "" : ""].join("|");
