@@ -1849,6 +1849,20 @@ async function op_jobList(b) {
   const now = Date.now();
   return { jobs: s.docs.map(d => { const j = d.data(); const up = ms(j.updatedAt), cr = ms(j.createdAt); return { id: d.id, kind: j.kind || "solver", status: j.status, stage: j.stage || null, done: j.done || 0, total: j.total || 0, name: j.name || null, path: j.path || null, error: j.error || null, createdAt: cr, updatedAt: up, silentForMs: up ? now - up : null, result: j.result ? { charms: j.result.charms, labelled: j.result.labelled, blocked: (j.result.blocked || []).length } : null }; }) };
 }
+/* NESTDEBUG (Paul, 21 Nov 2026: "unlock it, I want to test on the cloud"): READ ONLY. A nest job's own record, each of its slots' records (tries, state, how it ended, the size of the
+   layout it kept) and its prepared input (gzip, base64, when under 4.5 MB): what a failed cloud nest did, read from the cloud. Writes nothing. */
+async function op_nestDebugGet(b) {
+  if (!isId(b.id)) return { error: "bad id" };
+  const jref = db.collection(JOBS).doc(b.id), js = await jref.get(); if (!js.exists) return { job: null };
+  const j = js.data() || {}; j.updatedAt = ms(j.updatedAt); j.createdAt = ms(j.createdAt); if (j.result && j.result.layoutJson) j.result = Object.assign({}, j.result, { layoutJson: String(j.result.layoutJson).length });
+  const ss = await jref.collection("slots").get(), slots = {};
+  for (const d of ss.docs) { const x = Object.assign({}, d.data() || {}); if (x.bestJson) x.bestJson = String(x.bestJson).length; for (const k of Object.keys(x)) if (x[k] && typeof x[k].toMillis === "function") x[k] = x[k].toMillis(); slots[d.id] = x; }
+  let input = null, inputBytes = 0;
+  if (b.input === true && j.inputPath && /^charmnest\/jobs\/[\w\-~]+\/input\.json\.gz$/.test(String(j.inputPath))) {
+    try { const [buf] = await admin.storage().bucket().file(String(j.inputPath)).download(); inputBytes = buf.length; if (buf.length <= 4.5e6) input = buf.toString("base64"); } catch (e) { input = null; inputBytes = -1; }
+  }
+  return { job: j, slots, inputBytes, input };
+}
 async function op_getJob(b) {
   if (!isId(b.id)) return { error: "bad id" };
   const s = await db.collection(JOBS).doc(b.id).get();
@@ -2529,7 +2543,7 @@ const PIECES_MEMO = new Map(), PIECES_MEMO_MS = 30000;
    only: the sandbox keeps no counter (it would be a leftover of every reset) and answers in full, as before. A read or a raise that
    fails is never an error of the op: the reader then has no gen and reads in full. */
 const REV_COLL = "Charm_Nest_Rev";
-const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces", "getSheet", "listSheets", "getCalibration", "getJob", "jobList", "getAgent", "customReadGet", "masterGet", "masterGetMany", "masterList", "masterListFiles",
+const NO_GEN_BUMP = new Set(["nestDebugGet", "ping", "laserStatus", "flowState", "getOrderPieces", "getSheet", "listSheets", "getCalibration", "getJob", "jobList", "getAgent", "customReadGet", "masterGet", "masterGetMany", "masterList", "masterListFiles",
   "poolList", "poolGet", "backList", "sandboxStatus", "setGet", "setList", "runGet", "runList", "history", "releaseGet", "bridgeLog", "cancelList", "cancelCheck", "timelineAdd", "timelineGet", "listingSkus", "aliasGet", "noDesignGet", "optionMapGet",
   "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "remnantList", "remnantMark", "remnantBackfill", "partialList", "partialPolicyGet", "partialPolicySet", "partialPlan", "partialUse", "partialStocks", "sheetHistory", "partialSearchList", "sheetMake", "sheetDelete", "partialBackfill", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
   "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "listingKindPut", "noDesignPut", "noDesignDelete", "optionMapPut",
@@ -5682,7 +5696,7 @@ function cancelCopy(r) {
   if (!fits()) for (const k of Object.keys(x)) if (!["orderId", "by", "why", "at", "source", "etsyStatus", "etsyAt"].includes(k)) delete x[k];
   return x;
 }
-const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, getOrderDays: op_getOrderDays, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, sheetLayoutPatch: op_sheetLayoutPatch, manualClaim: op_manualClaim, listSheets: op_listSheets, getSheet: op_getSheet, getMany: op_getMany, changes: op_changes, getChanges: op_changes, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
+const OPS = { ...RoseStock, ...Remnants.ops, nestDebugGet: op_nestDebugGet, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, getOrderDays: op_getOrderDays, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, sheetLayoutPatch: op_sheetLayoutPatch, manualClaim: op_manualClaim, listSheets: op_listSheets, getSheet: op_getSheet, getMany: op_getMany, changes: op_changes, getChanges: op_changes, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterEditorPut: op_masterEditorPut, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, masterRemoveSkus: op_masterRemoveSkus, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxPullLimitSet: op_sandboxPullLimitSet, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,

@@ -16,7 +16,7 @@ const words = s => s.split(/\s+/).filter(Boolean);
 
 const READ = new Set(words(`activityGet aliasGet artDraftGet artGet artList artPrepoolList backList backPreview cancelCheck cancelList changes computerList customGet
   customPieceList customReadGet customSaveGet customSavePending customSheetGet customSkuCheck designGet designList driveGet engraveSyncGet etsyStopGet findSheets
-  flowState getAgent getCalibration getChanges getJob getMany getOrderDays getOrderPieces getShapeGuidance getSheet history jobList laserDoneList laserSheetLast
+  flowState getAgent getCalibration getChanges getJob nestDebugGet getMany getOrderDays getOrderPieces getShapeGuidance getSheet history jobList laserDoneList laserSheetLast
   laserStatus listCharms listSheets listingPhotos listingSkus lookupCharms masterGet masterGetMany masterList masterListFiles noDesignGet optionMapGet partialList
   partialPolicyGet partialSearchList partialStocks ping poolGet poolList releaseGet remnantList reviewMarkOpen roseGet roseList runCmdList runGet runList
   sandboxStatus sandboxStream sessionsList setGet setList shareGet sharedOrders sheetHistory sheetRevsGet shippedByUs timelineGet traceSrcGet trayList worldGet
