@@ -172,15 +172,15 @@ const cmdOf = id => ((F.doc('Charm_Nest_Run_Cmds/' + R) || {}).cmds || {})[id] |
     const id = putCmd('consolidate', { sourceId: 'silver-x2', targetId: 'silver-x1' });
     await pass();
     const c = cmdOf(id), x1 = S('silver-x1');
-    ok('5 · Combine (consolidate) of two SS drafts: the pieces are on the target, the emptied draft archived, a nest that only ADDS asked (NOWHOLE)', x1.charms.length === 3 && S('silver-x2').archived === true && jobsOf('silver-x1').length > 0 && jobsOf('silver-x1').every(j => j.mode !== 'fresh') && c.state === 'running' && c.claim && c.claim.dev === 'cloud', { n: x1.charms.length, c });
-    ok('5 · the move was the person\'s request (one move in the pass: the cloud\'s own combine found nothing left)', moves().length === 1);
+    ok('5 · NOMERGE: a person\'s Combine (consolidate) of two drafts is refused in words; nothing moved', c.state === 'failed' && /Merging sheets was removed/.test(c.text || ''), c);
+    ok('5 · the request moved nothing itself (what moved is the cloud\'s own combine of two drafts, which only adds)', moves().length <= 1);
     // refused: the target is in a set
     world();
     sheet('silver-y1', 'silver', 1, [[1201, 1]], { rec: { draft: false, setId: 'set-y' } }); F.seed('Charm_Nest_Sets/set-y', { setId: 'set-y', runId: R, sheetIds: ['silver-y1'], status: 'formed', seq: 1 });
     sheet('silver-y2', 'silver', 2, [[1202, 1]]);
     const id2 = putCmd('consolidate', { sourceId: 'silver-y2', targetId: 'silver-y1' });
     await pass();
-    ok('5 · Combine onto an SS sheet in a set: refused in words, nothing moved', cmdOf(id2).state === 'failed' && /in a set/.test(cmdOf(id2).text || '') && moves().length === 0, cmdOf(id2));
+    ok('5 · Combine onto an SS sheet in a set: refused in words, nothing moved', cmdOf(id2).state === 'failed' && /Merging sheets was removed|in a set/.test(cmdOf(id2).text || '') && moves().length === 0, cmdOf(id2));
     // Empty of a GF draft: onto the oldest other draft that takes all its pieces (the full one is passed over)
     world();
     sheet('gold-e1', 'gold', 1, [[1301, 4]], { rec: { usablePt2: 2200, freePt2: 600 } });   // (full: 0.8 × 2200 − 1600 = 160 pt²)
