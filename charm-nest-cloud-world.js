@@ -109,6 +109,10 @@
         safe(() => O.interpretAll());
         safe(() => root.Review && root.Review.syncOrderItems()); safe(() => O.render()); safe(() => root.Review && root.Review.render());
         if (fresh.size) safe(() => root.CharmNestEngraveSync && root.CharmNestEngraveSync.pull([...fresh], "keys"));
+        /* FRESHPHOTOS (Paul, 22 Nov 2026: a new order showed "Awaiting photo preparation" for up to 20 minutes): a computer that follows the cloud asked for a new order's listing photo only at
+           its ten-minute round. The new orders' photos are asked for now, each computer at its own moment within a few seconds, so the first one prepares the photo (one batched lookup) and the
+           others find it saved in the cloud; the existing limits (ten minutes a listing, the daily cap, a pause) still hold. */
+        if (added) { const rows = O.rows().filter(r => r && r.key && fresh.has(String(r.key).split("_")[0])); if (rows.length) setTimeout(() => safe(() => root.ListMedia && root.ListMedia.prepare(rows)), 1500 + Math.floor(Math.random() * 12000)); }
       }
       W.applied = { at: Date.now(), why, added, changed, gone, size: W.lines.size };
       return W.applied;

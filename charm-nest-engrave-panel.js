@@ -220,7 +220,11 @@
     const c = COMMITS.get(key), dirty = dirtyOf(vm, d, key);
     // (APPROVECLOUD, Paul 20 Nov 2026: the press of exactly this stage is being kept, or waits its turn: "Approving…", off, with the step it is at said under it; "Approved ✓" only once the cloud's
     //  engraving record holds it (CONFIRMED). data-dirty still says the jobs do not hold it yet)
-    if (c && sameStage(d, c.stage) && (RUNNING.has(key) || PENDING.has(key))) { const s = STEP.get(key); return { st: 'working', dirty, step: s ? s.words : STEP_WORDS.start }; }
+    /* INSTANTAPPROVE (Paul, 22 Nov 2026: "it took almost 30 seconds for it to actually show the approve stamp and seal. The approval process needs to be instantaneous ... it can't be no
+       delays"): the press of exactly this stage is "Approved ✓" at once, its seal pressed beside it in the same moment (instantSeal); the file, its save and the cloud's read-back go on behind
+       it. Only a press waiting for someone to sign in still says so (nothing can be approved by nobody). A press the cloud does not keep takes the "Approved ✓" and its seal back, says why in
+       red under Approve and in a toast, and Approve is lit again (runCommit). */
+    if (c && sameStage(d, c.stage) && (RUNNING.has(key) || PENDING.has(key))) { const s = STEP.get(key); return s && s.code === 'sign' ? { st: 'working', dirty, step: s.words } : { st: 'ok', dirty, working: true }; }
     const conf = CONFIRMED.has(key);
     // (NONEGATE 2, Paul 13 Nov 2026, TREBLE_79646 showed "Approved" with no approval: keptApproved is true for None, which has no faces to check): None is Approved only when the
     //  piece carries its CUT PLAIN seal (engravePlain) and nothing was changed; otherwise Approve is lit
@@ -453,8 +457,26 @@
     if (RUNNING.has(key)) PENDING.set(key, job);   // (kept right after the commit running now, from the jobs as they are then)
     else startRun(key, job);
     const E = Eng(); if (E && E.showStage && typeof E.showStage.flush === 'function') tryDo(() => E.showStage.flush());
-    for (const b of liveBindings(key)) tryDo(() => b.gate());   // ("Approving…", now: its commit runs or waits; APPROVECLOUD: "Approved ✓" once the cloud holds it)
+    for (const b of liveBindings(key)) tryDo(() => b.gate());   // (INSTANTAPPROVE: "Approved ✓" now; its commit runs or waits behind it)
+    instantSeal(key, snap.stage.choice);
     return true;
+  }
+  /** INSTANTAPPROVE: the seal of the press, pressed beside "Approved ✓" at once (the seal of each face it approves, or CUT PLAIN), marked provisional: the approval's own seal, when its file is
+   *  saved, takes its place without a second stamp (CNEngravingSeals.press), and a press the cloud does not keep takes it away (dropInstantSeals). Nobody signed in: no seal yet (the sign-in comes first). */
+  function instantSeal(key, choice) {
+    const ES = root && root.CNEngravingSeals, by = tryDo(() => str((root && root.B && root.B.employee) || (typeof employeeName === 'function' ? employeeName() : '')).trim(), '');   // eslint-disable-line no-undef
+    if (!ES || typeof ES.press !== 'function' || !(root && root.Seal) || !by || choice === 'none') return;   // (None: its CUT PLAIN seal has its own stamp, at once, in the commit)
+    const at = Date.now(), faces = choice === 'none' ? [''] : choice === 'both' ? ['back', 'front'] : [choice === 'front' ? 'front' : 'back'];
+    const anchor = liveBindings(key).map(b => b.stampAt()).find(Boolean); if (!anchor) return;
+    for (const f of faces) {
+      const how = choice === 'none' ? 'engravePlain' : 'engraveApproved';
+      const stamp = Object.assign({ id: `${how}:${f ? f + ':' : ''}${at}:${by}`, how, at, by, provisional: true }, f === 'front' ? { face: 'front' } : {});
+      tryDo(() => Promise.resolve(ES.press(anchor, stamp)).catch(() => {}));
+    }
+  }
+  /** INSTANTAPPROVE: a press the cloud did not keep: its provisional seals go. */
+  function dropInstantSeals(key) {
+    for (const b of liveBindings(key)) tryDo(() => { const a = b.stampAt(), w = a && a.closest ? a.closest('.egApproveWrap') : null; if (w) for (const s of w.querySelectorAll('.seal[data-provisional]')) s.remove(); });
   }
   function startRun(key, job) {
     RUNNING.add(key);
@@ -552,6 +574,7 @@
       settled = true; clearTimeout(timer);
       if (res && res.ok && !ctx.keepOnly && !res.overtaken && (res.approved || []).length) { CONFIRMED.set(key, { at: Date.now() }); CLOUDOFF.delete(key); }   // (APPROVECLOUD: "Approved ✓" from here, until the next change or press)
       else if (res && res.cloudOff) CLOUDOFF.set(key, str(res.message));
+      if (!(res && res.ok) && !(res && res.cancelled)) dropInstantSeals(key);   // (INSTANTAPPROVE: not kept: the seal shown at the press goes, Approve is lit again with why)
       if (res && res.hung) { const h = work.catch(() => {}).then(() => { if (HUNG.get(key) === h) HUNG.delete(key); for (const b of liveBindings(key)) tryDo(() => b.draw()); unbusy(key); }); HUNG.set(key, h); }
     } catch (e) { res = { ok: false, message: str(e && e.message ? e.message : e) }; }
     finally {

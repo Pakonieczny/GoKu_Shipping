@@ -127,7 +127,7 @@ const ListZoom = (() => {
 
 // One viewport-driven loader for the three work queues. A listing photo is never
 // replaced by a vector: these are separate, labelled sources for comparison.
-const ListMedia = (() => {
+const ListMedia = window.ListMedia = (() => {   // (FRESHPHOTOS: also window.ListMedia, for the cloud's new orders, charm-nest-cloud-world.js)
   const jobs=new WeakMap(), watched=new Set(), queue=[], photos=new Map(), pending=new Map(), wanted=new Set();
   // Firebase is the shared source; this small local index makes refresh instant.
   // Image bytes use the seven-day HTTP cache, not another Etsy metadata lookup.
@@ -199,7 +199,9 @@ const ListMedia = (() => {
     })().finally(()=>{preparing=null;if(prepareQueue.size)prepare([]);});
     return preparing;
   }
-  function start(){clearInterval(photoTick);prepare(Orders.rows());photoTick=setInterval(()=>{if(!document.hidden)prepare(Orders.rows());},600000);}
+  function start(){clearInterval(photoTick);prepare(Orders.rows());photoTick=setInterval(()=>{if(!document.hidden)prepare(Orders.rows());},600000);
+    // (FRESHPHOTOS, Paul 22 Nov 2026: "sometimes the etsy images are not showing up": a tab looked at again asks for the photos it still misses, as a new tab does; each listing at most once in ten minutes, as before)
+    if(!start.vis){start.vis=true;document.addEventListener('visibilitychange',()=>{if(!document.hidden)prepare(Orders.rows());});}}
   // a picture that failed while the network was down (a wake, a blip) loads again when the network is back or the tab is
   // looked at again, as the sheet previews do (CharmNestAssets); it said "Unavailable · Retry" until each one was clicked
   const retryFailed=()=>{if(document.hidden)return;for(const host of document.querySelectorAll('[data-vector],[data-listing]')){const job=jobs.get(host);if(job?.state==='error')watch(host,job.load,job.key,true,job.zoomKey);}};
@@ -13217,10 +13219,15 @@ const Engrave = window.Engrave = (() => {
       const f2 = pickFocus(q2, d2);
       // APPRFIX-B: kept only while it is still the card of the job that is in the list AND that job still waits for approval: a card drawn in review whose job left review (words the font cannot engrave, an order changed on Etsy,
       // a refit) or was replaced by another object under the same key stayed on screen with a live Approve that cardAction / approveOnce dropped without a word. Drawn again, it says what the placement is now.
-      if (f2 && f2.key === EG.cardKey && f2 === EG.card._job && f2.state === EG.card.dataset.state && (f2.state === "review" || busySig(f2) === EG.card._busySig)) {   // (NODECIDED: an approved piece in front is kept as long as it stays approved; the first change flips it to review and the card is drawn again)
+      /* NOFLICKER (Paul, 22 Nov 2026: "after the approval came through the screen flickers as if it's testing or resetting itself"): the piece in front that its own panel just approved goes
+         review → approved → written (its file saved, the cloud's record read back) while the person looks at it; each step drew the whole tab again. The card of a panel is kept through those
+         steps (its Approve and seal are the panel's, drawn in place); only another change (new words, another piece, a face taken back to review) draws it again. */
+      const panelCard = !!EG.card.querySelector(".engp"), was = EG.card.dataset.state;
+      const settles = panelCard && ["approved", "written"].includes(f2 && f2.state) && ["review", "approved"].includes(was) && f2.state !== was;
+      if (f2 && f2.key === EG.cardKey && f2 === EG.card._job && (settles || (f2.state === was && (f2.state === "review" || busySig(f2) === EG.card._busySig || (panelCard && f2.state !== "review"))))) {   // (NODECIDED: an approved piece in front is kept as long as it stays approved; the first change flips it to review and the card is drawn again)
         // (a card of a row with several pieces is kept only while its pieces are the same ones and the same words: otherwise it is drawn again; the switch itself follows in place)
         const g2 = listRows(q2.concat(d2)).find(r2 => r2.jobs.includes(f2)), pcs = multiJobs(g2);
-        if (headSig(pcs) === (EG.card._headSig || "")) { EG.card._switchSync?.(pcs); renderChrome(v, q2); return; }
+        if (headSig(pcs) === (EG.card._headSig || "")) { if (settles || panelCard) { EG.card.dataset.state = f2.state; EG.card._busySig = busySig(f2); } EG.card._switchSync?.(pcs); renderChrome(v, q2); return; }
       }
     }
     const jobs = CNListActivity.select(activityScope(), tabItems().filter(j => j.row.state !== "gone"));   // (MONOUI: the monogram lines are rows of the lists beside the engraved pieces)
@@ -29260,7 +29267,10 @@ const Cleanups = window.Cleanups = (() => {
    and adds the orders it holds itself (an arrival counts the moment it lands). Midnight in Toronto turns the day over on this page's clock, with no read. */
 const SalesDays = window.SalesDays = (() => {
   const D = () => window.CharmNestOrderDays;
-  const MIN_GAP = 20000, FRESH_MS = 15 * 60000;
+  /* SAMECOUNTS (Paul, 22 Nov 2026: "my computer shows today 50 orders and Michelle's computer shows 52 ... All computers should always have the same update and show the same quantities all at
+     the same time"): each computer kept its own copy of the shared counts (Charm_Nest_Order_Days/recent) and read it again only every 15 minutes, and added the orders its own page held. Every
+     computer now reads the shared counts again every minute while the Orders tab is shown, and shows them as they are: the same numbers everywhere. */
+  const MIN_GAP = 20000, FRESH_MS = 60000;
   // (SALSB, Paul 9 Nov 2026: "I actually want these numbers to be correct even in the sandbox": the real shop's counts on the real clock, in the sandbox too;
   //  the sandbox's replayed orders are not added)
   const key = () => "cn.orderDays.production";
@@ -29284,6 +29294,7 @@ const SalesDays = window.SalesDays = (() => {
   }
   /** The orders this page holds (an arrival counts at once, before the cloud's copy has it): their receipt and creation time. */
   function held() {
+    return [];   // (SAMECOUNTS: only the shared counts, never the orders one page holds: those differ from computer to computer)
     if (WORKSPACE_SANDBOX) return [];   // (the sandbox's orders are replays, not sales)
     try {
       const out = new Map();

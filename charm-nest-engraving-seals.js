@@ -266,9 +266,15 @@
     let row=wrap.querySelector('.sealRow');if(!row){row=root.document.createElement('span');row.className='sealRow egButtonSeal';wrap.append(row);}
     row.dataset.sealGroup='';
     const wasDisabled=button.disabled,wasBusy=button.getAttribute('aria-busy');
-    let seal=[...row.querySelectorAll('.seal')].find(s=>{try{const m=JSON.parse(s.querySelector('svg')?.getAttribute('data-seal-model'));return +m.at===+stamp.at && m.by===String(stamp.by || '') && m.action===(stamp.how==='engravePlain'?faceOf(stamp)==='front'?'FRONT CUT PLAIN':'CUT PLAIN':faceOf(stamp)==='front'?'FRONT ENGRAVING':'BACK ENGRAVING');}catch(_){return false;}});
+    const actionOf=st=>st.how==='engravePlain'?faceOf(st)==='front'?'FRONT CUT PLAIN':'CUT PLAIN':faceOf(st)==='front'?'FRONT ENGRAVING':'BACK ENGRAVING';
+    const modelOf=s=>{try{return JSON.parse(s.querySelector('svg')?.getAttribute('data-seal-model'))||null;}catch(_){return null;}};
+    /* INSTANTAPPROVE (Paul, 22 Nov 2026: the approval and its seal must show at once): a seal pressed at the press is provisional (stamp.provisional); the approval's own seal, when its file
+       is saved, takes its place quietly (same face, same person: no second stamp), and the panel takes a provisional seal away when the cloud does not keep the press */
+    if(!stamp.provisional){const prov=[...row.querySelectorAll('.seal[data-provisional]')].find(s=>{const m=modelOf(s);return m && m.by===String(stamp.by || '') && m.action===actionOf(stamp);});
+      if(prov){const holder=root.document.createElement('span');holder.innerHTML=root.Seal.html(stamp,regularSize(),'engravingSeal');const real=holder.firstElementChild;if(real){prov.replaceWith(real);row.dataset.sealCount=String(row.querySelectorAll('.seal').length);root.Seal.fit?.(row);}return;}}
+    let seal=[...row.querySelectorAll('.seal')].find(s=>{const m=modelOf(s);return !!m && +m.at===+stamp.at && m.by===String(stamp.by || '') && m.action===actionOf(stamp);});
     if(seal && !seal.classList.contains('pending'))return;
-    if(!seal){const holder=root.document.createElement('span');holder.innerHTML=root.Seal.html(stamp,regularSize(),'engravingSeal pending');seal=holder.firstElementChild;row.append(seal);}
+    if(!seal){const holder=root.document.createElement('span');holder.innerHTML=root.Seal.html(stamp,regularSize(),'engravingSeal pending');seal=holder.firstElementChild;if(stamp.provisional)seal.dataset.provisional='1';row.append(seal);}
     row.dataset.sealCount=String(row.querySelectorAll('.seal').length);root.Seal.fit?.(row);button.disabled=true;button.textContent='Approved';button.setAttribute('aria-busy','true');
     try{await root.Seal.press(seal);}finally{button.disabled=wasDisabled;if(wasBusy==null)button.removeAttribute('aria-busy');else button.setAttribute('aria-busy',wasBusy);}
   }
