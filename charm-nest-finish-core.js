@@ -352,6 +352,22 @@
            topupRoom(sh) (the gap fill's tries left), tag(metal), sheetName(metal, day, seq, index), today() } ═══ */
   const TOPUP = { orders: 35, target: 0.75 };
   const FINISHED_ENDS = ["cap", "stalled", "trials", "claude-full", "plateau", "no-room"];
+  const FULL_CEILING = 0.80;   // (the fill line: a sheet whose pieces cover this share of its usable area is full; the sorter's maxFill when it is set)
+  const FULL_AFTER_ORDERS = 5;   // (FULLAFTER5, Paul 21 Nov 2026: "the same rule for all percentage sheets": a sheet is full once this many different orders in a row had no room on it, at any fill)
+  /** FULLAFTER5: the run of different orders in a row a sheet had no room for, after this nest (sh: the sheet as written, with its rejects; before: the placements it held before the
+      nest; items: its pieces; o.orderKey). A nest that seats a new piece starts the run again. → [order keys] */
+  function noRoomRunOf(sh, result, before, items, prevRun, o) {
+    o = o || {};
+    const key = keyOf(o), had = new Set((before || []).map(p => String(p && p.id))), placedNew = (sh.placements || []).some(p => p && !had.has(String(p.id)));
+    if (!result || result.endedBy === "stopped" || result.timedOut) return placedNew ? [] : (Array.isArray(prevRun) ? prevRun.map(String) : []);
+    const untried = untriedIds(result), byId = new Map((items || []).map(c => [String(c.id), c])), area = areaOf(o), room = (+result.usablePt2 || 0) * (+o.maxFill || FULL_CEILING);
+    // (an order counts only when the whole order would fit an empty sheet: one bigger than a sheet says nothing about this sheet's room)
+    const fits = k => !(room > 0) || (items || []).filter(c => String(key(c)) === k).reduce((n, c) => n + area(c), 0) <= room;
+    const missed = (sh.rejects || []).map(idOfReject).filter(id => !untried.has(id)).map(id => (byId.get(id) ? String(key(byId.get(id))) : id)).filter(fits);
+    const run = placedNew ? [] : (Array.isArray(prevRun) ? prevRun.map(String) : []);
+    for (const k of missed) if (!run.includes(k)) run.push(k);
+    return run.slice(-20);
+  }
   const keyOf = o => (o && typeof o.orderKey === "function" ? o.orderKey : c => String(c.order || c.id));
   const rankOf = o => (o && typeof o.orderRank === "function" ? o.orderRank : c => +(c && c.orderDate) || 0);
   const areaOf = o => (o && typeof o.inflatedArea === "function" ? o.inflatedArea : c => +(c && c.areaPt2) || 0);
@@ -371,7 +387,10 @@
     const unitKey = keyOf(o), area = areaOf(o), cap = +o.maxFill || 0.8, byId = new Map(items.map(c => [c.id, c]));
     const finished = FINISHED_ENDS.includes(result.endedBy) || (result.endedBy === "budget" && sh.intakePhase !== "fill" && result.trials !== 0);
     const untried = untriedIds(result), missed = (sh.rejects || []).map(idOfReject).filter(id => !untried.has(id));
-    const overflow = missed.length > 0 && ((+result.density || 0) + 1e-6 >= Math.min(0.74, cap) || finished) &&
+    /* FULLAFTER5 (Paul, 21 Nov 2026: "the same rule for all percentage sheets … all partial draft sheets only and moving forward"): on a DRAFT a piece a finished search turned away no
+       longer makes the sheet full by itself, at any fill: the draft is full once FULL_AFTER_ORDERS different orders in a row had no room on it (the writer's afterNestMarks, noRoomRunOf), or when
+       its pieces reach the fill line (below). A sheet in a set keeps the rule it had */
+    const overflow = !sh.draft && missed.length > 0 && ((+result.density || 0) + 1e-6 >= Math.min(0.74, cap) || finished) &&
       [...new Set(missed.map(id => (byId.get(id) ? unitKey(byId.get(id)) : id)))].some(order => items.filter(c => unitKey(c) === order).reduce((n, c) => n + area(c), 0) <= (+result.usablePt2 || 0) * cap);
     const passedAtDoor = !!sh._nsCheck && !!sh._nsPassed && ((+result.density || 0) + 1e-6 >= Math.min(0.74, cap - 0.004) || result.smallRoom === false); sh._nsCheck = false; sh._nsMiss = passedAtDoor;
     return result.endedBy !== "stopped" && verified(sh) && (sh.placements || []).length > 0 && (overflow || passedAtDoor || (+result.placedPt2 || 0) / Math.max(1, +result.usablePt2 || 0) >= cap - 1e-6);
@@ -487,7 +506,7 @@
   }
 
   return {
-    TOPUP, untriedIds, shownFull, sheetFull, topupSettle, intakeMarks, sheetFileBase, rechunkStalled, overflowPlan, feedNext,
+    TOPUP, FULL_CEILING, FULL_AFTER_ORDERS, noRoomRunOf, untriedIds, shownFull, sheetFull, topupSettle, intakeMarks, sheetFileBase, rechunkStalled, overflowPlan, feedNext,
     CHARM_SCALE: CHARM_SCALE_DEFAULT, CAREFUL_ANGLES: CAREFUL_ANGLES_DEFAULT, OVF_MIN_SCALE, EXACT_EPS_MM2, EXACT_MM, EXACT_MORE_SCALE,
     layoutKey, buildJob, sheetSpec, buildReport,
     exchangeHeld, overlapOnly, overlapRound, applyOverlapFixes, overlapMoved, unionArea,

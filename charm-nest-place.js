@@ -510,7 +510,8 @@
     const all = () => views.concat(fresh);
     /* NOROOMFULL (Paul, 21 Nov 2026: "why is there stuff being put on a full sheet"): a sheet whose last nest ended with no room is full for the automatic placement: no new order goes
        on it (its own order's later pieces still may: orderHome / reopensHome). A person's move is not refused: closedRec, which placeOnSheet and finishOverflow check, is unchanged. */
-    const noRoom = r => !!r && r.endedBy === "no-room" && (r.placements || []).length > 0;
+    // (FULLAFTER5, Paul 21 Nov 2026: "the same rule for all percentage sheets": no room counts as full only after 5 different orders in a row had no room on the sheet, at any fill)
+    const noRoom = r => !!r && (r.placements || []).length > 0 && (Array.isArray(r.noRoomRun) ? r.noRoomRun.length : 0) >= 5;
     const closedV = v => !!v && (v._shut || (!v._new && (closedRec(v._rec, sets, run, now) || noRoom(v._rec))));
     function nextPage(m) { const mine = all().filter(v => v.metal === m); return Math.max(mine.length, ...mine.map(v => num(v.page))) + 1; }
     function newDraft(m) {
