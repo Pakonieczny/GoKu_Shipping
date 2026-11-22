@@ -415,7 +415,10 @@ async function inplace(x, label) {
       const l = L[k], home = ((w.vac[k] || {}).sheets || [])[0]; unvac[k] = { vacated: null };
       if (!l || !home) continue;
       const jr = await ctx.db.collection(INTAKE).doc(k).get(), charms = jr.exists ? (jr.data() || {}).charms : null, s = await sheetRec(ctx, home);
-      const mine = Array.isArray(charms) ? charms.filter(c => c && (l.poolIds || []).map(String).includes(String(c.poolId)) && (!s || !c.metal || c.metal === s.metal)) : [];
+      let mine = Array.isArray(charms) ? charms.filter(c => c && (l.poolIds || []).map(String).includes(String(c.poolId)) && (!s || !c.metal || c.metal === s.metal)) : [];
+      // (FIXBACK, Paul 22 Nov 2026: order 4231992262's new discs went to a new draft, not back to the Nov 18 set sheet they came from: the intake's ledger never holds a line's pieces
+      //  once it is pooled, so they were never "described" and every put-back gave up. They are described now from their own records, as the placement describes a piece)
+      if (!mine.length && s) mine = (await describeLine(ctx, l.poolIds)).filter(c => (!c.metal || c.metal === s.metal));
       if (!s || !mine.length) { why.push(`${ridOf(k)}: placed as a new piece (${!s ? "its sheet is gone" : "its new pieces are not described yet"})`); loose.push(k); continue; }
       const r = await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: home, poolIds: mine.map(c => String(c.poolId)), charms: mine, keepBacks: !!x.keepBacks, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "" }, `back|${k}|${home}|${num(s.contentRev)}`);
       if (err(r)) { why.push(`${ridOf(k)}: ${err(r)}; it is placed as any piece is`); loose.push(k); continue; }
@@ -436,6 +439,13 @@ async function inplace(x, label) {
       } catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; why.push(`the new pieces were not placed now: ${str((e && e.message) || e, 160)}`); }
     }
     for (const s of placedOn.values()) await startNest(x, s.id, false, `${label}, asked by ${x.cmd.by || "a person"}`);
+    /* SKUFAST (Paul, 22 Nov 2026: "updating SKUs … needs to be near instant and all the computers need to be updated near instantly"): the request is answered as soon as every new piece is on
+       its sheet (listed there, the sheet's nest asked): the nest and the sheet's files go on by themselves, as after any placement, and every computer sees them through the changes feed. It
+       no longer waits a minute or two more for that nest. A piece not on a sheet yet keeps the request at its nest step, which says how it ended. */
+    { const g = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L2 = (g && g.run && g.run.lines) || {}, on2 = listedBy(await runSheets(ctx)), names = new Set(); let pieces = 0, listed = 0;
+      for (const k of w.ready || []) for (const id of (L2[k] || {}).poolIds || []) { pieces++; const sh = on2.get(String(id)); if (sh) { listed++; names.add(nameOf(sh)); } }
+      if ((w.ready || []).length && pieces && listed === pieces && !(w.late || []).length)
+        return ok(`${(w.ready || []).length} order line(s) made again: ${listed} piece(s) on ${and([...names])}, being nested${why.length ? " · " + why.join("; ") : ""}`); }
     return wait("Seating the new pieces…", Object.assign({}, w, { stage: "nest", sheets: [...placedOn.values()], why }));
   }
   if (w.stage === "nest") {
@@ -473,6 +483,38 @@ async function staleLines(ctx, skus) {
     if (out.length >= 40) break;
   }
   return out;
+}
+/** FIXBACK: a line's live pieces as a sheet lists them, from their own records and the library's index (the placement's own description: charm-nest-place.js charmOfRow). */
+async function describeLine(ctx, ids) {
+  const PU = require("./_charmNestPlaceUnit"), Place = require("../../charm-nest-place.js"), rows = [...(await pools(ctx, ids || [])).values()].filter(r => r && r.poolId && !["abandoned", "superseded"].includes(String(r.state || "")));
+  const entries = new Map();
+  for (const sku of [...new Set(rows.map(r => String(r.sku || "").trim().toUpperCase()).filter(Boolean))]) { const d = await ctx.db.collection(MASTER).doc(sku).get(); if (d.exists) entries.set(sku, d.data()); }
+  const now = Date.now();
+  return rows.map(r => PU.customCharm(Place.charmOfRow(Object.assign({}, r, { material: r.material || r.metal }), PU.geometryOf(entries.get(String(r.sku || "").trim().toUpperCase()), r), now), r));
+}
+/* BACKHOME (Paul, 22 Nov 2026: "that should've gone back to the original sheet"): an order line made again whose new pieces went onto another sheet goes back to the sheet its pieces were
+   taken from (each piece's record names it: vacatedFrom), even a sheet of a set (it is its own order coming back: cmdMovePieces lets that sheet take it), into the room they left; that sheet
+   is nested again around what it holds. A sheet that was cut, has a green line, or whose set went to the station keeps what it has (cmdMovePieces refuses it, in words). */
+async function backhome(x) {
+  const ctx = x.ctx, key = String((x.a.ids || [])[0] || "");
+  if (x.work.stage === "nest") return settleNests(x, "Nesting the order on its sheet…", async late => {
+    const rec = await sheetRec(ctx, (x.work.sheets[0] || {}).id); if (!rec) return no("That sheet is no longer in the cloud.");
+    return late ? no(`The order's pieces are back on ${nameOf(rec)}, but its nest did not finish (${rec.status || "waiting"})`) : ok(`The order's pieces are back on ${nameOf(rec)}: ${placedWords(rec)}`);
+  });
+  const l = lines(ctx)[key]; if (!l || !OPEN_LINE(l) || !(l.poolIds || []).length) return no("That order line has no pieces in the run");
+  const live = [...(await pools(ctx, l.poolIds)).values()].filter(r => r && r.sheetId && !["abandoned", "superseded"].includes(String(r.state || "")));
+  if (!live.length) return no("The order's pieces are on no sheet yet: ask again once they are placed");
+  const homes = new Set(live.map(r => String(r.vacatedFrom || ""))), on = new Set(live.map(r => String(r.sheetId)));
+  if (homes.size !== 1 || homes.has("")) return no("The order's pieces do not name one sheet they were taken from");
+  if (on.size !== 1) return no("The order's pieces are on more than one sheet");
+  const home = [...homes][0], from = [...on][0];
+  if (from === home) return ok("The order's pieces are on their sheet already");
+  const f = await sheetRec(ctx, from), t = await sheetRec(ctx, home); if (!f || !t) return no("That sheet is no longer in the cloud");
+  const r = await put(x, { op: "cmdMovePieces", runId: ctx.runId, from: { sheetId: from, layoutBase: num(f.layoutRev), contentBase: num(f.contentRev) }, to: { sheetId: home, layoutBase: num(t.layoutRev), contentBase: num(t.contentRev) },
+    poolIds: live.map(p => String(p.poolId)), by: x.cmd.by || "", why: "back on the sheet it was made again from" }, `backhome|${key}|${home}|${num(t.contentRev)}`);
+  if (err(r)) return no(`Not moved back: ${err(r)}`);
+  await startNest(x, home, false, `${ridOf(key)}: back on the sheet it came from`);
+  return wait("Nesting the order on its sheet…", { stage: "nest", sheets: [{ id: home, layoutRev: num(r.to && r.to.layoutRev), at: Date.now() }] });
 }
 async function remakeline(x) {
   x.keepBacks = true;
@@ -821,5 +863,5 @@ async function customsend(x) {
   return no("The request lost its place: send it again");
 }
 
-const EXEC = { reorder, delete: del, leaveset, setrebuild, unkeep, repicture, placewaiting, pairnow, sendhome, remakeline, keepsync, remake, skuonce, release, renest, consolidate, empty, seat, customsend, hop };
+const EXEC = { reorder, delete: del, leaveset, setrebuild, unkeep, repicture, placewaiting, pairnow, sendhome, remakeline, keepsync, remake, skuonce, release, renest, consolidate, empty, seat, customsend, hop, backhome };
 module.exports = { EXEC, strandedFix, placedNow, staleLines, runSheets, runSets, sheetRec, nameOf, cutRec, lineDrawn, listedBy, seated, has, lane, WORK };

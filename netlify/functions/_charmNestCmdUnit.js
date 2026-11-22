@@ -14,7 +14,7 @@
 const Exec = require("./_charmNestCmdExec");
 
 const CMDS = "Charm_Nest_Run_Cmds", CLOUD_DEV = "cloud";
-const NOW_TYPES = new Set(["skuonce", "remakeline", "keepsync", "remake"]);   // (SKUNOW: the requests that make order lines again go through their steps at once)
+const NOW_TYPES = new Set(["skuonce", "remakeline", "keepsync", "remake", "backhome"]);   // (SKUNOW: the requests that make order lines again go through their steps at once)
 const LONG = new Set(["release", "skuonce"]), AGE_MS = 10 * 60000, LONG_AGE_MS = 6 * 3600000, STALE_MS = 10 * 60000, WORK_MAX_MS = 8 * 3600000;
 const PASSING = /answer in time|timed out|network|HTTP 5\d\d|ECONNRESET|ETIMEDOUT|socket hang up|is being written already|try again|DEADLINE_EXCEEDED|UNAVAILABLE|ABORTED/i;
 const num = v => (Number.isFinite(+v) ? +v : 0);

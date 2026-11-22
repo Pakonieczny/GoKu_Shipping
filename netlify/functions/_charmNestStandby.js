@@ -35,14 +35,14 @@ const COMPUTER_FRESH_MS = 90000, DRAIN_MS = 10 * 60000, TASK_BEAT_MS = 5 * 60000
 const OPEN_NOW_MS = 10 * 60000;
 const RUN_STEPS = O.RUN_STEPS;
 /* the relayed requests (charmNestLibrary CMD_TYPES): each is a lane "cmd:<type>" the cloud owns once it does it (build step 13) */
-const CMD_TYPES = ["reorder", "consolidate", "empty", "delete", "repicture", "seat", "renest", "remake", "unkeep", "placewaiting", "customsend", "setrebuild", "pairnow", "leaveset", "sendhome", "remakeline", "keepsync", "release", "skuonce", "hop"];   // (ITEM 13, Paul 21 Nov 2026: "hop", a charm dragged onto the next or previous 10K / 14K sheet from any computer: lane "cmd:hop", which the owner turns on in Settings)
+const CMD_TYPES = ["reorder", "consolidate", "empty", "delete", "repicture", "seat", "renest", "remake", "unkeep", "placewaiting", "customsend", "setrebuild", "pairnow", "leaveset", "sendhome", "remakeline", "keepsync", "release", "skuonce", "hop", "backhome"];   // (ITEM 13, Paul 21 Nov 2026: "hop", a charm dragged onto the next or previous 10K / 14K sheet from any computer: lane "cmd:hop", which the owner turns on in Settings)
 /* (ONSWITCH) the pass items' own lanes are lanes too: "rosecut" (the green line: the Rose Gold cut by itself and its presses, build step 10b) and "sweeps" (the repair sweeps,
    build step 13): in mode "on" no page does either, so "Cloud carries" lists them with the rest (a lane left out of cloudSteps would never run) */
 const LANES = ["files", "takeoff", "engrave", "rosecut", "sweeps"].concat(CMD_TYPES.map(t => "cmd:" + t));
 /* GAP G2 (Paul 21 Nov 2026: the sheet hop must work with no owner step): a request type whose own lane is new is covered by a lane that is on already. "hop" (a charm dragged onto
    the next / previous 10K / 14K sheet) is a sheet command of the same family as "seat" and "renest" (each moves a sheet's pieces): while either is the cloud's, so is the hop. Its
    own lane "cmd:hop" is still accepted. ONE list, read by the driver (answerCommands) and the commands unit (_charmNestCmdUnit.js); the page (charm-nest-viewer.js lane) keeps a copy. */
-const CMD_LANE_ALIAS = { hop: ["seat", "renest"] };
+const CMD_LANE_ALIAS = { hop: ["seat", "renest"], backhome: ["remakeline", "skuonce"] };   // (BACKHOME: the last step of a Change SKU, on while Change SKU is)
 /** Whether a request type's lane is in cloudSteps: "cmd:<type>" itself, or a lane CMD_LANE_ALIAS names for it. */
 function cmdLaneOn(cloudSteps, type) {
   const on = Array.isArray(cloudSteps) ? cloudSteps.map(String) : [], t = String(type || "");

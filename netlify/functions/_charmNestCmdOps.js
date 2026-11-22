@@ -162,13 +162,16 @@ module.exports = function make(d) {
       if (!ids.size) return words(409, `${fn} has no pieces to move`);
       const w = without(f, ids);
       if (!w.going.length) return words(409, `${fn} has no pieces to move`);
-      // (SETSHUT, Paul 20 Nov 2026: a sheet in any set takes no new orders; a piece of an order already on it may still join it)
-      if ((t.setId && !t.draft) || tSets.length) {
-        const own = new Set(orderList(t.charms).concat((t.poolIds || []).map(ridOfPool)).filter(Boolean)), shut = orderList(w.going).filter(o => !own.has(o));
-        if (shut.length) return words(409, `${tn} is in a set: it takes no new order (${shut.slice(0, 3).join(", ")}${shut.length > 3 ? "…" : ""})`, { refused: "setShut" });
-      }
       // the pieces' records: live, not committed, and listed by `from`
       const rows = await txGetAll(tx, [...ids].map(id => col(POOL).doc(id)));
+      // (SETSHUT, Paul 20 Nov 2026: a sheet in any set takes no new orders; a piece of an order already on it may still join it. BACKHOME, Paul 22 Nov 2026: and pieces made again that
+      //  were taken from this very sheet (their records' vacatedFrom) come back to it: it is their own order's place)
+      if ((t.setId && !t.draft) || tSets.length) {
+        const home = rows.length > 0 && rows.every(x => x.exists && String(x.data().vacatedFrom || "") === t.id);
+        const own = new Set(orderList(t.charms).concat((t.poolIds || []).map(ridOfPool)).filter(Boolean)), shut = home ? [] : orderList(w.going).filter(o => !own.has(o));
+        if (shut.length) return words(409, `${tn} is in a set: it takes no new order (${shut.slice(0, 3).join(", ")}${shut.length > 3 ? "…" : ""})`, { refused: "setShut" });
+        if (tSets.some(x => SetEdit.committedSet(x.data()))) return words(409, `${tn}'s set went to the station: it takes nothing more`, { refused: "committed" });
+      }
       const off = rows.filter(r => r.exists && Placement.takenOff(r.data())).map(r => r.id), done = rows.filter(r => r.exists && r.data().state === "committed").map(r => r.id);
       if (off.length) return words(409, `${off.length} of these pieces were taken off on purpose (on hold or cancelled): nothing was moved`, { taken: off.slice(0, 20) });
       if (done.length) return words(409, `${done.length} of these pieces were already committed: nothing was moved`);

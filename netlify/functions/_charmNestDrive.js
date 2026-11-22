@@ -20,7 +20,7 @@ const Standby = require("./_charmNestStandby");   // (build steps 8 and 15: what
 const TakeOff = require("./_charmNestTakeOff");   // (build step 9: the take-off lane and the revalidate step)
 
 const DRIVE = "Charm_Nest_Drive", OPEN = "Charm_Nest_Open", CARRIER = "Charm_Nest_Run_Carrier", RUNS = "Charm_Nest_Runs", CMDS = "Charm_Nest_Run_Cmds";
-const NOW_CMD_TYPES = new Set(["skuonce", "remakeline", "keepsync", "remake"]);   // (SKUNOW, Paul 22 Nov 2026: the requests that make order lines again, as _charmNestCmdUnit.js NOW_TYPES)
+const NOW_CMD_TYPES = new Set(["skuonce", "remakeline", "keepsync", "remake", "backhome"]);   // (SKUNOW, Paul 22 Nov 2026: the requests that make order lines again, as _charmNestCmdUnit.js NOW_TYPES)
 const LEASE_PATH = DRIVE + "/lease";
 const CLOUD_DEV = "cloud", CLOUD_BY = "Cloud";
 const COMPUTER_FRESH_MS = 90000, CLOUD_FRESH_MS = 180000, DISPATCH_STALE_MS = 2 * 60000;
@@ -351,7 +351,7 @@ async function pass(env) {
       if (["abandoned", "complete"].includes(run.status) || Date.now() > budgetEnd - PASS_TAIL_MS) return 0;
       let waiting = [];
       try { const s = await db.collection(CMDS).doc(runId).get(); waiting = Object.values((s.exists && (s.data() || {}).cmds) || {}).filter(c => c && c.id && c.type && (c.state === "waiting" || (c.state === "running" && c.claim && c.claim.dev === "cloud" && NOW_CMD_TYPES.has(c.type)))); } catch (_) { return 0; }   // (SKUNOW: a Change SKU / remake the cloud is doing is looked at again too, so it goes on as soon as the step it waits on has run)
-      const now = Date.now(); waiting = waiting.filter(c => now - num(cmdTried.get(c.id)) > 15000);   // (one the commands item left waiting, a passing failure or another computer's live claim, is looked at again 15 s on, not before every unit)
+      const now = Date.now(); waiting = waiting.filter(c => now - num(cmdTried.get(c.id)) > (c.state === "running" && NOW_CMD_TYPES.has(c.type) ? 5000 : 15000));   // (SKUFAST: a running Change SKU is looked at again 5 s on)   // (one the commands item left waiting, a passing failure or another computer's live claim, is looked at again 15 s on, not before every unit)
       if (!waiting.length) return 0;
       live();
       for (const c of waiting) cmdTried.set(c.id, now);
