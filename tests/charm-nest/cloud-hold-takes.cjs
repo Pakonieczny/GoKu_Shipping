@@ -31,6 +31,20 @@ const Place = require('../../charm-nest-place.js');
   F.seed('Charm_Nest_Jobs/nest-person-done', { id: 'nest-person-done', kind: 'nest', cloud: true, status: 'done', sheetId: 'gold14k-c', runId: R, auto: false, lane: R + '~gold14k', createdMs: T0 });
   try { await units[0]({ db: F.db, run: r2, runId: R, budgetEnd: Date.now() + 600000, call: async () => ({ ok: true }), say: () => {}, cursor: {} }); } catch (e) { err = String(e && e.stack || e); }
   ok('6b · an old hold (no revisions) is lifted once a person\'s nest of the sheet ended done', !err && r2.sheetHolds['gold14k-c'] === null, err || r2.sheetHolds);
+  /* NESTSETTLED (Paul, 22 Nov 2026: every sheet stood at "Nesting · step 1 of 5"): a nest that changed nothing ends "done" at the sheet's own revisions; once the sheet writer has
+     finished it (its task's lastDone names it: "the layout and its saved files stand as they are"), the run no longer waits for it */
+  {
+    const R3 = 'run-nest-settled';
+    F.seed('Charm_Nest_Sheets/gold-settled', { id: 'gold-settled', runId: R3, metal: 'gold', draft: true, layoutRev: 110, contentRev: 110, charms: [], poolIds: [], placements: [], dirty: false,
+      nestJob: { id: 'nest-settled', status: 'nested', attempt: 1 } });
+    F.seed('Charm_Nest_Jobs/nest-settled', { id: 'nest-settled', kind: 'nest', cloud: true, status: 'done', sheetId: 'gold-settled', runId: R3, auto: true, lane: R3 + '~gold', layoutBase: 110, contentBase: 110, createdMs: T0 });
+    const stepOnce = async () => { try { return await units[0]({ db: F.db, run: { runId: R3 }, runId: R3, budgetEnd: Date.now() + 600000, call: async () => ({ ok: true }), say: () => {}, cursor: {} }); } catch (e) { return { err: String(e && e.stack || e) }; } };
+    const before = await stepOnce();
+    ok('11 · NESTSETTLED: a nest done at the sheet\'s revisions that its writer has not taken yet is waited for', !before.err && before.wait === 'jobs' && /wait for the cloud's sheet writer/.test(before.why || ''), before);
+    F.seed('Charm_Nest_Finish/gold-settled', { sheetId: 'gold-settled', runId: R3, state: 'done', outcome: 'done', lastDone: { outcome: 'done', nestJobId: 'nest-settled', why: 'the layout and its saved files stand as they are', written: { layoutRev: 110, contentRev: 110 } } });
+    const after = await stepOnce();
+    ok('12 · NESTSETTLED: once its writer finished it (the layout stood as it was), the run no longer waits for it', !after.err && !after.wait && !/sheet writer/.test(after.why || ''), after);
+  }
   const pieces = fs.readFileSync(path.join(__dirname, '../../netlify/functions/_charmNestNestPieces.js'), 'utf8');
   ok('6c · BODYWHY: a piece the cloud cannot make says the maker\'s own words, and a spent time budget is thrown on, never "no such body"', /baseWhy = e; return null/.test(pieces) && /if \(e && e\.budget\) throw e; baseWhy/.test(pieces));
   const src = fs.readFileSync(path.join(__dirname, '../../netlify/functions/_charmNestCmdExec.js'), 'utf8');
