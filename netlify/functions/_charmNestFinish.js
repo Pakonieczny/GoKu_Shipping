@@ -505,7 +505,11 @@ async function afterNestMarks(X, sh, result, items, o = {}) {
   //  room on it, at any fill, or when it reaches the fill line; a new piece seated starts the count again. A sheet already marked full stays full: none is reopened)
   const missRun = rec.draft ? FC.noRoomRunOf(sh, result, rec.placements || [], items, rec.noRoomRun, env) : [];
   const fiveMissed = !!rec.draft && missRun.length >= FC.FULL_AFTER_ORDERS && (sh.placements || []).length > 0 && !!(sh.verification && sh.verification.ok);
-  const full = FC.topupSettle(sh, result, FC.sheetFull(Object.assign(sh, { draft: !!rec.draft }), result, items, env) || fiveMissed, env) || !!rec.releaseFull;
+  /* FIVEWINS (Paul, 22 Nov 2026: "out of those four completed sheets there can't be at least one set"; GF Draft 3, SS Draft 1 and SS Draft 2 had 9, 19 and 15 orders in a row with no room and
+     were not full): the gap fill (topupSettle: the next 35 orders try a sheet past the fill line first) kept a draft open whatever FULLAFTER5 said. Five different orders in a row with no
+     room make a draft full now, at any fill: no gap fill is started for it, and one under way is closed with that reason. */
+  if (fiveMissed && sh.topup && !sh.topup.closedAt) Object.assign(sh.topup, { closedAt: Date.now(), density: +(+result.density || 0).toFixed(4), why: `${missRun.length} different orders in a row had no room on it` });
+  const full = fiveMissed || FC.topupSettle(sh, result, FC.sheetFull(Object.assign(sh, { draft: !!rec.draft }), result, items, env), env) || !!rec.releaseFull;
   return Object.assign({ releaseFull: !!full, topup: sh.topup || null, noRoomRun: missRun.length ? missRun : null }, sh.releaseWhy ? { releaseWhy: sh.releaseWhy } : {}, fiveMissed && !rec.releaseFull ? { releaseWhy: `${missRun.length} different orders in a row had no room on it` } : {}, FC.intakeMarks(sh, result, items));
 }
 /* The fields of finish-core's record() the writer sends (persistSheet's record, less what is not the writer's: membership (P4), the sheet's name, day and folder once it has one,
