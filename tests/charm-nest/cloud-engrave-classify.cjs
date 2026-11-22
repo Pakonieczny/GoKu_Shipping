@@ -137,7 +137,7 @@ const engraveSnap = () => JSON.stringify(F.list('Charm_Nest_Engrave').map(d => [
   const i = jobOf('I'), bLike = jobOf('B');
   ok('I · EDITOR WORDS: the words would wait for a person (as B\'s do), but the Charm Editor drew its back: it goes to Review with no words, never to a words card', !!i && i.state === 'review' && i.text === '' && (i.lines || []).length === 0 && bLike.state === 'words', { i, b: bLike && bLike.state });
   ok('A-I · still ONE paid reading in all (C\'s), none for the rules\', BARFRONT\'s, the pieces\', ENGPRE\'s or the editor\'s lines', intentCalls() === 1 && asked.length === 0, { intent: intentCalls(), asked: asked.length });
-  ok('pass 1 · the reading under way is remembered in the cursor (C pending, readingAt set)', !!(r1 && r1.cursor && r1.cursor.pending[keyOf('C')] && r1.cursor.readingAt > 0), r1 && r1.cursor);
+  ok('pass 1 · the reading under way is remembered in the cursor (C pending, readingAt set)', !!(r1 && r1.cursor && (r1.cursor.pending || []).includes(keyOf('C')) && r1.cursor.readingAt > 0), r1 && r1.cursor);
   const revA1 = recOf('A').rev, revB1 = recOf('B').rev;
 
   /* a pass before the reading is answered: nothing is paid for again, nothing is written */
@@ -170,6 +170,20 @@ const engraveSnap = () => JSON.stringify(F.list('Charm_Nest_Engrave').map(d => [
   await F.drain(5);
   const OpClass = F.load('_charmNestOpClass.js'), wrote = spy.ops.slice(ops0).filter(o => !OpClass.READ.has(o.op)).map(o => o.op), writes = F.count().writes - w0;
   ok('again · two more passes (one with no cursor) send no write, write nothing to Firestore, start no reading and pay for nothing', engraveSnap() === snap && intentCalls() === 1 && asked.length === 1 && !wrote.length && writes === 0, { wrote, writes, intent: intentCalls(), asked: asked.length });
+  /* KEEPLIST (Paul, 22 Nov 2026: order 4242358457 never reached Design & Engrave): the driver saves a pass item's cursor merged ({ merge: true }); a map merged key by key kept every line
+     ever pending, so every pass read the same first 300 lines again. Saved as the driver saves it, over a cursor that still held 1,200 done lines as a map, the list is the unit's own. */
+  {
+    const ref = F.db.collection('Charm_Nest_Drive').doc('keeplist-test'), stale = Object.fromEntries(Array.from({ length: 1200 }, (_, i) => ['4200000000_' + (5200000000 + i), true]));
+    await ref.set({ items: { 'engrave-classify': { runId, since: 1, pending: stale, reading: { [keyOf('C')]: 'old-reading' } } } });
+    const back = (await ref.get()).data().items['engrave-classify'], k1 = await Unit.classifyUnit(await ctxOf(back));
+    await ref.set({ items: { 'engrave-classify': k1.cursor } }, { merge: true });
+    const saved = (await ref.get()).data().items['engrave-classify'];
+    ok('KEEPLIST · a cursor saved as a map (1,200 lines not in the run) is still read; the saved list is the new one: an array, none of the old lines kept, no old reading kept', Array.isArray(saved.pending) && Array.isArray(saved.reading)
+      && !saved.pending.some(k => stale[k]) && !saved.reading.includes(keyOf('C')) && JSON.stringify(saved.pending) === JSON.stringify(k1.cursor.pending), { pending: (saved.pending || []).length, reading: saved.reading });
+    const many = Array.from({ length: 900 }, (_, i) => 'x' + i);
+    await ref.set({ items: { 'engrave-classify': { pending: many } } }, { merge: true }); await ref.set({ items: { 'engrave-classify': { pending: many.slice(600) } } }, { merge: true });
+    ok('KEEPLIST · saved merged, a shorter list replaces the longer one whole (an array is one value): lines taken off stay off', (await ref.get()).data().items['engrave-classify'].pending.length === 300);
+  }
   ok('again · the cursor has no reading waiting', !!(r4 && r4.cursor && !r4.cursor.readingAt && r5 && r5.cursor && !r5.cursor.readingAt), [r4 && r4.cursor, r5 && r5.cursor]);
 
   /* the doors */
