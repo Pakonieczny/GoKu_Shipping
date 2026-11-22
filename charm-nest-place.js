@@ -504,7 +504,10 @@
     let views = lineOrder((o.records || []).filter(r => r && !r.archived && (!run.runId || r.runId === run.runId)).map(r => recordView(r, { run, now })));
     const fresh = [];
     const all = () => views.concat(fresh);
-    const closedV = v => !!v && (v._shut || (!v._new && closedRec(v._rec, sets, run, now)));
+    /* NOROOMFULL (Paul, 21 Nov 2026: "why is there stuff being put on a full sheet"): a sheet whose last nest ended with no room is full for the automatic placement: no new order goes
+       on it (its own order's later pieces still may: orderHome / reopensHome). A person's move is not refused: closedRec, which placeOnSheet and finishOverflow check, is unchanged. */
+    const noRoom = r => !!r && r.endedBy === "no-room" && (r.placements || []).length > 0;
+    const closedV = v => !!v && (v._shut || (!v._new && (closedRec(v._rec, sets, run, now) || noRoom(v._rec))));
     function nextPage(m) { const mine = all().filter(v => v.metal === m); return Math.max(mine.length, ...mine.map(v => num(v.page))) + 1; }
     function newDraft(m) {
       const unused = fresh.find(v => v.metal === m && !v.charms.length && !v.greenLeftover); if (unused) return unused;
