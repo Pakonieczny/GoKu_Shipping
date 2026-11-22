@@ -550,7 +550,8 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     if (mode && mode.startsWith('refused:')) return fail(M, st.id, mode.slice(8));
     const src = st.rows.find(r => r.id === st.id);
     if (mode === 'seat') return void planOpen(M, src, overId);   // (MOVESHOW: the move plan opens; Move them is pressed there)
-    if (mode === 'onto') {
+    if (mode === 'onto') return fail(M, st.id, 'Combining sheets was removed: a sheet is never put onto another');   // (NOMERGE, Paul 21 Nov 2026)
+    if (false) {
       const tgt = st.rows.find(r => r.id === overId);
       S.ask = { src, tgt };
       return ask(M, `Combine ${plural(src.pieces)} from ${esc(src.name)} onto ${esc(tgt.name)}? What does not fit goes on to the next sheets, then stays on ${esc(src.name)}. ${esc(src.name)} is kept, empty, until you delete it.${src.relay ? (root.CNViewer && root.CNViewer.on() ? ' The cloud does it.' : ' The computer that carries the run does it.') : ''}`, a => doCombine(M, a.src.id, a.tgt.id, `Combine ${src.name} onto ${tgt.name}`), 'Combine');

@@ -7405,6 +7405,7 @@ const Gate = window.Gate = (() => {
   /** The panel's Merge sheets section: shown while the metal has two sheets or more that can change, or a merge runs. */
   /** The Merge sheets section (the solid Options box; with Empty, the GF / SS viewer panel). */
   function mergeSectionHtml(title, withEmpty) {
+    return "";   // (NOMERGE, Paul 21 Nov 2026: "that option doesn't exist anymore. Get rid of it": no Merge sheets / Move all onto, for anybody; the section is not drawn and its code finds nothing)
     return `<section class="sheetOptionSection" data-solid="merge" hidden><h4>${title}</h4><p class="help sheetMergeHelp" data-solid="merge-help"></p>
           <div class="sheetMergeActions" data-solid="merge-actions"><button type="button" class="btn ghost xs" data-solid="merge-move">Move all onto Sheet 1</button>${withEmpty ? `<button type="button" class="btn ghost xs" data-solid="merge-empty">Empty the later drafts</button>` : ""}<button type="button" class="btn ghost xs" data-solid="merge-renest">Re-nest both sheets</button></div>
           <div class="sheetMergeAsk" data-solid="merge-ask" role="group" aria-label="Confirm merge" hidden><span class="help" data-solid="merge-ask-text"></span><span class="sheetMergeAskBtns"><button type="button" class="btn ghost xs" data-solid="merge-cancel">Cancel</button><button type="button" class="btn sage xs" data-solid="merge-go">Merge</button></span></div>
