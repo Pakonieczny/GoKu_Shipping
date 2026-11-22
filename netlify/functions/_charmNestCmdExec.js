@@ -448,12 +448,23 @@ async function inplace(x, label) {
   return no("The request lost its place: ask again");
 }
 /** The open lines whose pieces hold an older drawing of these SKUs, or another SKU than the line reads as now (the world's line). */
+/* FASTPICK (Paul, 22 Nov 2026: a save to the charm repository on Michelle's computer stayed at "Reading the lines again…" and failed; the request after it waited behind it): this read every
+   open line of the run one by one, two reads a line (its world reading, its pieces), about 1,400 lines: two minutes, past the unit's one-minute limit. The unit was cut off when it went to save
+   what it found, so every pass read them all again from the start, for good, and every request after it waited. The world readings and the pieces are read now in a few batched reads
+   (300 a read), a few seconds for the whole run. */
 async function staleLines(ctx, skus) {
   const want = new Set(skus.map(s => String(s).trim().toUpperCase()).filter(Boolean)), L = lines(ctx), out = [], entries = new Map();
   const entryOf = async sku => { if (!entries.has(sku)) { const s = await ctx.db.collection(MASTER).doc(sku).get(); entries.set(sku, s.exists ? s.data() : null); } return entries.get(sku); };
-  for (const [k, l] of Object.entries(L)) {
-    if (!OPEN_LINE(l) || !(l.poolIds || []).length || l.hold) continue;
-    const wl = await worldLine(ctx, k), design = String((wl && wl.spec && wl.spec.designSku) || l.sku || "").toUpperCase(), rows = await pools(ctx, l.poolIds);
+  const keys = Object.keys(L).filter(k => { const l = L[k]; return OPEN_LINE(l) && (l.poolIds || []).length && !l.hold; });
+  const world = new Map(), rowsAll = new Map();
+  for (let i = 0; i < keys.length; i += 300) for (const s of await ctx.db.getAll(...keys.slice(i, i + 300).map(k => ctx.db.collection(WORLD_LINES).doc(k)))) {
+    if (!s.exists) continue; const d = s.data() || {}; if (d.gone) continue; try { world.set(s.id, JSON.parse(d.data || "{}")); } catch (_) { /* a reading that does not parse: the run line's own SKU is used */ }
+  }
+  const ids = [...new Set(keys.flatMap(k => (L[k].poolIds || []).map(String)))];
+  for (let i = 0; i < ids.length; i += 300) for (const s of await ctx.db.getAll(...ids.slice(i, i + 300).map(id => ctx.db.collection(POOL).doc(id)))) if (s.exists) rowsAll.set(s.id, s.data());
+  for (const k of keys) {
+    const l = L[k];
+    const wl = world.get(k) || null, design = String((wl && wl.spec && wl.spec.designSku) || l.sku || "").toUpperCase(), rows = new Map((l.poolIds || []).map(String).filter(id => rowsAll.has(id)).map(id => [id, rowsAll.get(id)]));
     const skusHere = new Set([design].concat([...rows.values()].map(r => String(r.sku || "").toUpperCase())).filter(Boolean));
     if (![...skusHere].some(s => want.has(s))) continue;
     const e = design ? await entryOf(design) : null;

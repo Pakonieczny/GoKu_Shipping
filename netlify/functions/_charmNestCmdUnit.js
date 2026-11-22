@@ -25,13 +25,17 @@ const laneOn = (ctx, type) => cmdLaneOn(ctx.cloudSteps || [], type);   // (GAP G
 
 async function commandsUnit(ctx) {
   const { db, runId } = ctx, now = Date.now(), bucket = Math.floor(now / 60000);
+  /* FASTPICK (Paul, 22 Nov 2026): a request's progress and answer are always saved, even after a step that ran past the unit's one-minute limit (ctx.call refuses every write then, and a step
+     that ran long was done again at every pass, for good, with every request after it waiting). ctx.callNow is the same fenced call without that limit (the driver's pass items); the unit
+     still ends at once after it (more: the next pass) */
+  const put = (b, u) => (typeof ctx.callNow === "function" ? ctx.callNow : ctx.call)(b, u);
   const s = await db.collection(CMDS).doc(runId).get(), all = Object.values((s.exists && (s.data() || {}).cmds) || {}).filter(c => c && c.id && c.type);
   const mine = c => !!(c.claim && c.claim.dev === CLOUD_DEV);
   const key = (c, what) => `${runId}|cmd|${c.id}|${what}`;
   const answer = async (c, ok, text, freed) => {
     text = str(text, 400) || (ok ? "Done" : "Not done");
-    await ctx.call({ op: "cmdWorkPut", runId, cmdId: c.id, patch: { state: "done", ok: !!ok, text, doneAt: Date.now() } }, key(c, "work-done"));
-    await ctx.call(Object.assign({ op: "runCmdDone", runId, id: c.id, ok: !!ok, text }, freed ? { freed: str(freed, 120) } : {}), key(c, "done"));
+    await put({ op: "cmdWorkPut", runId, cmdId: c.id, patch: { state: "done", ok: !!ok, text, doneAt: Date.now() } }, key(c, "work-done"));
+    await put(Object.assign({ op: "runCmdDone", runId, id: c.id, ok: !!ok, text }, freed ? { freed: str(freed, 120) } : {}), key(c, "done"));
   };
   let n = 0;
   // a request another computer began and never finished (it closed, or stopped answering): answered as failed, with why, for every computer to see; never run twice
@@ -51,7 +55,7 @@ async function commandsUnit(ctx) {
     const cl = await ctx.call({ op: "runCmdClaim", runId, id: c.id }, key(c, "claim|" + bucket));
     if (!cl || !cl.claimed) continue;   // (another computer holds it and is alive: that one answers it)
     const ws = await db.collection(Exec.WORK).doc(c.id).get(); let work = ws.exists ? ws.data() || {} : {};
-    if (work.state === "done") { await ctx.call({ op: "runCmdDone", runId, id: c.id, ok: !!work.ok, text: str(work.text, 400) || "Done" }, key(c, "done")); n++; continue; }   // (answered in its journal; the answer itself is sent again)
+    if (work.state === "done") { await put({ op: "runCmdDone", runId, id: c.id, ok: !!work.ok, text: str(work.text, 400) || "Done" }, key(c, "done")); n++; continue; }   // (answered in its journal; the answer itself is sent again)
     if (num(work.firstAt) && now - num(work.firstAt) > WORK_MAX_MS) { await answer(c, false, `Stopped: it was still at "${str(work.text || c.step, 80)}" after ${Math.round((now - num(work.firstAt)) / 3600000)} hours. Ask again.`); n++; continue; }
     const ex = Exec.EXEC[c.type];
     let r;
@@ -73,8 +77,8 @@ async function commandsUnit(ctx) {
       while (r && r.wait && hops < 12 && Date.now() < ctx.budgetEnd - 20000) {
         const nextWork = Object.assign({}, r.wait.work || {});
         if (String(nextWork.stage || "") === String(cur.stage || "")) break;   // (not moved on: saved below, and looked at again between units or in the next pass)
-        await ctx.call({ op: "cmdWorkPut", runId, cmdId: c.id, patch: Object.assign({}, nextWork, { state: "working", text: r.wait.text || "", type: c.type, firstAt }) }, key(c, "work|now|" + hops));
-        if (r.wait.text && r.wait.text !== c.step) { await ctx.call(Object.assign({ op: "runCmdStep", runId, id: c.id, text: str(r.wait.text, 160) }, r.wait.pct == null ? {} : { pct: r.wait.pct }), key(c, "step|now|" + hops)); c.step = r.wait.text; }
+        await put({ op: "cmdWorkPut", runId, cmdId: c.id, patch: Object.assign({}, nextWork, { state: "working", text: r.wait.text || "", type: c.type, firstAt }) }, key(c, "work|now|" + hops));
+        if (r.wait.text && r.wait.text !== c.step) { await put(Object.assign({ op: "runCmdStep", runId, id: c.id, text: str(r.wait.text, 160) }, r.wait.pct == null ? {} : { pct: r.wait.pct }), key(c, "step|now|" + hops)); c.step = r.wait.text; }
         cur = nextWork; hops++;
         try { r = await ex({ ctx, cmd: c, a: c.args || {}, work: Object.assign({}, cur), now: Date.now() }); }
         catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; if (e && e.overBudget) return { more: true, done: n }; r = null; break; }
@@ -86,8 +90,8 @@ async function commandsUnit(ctx) {
     if (r && r.done) { await answer(c, r.done.ok, r.done.text, r.done.freed); n++; continue; }
     if (r && r.wait) {
       const w = Object.assign({}, r.wait.work || {}, { state: "working", text: r.wait.text || "", type: c.type, firstAt: num(work.firstAt) || now });
-      await ctx.call({ op: "cmdWorkPut", runId, cmdId: c.id, patch: w }, key(c, "work"));
-      if (r.wait.text && (r.wait.text !== c.step || now - num(c.stepAt) > 60000)) await ctx.call(Object.assign({ op: "runCmdStep", runId, id: c.id, text: str(r.wait.text, 160) }, r.wait.pct == null ? {} : { pct: r.wait.pct }), key(c, "step|" + bucket));
+      await put({ op: "cmdWorkPut", runId, cmdId: c.id, patch: w }, key(c, "work"));
+      if (r.wait.text && (r.wait.text !== c.step || now - num(c.stepAt) > 60000)) await put(Object.assign({ op: "runCmdStep", runId, id: c.id, text: str(r.wait.text, 160) }, r.wait.pct == null ? {} : { pct: r.wait.pct }), key(c, "step|" + bucket));
       n++;
     }
   }

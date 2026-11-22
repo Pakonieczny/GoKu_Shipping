@@ -332,7 +332,7 @@ async function pass(env) {
       live();
       const t0 = Date.now(), itemCall = (b, u) => { if (Date.now() - t0 > UNIT_HARD_MS) throw Object.assign(new Error("the unit ran past its time: it goes on in the next pass"), { overBudget: true }); return call(b, u); };
       let r = null;
-      try { r = await item.unit({ db, run, runId, step: "pass:" + item.name, cursor: Object.assign({}, (state.items || {})[item.name] || {}), call: itemCall, read, drive, cloudSteps, state, fence, live, say, unitKey: `${runId}|pass|${item.name}`, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, t0 + UNIT_BUDGET_MS), gate: o => freshnessGate(db, Object.assign({ stepStartedAt: 0 }, o)), pass: true }); out.units++; }
+      try { r = await item.unit({ db, run, runId, step: "pass:" + item.name, cursor: Object.assign({}, (state.items || {})[item.name] || {}), call: itemCall, callNow: call /* (FASTPICK: the same fenced call, without the unit's time limit: a request's progress is saved) */, read, drive, cloudSteps, state, fence, live, say, unitKey: `${runId}|pass|${item.name}`, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, t0 + UNIT_BUDGET_MS), gate: o => freshnessGate(db, Object.assign({ stepStartedAt: 0 }, o)), pass: true }); out.units++; }
       catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; if (e && e.overBudget) r = { more: true }; else { say(`[drive] ${item.name}: ${String((e && e.message) || e).slice(0, 300)}`); out.itemErrors = (out.itemErrors || []).concat([item.name]); } }
       out.items = (out.items || 0) + 1;
       if (r && r.more) out.again = true;
