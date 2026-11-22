@@ -141,7 +141,6 @@ async function placeAll(ctx) {
   const ordered = todo.map(x => [x, Place.CUT_METALS.includes(metalOf(x)) ? 1 : 0, behind(x)]).sort((a, b) => a[1] - b[1] || a[2] - b[2] || firstAt(a[0]) - firstAt(b[0]) || String(a[0].key).localeCompare(String(b[0].key))).map(a => a[0]);
   const day = String(run.day || torontoDay(now));
 
-  let fit = null; const fitter = () => fit || (fit = require("./_charmNestFitCheck").create({ db, bucket: ctx.bucket || require("./firebaseAdmin").storage().bucket(), log: say }));   // (FITFIRST)
   /* one line's pieces of one metal onto the chosen sheet: "ok" | "retry" (the sheet changed or refused: read again, choose again) | "skip" */
   async function place(view, list, home, key, metal) {
     const slim = list.map(c => Object.assign({}, c));
@@ -187,23 +186,6 @@ async function placeAll(ctx) {
         const d = R.chooseSheet({ metal, rid, run, list, info, matePages: mates, byMetalSize: byMetal.size });
         for (const ev of d.events) if (ev.kind === "split") say(`Split order ${rid} (a split of necessity: its other ${LABEL[metal]} pieces are on ${ev.apart.map(nameOf).join(", ")}, which can take no more) — both sheets must go in one set`);
         if (d.wait) { waits.push({ metal, w: d.wait, n: list.length }); waited++; done = true; break; }
-        /* FITFIRST (Paul, 21 Nov 2026: "a piece goes on a sheet only after the nester confirms it fits there; if it doesn't fit, it goes straight to the next draft"): a Gold Filled or
-           Sterling Silver order goes on a sheet that has a layout only when the WHOLE order finds empty spots on the sheet's map; else that sheet is passed and the next is chosen */
-        if (Place.FAST.includes(metal)) {
-          const rec0 = d.page && !d.page._new ? d.page._rec : null;
-          if (rec0 && (rec0.placements || []).length) {
-            const rowsOf = new Map(x.rows.filter(r => (r.material || r.metal) === metal).map(r => [String(r.poolId), r]));
-            const f = await fitter().fits(rec0, list.map(c => Object.assign({}, c)), rowsOf);
-            if (f.fits === false) { say(`${rid}: its ${list.length} ${LABEL[metal]} piece(s) do not fit on ${nameOf(d.page)} (${f.why}): the next draft`); d.page._shut = true; continue; }
-            /* (Paul, 21 Nov 2026: no answer (the sheet has no map yet): the order waits and is checked again at the next pass; after 10 minutes of no answer it goes to the next draft,
-               never onto the sheet unchecked) */
-            if (f.fits === null) {
-              const since = num(x.l.fitWaitAt) || now;
-              if (now - since < 10 * 60000) { if (!x.l.fitWaitAt) patchLine(x.key, { fitWaitAt: since }); say(`${rid}: waits for ${nameOf(d.page)}'s map (${f.why})`); deferred.push(d.page); done = true; break; }
-              say(`${rid}: still no map of ${nameOf(d.page)} after 10 minutes: the next draft`); d.page._shut = true; continue;
-            }
-          }
-        }
         const home = d.back && d.page === d.back ? rid : null, got = await place(d.page, list, home, x.key, metal);
         if (got === "ok") { say(`${rid} · ${list.length} ${LABEL[metal]} piece(s) → ${nameOf(W.views().find(v => v.sheetId && list.every(c => listed.get(String(c.poolId)) === v.sheetId)) || d.page)}`); done = true; }
         else if (got === "skip") done = true;
