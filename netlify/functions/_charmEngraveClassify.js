@@ -60,6 +60,10 @@ const num = v => (Number.isFinite(+v) ? +v : 0);
 const plain = v => { try { return v == null ? null : JSON.parse(JSON.stringify(v)); } catch (_) { return null; } };
 const tlHash = s => { let a = 2166136261; for (const ch of String(s)) a = Math.imul(a ^ ch.charCodeAt(0), 16777619); return (a >>> 0).toString(36); };   // (CNTimeline.hash: the page's timeline ids)
 const passThrough = e => !!(e && (e.fenced || e.yielded || e.fatal || e.overBudget));
+/* KEEPLIST (Paul, 22 Nov 2026: order 4242358457 never reached Design & Engrave; no engraving was read in the cloud from 21 Nov 16:55): the driver saves a pass item's cursor with
+   set(..., { merge: true }), and Firestore MERGES maps key by key, so a line taken off the `pending` map stayed in the saved one: the list only grew, every pass read the same first 300
+   lines again (all done) and never the ones behind them. The lists are saved as arrays now (an array is one value: a merge replaces it whole); a cursor saved as a map is still read. */
+const keysOf = v => (Array.isArray(v) ? v.map(String) : Object.keys(v || {}));
 const faceOf = x => Faces.faceOf(x);
 const isFront = x => faceOf(x) === "front";
 const lineOf = r => (r && r.parentRow) || r;
@@ -395,7 +399,7 @@ async function classifyUnit(ctx) {
   let since = fresh ? 0 : num(cur.since), newest = since, more = false;
   if (fresh) { for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.state !== "gone") keys.add(k); newest = Date.now() - 5000; }
   else {
-    for (const k of Object.keys(cur.pending || {})) if (lines[k]) keys.add(k);
+    for (const k of keysOf(cur.pending)) if (lines[k]) keys.add(k);
     for (const k of waiting) if (READ_STATES.has((lines[k] || {}).state)) { keys.add(k); waiting.delete(k); }   // (a line that waited for its pieces and has them now)
     // (the lines whose world reading or engraving record changed since the last pass)
     const ws = await ctx.db.collection(WORLD_LINES).where("at", ">", since).orderBy("at").limit(500).get();
@@ -408,7 +412,7 @@ async function classifyUnit(ctx) {
   for (const k of all.slice(300)) pending[k] = true;
   if (all.length > 300) more = true;
   const todo = all.slice(0, 300);
-  if (!todo.length) return Object.assign({ cursor: { runId: ctx.runId, since: newest, pending, waiting: [...waiting].slice(0, 1500), reading: {}, readingAt: 0 } }, more ? { more: true } : {});
+  if (!todo.length) return Object.assign({ cursor: { runId: ctx.runId, since: newest, pending: Object.keys(pending).slice(0, 1500), waiting: [...waiting].slice(0, 1500), reading: [], readingAt: 0 } }, more ? { more: true } : {});
   const [world, recs] = await Promise.all([worldLines(ctx, todo), Files.readLines(ctx, todo)]);
   /* ENGNOTE: the other lines of an order whose staff messages carry an "ENG:" note (which line the words are for is the order's question), read with the lines themselves */
   const engOrders = new Set(todo.filter(k => { const w = world.get(k); return w && Classify.engNoteOf(w.spec && w.spec.messages); }).map(k => String(k).split("_")[0]));
@@ -486,7 +490,7 @@ async function classifyUnit(ctx) {
   // (a reading under way: its line is looked at again at every pass until it is answered; the driver's tick reads readingAt so a waiting reading starts a pass)
   for (const k of Object.keys(reading)) pending[k] = true;
   const readingAt = Object.keys(reading).length ? (num(cur.readingAt) || Date.now()) : 0;
-  return Object.assign({ cursor: { runId: ctx.runId, since: newest, pending: Object.fromEntries(Object.keys(pending).slice(0, 1500).map(k => [k, true])), waiting: [...waiting].slice(0, 1500), reading, readingAt } }, more ? { more: true } : {});
+  return Object.assign({ cursor: { runId: ctx.runId, since: newest, pending: Object.keys(pending).slice(0, 1500), waiting: [...waiting].slice(0, 1500), reading: Object.keys(reading), readingAt } }, more ? { more: true } : {});
 }
 
 const passItems = [{ name: NAME, lane: "engrave", order: 80, unit: classifyUnit }];
