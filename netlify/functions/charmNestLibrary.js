@@ -6012,6 +6012,13 @@ async function op_runCmdPut(b) {
     args.poses = poses; if (c.free === true) args.free = true; if (c.fill === true) args.fill = true;   /* (fill: GAP G1, Paul 21 Nov 2026, the sheet window's Fill the freed room / Place from a viewer: the pieces go into the freed room where the page planned them) */ if (Number.isFinite(+c.layoutBase) && c.layoutBase !== null) args.layoutBase = +c.layoutBase;
     if (Array.isArray(c.sourceIds)) { const s = c.sourceIds.slice(0, 4).map(x => str(x, 80)).filter(Boolean); if (s.length) args.sourceIds = s; }
   }
+  /* RESTORE (Paul, 21 Nov 2026): a Re-nest may carry a saved layout to put back as it was: a pose for each piece, by pool id (150 at most) */
+  if (c.type === "renest" && Array.isArray(c.poses)) {
+    const fin = v => Number.isFinite(+v) ? Math.round(+v * 100000) / 100000 : null;
+    const poses = c.poses.slice(0, 150).map(p => p && typeof p === "object" ? { poolId: str(p.poolId, 120), cxPt: fin(p.cxPt), cyPt: fin(p.cyPt), angle: fin(p.angle), wPt: fin(p.wPt), hPt: fin(p.hPt), scale: fin(p.scale) } : null);
+    if (!poses.length || poses.some(p => !p || !p.poolId || p.cxPt == null || p.cyPt == null || p.angle == null)) return { error: "a layout to put back names each piece and where it lies" };
+    args.poses = poses;
+  }
   if (c.type === "customsend" && !args.ck) return { error: "a send names its card" };
   if (c.type === "seat" && (!args.sheetId || !args.partialId)) return { error: "a seat names the sheet and the physical sheet" };
   const ref = col(CMDS).doc(runId), now = Date.now(), id = "c" + now.toString(36) + Math.random().toString(36).slice(2, 6).padEnd(4, "0");

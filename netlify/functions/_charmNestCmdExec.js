@@ -521,8 +521,15 @@ async function release(x) {
 async function restoreLayout(x) {
   const p = await sheetRec(x.ctx, x.a.sheetId); if (!p || p.archived || p.runId !== x.ctx.runId) return no("That sheet is not on the run the cloud carries.");
   if (cutRec(p)) return no("That sheet was already cut: its layout is not changed.");
-  const js = await x.ctx.db.collection("Charm_Nest_Jobs").doc(String(x.a.sourceId)).get(), j = js.exists ? js.data() || {} : null, res = j && j.result;
-  if (!j || j.sheetId !== p.id || j.status !== "done" || !res || !Array.isArray(res.placements)) return no("That nest has no finished layout saved for this sheet.");
+  let j = null, res = null;
+  if (Array.isArray(x.a.poses) && x.a.poses.length) {   // (a layout a person's computer kept: each pose names its piece by pool id)
+    const idOf = new Map(activeCharms(p).map(c => [String(c.poolId), String(c.id)]));
+    res = { placements: x.a.poses.filter(q => idOf.has(String(q.poolId))).map(q => ({ id: idOf.get(String(q.poolId)), cxPt: +q.cxPt, cyPt: +q.cyPt, angle: +q.angle || 0, wPt: num(q.wPt), hPt: num(q.hPt), scale: num(q.scale) || 1 })), density: num(p.density), freePt2: num(p.freePt2), verification: null };
+    j = { finishedMs: Date.now() };
+  } else {
+    const js = await x.ctx.db.collection("Charm_Nest_Jobs").doc(String(x.a.sourceId)).get(); j = js.exists ? js.data() || {} : null; res = j && j.result;
+    if (!j || j.sheetId !== p.id || j.status !== "done" || !res || !Array.isArray(res.placements)) return no("That nest has no finished layout saved for this sheet.");
+  }
   const on = new Set(activeCharms(p).map(c => String(c.id))), placements = res.placements.filter(q => q && on.has(String(q.id)));
   if (!placements.length) return no("None of the pieces that nest placed are on the sheet now.");
   const r = await put(x, { op: "putSheet", layoutBase: num(p.layoutRev), sheet: { id: p.id, placements, rejects: [], feedWait: null, placedCount: placements.length, density: num(res.density), freePt2: num(res.freePt2),
@@ -531,7 +538,7 @@ async function restoreLayout(x) {
   return ok(`${nameOf(p)}: its layout is back, ${placements.length} of ${on.size} pieces placed where the nest of ${new Date(num(j.finishedMs)).toLocaleTimeString("en-CA", { timeZone: "America/Toronto" })} left them`);
 }
 async function renest(x) {
-  if (!x.work.stage && x.a.sourceId) return restoreLayout(x);
+  if (!x.work.stage && (x.a.sourceId || (Array.isArray(x.a.poses) && x.a.poses.length))) return restoreLayout(x);
   if (!lane(x.ctx, "nest") || !has("nestStart")) return no("Nesting is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
   if (!x.work.stage) {
     const p = await sheetRec(x.ctx, x.a.sheetId), sets = await runSets(x.ctx), now = Date.now();
