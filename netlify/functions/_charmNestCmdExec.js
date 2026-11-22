@@ -516,7 +516,22 @@ async function release(x) {
 }
 
 /* ═══ nest ═══ */
+/* RESTORE (Paul, 21 Nov 2026: "I don't want this nesting … fix that"): Re-nest with sourceId = a nest job that finished on this sheet puts that nest's saved layout back on the sheet,
+   every piece where that nest placed it (only pieces still on the sheet); no new nest is asked and no file is written by this request. */
+async function restoreLayout(x) {
+  const p = await sheetRec(x.ctx, x.a.sheetId); if (!p || p.archived || p.runId !== x.ctx.runId) return no("That sheet is not on the run the cloud carries.");
+  if (cutRec(p)) return no("That sheet was already cut: its layout is not changed.");
+  const js = await x.ctx.db.collection("Charm_Nest_Jobs").doc(String(x.a.sourceId)).get(), j = js.exists ? js.data() || {} : null, res = j && j.result;
+  if (!j || j.sheetId !== p.id || j.status !== "done" || !res || !Array.isArray(res.placements)) return no("That nest has no finished layout saved for this sheet.");
+  const on = new Set(activeCharms(p).map(c => String(c.id))), placements = res.placements.filter(q => q && on.has(String(q.id)));
+  if (!placements.length) return no("None of the pieces that nest placed are on the sheet now.");
+  const r = await put(x, { op: "putSheet", layoutBase: num(p.layoutRev), sheet: { id: p.id, placements, rejects: [], feedWait: null, placedCount: placements.length, density: num(res.density), freePt2: num(res.freePt2),
+    verification: res.verification || null, endedBy: "kept", status: "complete", dirty: false, nestOwed: null } }, `restore|${p.id}|${x.a.sourceId}|${num(p.layoutRev)}`);
+  if (err(r)) return no(`Not restored: ${err(r)}`);
+  return ok(`${nameOf(p)}: its layout is back, ${placements.length} of ${on.size} pieces placed where the nest of ${new Date(num(j.finishedMs)).toLocaleTimeString("en-CA", { timeZone: "America/Toronto" })} left them`);
+}
 async function renest(x) {
+  if (!x.work.stage && x.a.sourceId) return restoreLayout(x);
   if (!lane(x.ctx, "nest") || !has("nestStart")) return no("Nesting is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
   if (!x.work.stage) {
     const p = await sheetRec(x.ctx, x.a.sheetId), sets = await runSets(x.ctx), now = Date.now();

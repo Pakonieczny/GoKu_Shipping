@@ -555,6 +555,10 @@ async function layoutOf(X) {
   if (!nest && job.nestJobId) { const js = await X.db.collection(JOBS).doc(job.nestJobId).get(), j = js.exists ? js.data() || {} : null, r = j && (j.result || j.best); if (r && Array.isArray(r.placements)) nest = { jobId: job.nestJobId, result: r, appendOnly: job.appendOnly }; }
   if (!nest) {
     // (the record as it stands: written again with the pieces where they lie, writeAsPlaced / mcWriteStandalone)
+    /* NOWIPE (Paul, 21 Nov 2026: GF Draft 2 at 18:45 and SS Draft 1 at 19:03 were written with 0 placed): a placed piece the writer could not match to a piece it made again is never
+       dropped from the layout: the writer stops and the sheet stays exactly as it is */
+    { const listed = new Set((rec.charms || []).filter(c => c && !c.excluded).map(c => String(c.id))), lost = (rec.placements || []).filter(p => p && listed.has(String(p.id)) && !byId.has(String(p.id)));
+      if (lost.length) throw new Stop("failed", `${rec.fileBase || rec.id}: ${lost.length} placed piece(s) could not be matched to the pieces made again; its layout is kept as it is and no file was written`); }
     const placements = (rec.placements || []).filter(p => p && byId.has(String(p.id))).map(norm), rejects = (rec.rejects || []).map(r => String(r && r.id != null ? r.id : r)).filter(id => byId.has(id));
     return { placements, rejects, nestInitial: placements.map(p => Object.assign({}, p)), dirty: false,
       result: { params: rec.params || {}, endedBy: "kept", trials: num0(rec.trials), elapsedMs: num0(rec.elapsedMs), density: num0(rec.density), usablePt2: num0(rec.usablePt2), freePt2: num0(rec.freePt2), placedPt2: Math.max(0, num0(rec.usablePt2) - num0(rec.freePt2)), pocket: rec.pocket || null, metrics: rec.searchMetrics || null } };
