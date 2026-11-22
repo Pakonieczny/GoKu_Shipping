@@ -207,14 +207,14 @@ const unitsOf = (log, n = {}) => { const out = {}; for (const s of STEPS) out[s]
     const marked = spy.ops.slice(opsBefore).filter(o => o.marked), OpClass = require(require('path').join(F.fnDir, '_charmNestOpClass.js'));
     const writes = marked.filter(o => !OpClass.READ.has(o.op) && !(o.op === 'runOpen')), perPass = passes.map(p => p.filter(op => !OpClass.READ.has(op) && op !== 'runOpen'));
     ok('F2 · the 20 builds ran and each moved the feed (feed-x)', feeds.every((n, i) => i === 0 || n > feeds[i - 1]) && feeds[19] > feeds[0], feeds);
-    ok('F2 · after each build the driver was told and one pass ran (it read the run)', passes.length === 20 && passes.every(p => p.includes('runGet')), passes.slice(0, 3));
+    ok('F2 · after each build the driver was told and a pass ran (NORECEIPTWAIT: the run no longer rests at revalidate, so a pass may find nothing to read)', passes.length === 20, passes.slice(0, 3));
     // (build step 8, commit e1032d4: the cloud reconciles a run it takes ONCE per take, keyed on carrier.since, and says so on the run (its note). This run was handed to the cloud
     //  just before the builds, so the first pass makes the take's writes; no world build makes the driver write anything (E1).
     //  ONSWITCH (Paul, 20 Nov 2026): a take also makes ONE set look at once: with "checkpoint" the cloud's, the resting run goes through its steps again from the checkpoint, in that
     //  first pass, and waits at revalidate behind the Etsy freshness gate; the take's and the look's writes are the run's record only (runPut): no sheet or set here)
     const st = F.doc('Charm_Nest_Drive/state') || {};
     ok('F2 · the take\'s own writes, in the first pass only (step 8: reconciled once per take; ONSWITCH: one set look per take): the run\'s record only', perPass[0].length >= 1 && perPass[0].every(op => op === 'runPut') && !!(st.reconciled && st.reconciled.runId === R && st.reconciled.done) && String(st.setLook || '').startsWith(R + '|'), { first: perPass[0], note: run(R).note, reconciled: st.reconciled, setLook: st.setLook });
-    ok('F2 · 0 Lib.call writes after it, across the other 19 builds (the run waits at revalidate behind the freshness gate, as it was left)', writes.length === perPass[0].length && perPass.slice(1).every(p => !p.length) && run(R).status === 'running' && run(R).step === 'revalidate' && /Re-checking the orders waits/.test(String(run(R).note || '')), { writes: writes.slice(0, 5), perPass, status: run(R).status, step: run(R).step, note: run(R).note });
+    ok('F2 · NORECEIPTWAIT: the run is not held at revalidate by the mail copy (it goes on)', !(run(R).step === 'revalidate' && /next copy of Etsy/.test(String(run(R).note || ''))), { step: run(R).step, note: run(R).note });
     ok('F2 · 0 Charm_World/lease dispatches by a change or by the drive (the driver never builds the world)', bys.every(b => !/^change:|^drive/.test(String(b || ''))), bys);
     ok('F2 · and the pair cannot loop: no kick was left waiting', F.net.kicks.length === 0, F.net.kicks.map(k => k.name));
   }
@@ -315,11 +315,11 @@ const unitsOf = (log, n = {}) => { const out = {}; for (const s of STEPS) out[s]
     ok('gate · the switch cannot be read: it holds (never "not stopped")', !g.ok && g.hold && g.why.some(w => /could not be read/.test(w)), g);
     F.seed('EtsyMail_Config/receiptsMirrorState', { lastSyncOutcome: 'rate_limited', lastSyncCompletedAt: Date.now() - 1000 });
     g = await Drive.freshnessGate(F.db, { stepStartedAt: started });
-    ok('gate · the mail system\'s last sync was not good: it waits, saying so', !g.ok && g.why.some(w => /last sync was rate_limited/.test(w)), g);
+    ok('gate · NORECEIPTWAIT (Paul, 21 Nov 2026): a mail sync that was not good no longer holds the step', g.ok && !g.why.some(w => /last sync/.test(w)), g);
     F.seed('EtsyMail_Config/receiptsMirrorState', { lastSyncOutcome: 'ok', lastSyncCompletedAt: Date.now() - 1000 });
     F.seed('Charm_World/summary', { at: Date.now(), mirrorBefore: Date.now() - 30000, toRead: 1, toReadIds: ['7'] });
     g = await Drive.freshnessGate(F.db, { stepStartedAt: started, receipts: ['7'] });
-    ok('gate · a world built before that sync, or a receipt of the set still to be read: it waits', !g.ok && g.why.some(w => /built from that copy/.test(w)) && g.why.some(w => /still to be read/.test(w)), g);
+    ok('gate · NORECEIPTWAIT: a world built before that sync, or a receipt still to be read, no longer holds the step', g.ok && !g.why.some(w => /built from that copy|still to be read/.test(w)), g);
   }
 
   /* ═══ the record helpers ported from RunCtl (recordOf, sizeCheck, archiveFinished, updatePending) ═══ */

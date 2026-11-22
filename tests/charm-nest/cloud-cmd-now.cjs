@@ -279,9 +279,9 @@ async function partW() {
   const atCommit = () => { const r = F.doc('Charm_Nest_Runs/' + runId) || {}, st = F.doc('Charm_Nest_Drive/state') || {}; return r.status === 'running' && ['revalidate', 'labels', 'commit'].includes(r.step) && !!(st.wait && /daily limit/.test(String(st.wait.why || ''))); };
   ok('W0 the run waits behind the freshness gate ("Etsy\'s daily limit for the shop is reached")', atCommit(), { view: view(), wait: (F.doc('Charm_Nest_Drive/state') || {}).wait });
   const Intake = F.load('_charmNestIntake.js'), auto = { runMode: 'auto' };
-  ok('W0 the intake\'s gate is open while the run merely waits at revalidate, labels or commit; closed for an operator\'s stop, a sheet being nested, mid-steps and manual mode',
+  ok('W0 the intake\'s gate is open while the run merely waits at revalidate, labels or commit; open at the nest step and while a sheet is nested (FLOWNOW); closed for an operator\'s stop, the other mid-steps and manual mode',
     ['revalidate', 'labels', 'commit'].every(step => Intake.poolGate({ status: 'running', step }, auto, null) === '') && /stopped by the operator/.test(Intake.poolGate({ status: 'stopped', stopKind: 'operator', step: 'commit' }, auto, null))
-    && /being nested or written/.test(Intake.poolGate({ status: 'running', step: 'commit' }, auto, new Map([['s1', { id: 's1', status: 'nesting' }]]))) && /next checkpoint/.test(Intake.poolGate({ status: 'running', step: 'nest' }, auto, null)) && /manual/.test(Intake.poolGate({ status: 'running', step: 'commit' }, { runMode: 'manual' }, null)));
+    && Intake.poolGate({ status: 'running', step: 'commit' }, auto, new Map([['s1', { id: 's1', status: 'nesting' }]])) === '' /* FLOWNOW: a sheet being nested no longer holds new orders */ && Intake.poolGate({ status: 'running', step: 'nest' }, auto, null) === '' /* FLOWNOW: made at the nest step too */ && /next checkpoint/.test(Intake.poolGate({ status: 'running', step: 'plan' }, auto, null)) && /manual/.test(Intake.poolGate({ status: 'running', step: 'commit' }, { runMode: 'manual' }, null)));
   /* W1 */
   {
     const before = pieces([A]);
