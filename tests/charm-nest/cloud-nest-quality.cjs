@@ -27,7 +27,7 @@ Module._load = function (req, parent, ...rest) {
   return prevLoad.call(this, req, parent, ...rest);
 };
 const lib = F.load('charmNestLibrary.js'), Nest = F.load('_charmNestNest.js'), Slot = F.load('_charmNestNestSlot.js'), Lease = F.load('_charmNestLease.js');
-const WHOLE = Slot.WHOLE_METALS.slice(), whole = on => { Slot.WHOLE_METALS.length = 0; if (on) Slot.WHOLE_METALS.push(...WHOLE); };
+const DEFAULT_WHOLE = Slot.WHOLE_METALS.slice(), WHOLE = ['gold', 'silver'], whole = on => { Slot.WHOLE_METALS.length = 0; if (on) Slot.WHOLE_METALS.push(...WHOLE); };
 
 /* ── the world ── */
 const R = 'run-2026-11-21-nq';
@@ -131,6 +131,7 @@ async function savedLayout(pieces, k) {
       ok(`A6 ${why}: nested as before (its saved pieces held, the next turn only, no whole layout)`, p.solverJob.pieces.length < 44 && (p.solverJob.lockedPlacements || []).length === 22 && !p.altJob && !p.input.meta.whole, { pieces: p.solverJob.pieces.length, locked: (p.solverJob.lockedPlacements || []).length });
       F.seed('Charm_Nest_Sheets/' + SH, Object.assign({}, before, { layoutRev: +before.layoutRev + 2 }));
     }
+    whole(true);
     ok('A7 wholeOf: GF and SS drafts and sheets in no set; never 10K, 14K, Rose Gold, a set\'s sheet, a released, committed, approved, cut or laser cut one',
       Slot.wholeOf({ metal: 'gold', draft: true }) && Slot.wholeOf({ metal: 'silver' }) && Slot.wholeOf({ metal: 'gold', setId: 's', draft: true }) && !Slot.wholeOf({ metal: 'gold10k', draft: true }) && !Slot.wholeOf({ metal: 'gold14k' }) && !Slot.wholeOf({ metal: 'rose' })
         && !Slot.wholeOf({ metal: 'gold', setId: 's' }) && !Slot.wholeOf({ metal: 'silver', releaseFull: true }) && !Slot.wholeOf({ metal: 'gold', approvedAt: 1 }) && !Slot.wholeOf({ metal: 'gold', roseCutAt: 1 }) && !Slot.wholeOf({ metal: 'gold', laserDoneAt: 5 }));
@@ -170,5 +171,6 @@ async function savedLayout(pieces, k) {
     ok('B3 the layout is checked as every cloud nest is (the solver\'s verifier)', j.result.verification && j.result.verification.ok === true, j.result.verification);
     NP.multiStartFor = realMS;
   }
+  ok('NOWHOLE · by default no Gold Filled or Silver sheet is laid out whole again: the pieces on it stay where they lie', DEFAULT_WHOLE.length === 0);
   log0(failed ? `FAIL cloud-nest-quality (${failed})` : 'PASS cloud-nest-quality'); process.exit(failed ? 1 : 0);
 })().catch(e => { log0('FAIL cloud-nest-quality: ' + (e && e.stack || e)); process.exit(1); });

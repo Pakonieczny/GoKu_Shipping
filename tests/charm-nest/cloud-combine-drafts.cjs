@@ -73,14 +73,14 @@ const cmdOf = id => ((F.doc('Charm_Nest_Run_Cmds/' + R) || {}).cmds || {})[id] |
     ok('1 · the pass ran (the cloud carries the run, mode "on")', p1 && p1.ok && !p1.error, p1);
     const gfFirst = S('gold-d4').archived === true, ssFirst = S('silver-d3').archived === true;
     ok('1 · at most one combine a pass: the first pass combined ONE colour (Gold Filled first), the other waits', moves().length === 1 && gfFirst && !ssFirst && S('silver-d2').charms.length === 6, { moves: moves().length, gfFirst, ssFirst });
-    ok('1 · GF Draft 4 (12 pieces) went onto the older GF draft with room (15), Draft 4 archived, a fresh nest asked', S('gold-d1').charms.length === 15 && jobsOf('gold-d1').some(j => j.mode === 'fresh'), { n: S('gold-d1').charms.length });
+    ok('1 · GF Draft 4 (12 pieces) went onto the older GF draft with room (15), Draft 4 archived, a nest that only ADDS asked (NOWHOLE)', S('gold-d1').charms.length === 15 && jobsOf('gold-d1').length > 0 && jobsOf('gold-d1').every(j => j.mode !== 'fresh'), { n: S('gold-d1').charms.length });
     ok('1 · said in the run\'s log', logs.some(t => /\[drive\] combine: 12 pieces of GF Draft 4 moved onto GF Draft 1; GF Draft 4 was left empty and archived; GF Draft 1 is nested again from scratch/.test(t)), logs.filter(t => /combine/.test(t)));
     const p2 = await pass();
     const d2 = S('silver-d2'), d3 = S('silver-d3'), job = jobsOf('silver-d2')[0];
     ok('1 · the next pass ran', p2 && p2.ok && !p2.error, p2);
     ok('1 · SS Draft 3\'s 5 pieces are on SS Draft 2: 11 pieces, every pool id listed once', d2.charms.length === 11 && new Set(d2.poolIds).size === 11 && ['5301', '5302', '5303', '5304'].every(r => d2.charms.some(c => c.order === r)), { n: d2.charms && d2.charms.length });
     ok('1 · SS Draft 3 was left empty and archived (archiveEmptySheet)', d3.archived === true && !(d3.charms || []).length && spy.ops.some(o => o.op === 'archiveEmptySheet' && o.marked), { archived: d3.archived, left: (d3.charms || []).length });
-    ok('1 · a FRESH nest of SS Draft 2 was asked (nestStart fresh, its job queued)', !!job && job.mode === 'fresh' && job.status === 'queued' && (S('silver-d2').nestJob || {}).id === job.id, job);
+    ok('1 · NOWHOLE: a nest of SS Draft 2 that only ADDS was asked (never fresh), its job queued', !!job && job.mode !== 'fresh' && job.status === 'queued' && (S('silver-d2').nestJob || {}).id === job.id, job);
     ok('1 · the moved pieces\' records name SS Draft 2 (sheetId), and the moved orders are whole on it', ['5301_silver_1', '5301_silver_2', '5304_silver_1'].every(id => F.doc('Charm_Pool/' + id).sheetId === 'silver-d2'));
     ok('1 · the SS sheet in a set was left alone (byte for byte)', JSON.stringify(S('silver-s1')) === before1);
     ok('1 · one move in this pass too (two in all)', moves().length === 2, moves());
@@ -172,7 +172,7 @@ const cmdOf = id => ((F.doc('Charm_Nest_Run_Cmds/' + R) || {}).cmds || {})[id] |
     const id = putCmd('consolidate', { sourceId: 'silver-x2', targetId: 'silver-x1' });
     await pass();
     const c = cmdOf(id), x1 = S('silver-x1');
-    ok('5 · Combine (consolidate) of two SS drafts: the pieces are on the target, the emptied draft archived, a fresh nest asked', x1.charms.length === 3 && S('silver-x2').archived === true && jobsOf('silver-x1').some(j => j.mode === 'fresh') && c.state === 'running' && c.claim && c.claim.dev === 'cloud', { n: x1.charms.length, c });
+    ok('5 · Combine (consolidate) of two SS drafts: the pieces are on the target, the emptied draft archived, a nest that only ADDS asked (NOWHOLE)', x1.charms.length === 3 && S('silver-x2').archived === true && jobsOf('silver-x1').length > 0 && jobsOf('silver-x1').every(j => j.mode !== 'fresh') && c.state === 'running' && c.claim && c.claim.dev === 'cloud', { n: x1.charms.length, c });
     ok('5 · the move was the person\'s request (one move in the pass: the cloud\'s own combine found nothing left)', moves().length === 1);
     // refused: the target is in a set
     world();
