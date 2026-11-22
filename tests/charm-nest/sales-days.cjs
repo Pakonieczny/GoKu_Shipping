@@ -200,7 +200,7 @@ const at = iso => Date.parse(iso), s = iso => Math.floor(at(iso) / 1000);
     ok((html.match(/class="odSec"/g) || []).length === 3 && /data-k="today"/.test(html) && /data-k="yday"/.test(html) && /data-k="week"/.test(html) && (html.match(/<svg class="odIc"/g) || []).length === 3, 'three sections, each with its own line icon');
     SD.paint(); await new Promise(r => setImmediate(r));
     ok(calls.length === 1 && calls[0] === 'getOrderDays', 'first drawing with no copy: one read (getOrderDays): ' + calls.join());
-    ok(box.secs.today.querySelector('.odN').textContent === '3', 'Today = the document\'s 2 + the page\'s own arrival (2 pieces, 1 receipt): ' + box.secs.today.querySelector('.odN').textContent);
+    ok(box.secs.today.querySelector('.odN').textContent === '2', 'SAMECOUNTS (Paul, 22 Nov 2026: every computer shows the same numbers): Today = the shared document\'s 2, never with an order only this page holds: ' + box.secs.today.querySelector('.odN').textContent);
     ok(follow && follow.kinds === 'd' && intervals.length === 1, 'it follows the changes feed (d:) and keeps one drawing tick');
     for (let i = 0; i < 30; i++) intervals[0].f();   // half an hour of the minute tick
     await new Promise(r => setImmediate(r));

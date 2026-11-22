@@ -22,7 +22,7 @@ const SCALE = 0.02;   // (CN_SPIN_SCALE while the wait hangs: the 30 s limit of 
   if (!w) { console.log('no playwright-core: nothing run'); process.exit(0); }
   const page = w.page;
   const facts = key => page.evaluate(({ Q, key }) => {
-    const j = Engrave.items().get(key), c = document.querySelector(Q), mine = !!c && c.dataset.key === key, ap = mine ? c.querySelector('[data-a="approve"]') : null, why = mine ? c.querySelector('.egApproveWhy') : null;
+    const j = Engrave.items().get(key), c = document.querySelector(Q), mine = !!c && c.dataset.key === key, ap = mine ? (c.querySelector('[data-engp-approve]') || c.querySelector('[data-a="approve"]')) : null, why = mine ? c.querySelector('.egApproveWhy') : null;
     const sv = mine ? c.querySelector('[data-engp="save"]') : null, cn = mine ? c.querySelector('[data-engp="cancel"]') : null;
     return { mine, state: j && j.state, approvedAt: j && j.approvedAt || null, centre: j && j.fit ? j.fit.centre.map(v => Math.round(v * 1000) / 1000) : null, nudged: !!(j && j.nudged),
       busy: !!(j && (j._approvalTask || j.approvalPreparing || j.stamping)), approve: ap ? { text: ap.textContent.trim(), live: !ap.disabled } : null,
@@ -57,16 +57,25 @@ const SCALE = 0.02;   // (CN_SPIN_SCALE while the wait hangs: the 30 s limit of 
     const looks = [], SAVE_LIMIT_MS = 2 * 60000 * SCALE;
     const f1 = await until(async () => { const f = await facts(key); looks.push(f); return /^Not approved/.test(f.why) ? f : null; }, 8000), ms = Date.now() - t0;
     const working = f1 ? looks.slice(0, -1) : looks;
-    check(`${tag}1 the press while the workspace save hangs is never silent: "Approving…" with its step in the card at once and while it works, then why it was not approved once the save's limit passed`,
-      p1 === 'pressed' && working.length > 0 && working.every(f => f.approve && f.approve.text === 'Approving…' && !f.approve.live && !!f.why && !/^Not approved/.test(f.why))
-      && !!f1 && /^Not approved/.test(f1.why) && /workspace save/.test(f1.why) && !/took too long/.test(f1.why) && ms >= SAVE_LIMIT_MS,
+    // (INSTANTAPPROVE, Paul 22 Nov 2026: "The approval process needs to be instantaneous": "Approved ✓" at once and while the save works behind it, never "Approving…"; the save that never answered
+    //  takes it back: Approve lit again, "Not approved:" with why)
+    check(`${tag}1 the press while the workspace save hangs: "Approved ✓" at once and while it works, then taken back with why it was not approved once the save's limit passed`,
+      p1 === 'pressed' && working.length > 0 && working.every(f => f.approve && /^Approved/.test(f.approve.text) && !f.approve.live && !/^Not approved/.test(f.why))
+      && !!f1 && /^Not approved/.test(f1.why) && /workspace save/.test(f1.why) && !/took too long/.test(f1.why) && ms >= SAVE_LIMIT_MS && !!f1.approve && f1.approve.live && f1.approve.text === 'Approve',
       JSON.stringify({ p1, ms, looks: looks.length, steps: [...new Set(working.map(f => f.why))], first: working[0] || null, f1 }));
     const f2 = await until(async () => { const f = await facts(key); return !f.busy && f.approve && f.approve.live ? f : null; }, 4000) || await facts(key);
     check(`${tag}2 it does not stay stuck: the approval let go (no task, nothing preparing), Approve is live and reads "Approve" again`, !f2.busy && f2.state === 'review' && f2.approve && f2.approve.live && f2.approve.text === 'Approve', JSON.stringify(f2));
     check(`${tag}3 the adjustments are kept: the words stay where they were moved`, JSON.stringify(f2.centre) === JSON.stringify(f0.centre) && f2.nudged, JSON.stringify({ moved: f0.centre, now: f2.centre }));
     await page.evaluate(() => { Session.flushNow = window.__flush; window.CN_SPIN_SCALE = 1; });
+    await page.evaluate(Q => { window.__card0 = document.querySelector(Q); window.__rebuilt = 0; }, Q);
     const p2 = await press();
-    const f3 = await until(async () => { const f = await facts(key); return f.state === 'approved' || f.state === 'written' ? f : null; }, 30000) || await facts(key);
+    // (INSTANTAPPROVE, Paul 22 Nov 2026: the approval and its seal show at once; NOFLICKER: the card is not drawn again while its approval lands)
+    const now0 = await page.evaluate(Q => { const c = document.querySelector(Q), b = c && c.querySelector('[data-engp-approve]'); return { text: b ? b.textContent.trim() : '', seals: c ? c.querySelectorAll('.egApproveWrap .seal').length : 0, prov: c ? c.querySelectorAll('.egApproveWrap .seal[data-provisional]').length : 0 }; }, Q);
+    check(`${tag}4a the press shows "Approved ✓" and its seal at once, before anything is saved`, p2 === 'pressed' && /^Approved/.test(now0.text) && now0.text.includes('✓') && now0.prov >= 1, JSON.stringify(now0));
+    const f3 = await until(async () => { const f = await facts(key); const r = await page.evaluate(({ Q, key }) => { const c = document.querySelector(Q); if (c && c.dataset.key === key && c !== window.__card0) window.__rebuilt++; return true; }, { Q, key }); return f.state === 'approved' || f.state === 'written' ? f : null; }, 30000) || await facts(key);
+    await R.settle(page, 400);
+    const after = await page.evaluate(({ Q, key }) => { const c = document.querySelector(Q), mine = !!c && c.dataset.key === key; return { mine, same: c === window.__card0, rebuilt: window.__rebuilt, seals: mine ? c.querySelectorAll('.egApproveWrap .seal').length : -1, prov: mine ? c.querySelectorAll('.egApproveWrap .seal[data-provisional]').length : -1 }; }, { Q, key });
+    check(`${tag}4b when it is saved: one seal (the press's seal taken over, never stamped twice) and the card was never drawn again (no flicker)`, after.rebuilt === 0 && (!after.mine || (after.same && after.seals === now0.seals && after.prov === 0)), JSON.stringify({ now0, after }));
     check(`${tag}4 the next press approves it, at the place the words were moved to`, p2 === 'pressed' && /approved|written/.test(f3.state) && !!f3.approvedAt && JSON.stringify(f3.centre) === JSON.stringify(f0.centre), JSON.stringify({ p2, f3 }));
   }
   try {
@@ -83,7 +92,7 @@ const SCALE = 0.02;   // (CN_SPIN_SCALE while the wait hangs: the 30 s limit of 
     await page.keyboard.press('Backspace'); await R.settle(page, 250);
     const g2 = await facts(key);
     // (ENGSTAGE: the words put back on a piece the one press approved: nothing is staged, so Approve is the calm "Approved" again, or live on a piece still to approve)
-    check('G2 the words put back: Approve is as before the letter (calm on an approved piece, live otherwise) and the line is gone', (g2.approve ? g2.approve.live : !!(await page.evaluate(Q => document.querySelector(Q + ' [data-a="approved"]'), Q))) && !g2.why, JSON.stringify(g2));
+    check('G2 the words put back: Approve is as before the letter (calm on an approved piece, live otherwise) and the line is gone', (g2.approve ? (g2.approve.live || (g2.state !== 'review' && /^Approved/.test(g2.approve.text))) : !!(await page.evaluate(Q => document.querySelector(Q + ' [data-a="approved"]'), Q))) && !g2.why, JSON.stringify(g2));
   } catch (e) { check('run', false, String(e && e.stack || e).split('\n').slice(0, 3).join(' | ')); }
   check('no page error', w.errors.length === 0, w.errors.slice(0, 2).join(' | '));
   await w.close();
