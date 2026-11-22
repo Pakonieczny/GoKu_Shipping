@@ -363,6 +363,8 @@ STEP.S7 = async X => {
     }
     job.written = { layoutRev: num(ans.layoutRev), contentRev: job.base.contentRev + 1 };   // (the record carried the placements: putSheet raised layoutRev once and contentRev once)
     job.key = FC.layoutKey(sh, X.byId);
+    // (FITFIRST: the sheet's map of filled and empty space, for the placement's fit check, made from the pieces drawn here; a map that cannot be saved never stops the write)
+    try { const FreeMap = require("./_charmNestFreeMap"); await FreeMap.save(X.bucket, X.sheetId, FreeMap.build(X.buildJob(sh), sh.placements)); } catch (e) { X.notes.push("its map was not saved: " + String((e && e.message) || e).slice(0, 120)); }
     W.save.phase = "claim"; await saveW(X); await X.saveTask({ job });
   }
   if (W.save.phase === "claim") {
