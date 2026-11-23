@@ -52,7 +52,7 @@
   const ID = /^[A-Za-z0-9_.:~-]{1,64}$/, DESIGN_ID = /^[A-Za-z0-9_-]{4,64}$/, ORDER_ID = /^(?:\d{4,20}|CUSTOM-\d{8}-\d{1,5})$/, EXTRA = /^[A-Za-z][A-Za-z0-9_]{0,30}$/;
   const KNOWN = new Set(["id", "kind", "role", "source", "name", "hidden", "locked", "subpaths", "d", "children", "stroke", "fill", "lwPt", "weightMm", "even", "evenOdd", "fillRule",
     "text", "fontKey", "sizePt", "align", "lineGap", "tx", "ty", "sx", "sy", "rot", "matrix", "pivot", "bbox", "extra",
-    "pathD", "pathAt", "pathFlip", "pathRisePt", "pathRole", "tracking", "shape", "clipOf"]);
+    "pathD", "pathAt", "pathFlip", "pathRisePt", "pathRole", "tracking", "shape", "clipOf", "arcR", "arcX"]);   // (CURVETEXT: a text bent on a circle, charm-nest-ce-extras.js)
   const fin = v => typeof v === "number" && Number.isFinite(v);
   const str = (v, n) => (v == null ? "" : String(v)).slice(0, n);
   const r3 = v => { const r = Math.round(v * 1000) / 1000; return Object.is(r, -0) ? 0 : r; };
@@ -198,7 +198,7 @@
     if (x.evenOdd === true) out.evenOdd = true;
     if (x.fillRule === "evenodd" || x.fillRule === "nonzero") out.fillRule = x.fillRule;
     if (x.pathD != null && x.pathD !== "") { if (typeof x.pathD !== "string" || x.pathD.length > LIMITS.pathD || !/^[MLCZHVQSTAmlczhvqsta0-9eE.,+\-\s]*$/.test(x.pathD)) return no(at + `the path its words run along (pathD) is SVG path data of at most ${LIMITS.pathD / 1000} KB`); out.pathD = x.pathD; }
-    for (const k of ["pathAt", "pathRisePt", "tracking"]) if (x[k] != null) { if (!fin(x[k]) || Math.abs(x[k]) > 1e5) return no(at + `its ${k} is not a number`); out[k] = x[k]; }
+    for (const k of ["pathAt", "pathRisePt", "tracking", "arcR", "arcX"]) if (x[k] != null) { if (!fin(x[k]) || Math.abs(x[k]) > 1e5) return no(at + `its ${k} is not a number`); out[k] = x[k]; }
     if (x.pathFlip === true) out.pathFlip = true;
     if (x.pathRole != null && x.pathRole !== "") out.pathRole = str(x.pathRole, 20);
     if (x.shape != null) { const sh = cleanShape(x.shape); if (sh) out.shape = sh; }

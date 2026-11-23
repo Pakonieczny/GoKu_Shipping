@@ -8939,7 +8939,15 @@ const Engrave = window.Engrave = (() => {
   }
   let previewRecovery = false, previewRecoveryTimer = null, preparingJob = null;
   const isWorking = job => classifyTasks.has(job) || fitTasks.has(job) || preparingJob === job;
-  const canFit = job => !!(job.copies?.length && charmFor(job)?.outline && (sheetFor(job, job.copies[0])?.fileBase || job.pre));   // (ENGPRE: a job made before its piece was pooled is fitted on the charm it will have: the fit needs the outline, never the sheet)
+  /* APPROVENOW (Paul, 22 Nov 2026, order 4244269666: "This order is not allowing the user to Approve the back engraving": "Not approved: the back words wait for the piece's sheet"): a
+     piece made but not on any sheet yet (the cloud places new pieces at its place step, minutes on) is fitted on its own charm and approved as ENGPRE's are (job.pre: nothing waits for
+     the sheet; its back file is written once the piece is on one). Only a piece on a sheet still waits for that sheet's name (fileBase). */
+  const canFit = job => {
+    if (!(job.copies?.length && charmFor(job)?.outline)) return false;
+    if (sheetFor(job, job.copies[0])?.fileBase || job.pre) return true;
+    if (!job.copies.some(id => Pool.sheetOf(id) || savedSheetOf(id))) { job.pre = true; return true; }
+    return false;
+  };   // (ENGPRE: a job made before its piece was pooled is fitted on the charm it will have: the fit needs the outline, never the sheet)
   // (AUTOWORDS, Paul 26 Oct 2026, on a back engraving left waiting at "Engrave these words": "For some reason many of the back engravings do not get auto applied.
   //  All engravings must be added to each charm. The user should not need to press this 'Engrave these Words'". Every "words" job that holds words (a buyer's
   //  proposal, ENGPRE's free words, a sibling's words) is fitted and goes on to Approve by itself, where a person still sees the words on the piece before

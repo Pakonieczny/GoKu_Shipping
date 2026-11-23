@@ -295,14 +295,49 @@
   }
   const capOf = (engine, fontKey, size) => { const b = capBand(engine, fontKey, size); return b[1] - b[0]; };
   const isBent = it => !!it && it.kind === 'text' && typeof it.pathD === 'string' && it.pathD.length > 0;
+  /* CURVETEXT (Paul, 22 Nov 2026: "add the ability to curve the text so that it matches the circumference of the circle ... a simple, quick drag tool like illustrator has to easily
+     adjust any text so that it matches the form and circumference of a given circle disc"): words bent on a circle, every line of them. A text keeps arcR (pt, its own coordinates:
+     the radius its FIRST line's baseline is bent on; > 0 arches it (∩, the circle's centre below), < 0 curves it as a smile (∪, the centre above)) and arcX (the centre's x; the
+     words' middle when it is not set). Each line is bent on a circle of the same centre (the lines stay their distance apart), each letter upright on it, its shape unchanged, as
+     Illustrator sets type on a circle. The words stay words (font, size, weight, more lines), and are handed back as outlines, as every text. */
+  const isArced = it => !!it && it.kind === 'text' && !isBent(it) && fin(it.arcR) && Math.abs(it.arcR) > 1e-3;
+  const leadCache = new Map();
+  /** The distance from one line's baseline to the next, as the engine sets them (two capitals on two lines, measured). */
+  function leadOf(engine, it, size) {
+    const key = it.fontKey + '\u0001' + size + '\u0001' + num(it.lineGap, 0) + (engine.sig ? '\u0002' + engine.sig : ''); let v = leadCache.get(key);
+    if (v == null) {
+      let a = null, b = null; try { a = engine('H', it.fontKey, size, { align: 'left', lineGap: it.lineGap }); b = engine('H\nH', it.fontKey, size, { align: 'left', lineGap: it.lineGap }); } catch (e) { a = b = null; }
+      const ba = a && M.bboxOf(a.subpaths), bb = b && M.bboxOf(b.subpaths);
+      v = ba && bb && bb[3] - ba[3] > 0 ? bb[3] - ba[3] : 1.2 * size; leadCache.set(key, v); if (leadCache.size > 500) leadCache.delete(leadCache.keys().next().value);
+    }
+    return v;
+  }
+  /** The words of `it` bent on their circle: { subpaths, bbox } (null: the engine's own). */
+  function arcLayout(it, engine, L, size, dxOf) {
+    const R = +it.arcR, lead = leadOf(engine, it, size), all = []; for (const g of L.out) for (const sp of g.subs) all.push(sp);
+    const B = M.bboxOf(all); if (!B) return null;
+    const cx = fin(it.arcX) ? +it.arcX : (B[0] + B[2]) / 2, out = [];
+    for (const g of L.out) {
+      if (!g.subs.length) continue;
+      const b = M.bboxOf(g.subs); if (!b) continue;
+      const yb = g.line * lead, r = R - yb;   // (this line's baseline, and the radius it is bent on: the same centre, (cx, R))
+      const xc = (b[0] + b[2]) / 2 + dxOf(g);
+      if (!(r * R > 0)) { for (const sp of move(g.subs, dxOf(g), 0)) out.push(sp); continue; }   // (a line past the centre is left straight: it cannot go round it)
+      const phi = (xc - cx) / r, c = Math.cos(phi), sn = Math.sin(phi), px = cx + r * sn, py = R - r * c;
+      // the letter turned by phi about its own middle on its baseline (xc, yb), that point put on the circle at (px, py)
+      const m = [c, sn, -sn, c, px - (c * (xc - dxOf(g)) - sn * yb), py - (sn * (xc - dxOf(g)) + c * yb)];
+      for (const sp of M.transformSubpaths(g.subs, m)) out.push(sp);
+    }
+    return { subpaths: out, bbox: M.bboxOf(out) };
+  }
   /** CharmEditor.textLayout: words spaced (tracking) and words along their path. */
   const textLayout = {
     key(it) {
-      const tr = num(it.tracking, 0), bent = isBent(it);
-      if (!tr && !bent) return '';
-      return 't' + tr + (bent ? '|' + it.pathD + '|' + num(it.pathAt, 0.5) + '|' + (it.pathFlip ? 1 : 0) + '|' + num(it.pathRisePt, 0) : '');
+      const tr = num(it.tracking, 0), bent = isBent(it), arc = isArced(it);
+      if (!tr && !bent && !arc) return '';
+      return 't' + tr + (bent ? '|' + it.pathD + '|' + num(it.pathAt, 0.5) + '|' + (it.pathFlip ? 1 : 0) + '|' + num(it.pathRisePt, 0) : '') + (arc ? '|a' + r4(+it.arcR) + '|' + (fin(it.arcX) ? r4(+it.arcX) : 'm') : '');
     },
-    bent: isBent,
+    bent: it => isBent(it) || isArced(it),
     layout(it, engine) {
       const size = num(it.sizePt, 10), track = num(it.tracking, 0) / 1000 * size, bent = isBent(it);
       let words = String(it.text == null ? '' : it.text);
@@ -311,6 +346,7 @@
       if (!L) return null;
       const align = it.align || 'left', dxOf = g => g.at * track - (align === 'center' ? (g.of - 1) * track / 2 : align === 'right' ? (g.of - 1) * track : 0);
       const out = [];
+      if (!bent && isArced(it)) return arcLayout(it, engine, L, size, dxOf);   // (CURVETEXT)
       if (!bent) { for (const g of L.out) for (const sp of move(g.subs, dxOf(g), 0)) out.push(sp); return { subpaths: out, bbox: M.bboxOf(out) }; }
       const G = guideOf(it.pathD); if (!G) return null;
       const flip = !!it.pathFlip, W = flip ? G.rev : G.fwd, at = num(it.pathAt, 0.5), rise = num(it.pathRisePt, 0);
@@ -613,6 +649,8 @@
     bail: SV('<path d="M5.5 11.5h13v8.5h-13Z"/><circle cx="12" cy="7.3" r="3.6"/><circle cx="12" cy="7.3" r="1.5"/>'),
     clip: SV('<circle cx="12" cy="12" r="7.5"/><path d="M2.5 9h4M17.5 9h4M2.5 15h4M17.5 15h4" stroke-dasharray="1.6 1.6"/><path d="M6 9h12M6 15h12"/>'),
     unclip: SV('<circle cx="12" cy="12" r="7.5" stroke-dasharray="2.4 2"/><path d="M2.5 9h19M2.5 15h19"/>'),
+    curve: SV('<path d="M3.5 18C7 10.5 17 10.5 20.5 18"/><path d="M8.5 4.5h7M12 4.5v7.5"/>'),
+    straight: SV('<path d="M3.5 16h17"/><path d="M8.5 4.5h7M12 4.5v7.5"/>'),
     onPath: SV('<path d="M4 17.5C7 9 17 9 20 17.5" stroke-dasharray="2 2"/><path d="M8.2 12.6 9.7 8.6l1.6 3.8M8.6 11.4h2.3M13.3 8.3v4.3h1.7a1.1 1.1 0 0 0 0-2.2h-1.7"/>'),
     offPath: SV('<path d="M4 18.5h16" stroke-dasharray="2 2"/><path d="M7 15 9 9l2 6M7.7 13h2.6M13.5 9v6h2.1a1.6 1.6 0 0 0 0-3.2h-2.1"/>'),
     outline: SV('<rect x="4" y="5" width="9" height="9" rx=".6"/><circle cx="14.5" cy="14.5" r="5"/>'),
@@ -1082,22 +1120,109 @@
     return h;
   }
 
+  /* ── 6d · CURVETEXT: the Curve text tool (a press on words and a drag up or down bends them on a circle), Fit to the disc and Straighten ── */
+  const curvable = it => !!it && it.kind === 'text' && !it.locked && !isBent(it);
+  /** The charm's disc in face points: the biggest cut line's box (its middle and half its larger side), or the face's frame. */
+  function discOf(ctx) {
+    let best = null;
+    const visit = (items, P) => { for (const it of items || []) { if (!it || it.hidden) continue; if (it.kind === 'group') { visit(it.children, M.mul(P, ctx.geo.matrix(it))); continue; }
+      if (it.role !== 'cut') continue; let b = null; try { b = ctx.geo.drawn(it, P); } catch (e) { b = null; } if (b && (!best || (b[2] - b[0]) * (b[3] - b[1]) > (best[2] - best[0]) * (best[3] - best[1]))) best = b; } };
+    try { visit(ctx.items(), M.I); } catch (e) { best = null; }
+    if (best) return { cx: (best[0] + best[2]) / 2, cy: (best[1] + best[3]) / 2, r: Math.max(best[2] - best[0], best[3] - best[1]) / 2 };
+    const f = ctx.frame(); return f ? { cx: f.x0 + f.wPt / 2, cy: f.y0 + f.hPt / 2, r: Math.min(f.wPt, f.hPt) / 2 } : null;
+  }
+  /** A text's facts for bending: its matrix to the face (W) and back (Wi), its straight words' box in its own points (w, xMid), and the bend that fits the disc. */
+  function bendFacts(ctx, e) {
+    const W = M.mul(e.P || M.I, ctx.geo.matrix(e.it)), Wi = M.inv(W); if (!Wi) return null;
+    const flat = Object.assign({}, e.it); delete flat.arcR; delete flat.arcX;
+    let b = null; try { const r = ctx.geo.raw(flat); b = r && (M.bboxOf(r.subpaths) || r.bbox); } catch (e2) { b = null; }
+    if (!b || !(b[2] > b[0])) return null;
+    const d = discOf(ctx), c = d ? M.ap(Wi, d.cx, d.cy) : null;
+    return { W, Wi, w: b[2] - b[0], xMid: (b[0] + b[2]) / 2, fitR: c && Math.abs(c[1]) > 0.5 ? c[1] : null, fitX: c ? c[0] : null };
+  }
+  /** The drag that gives a bend 1/R over the width w, and back: the drag up is the bend's rise over the words' width at a gentle bend (h = w² / 8R), and goes on past
+   *  it without a limit, so a short drag bends the words round a disc much smaller than they are wide. */
+  const sagOf = (R, w) => (!fin(R) || !R ? 0 : w * w / (8 * R));
+  const radOf = (h, w) => (Math.abs(h) < 1e-6 ? null : w * w / (8 * h));
+  const bentPatch = (it, R, x) => { const n = Object.assign({}, it); if (R == null) { delete n.arcR; delete n.arcX; } else { n.arcR = r4(R); n.arcX = r4(x); } return n; };
+  const mmOf = v => (Math.abs(v) / PT).toFixed(1);
+  const curveTool = {
+    id: 'curve-text', title: 'Curve text', icon: IC.curve, cursor: 'ns-resize', tip: 'Drag a text up or down to curve it round the disc',
+    hint: 'Press on a text and drag up to arch it (∩), down to curve it (∪) · near the disc\'s own curve it snaps to fit it (Alt: no snap) · Fit to the disc and Straighten are on the bar',
+    onDown(ctx, ev, p) {
+      this.g = null; if (!p) return;
+      const es = sel(ctx).filter(e => curvable(e.it));
+      let e = es.length === 1 ? es[0] : null;
+      if (!e) { const hits = []; M.walk(ctx.items(), it => { if (it.kind === 'text' && curvable(it)) { const en = ctx.entry(it.id); let b = null; try { b = en && ctx.geo.drawn(en.it, en.P); } catch (x) { b = null; } if (b && p.x >= b[0] - 1 && p.x <= b[2] + 1 && p.y >= b[1] - 1 && p.y <= b[3] + 1) hits.push(en); } }); e = hits.length ? hits[hits.length - 1] : null; }
+      if (!e) { ctx.say('Press on a text to curve it'); return; }
+      const f = bendFacts(ctx, e); if (!f) { ctx.say('That text has no letters to curve'); return; }
+      ctx.select([e.it.id]);
+      this.g = Object.assign(f, { id: e.it.id, it0: e.it, p0: [p.x, p.y], h0: isArced(e.it) ? sagOf(+e.it.arcR, f.w) : 0 });
+    },
+    onMove(ctx, ev, p) {
+      const g = this.g; if (!g || !p || !(ev && ev.buttons)) return;
+      const L = g.Wi, dy = L[1] * (p.x - g.p0[0]) + L[3] * (p.y - g.p0[1]);   // (the drag in the words' own points, along their up)
+      const h = g.h0 - dy; let R = Math.abs(h) < 0.15 ? null : radOf(h, g.w), x = g.xMid, said;
+      const snap = !(ev && ev.altKey) && R != null && g.fitR != null && Math.sign(R) === Math.sign(g.fitR) && Math.abs(R - g.fitR) < 0.15 * Math.abs(g.fitR);
+      if (snap) { R = g.fitR; x = g.fitX; said = 'Fits the disc · radius ' + mmOf(R) + ' mm'; }
+      else said = R == null ? 'Straight' : (R > 0 ? 'Arched' : 'Curved') + ' · radius ' + mmOf(R * Math.sqrt(Math.abs(g.W[0] * g.W[3] - g.W[1] * g.W[2]))) + ' mm';
+      ctx.replaceItems({ [g.id]: bentPatch(g.it0, R, x) });
+      const en = ctx.entry(g.id); let b = null; try { b = en && ctx.geo.drawn(en.it, en.P); } catch (x2) { b = null; }
+      if (b && typeof ctx.live === 'function') ctx.live({ box: b, text: said });
+      g.R = R; g.snapped = snap;
+    },
+    onUp(ctx) {
+      const g = this.g; this.g = null; if (!g || g.R === undefined) return;
+      ctx.commit(g.R == null ? 'Straighten text' : 'Curve text');
+      log('textCurve', { face: ctx.face(), fits: !!g.snapped, radiusMm: g.R == null ? 0 : +mmOf(g.R) * Math.sign(g.R) });
+    }
+  };
+  const curvedSel = ctx => sel(ctx).filter(e => e.it.kind === 'text' && !e.it.locked && !isBent(e.it));
+  function arcFitRun(ctx) {
+    const es = curvedSel(ctx); if (!es.length) return;
+    const map = {}; let n = 0, far = 0;
+    for (const e of es) { const f = bendFacts(ctx, e); if (!f || f.fitR == null) { far++; continue; } map[e.it.id] = bentPatch(e.it, f.fitR, f.fitX); n++; }
+    if (!n) { ctx.say(far ? 'The words sit on the disc\'s middle: move them up or down first' : 'No words to fit'); return; }
+    ctx.replaceItems(map); ctx.commit('Fit text to the disc');
+    ctx.say(n === 1 ? 'Curved to fit the disc · drag with Curve text to change it' : `${n} texts curved to fit the disc`, 2600); log('textCurve', { face: ctx.face(), fits: true, n });
+  }
+  function arcOffRun(ctx) {
+    const es = sel(ctx).filter(e => isArced(e.it)); if (!es.length) return;
+    const map = {}; for (const e of es) map[e.it.id] = bentPatch(e.it, null);
+    ctx.replaceItems(map); ctx.commit('Straighten text'); log('textCurve', { face: ctx.face(), straight: true, n: es.length });
+  }
+  /** Over the charm: the circle a curved text's first line sits on, dashed, and its centre. */
+  function curveOverlay(ctx) {
+    let h = ''; const V = ctx.view();
+    for (const id of ctx.selection()) {
+      const e = ctx.entry(id); if (!e || !isArced(e.it)) continue;
+      const W = M.mul(V, M.mul(e.P || M.I, ctx.geo.matrix(e.it)));
+      let x = e.it.arcX; if (!fin(x)) { const f = Object.assign({}, e.it); delete f.arcR; delete f.arcX; try { const r = ctx.geo.raw(f), b = r && M.bboxOf(r.subpaths); x = b ? (b[0] + b[2]) / 2 : 0; } catch (x2) { x = 0; } }
+      const c = M.ap(W, x, +e.it.arcR), k = Math.sqrt(Math.abs(W[0] * W[3] - W[1] * W[2])), r = Math.abs(+e.it.arcR) * k;
+      if (!(r > 0) || r > 1e5) continue;
+      h += `<circle class="cx-guide" cx="${c[0].toFixed(1)}" cy="${c[1].toFixed(1)}" r="${r.toFixed(1)}" fill="none"/><circle class="cx-anchor" cx="${c[0].toFixed(1)}" cy="${c[1].toFixed(1)}" r="2.5"/>`;
+    }
+    return h;
+  }
+
   /* ── registering (the header's EXTENSION POINTS; the lists are read each time a workspace opens) ── */
   const presets = ['rrect', 'star', 'heart'].map(presetTool);   // (HOOPS, 11 Nov 2026: the Ring blank's tool is the Necklace Hoop now; SHAPES.ring stays for the rings drawn before)
   CE.tools = Array.isArray(CE.tools) ? CE.tools : [];
-  CE.tools.push(...presets, ...hoopTools, bailTool);
+  CE.tools.push(...presets, ...hoopTools, bailTool, curveTool);
   CE.commands = CE.commands && typeof CE.commands === 'object' ? CE.commands : {};
   Object.assign(CE.commands, {
     'cx.clip': { title: 'Clip to the charm', group: 'Clipping mask', key: 'Mod+7', icon: IC.clip, enabled: ctx => hasCut(ctx) || ctx.selection().length >= 2, run: clipRun },
     'cx.unclip': { title: 'Release the clip', group: 'Clipping mask', key: 'Mod+Alt+7', icon: IC.unclip, enabled: anyClipped, run: releaseRun },
     'cx.onPath': { title: 'Words along the path', group: 'Type', icon: IC.onPath, enabled: ctx => !!textAndPath(ctx), run: onPathRun },
     'cx.offPath': { title: 'Words off the path', group: 'Type', icon: IC.offPath, enabled: ctx => sel(ctx).some(e => isBent(e.it)), run: offPathRun },
+    'cx.arcFit': { title: 'Fit to the disc', group: 'Type', icon: IC.curve, bar: true, enabled: ctx => curvedSel(ctx).length > 0, run: arcFitRun },   // (CURVETEXT)
+    'cx.arcOff': { title: 'Straighten', group: 'Type', icon: IC.straight, bar: true, enabled: ctx => sel(ctx).some(e => isArced(e.it)), run: arcOffRun },
     'cx.jumpRing': { title: 'Jump ring on top', group: 'Shapes', icon: IC.bail, enabled: ctx => ctx.selection().length > 0, run: ctx => { bailOnTop(ctx); } },
     'cx.outline': { title: 'Outline view', group: 'View', key: 'Mod+Y', icon: IC.outline, context: false, run: outlineToggle },
     'cx.check': { title: 'Laser check', group: 'View', icon: IC.check, context: false, run: ctx => { if (W) { if (W.list && !W.list.hidden) W.list.hidden = true; Promise.resolve().then(() => openList(ctx)); } } }
   });
   for (const k of ['onOpen', 'onChange', 'onClose', 'overlays']) if (!Array.isArray(CE[k])) CE[k] = [];
-  CE.onOpen.push(onOpen); CE.onChange.push(onChange); CE.onClose.push(onClose); CE.overlays.push(overlay);
+  CE.onOpen.push(onOpen); CE.onChange.push(onChange); CE.onClose.push(onClose); CE.overlays.push(overlay, curveOverlay);
   CE.textLayout = textLayout;
 
   return {
