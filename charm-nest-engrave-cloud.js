@@ -93,7 +93,7 @@
     const fields = {}; for (const k of FIELD_KEYS) if (job[k] !== undefined) { const v = plain(job[k]); if (v !== undefined) fields[k] = v; }
     const at = Date.now();
     // (the line's own work first, so the cloud's copy of the job is this page's: the press then carries what the person approved)
-    try { const ES = root.CharmNestEngraveSync; if (ES && typeof ES.flush === "function") await Promise.race([ES.flush(), wait(3000)]); } catch (_) { /* the press carries what matters */ }
+    try { const ES = root.CharmNestEngraveSync; if (ES && typeof ES.flush === "function") await Promise.race([ES.flush(), wait(600)]); } catch (_) { /* the press carries what matters */ }
     let res;
     try { res = await api({ op: "engraveApprove", runId, lineKey, jobKey, at, by, dev: devOf(), text: job.text == null ? "" : String(job.text), place, fields, artAtBy: job.artAtBy || null, ...(ed ? { edit: ed.edit } : {}) }); }
     catch (e) { const d = (e && e.data) || {}; return { ok: false, local: !!d.local, message: d.error || (e && e.message) || "the cloud did not answer" }; }

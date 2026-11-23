@@ -8694,11 +8694,12 @@ const Engrave = window.Engrave = (() => {
   }
   const pendingCount = () => [...items().values()].filter(j => !j.editingBack && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone" && !unplacedPre(j)).length;   // (ENGPRE: the run's Engrave step waits for the engraving of pieces in the run; a line not nested yet is the Engrave tab's own list, counted by pendingRows)
   /** How many placements have already been settled in this run — the numerator of "3 of 9" on the card. */
+  const accepted = j => !!(j && !j.editingBack && j.state === "review" && j.approving && j.approving.cloud);   // (ACCEPTED, Paul 23 Nov 2026: the cloud holds this approval: it reads approved at once; charm-nest-engraving-seals.js accepted)
   const DECIDED = ["approved", "written", "skipped"];                    // the pieces that are decided: listed after the ones still to settle, and opened in the same detail card (NODECIDED)
   // (NONEKEPT, Paul 12 Nov 2026: "the actual order disappears somewhere": a piece a person approved with None (takeAway: state "none", decision.removed) is decided too: it stays in the list, under Approved, with its
   //  "no engraving" seal, and opens in the same card, where Front / Back puts its words back)
   const personNone = j => !!(j && j.state === "none" && j.decision && j.decision.removed);
-  const decidedJobs = () => [...items().values()].filter(j => (DECIDED.includes(j.state) || personNone(j)) && j.row.state !== "gone" && j.copies.length);
+  const decidedJobs = () => [...items().values()].filter(j => (DECIDED.includes(j.state) || accepted(j) || personNone(j)) && j.row.state !== "gone" && j.copies.length);
   /** A recalled set's engraving: each back written on its sheets becomes a decided job on the line it belongs to, with
    *  its words, who approved it and the file, so the Decided list reads the same for a set from March as for today's. */
   function fromRecall() {
@@ -8970,7 +8971,7 @@ const Engrave = window.Engrave = (() => {
   //  anything is cut; a job with no words, or with a character no font has (job.missing), still waits for a person. This undoes WORDSWAIT, same day.)
   const needsPreview = job => job.row.state !== "gone" && !isWorking(job) && job.lines?.length && !job.missing?.length &&
     (job.state === "words" || (["ready", "fitting"].includes(job.state) && canFit(job)));
-  const queuedJobs = jobs => jobs.filter(j => ["review", "words", "blocked", "classify", "ready", "fitting"].includes(j.state));
+  const queuedJobs = jobs => jobs.filter(j => ["review", "words", "blocked", "classify", "ready", "fitting"].includes(j.state) && !accepted(j));
   async function prepareWaitingPreviews() {
     if (previewRecovery) return;
     const owner = items();
@@ -10090,8 +10091,7 @@ const Engrave = window.Engrave = (() => {
     await approve(job,by,button,o);
     const now=()=>items().get(job.key) || job, t0=Date.now();
     if(!["approved","written"].includes(now().state) && now().approving && now().approving.cloud && button && button.isConnected){try{button.disabled=true;window.CNEngravingSeals?.busyLabel?.(button);}catch(_){}}   // (SAVING: the button pressed says it is still being saved, never a plain Approve again)
-    while(!["approved","written"].includes(now().state) && now().approving && now().approving.cloud && Date.now()-t0<APPROVE_MS.fit) await new Promise(res=>setTimeout(res,250));
-    return ["approved","written"].includes(now().state);
+    return ["approved","written"].includes(now().state) || accepted(now());   // (ACCEPTED: the press is over once the cloud holds it; the seal comes down with the saved file)
   }
   async function approve(job, by, button, o) {
     if(job._approvalTask){approveSay(job,"Still approving this placement…",null,true);return;}   // (APPROVEFIX: every wait of the task has a time limit, so this ends)
@@ -10164,7 +10164,8 @@ const Engrave = window.Engrave = (() => {
     { const EC = window.CharmNestEngraveCloud;
       if (EC && typeof EC.lane === "function" && !unplacedPre(job) && await EC.lane(job)) {
         const sent = await EC.approve(job, by);
-        if (sent && sent.ok) { job.approving = { at: sent.at, by, text: job.text, cloud: true, ...(sent.jobKey ? { jobKey: sent.jobKey } : {}) }; approveSay(job, `Sent to the cloud: it saves the ${faceWord(job)} file, then the seal comes down`, null, true); try { Session.schedule(); } catch (_) {} for (const show of [render, () => Orders.render()]) try { show(); } catch (_) {} return; }
+        if (sent && sent.ok) { job.approving = { at: sent.at, by, text: job.text, cloud: true, ...(sent.jobKey ? { jobKey: sent.jobKey } : {}) }; if (job.editingBack) approveSay(job, `Sent to the cloud: it saves the ${faceWord(job)} file, then the seal comes down`, null, true); else approveSay(job, ""); { const moveOn = !(o && o.moveOn === false) && !job.editingBack; if (moveOn && EG.opened === job.key) EG.opened = null; if (moveOn) try { goes(job, { to: EG_TAB("approved") }); } catch (_) {} }   // (ACCEPTED: it reads approved and the card moves on, as after any approval)
+          try { Session.schedule(); } catch (_) {} for (const show of [render, () => Orders.render()]) try { show(); } catch (_) {} return; }
         if (!(sent && sent.local) || cloudEdit) { notApproved(job, `Not approved: ${String((sent && sent.message) || "the cloud did not take the approval").replace(/^Not approved:\s*/i, "")}`); return; }   // (ITEM 9: an edit the cloud does not take is said, never built here)
       }
       // (VIEWAPPROVE, Paul 21 Nov 2026: a viewer writes no file and keeps no workspace, so a placed piece the cloud did not take is said in words, never tried on this browser; ITEM 9: an edit too)
@@ -10217,7 +10218,7 @@ const Engrave = window.Engrave = (() => {
     if(!hold)await saveBacks(job);
     } finally {
       job.approvalPreparing=false;
-      if(approvalButton){approvalButton.removeAttribute?.("aria-busy");approvalButton.textContent=job.state==="review" ? "Approve" : "Approved";if(job.state==="review")approvalButton.disabled=wasDisabled;}   // (APPROVEFIX: a press that did not approve leaves "Approve", never a live "Approved")
+      if(approvalButton){approvalButton.removeAttribute?.("aria-busy");approvalButton.textContent=job.state==="review" && !accepted(job) ? "Approve" : "Approved";if(job.state==="review" && !accepted(job))approvalButton.disabled=wasDisabled;}   // (APPROVEFIX: a press that did not approve leaves "Approve", never a live "Approved")
       if(job.state==="review")render();
     }
   }
@@ -12752,13 +12753,13 @@ const Engrave = window.Engrave = (() => {
      the rows that hold an approved piece (an approved or "Saved to sheet" engraving, an approved monogram), drawn by the same renderPlacementRows from the same decidedSelect() (so the search and the date chips apply, and a row is told as it is in Placements). A piece cut
      plain (skipped) is decided but not approved: a row of only those is in Placements alone. The chip's number is the rows it shows (approvedRows). Nothing is read, stored or waited on for it. */
   const onApproved = () => EG.tab === "approved";
-  const isApprovedJob = j => j.state === "approved" || j.state === "written" || personNone(j);   // (NONEKEPT)
+  const isApprovedJob = j => j.state === "approved" || j.state === "written" || accepted(j) || personNone(j);   // (NONEKEPT)
   const approvedSelect = () => decidedSelect().filter(isApprovedJob);
   const approvedRows = () => listRows(approvedSelect());
   const ordersIn = rows => new Set((rows || []).map((r, i) => ridOfJob(r && r.lead) || '~' + i)).size;   // (ONEORDER: the cards a set of rows makes)
   const shownList = () => (onApproved() ? approvedSelect() : shownQueue().concat(decidedSelect()));   // (APPTAB: Back / Next stop at what the open tab lists, and at the rest of the piece's own order)
   const listUniverse = () => { const q = queueUniverse(); return q.concat(decidedAll().filter(j => !q.includes(j))); };
-  const rowPending = r => !!r && r.jobs.some(j => !DECIDED.includes(j.state));
+  const rowPending = r => !!r && r.jobs.some(j => !DECIDED.includes(j.state) && !accepted(j));
   function listRows(selected) {
     let rows = rowsIn(selected, listUniverse());
     const a = rows.filter(rowPending), b = rows.filter(r => !rowPending(r)), E = EO(), ix = lineIndexFn();
@@ -12766,13 +12767,13 @@ const Engrave = window.Engrave = (() => {
     return rows;
   }
   /** What a piece's line in a row says it is: nothing for a written one (NOSAVED, Paul 23 Nov 2026: "I don't want to see these green Saved to sheet UI pills": its seal and green number say it; no word, so no dot), else the stage word of charm-nest-engrave-rows.js ("Approved", "No engraving", "Placement to check", ...). */
-  const stageText = (j, busy) => (j.state === "written" ? "" : j.backPending && j.state === "approved" ? `Approved · ${faceNoun(faceOfJob(j))} file waits for the cloud` : ROWS() ? ROWS().stageOf(j, busy) : "");
+  const stageText = (j, busy) => (j.state === "written" ? "" : accepted(j) ? "Approved" : j.backPending && j.state === "approved" ? `Approved · ${faceNoun(faceOfJob(j))} file waits for the cloud` : ROWS() ? ROWS().stageOf(j, busy) : "");
   /** What is still to settle, and what is decided, counted in ROWS: the numbers on the tabs and rails say what the lists show. (pendingCount and reviewedCount count jobs and stay as they are for the run's own checks.) */
   /* CLOUDWORLD (Paul, 20 Nov 2026): the Design & Engrave tab lists the lines whose engraving work the cloud holds (Charm_Nest_Engrave, as every computer saves it: charm-nest-engrave-sync.js), the same on
      every computer; a line one computer prepared alone in the background, and never sent, is not listed there. null: no cloud world (the page lists what it holds, as before). */
   const cloudEngraveKeys = () => { try { const CW = window.CloudWorld, rv = CW && CW.wanted && CW.wanted() && CW.review ? CW.review() : null; return rv && Array.isArray(rv.engraveKeys) ? (rv._engSet && rv._engSet.src === rv.engraveKeys ? rv._engSet.set : (rv._engSet = { src: rv.engraveKeys, set: new Set(rv.engraveKeys.map(String)) }).set) : null; } catch (_) { return null; } };
   const inCloudEngrave = j => { const keys = cloudEngraveKeys(); if (!keys) return true; const r = j && j.row; if (!r) return false; return keys.has(String(r.key)) || !!(r.parentRow && keys.has(String(r.parentRow.key))) || keys.has(String(j.rowKey || "")); };
-  const pendingJobs = () => tabItems().filter(j => !j.editingBack && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row && j.row.state !== "gone");
+  const pendingJobs = () => tabItems().filter(j => !j.editingBack && !accepted(j) && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row && j.row.state !== "gone");
   const pendingRows = () => { const p = pendingJobs(); return rowsIn(p, p).length; };
   /** CNT1 (Paul, 9 Nov 2026): the ORDERS with engraving still to settle (the same pieces pendingRows counts, by order number): the rail's Design & engrave step reads it (Orders.flowNow). */
   const pendingOrderIds = () => { const out = new Set(); for (const j of pendingJobs()) { const r = j.row.parentRow || j.row, id = r && r.order && r.order.receiptId; if (id != null && id !== "") out.add(String(id)); } return out; };
@@ -27321,8 +27322,8 @@ const OrderWin = window.OrderWin = (() => {
           const run=(Engrave.approveSettled || Engrave.approve)(eng.job,who,ap);CNEngravingSeals.busyLabel(ap);   // (it puts "Approved" on the button as it starts: the wait is said again until the stamp)
           // (the card turns Approved as soon as the stamp is down, the saving of the back file said under it; not when that saving is over)
           await CNEngravingSeals.stamped(eng.job,run);
-          if(!["approved","written"].includes(eng.job.state)){await run;ap.disabled=false;return;}
-          if(x0 && (!cyc || x0.eng?.job===eng.job))x0.eng={...eng,kind:"approved",by:eng.job.approvedBy,at:eng.job.approvedAt};
+          if(!["approved","written"].includes(eng.job.state) && !CNEngravingSeals.accepted(eng.job)){await run;ap.disabled=false;return;}
+          if(x0 && (!cyc || x0.eng?.job===eng.job))x0.eng={...eng,kind:"approved",by:eng.job.approvedBy || eng.job.approving?.by,at:eng.job.approvedAt || eng.job.approving?.at};
           if(SV.info)paintPanel(SV.info);if(window.RunCtl)RunCtl.poke();
           await run;
         }catch(e){if(!["approved","written"].includes(eng.job.state)){toast("Not approved: "+e.message,"bad",6000);ap.disabled=false;}}

@@ -2144,6 +2144,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (s === "none") return { kind: "none", label: "none", job, back, saved };
       if (["approved", "written"].includes(s)) return { kind: "approved", label: "approved", job, back, by: job.approvedBy, at: job.approvedAt, text: job.text };
       if (s === "skipped") return { kind: "skipped", label: "cut plain", job, by: job.approvedBy };
+      if (s === "review" && job.approving && job.approving.cloud) return { kind: "approved", label: "approved", job, back, by: job.approving.by, at: job.approving.at, text: job.text };   // (ACCEPTED: the cloud holds the approval)
       if (s === "review") return { kind: "approve", label: "to approve", job, text: job.text };
       if (s === "words" || s === "blocked") return { kind: "words", label: "words to confirm", job, text: job.text, reason: job.reason };
       if (["classify", "ready", "fitting"].includes(s)) {
@@ -2781,11 +2782,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const run = (Engrave.approveSettled || Engrave.approve)(job, who, b); CNEngravingSeals.busyLabel(b);   // (SETTLE: until the cloud has saved it)
       await run;
       if (W.sel !== x) return;
-      if (!["approved", "written"].includes(job.state)) { b.disabled = false; return; }
+      if (!["approved", "written"].includes(job.state) && !CNEngravingSeals.accepted(job)) { b.disabled = false; return; }
       renderEng(x, true); renderStrip(); renderOrders(); paintFx();
       if (window.RunCtl) RunCtl.poke();
     } catch (e) { toast("Not approved: " + e.message, "bad", 6000); b.disabled = false; }
-    finally { b.removeAttribute('aria-busy'); if (b.isConnected && ["approved", "written"].includes(job.state)) b.textContent = 'Approved'; }   // (a press that did not go through is given back by the card as it was: it never says Approved)
+    finally { b.removeAttribute('aria-busy'); if (b.isConnected && (["approved", "written"].includes(job.state) || CNEngravingSeals.accepted(job))) b.textContent = 'Approved'; }   // (a press that did not go through is given back by the card as it was: it never says Approved)
   }
 
   /* ── the order's pieces, here and elsewhere ── */

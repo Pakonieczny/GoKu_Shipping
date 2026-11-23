@@ -79,7 +79,9 @@
   /** The wait of an approval, said on its button: it cannot be pressed again, and a small spinner says what is being done. */
   function busyLabel(btn){if(!btn || !btn.isConnected)return;btn.disabled=true;btn.setAttribute('aria-busy','true');btn.innerHTML='<span class="spin"></span>Approving…';}
   /** Resolves when the approval stands (the stamp is down and the job is approved), or when `run` (the approval itself, which goes on to save the back file) ends. */
-  function stamped(job,run){return new Promise(res=>{let t=0;const done=()=>{clearInterval(t);res();};t=setInterval(()=>{if(['approved','written'].includes(job?.state))done();},80);Promise.resolve(run).then(done,done);});}
+  /* ACCEPTED (Paul, 23 Nov 2026: Approve took 17 to 112 s to say Approved): the cloud holds this approval (its own record and task, a name and a time): it reads Approved at once, everywhere; the seal and the order's event still come only with the saved file (SEALAFTERSAVE, 17 Nov). One the cloud cannot save goes back to To approve with the reason. */
+  const accepted=job=>!!(job && !job.editingBack && job.state==='review' && job.approving && job.approving.cloud);   // (an EDIT of an approved engraving waits for its file, ITEM 9)
+  function stamped(job,run){return new Promise(res=>{let t=0;const done=()=>{clearInterval(t);res();};t=setInterval(()=>{if(['approved','written'].includes(job?.state) || accepted(job))done();},80);Promise.resolve(run).then(done,done);});}
   /** The words of the piece's back file while it is saved or waits for the cloud: the approval stands either way. */
   function savingNote(job){
     if(!job)return null;
@@ -305,5 +307,5 @@
     row.dataset.sealCount=String(row.querySelectorAll('.seal').length);root.Seal.fit?.(row);button.disabled=true;button.textContent='Approved';button.setAttribute('aria-busy','true');
     try{await root.Seal.press(seal);}finally{button.disabled=wasDisabled;if(wasBusy==null)button.removeAttribute('aria-busy');else button.setAttribute('aria-busy',wasBusy);}
   }
-  return {merge,own:ownOnly,list,keep,add,html,press,record,panel,wirePanel,fromEvents,who,busyLabel,stamped};
+  return {merge,own:ownOnly,list,keep,add,html,press,record,panel,wirePanel,fromEvents,who,busyLabel,stamped,accepted};
 });

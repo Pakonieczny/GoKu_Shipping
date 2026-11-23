@@ -202,10 +202,11 @@
    *  Stops at the first that did not stand (the rest are left as they are). { ok, failed } */
   async function approveFaces(jobs, who, shownJob, shownBtn) {
     for (const j of jobs || []) {
-      if (j.state !== 'review') continue;
+      const held = x => !!(root.CNEngravingSeals && root.CNEngravingSeals.accepted && root.CNEngravingSeals.accepted(x));   // (ACCEPTED)
+      if (j.state !== 'review' || held(j)) continue;
       await (root.Engrave.approveSettled || root.Engrave.approve)(j, who, j === shownJob ? shownBtn || undefined : undefined);   // (SETTLE: followed until the cloud has saved it; judged before that, an approval being saved was called "not approved")
       const now = (root.Engrave.items && tryDo(() => root.Engrave.items().get(j.key), null)) || j;
-      if (!DONE.includes(now.state)) return { ok: false, failed: j };
+      if (!DONE.includes(now.state) && !held(now)) return { ok: false, failed: j };
     }
     return { ok: true, failed: null };
   }
@@ -222,6 +223,7 @@
     if (s === 'none') return Object.assign(base, { kind: 'none' });
     if (DONE.includes(s)) return Object.assign(base, { kind: 'approved', back: backOf(job, poolId) || undefined, by: job.approvedBy, at: job.approvedAt, text: job.text });
     if (s === 'skipped') return Object.assign(base, { kind: 'skipped', by: job.approvedBy, text: job.text });
+    if (s === 'review' && job.approving && job.approving.cloud) return Object.assign(base, { kind: 'approved', back: backOf(job, poolId) || undefined, by: job.approving.by, at: job.approving.at, text: job.text });   // (ACCEPTED)
     if (s === 'review') return Object.assign(base, { kind: 'approve', text: job.text });
     if (s === 'words' || s === 'blocked') return Object.assign(base, { kind: 'words', text: job.text, reason: job.reason });
     const working = !!(E && E.isWorking && tryDo(() => E.isWorking(job), false));
@@ -428,7 +430,7 @@
         S.busyLabel(btn);
         const done = await run;
         if (!done.ok) { ok = false; msg = `The ${faceOf(done.failed)} was not approved`; }
-        else if (jobs.some(j => !DONE.includes(((root.Engrave.items && tryDo(() => root.Engrave.items().get(j.key), null)) || j).state))) ok = false;
+        else if (jobs.some(j => { const n = (root.Engrave.items && tryDo(() => root.Engrave.items().get(j.key), null)) || j; return !DONE.includes(n.state) && !(S.accepted && S.accepted(n)); })) ok = false;   // (ACCEPTED)
         if (!ok && jobs.some(j => j.row && j.row.state === 'gone')) msg = 'This order has left the pull (cancelled or shipped)';
       } catch (e) { ok = false; msg = (e && e.message) || 'Not approved'; }
       finally { busy.delete(k); }
