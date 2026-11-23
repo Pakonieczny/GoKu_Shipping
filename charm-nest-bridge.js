@@ -9071,7 +9071,7 @@ const Engrave = window.Engrave = (() => {
       ...(keepFor(job) ? {keep:keepFor(job)} : {})};   // (KEEP: after a charm edit the words stay where they were placed: CharmNestEngraveFit keepPlacement)
   }
   const fitStamp = ({charm, ...options}) => JSON.stringify(options);
-  const fitTasks = new WeakMap();
+  const fitTasks = new WeakMap(), fitCut = new WeakSet();   // (fitCut: FITKEEP, the jobs whose placing a change cut short)
   /* EDITOR WORDS (27 Oct 2026): the placement of a face whose engraving is the charm editor's parts and no words. Its view and mask are the ones a fit makes (fitInput's own options, made here: with
      nothing to fit, no worker), its fit holds no letters (`artOnly`, set in the middle of the metal) and its check has no ink to check. So the face waits for Approve as any placement does, and the
      approval writes its file and record as for words: a front's file carries no words (its parts are in the sheet's own drawing), a back's carries the artBack. → true when placed. */
@@ -9102,7 +9102,8 @@ const Engrave = window.Engrave = (() => {
   }
   function fitJob(job) {
     if (fitTasks.has(job)) return fitTasks.get(job);
-    const task = Promise.resolve().then(() => fitJobOnce(job)).finally(() => { fitTasks.delete(job); render(); });
+    // (FITKEEP: a placing cut short while the piece was asked for again joins this very task, so it is made once more for the piece as it is now; never left unplaced behind a finished promise)
+    const task = Promise.resolve().then(() => fitJobOnce(job)).then(async r => { if (fitCut.delete(job) && !job.fit && job.state === "ready" && canFit(job)) { r = await fitJobOnce(job); fitCut.delete(job); } return r; }).finally(() => { fitTasks.delete(job); render(); });
     fitTasks.set(job, task);
     return task;
   }
@@ -9120,12 +9121,25 @@ const Engrave = window.Engrave = (() => {
     if (EG.cardKey === job.key) { EG.card = null; EG.cardKey = null; }
     if (typeof faceHasEditorArt === "function" && !engravedWords(job).length && faceHasEditorArt(job) && artOnlyPlacement(job)) { render(); return job; }   // (EDITOR WORDS: no words on a face the charm editor drew: its parts are the engraving, nothing to fit)
     if (typeof holdDrawing === "function") holdDrawing(job);   // (REFIT: the drawing it had stays on the work area, dimmed, until this fit lands)
-    job.reason = null; job.verify = null; job.fit = null; delete job.writtenFit;
+    /* FITKEEP (Paul, 23 Nov 2026): placing the words takes the old placement away first; a change of the piece meanwhile (a record from another computer) ended it with neither, and the piece stood to check with no
+       placement. Cut short, it gets back the placement it had, only when nothing that placement was made from changed: the same words, font and layout, the same charm and art, and no other place from the cloud. */
+    const sigOfWords = () => JSON.stringify([job.text, job.lineInput || null, job.lineMode || null, job.lineGap, job.fontKey || null, job.turnUp == null ? null : job.turnUp]);
     job.lineInput ||= job.lines.slice();
+    const charm0 = charmFor(job), held = job.fit ? { fit: job.fit, view: job.view, mask: job.mask, verify: job.verify, lines: job.lines, written: job.writtenFit, words: sigOfWords(), art: JSON.stringify(artStampsOf(job)), outline: charm0 && charm0.outline, members: charm0 && charm0.members } : null;
+    const cut = () => {
+      fitCut.add(job);
+      if (!held || job.fit || items() !== currentItems || currentItems.get(job.key) !== job || job.row !== row || !["review", "approved", "written"].includes(job.state)) return job;
+      const c = charmFor(job), k = job.keepPlace, f = held.fit;
+      if (held.words !== sigOfWords() || held.art !== JSON.stringify(artStampsOf(job)) || !c || c.outline !== held.outline || c.members !== held.members) return job;
+      if (k && Array.isArray(k.centre) && !(Array.isArray(f.centre) && Math.abs(k.centre[0] - f.centre[0]) < 0.05 && Math.abs(k.centre[1] - f.centre[1]) < 0.05 && Math.abs((+k.size || 0) - (+f.size || 0)) < 0.02 && Math.abs((+k.angle || 0) - (+f.angle || 0)) < 0.5)) return job;   // (the cloud names another place: that one is placed, never the old one)
+      Object.assign(job, { fit: f, view: held.view, mask: held.mask, verify: held.verify, lines: held.lines }); if (held.written !== undefined) job.writtenFit = held.written;
+      return job;
+    };
+    job.reason = null; job.verify = null; job.fit = null; delete job.writtenFit;
     job.lines = job.lineInput.slice();
     if (!F_.ok) return setReady(job);
     await ensureJobFont(job);
-    if (items() !== currentItems || currentItems.get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== state || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
+    if (items() !== currentItems || currentItems.get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== state || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return cut();
     if (!G.glyphCoverage(fontFor("Regular", job), job.lines.join("\n")).ok) return setReady(job);
     const poolId = job.copies[0]; const charm = charmFor(job); if (!charm) { job.state = "ready"; return job; }
     job.state = "fitting"; job.row.engrave.state = "fitting"; render();
@@ -9134,7 +9148,7 @@ const Engrave = window.Engrave = (() => {
     let result;
     try { result = await fitClient().run(input); }
     catch (e) {
-      if (items() !== currentItems || items().get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== "fitting" || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
+      if (items() !== currentItems || items().get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== "fitting" || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return cut();
       job.state = "blocked"; job.reason = e.message; job.flipError = e; job.row.engrave.state = "blocked"; job.row.engrave.reason = job.reason;
       Review.add({ kind: e.stage === "flip" ? "flipFailed" : "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason, checks:e.checks, images:e.images });
       agent({engrave:true}, "warn", `${job.row.order.receiptId}: ${job.reason}`);
@@ -9143,7 +9157,7 @@ const Engrave = window.Engrave = (() => {
     }
     // A result belongs to the exact job/input that requested it. A changed set,
     // skipped job or edit made during calculation cannot be overwritten.
-    if (items() !== currentItems || items().get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== "fitting" || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
+    if (items() !== currentItems || items().get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== "fitting" || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return cut();
     if (charmFor(job) !== charm || charm.outline !== input.charm.outline || charm.members !== input.charm.members || stamp !== fitStamp(fitInput(job, charmFor(job), Master.entryFor(job.row.spec.designSku) || {}))) return fitJobOnce(job);
     const {view,mask,lines,check}=result, kept=result.kept || null, had=KEPT.get(job), lost=!!input.keep && !kept;
     const fit=kept === "same" && had ? had : result.fit;   // (KEEP: the words where they were, as they were: the very fit, nothing laid out again)
@@ -9788,7 +9802,7 @@ const Engrave = window.Engrave = (() => {
     }
     if (o.approve === false) return { ok: true, kept: true, approved: [] };
     // (2) every engraved face read and fitted, with the staged words
-    const decided = new Set(), fitting = new Set(), jobs = {};
+    const decided = new Set(), fitting = new Set(), placing = new Map(), jobs = {};
     for (const f of on) {
       const text = String((faces[f] && faces[f].text) || "").trim(); let why = "", seen = "";
       for (;;) {
@@ -9799,6 +9813,20 @@ const Engrave = window.Engrave = (() => {
         if (["approved", "written"].includes(j.state)) break;
         if (j.state === "review" && j.fit && j._placeAt && !lateTasks.has(j) && !isWorking(j)) { const pc = j._placeAt; delete j._placeAt; if (j.view && !j.fit.artOnly) { const c = viewPointOf(j.view, pc); try { if (c && moveTo(j, c)) j.nudged = true; } catch (_) { /* the system's place stands */ } } const lk = j._placeLook; delete j._placeLook; if (lk) applyLook(j, lk); }   // (fitted by another path than prepareLate: the dragged place is put on it here)
         if (j.state === "review" && j.fit && !isWorking(j) && !lateTasks.has(j) && !j._placeAt && !fitTasks.get(j)) break;
+        /* PLACEFIRST (Paul, 23 Nov 2026, order 4242795385 piece 3: "Not approved: the back words were not placed: nothing moved for 4 minutes"): a face to check whose words have NO placement on this page (a
+           sync that could not place them, a placing another change cut short) matched no step of this wait, so the press waited out the silence and failed. It is placed first, at the place the cloud says
+           (CharmNestEngraveSync.placeNow); one that cannot be placed says why at once. Two tries; a placing under way is waited for. */
+        { const pl = placing.get(j);
+          if (pl && !pl.done) { if (Date.now() > until()) { why = `the ${f} words were not placed: nothing moved for ${minutesOf(silence)}`; break; } await wait(60); continue; }
+          if (j.state === "review" && !j.fit && !isWorking(j) && !lateTasks.has(j)) {
+            const Y = window.CharmNestEngraveSync, n = pl ? pl.n : 0;
+            if (n >= 2) { why = (pl.res && pl.res.why) || j.reason || `the ${f} words could not be placed on the charm`; break; }
+            if (!Y || typeof Y.placeNow !== "function") { if (!canFit(j)) { why = `the ${f} words wait for the piece's sheet`; break; } j.state = "ready"; placing.set(j, { n: n + 1, done: true, res: null }); continue; }
+            step("face", `Placing the ${f} words on the charm…`);
+            const t = { n: n + 1, done: false, res: null }; placing.set(j, t);
+            Promise.resolve().then(() => Y.placeNow(j)).catch(e => ({ ok: false, why: String((e && e.message) || e) })).then(r => { t.res = r || null; if (r && r.busy) t.n = n; t.done = true; });   // (busy: being placed already by the open card: no try of this press)
+            await wait(60); continue;
+          } }
         if (["words", "blocked"].includes(j.state)) { if (!text && !decided.has(j) && typeof faceHasEditorArt === "function" && !engravedWords(j).length && faceHasEditorArt(j) && artOnlyPlacement(j)) { decided.add(j); continue; }   /* (APPROVEALL, Paul 12 Nov 2026: "the approved button breaks on front or back or front and back options": a face the Charm Editor drew whose words were taken off is approved as drawn, never refused for words) */
           const said = text || (j.state === "words" ? String(j.text || "").trim() : "");   /* (APPROVEALL: Approve on words shown and not retyped approves those words) */
           if (!said || decided.has(j)) { why = j.reason || `the ${f} words need a decision`; break; } decided.add(j); await decideWords(j, { text: said, by, note: "edited" }); continue; }

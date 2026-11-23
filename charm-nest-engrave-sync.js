@@ -192,6 +192,7 @@
         /* KEEPAPPROVED (Paul, 18 Nov 2026, Michelle's computer: "the only thing missing is the approved engraving of the emoji heart"): a computer that opened the order with no charm wrote its job with NO place and back to Review, over the
            approved placement in the cloud. A cloud job with no place and no approval, for the very same words, is never taken over an approved placement this computer holds: it is kept, and sent again, so the cloud (and every computer) has it back. */
         if (["approved", "written"].includes(j.state) && j.fit && +j.approvedAt > 0 && !rj.place && !["approved", "written"].includes(rj.state) && String(rj.text == null ? "" : rj.text) === String(j.text == null ? "" : j.text)) { REPAIR.add(l.key); continue; }
+        const font0 = j.fontKey || null;
         for (const f of JOB_FIELDS) { if (rj[f] === undefined) delete j[f]; else j[f] = plain(rj[f]); }
         if (rj.place && FIT_STATES.has(rj.state) && (j.lineInput || j.lines || []).length) {
           // the same words, in the same font, at the same place: fitJob keeps a placement made for them (keepPlace), then the state it had there goes back on
@@ -199,6 +200,7 @@
           j.keepPlace = plain(rj.place); if (j.keepPlace) j.keepPlace.fontKey = j.fontKey || j.keepPlace.fontKey;
           // (LIGHTLOAD, Paul 13 Nov 2026: "THE GRID": the page froze for over 45 s at every load while every piece was refitted and every outline read at once): at the start of the page a piece is not refitted here (its fields are in place); it is outlined and fitted when it is opened (watchOpen)
           if (why === "start" && !onScreenKey(l.key)) { if (!sameFit(j)) { j.fit = null; j.view = null; j.mask = null; } continue; }   // (NOFALLBACK, Paul 13 Nov 2026: "Look at the thumbnails" / "remove these fallbacks, make it work"): a fit this page holds that is the cloud's placement is kept; any other is fitted again in the background (fitMissing)
+          const had = j.fit && sameFit(j) && font0 === (j.fontKey || null) ? { fit: j.fit, view: j.view, mask: j.mask, verify: j.verify } : null;   // (FITKEEP: the placement this page holds IS the one the cloud names)
           j.fit = null; j.view = null; j.mask = null; j.state = "ready";
           // (APPROVEDSTAYS, Paul 16 Nov 2026: "on my computer it was approved without any issues. Then when I refreshed the other computer tab my approval showed up ... This can not continue to happen"): the state the
           //  other computer sent (approved, written) is put back WHATEVER happens while the words are fitted here: a piece whose outline or sheet this computer could not read threw out of this step and was left at
@@ -208,7 +210,7 @@
           
             try { await E().fitJob(j); } catch (e) { console.warn("[engrave-sync] fit", l.key, e); }
           } catch (e) { console.warn("[engrave-sync] outline", l.key, e); }
-          finally { j.state = keepState; if (keepApproved.approvedAt !== undefined) Object.assign(j, keepApproved); }
+          finally { j.state = keepState; if (keepApproved.approvedAt !== undefined) Object.assign(j, keepApproved); if (!j.fit && had) Object.assign(j, had); }   // (FITKEEP: not placed again here: the same placement stays)
         } else if (!FIT_STATES.has(rj.state)) { j.fit = null; }
       }
       if (REPAIR.has(l.key)) { REPAIR.delete(l.key); setTimeout(() => repairSend(l.key), 400); }
@@ -318,6 +320,19 @@
   }
   /** The piece open on screen is outlined and fitted at once (it does not wait for the background pass) */
   const TRIED = new Map();   // (HELDENGRAVE: job key -> { at, n }: a pass that changed nothing; the next waits longer, 15 s, 30 s ... 2 min)
+  /** PLACEFIRST (Paul, 23 Nov 2026): the words of a job with no placement here, placed now at the place the cloud says (fitOne), for an Approve that needs them. -> { ok } | { ok: false, busy } (being placed already) | { ok: false, why } */
+  async function placeNow(j) {
+    if (!j) return { ok: false, why: "this piece is not on this computer any more" };
+    if (j.fit) return { ok: true };
+    if (FITTING.has(j.key)) return { ok: false, busy: true };
+    TRIED.delete(j.key);
+    await fitOne(j);
+    if (j.fit) return { ok: true };
+    const pid = (j.copies || [])[0];
+    if (!pid) return { ok: false, why: "the words have no piece to be placed on yet (the order has none on a sheet)" };
+    if (!safe(() => root.Pool.charmOf(pid) || root.Pool.previewCharmOf(pid), null)) return { ok: false, why: "the charm's drawing could not be read on this computer" };
+    return { ok: false, why: j.reason || "the words could not be placed on the charm" };
+  }
   function watchOpen() {
     setInterval(() => { safe(() => {
       const c = root.document && root.document.querySelector(".rvItem.full"), j = c && c._job; if (!j) return;
@@ -392,6 +407,6 @@
     };
     go();
   }
-  root.CharmNestEngraveSync = { why: k => WHY.get(String(k)) || "", state: () => Object.assign({}, st, { lines: SIGS.size, cloud: CLOUD.size, raised: RAISED.size }), flush: sweep, pull, raisedPush, sigOf: l => sigOf(lineOf(l)), confirm, cloudJobs, _take: take };
+  root.CharmNestEngraveSync = { why: k => WHY.get(String(k)) || "", state: () => Object.assign({}, st, { lines: SIGS.size, cloud: CLOUD.size, raised: RAISED.size }), flush: sweep, pull, raisedPush, sigOf: l => sigOf(lineOf(l)), confirm, cloudJobs, placeNow, _take: take };
   if (root.document) { if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", boot); else boot(); }
 })(typeof self !== "undefined" ? self : this);
