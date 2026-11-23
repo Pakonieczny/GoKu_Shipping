@@ -682,3 +682,23 @@
 #libView .libActive{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;padding:6px 0 2px}
 #libView .libActive[hidden]{display:none}
 @media(max-width:760px),(pointer:coarse){#libView .libFilters .cnBtn{height:40px;font-size:13px}}
+
+/* PIECECHIPS in the lists (Paul, 23 Nov 2026: "You should just have little small buttons for each piece … a lot of them in a single row without expanding vertically … which ones have already been
+   approved or not … at a glance"): a line of three pieces or more (discs, bars, copies; one face each) is told as small chips in one wrapping row, its number, its words and a dot for where it stands
+   (green ✓ approved, amber to check, red words to confirm, grey ring being prepared); the piece's full tag, stage and seal stay in the row for its readers and its title, only hidden here.
+   A Left | Right pair and a line engraved on both faces keep their lines. */
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])){display:flex!important;flex-wrap:wrap;align-items:center;gap:3px;counter-reset:egp}
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar{display:inline-flex!important;flex:0 0 auto!important;width:auto!important;max-width:16ch;align-items:center;gap:4px!important;min-height:0!important;margin:0!important;padding:2px 7px 2px 2px;border:1px solid var(--line);border-radius:999px;background:var(--card);counter-increment:egp;grid-template-columns:none;cursor:pointer}
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar::before{content:counter(egp);display:inline-grid;place-items:center;min-width:17px;height:17px;border-radius:50%;background:var(--paper2);font:600 10.5px var(--mono,ui-monospace,monospace);color:var(--ink70)}
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar > .egPiece{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar > .egEarSeal{display:none!important}
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar .w{flex:none!important;width:auto!important;min-width:0!important;font:600 12px var(--serif)!important;max-width:6ch!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;grid-column:auto;grid-row:auto}
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar .egEnd{grid-column:auto;grid-row:auto;display:inline-flex!important;flex:none!important;margin:0!important;width:auto!important;min-width:0!important}
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]{font-size:0!important;line-height:0!important;display:inline-block!important;width:8px!important;height:8px!important;padding:0!important;margin:0!important;border-radius:50%;background:var(--ink25);overflow:hidden}
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]::before,.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]::after{display:none}
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]:is([data-s=approved],[data-s=written]){width:auto!important;height:auto!important;background:none;font:700 11px/1 var(--sans)!important;color:#3f7a4c;overflow:visible}
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]:is([data-s=approved],[data-s=written])::before{content:"✓";display:inline!important}
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar:has([data-s=approved],[data-s=written])::before{background:#e3efe4;color:#2f6a3c}
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage][data-s=review]{background:#d49a2a}
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]:is([data-s=words],[data-s=blocked]){background:#c2452f}
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]:is([data-s=busy],[data-s=ready],[data-s=fitting],[data-s=classify]){background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink25)}
