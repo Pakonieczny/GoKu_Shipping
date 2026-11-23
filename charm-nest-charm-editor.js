@@ -864,6 +864,54 @@
     return { items: pruneEmpty(setList(items, parentId, list)), id: g.id };
   }
   /** The group's children take its place (its transform pushed into them). */
+  /* ISLANDS (Paul, 22 Nov 2026: "in the charm editor, I can't seem to ungroup a vectorized image which has several individual pieces in it that are not connected like words or letters,
+     and I should be able to ungroup those ... Make sure the group works like an illustrator with the same keyboard shortcut"): a traced picture, or words made into outlines, is ONE path of
+     many rings, which Ungroup left alone (it ungrouped groups only). Its separate PIECES are each outline with the holes directly inside it (an O keeps its hole, an A its counter); an
+     outline standing inside a hole is a piece of its own. → [[subpath indexes], ...] in the path's own order; one list when the path is one piece. */
+  function islandsOf(sps) {
+    const R = (sps || []).map((sub, i) => {
+      const f = flatten([sub])[0], pts = f ? f.pts : [];
+      let a = 0, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (let k = 0; k + 1 < pts.length; k += 2) { const x = pts[k], y = pts[k + 1], nx = pts[(k + 2) % pts.length], ny = pts[(k + 3) % pts.length]; a += x * ny - nx * y; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      return { i, pts, area: Math.abs(a / 2), box: [x0, y0, x1, y1], ring: !!f && pts.length >= 6 };
+    });
+    const up = R.map((_, i) => i), find = i => { while (up[i] !== i) { up[i] = up[up[i]]; i = up[i]; } return i; }, join = (a, b) => { a = find(a); b = find(b); if (a !== b) up[Math.max(a, b)] = Math.min(a, b); };
+    const meet = (p, q) => !(p.box[2] < q.box[0] || q.box[2] < p.box[0] || p.box[3] < q.box[1] || q.box[3] < p.box[1]);
+    const inside = (x, y, pts) => { let w = false; for (let k = 0, j = pts.length - 2; k < pts.length; j = k, k += 2) { const ax = pts[k], ay = pts[k + 1], bx = pts[j], by = pts[j + 1]; if ((ay > y) !== (by > y) && x < (bx - ax) * (y - ay) / (by - ay) + ax) w = !w; } return w; };
+    const cross = (p, q) => {   // (the two outlines cross or touch: one piece)
+      const P = p.pts, Q = q.pts, n = P.length, m = Q.length;
+      for (let a = 0; a < n; a += 2) { const ax = P[a], ay = P[a + 1], bx = P[(a + 2) % n], by = P[(a + 3) % n]; if (Math.max(ax, bx) < q.box[0] || Math.min(ax, bx) > q.box[2] || Math.max(ay, by) < q.box[1] || Math.min(ay, by) > q.box[3]) continue;
+        for (let c = 0; c < m; c += 2) { const cx = Q[c], cy = Q[c + 1], dx = Q[(c + 2) % m], dy = Q[(c + 3) % m];
+          const d1 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx), d2 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx), d3 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax), d4 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+          if (((d1 > 0) !== (d2 > 0) || d1 === 0 || d2 === 0) && ((d3 > 0) !== (d4 > 0) || d3 === 0 || d4 === 0)) return true; } }
+      return false;
+    };
+    const rings = R.filter(r => r.ring), heavy = rings.reduce((t, r) => t + r.pts.length, 0) > 400000;
+    // 1 · outlines that cross or touch are one piece
+    if (!heavy) for (let a = 0; a < rings.length; a++) for (let b = a + 1; b < rings.length; b++) if (meet(rings[a], rings[b]) && cross(rings[a], rings[b])) join(rings[a].i, rings[b].i);
+    // 2 · a ring wholly inside another (no crossing): its depth among the rings that hold it; a hole (odd) belongs to the smallest that holds it, an outline in a hole (even) is a piece of its own
+    for (const r of rings) {
+      let best = null, d = 0; const px = r.pts[0], py = r.pts[1];
+      for (const o of rings) { if (o === r || !(o.area > r.area) || px < o.box[0] || px > o.box[2] || py < o.box[1] || py > o.box[3] || find(o.i) === find(r.i) || !inside(px, py, o.pts)) continue; d++; if (!best || o.area < best.area) best = o; }
+      if (best && d % 2 === 1) join(r.i, best.i);
+    }
+    const groups = new Map(); for (const r of R) { const k = find(r.i); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r.i); }
+    return [...groups.values()].map(g => g.sort((p, q) => p - q)).sort((p, q) => p[0] - q[0]);
+  }
+  /** Ungroup a path of several pieces (ISLANDS): one path per piece, each where it was (the same transform, paint and role), in place of the path. → { items, ids } (ids: [] when it is one piece) */
+  function splitIslands(items, id, geo) {
+    const ix = indexTree(items, geo), e = ix.get(id);
+    if (!e || e.it.kind !== 'path' || e.it.locked) return { items, ids: [] };
+    const groups = islandsOf(e.it.subpaths || []); if (groups.length < 2) return { items, ids: [] };
+    // (each piece drawn where it was: the path's own turn and scale go into its points, as Illustrator's pieces stand where they stood; a transform kept on each would turn it about its OWN middle)
+    const W = geo.matrix(e.it), base = String(e.it.name || 'Path');
+    const parts = groups.map((g, k) => { const n = Object.assign({}, e.it, { id: newId(), name: `${base} ${k + 1}`, subpaths: transformSubpaths(g.map(i => e.it.subpaths[i]), W), tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 }); for (const f of ['shape', 'clipOf', 'matrix', 'pivot', 'bbox']) delete n[f]; return n; });
+    const parentId = e.parent ? e.parent.id : null, list = listOf(items, parentId, ix).slice();
+    list.splice(e.i, 1, ...parts);
+    return { items: setList(items, parentId, list), ids: parts.map(p => p.id) };
+  }
+  /** What Ungroup takes apart: a group, or a path of several pieces (ISLANDS; a path of one ring never asks). */
+  const ungroupable = it => !!it && (it.kind === 'group' || (it.kind === 'path' && !it.locked && (it.subpaths || []).length > 1));
   function ungroupItem(items, gid, geo) {
     items = normaliseAncestors(items, [gid], geo);
     const ix = indexTree(items, geo), e = ix.get(gid);
@@ -1091,7 +1139,7 @@
 
   const model = { MM, PT, I, mul, ap, inv, tr, rotM, scM, about, isI, bboxOf, union, transformSubpaths, flatten, dOf, rectSP, ellipseSP, lineSP,
     createGeo, decompose, composeInto, pushDown, retext, foldTextScale, walk, indexTree, replaceIn, removeIds, pruneEmpty, topmost, normaliseAncestors, copyItems, pasteItems, reid,
-    groupItems, ungroupItem, arrange, hitTest, touching, History, prepIn, exportItems, diffFace, changeCount, outlinesOf, newId, paintFill, paintStroke,
+    groupItems, ungroupItem, islandsOf, splitIslands, ungroupable, arrange, hitTest, touching, History, prepIn, exportItems, diffFace, changeCount, outlinesOf, newId, paintFill, paintStroke,
     weighSubpaths, weighItem, weighable, weightOf, lwOf, inkArea, canWeigh, LW_LASER_PT, WT_MIN_MM, WT_MAX_MM };
   Object.assign(model, { polygonSP, polygonRatio });
   Object.assign(model, { casedText, caseOf, styledEngine, CASES });   // (CETEXT, 28 Oct 2026: the text's style, for node tests and the extensions)
@@ -2766,7 +2814,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
       if (reveal && first && first.scrollIntoView) { try { first.scrollIntoView({ block: 'nearest' }); } catch (e) { /* old engines */ } }
       const n = S.sel.length, es = selEntries();
       $('[data-act="forward"]').disabled = !n; $('[data-act="backward"]').disabled = !n; $('[data-act="delete"]').disabled = !n;
-      $('[data-act="group"]').disabled = n < 2; $('[data-act="ungroup"]').disabled = !es.some(e => e.it.kind === 'group');
+      $('[data-act="group"]').disabled = n < 2; $('[data-act="ungroup"]').disabled = !es.some(e => ungroupable(e.it));
       if (aiDock && typeof aiDock.paint === 'function') { try { aiDock.paint(); } catch (er) { xErr('aiDock.paint', er); } }
     }
 
@@ -2867,7 +2915,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
       const kind = !n ? (S.tool === 'text' ? 'Characters' : 'No Selection') : n > 1 ? (es.every(e => e.it.kind === 'text') ? 'Type' : es.every(e => e.it.kind === 'path') ? 'Paths' : 'Mixed Objects')
         : es[0].it.kind === 'text' ? (S.editing ? 'Characters' : 'Type') : es[0].it.kind === 'group' ? (es[0].it.clipOf ? 'Clip Group' : 'Group') : (es[0].it.subpaths || []).length > 1 ? 'Compound Path' : 'Path';
       const kEl = $('[data-selkind]'); if (kEl.textContent !== kind) kEl.textContent = kind;
-      { const g = $('[data-ctl-group]'), u = $('[data-ctl-ungroup]'); if (g) g.disabled = n < 2; if (u) u.disabled = !es.some(e => e.it.kind === 'group'); }   // (GROUPBTN)
+      { const g = $('[data-ctl-group]'), u = $('[data-ctl-ungroup]'); if (g) g.disabled = n < 2; if (u) u.disabled = !es.some(e => ungroupable(e.it)); }   // (GROUPBTN; ISLANDS: a path of several pieces too)
       $$('[data-ai-when="text"]').forEach(el => { el.hidden = !showText; });
       // the paint the selection has (or the next shape or words will have): a fill engraves as a hatch, a stroke along the line; the swatch shows the role's colour or None
       const paint = list => {
@@ -3145,8 +3193,13 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
     }
     function ungroupSel() {
       let next = items(); const sel = [];
-      for (const e of selEntries()) { if (e.it.kind !== 'group') { sel.push(e.it.id); continue; } const r = ungroupItem(next, e.it.id, geo); next = r.items; sel.push(...r.ids); }
+      let split = 0;
+      for (const e of selEntries()) {
+        if (e.it.kind === 'path') { const r = splitIslands(next, e.it.id, geo); if (r.ids.length) { next = r.items; sel.push(...r.ids); split += r.ids.length; } else sel.push(e.it.id); continue; }   // (ISLANDS: a path of several pieces, one path a piece)
+        if (e.it.kind !== 'group') { sel.push(e.it.id); continue; } const r = ungroupItem(next, e.it.id, geo); next = r.items; sel.push(...r.ids);
+      }
       if (next !== items()) commit(next, sel);
+      else if (selEntries().some(e => e.it.kind === 'path' && (e.it.subpaths || []).length > 1)) { try { say('This shape is one piece: nothing to ungroup'); } catch (_) { /* the button says it */ } }
     }
     function toggleFlag(id, flag) {
       const e = entry(id); if (!e) return;
@@ -3724,7 +3777,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
       // (the Illustrator workspace, 28 Oct 2026: Illustrator's contextual menu for what is selected, charm-nest-ce-ai-keys.js, when the page has it and the menu bar's handle)
       { const AK = aiKeys(), w = aiW(); if (AK && w && AK.openContext(ctx, cx, cy, w, src || 'stage')) return; }
       const es = selEntries(), n = es.length, anyText = n === 1 && es[0].it.kind === 'text';
-      const lockable = n > 0, anyGroup = es.some(e => e.it.kind === 'group');
+      const lockable = n > 0, anyGroup = es.some(e => ungroupable(e.it));   // (ISLANDS)
       const it = (act, label, key, on, cls) => `<button class="ce-item${on ? '' : ' is-off'}${cls ? ' ' + cls : ''}" type="button" data-ctx="${act}" role="menuitem"${on ? '' : ' aria-disabled="true"'}>${label}${key ? `<em>${key}</em>` : ''}</button>`;
       const name = n === 1 ? rowName(es[0].it) : n > 1 ? `${n} things` : 'Nothing selected';
       ctx.innerHTML = `<div class="ce-menu__head">${esc(name)}</div>`
@@ -4420,7 +4473,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
       const es = selEntries(), leaves = selLeaves(), texts = leaves.filter(l => l.kind === 'text');
       const tsrc = texts.length ? texts[0] : null;
       return {
-        n: es.length, anyText: texts.length > 0, anyGroup: es.some(e => e.it.kind === 'group'), anyPath: leaves.some(l => l.kind === 'path'),
+        n: es.length, anyText: texts.length > 0, anyGroup: es.some(e => e.it.kind === 'group'), anyUngroup: es.some(e => ungroupable(e.it)), anyPath: leaves.some(l => l.kind === 'path'),
         canUndo: S.hist.canUndo, canRedo: S.hist.canRedo, clip: !!(S.clip && S.clip.length), face: S.face, faces: ['front', 'back'].filter(f => S.faces[f]), tool: S.tool,
         opts: { grid: !!S.grid, snapGrid: !!S.snapGrid, smart: !!S.smart, showGuides: !!S.showGuides, snapGuides: !!S.snapGuides }, outline: rootEl.classList.contains('cx-outline'),
         rulers: S.rulers, dock: S.dock, xpanel: xPanelOn, panels: X.panels.map(p => ({ id: String(p.id), title: String(p.title || p.id) })), importers: X.importers.length,

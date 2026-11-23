@@ -4889,10 +4889,17 @@ const Pool = window.Pool = (() => {
       const one = !set && sp && sp.skuSource === "alias" && sp.designSku && !sp.noDesign && !sp.ownDesign && !sp.customDone && !(sp.problems || []).length ? [String(sp.designSku)] : null, want = set || one;
       if (!want || ["gone", "committed"].includes(row.state) || row.hold) return;
       if (one && row._relinkTold && O.sameDesign(row._relinkTold, want[0], k => Master.entryFor(k))) return;   // (LISTPICK told a person this line's piece is cut, committed or released with the old drawing: no card offers to take it off)
-      if (row.changePending && row.repoolChanged && ((B.review && B.review.items) || []).some(x => x.key === "chg:" + row.key)) return;   // (already offered: the card stands until a person answers it)
       const units = Math.max(1, Math.round(+sp.quantity || 1)), expect = []; for (let u = 0; u < units; u++) for (const d of want) expect.push(d.toUpperCase());
       const made = live.slice().sort((a, b) => (+a.copy || 0) - (+b.copy || 0)).map(r => String(r.sku || "").toUpperCase());
-      if (set ? made.length === expect.length && made.every((s, i) => s === expect[i]) : made.length > 0 && made.every(s => O.sameDesign(s, want[0], k => Master.entryFor(k)))) return;   // (already made as the link says: for one design, every piece is that drawing, under whichever of its names)
+      const offered = ((B.review && B.review.items) || []).find(x => x.key === "chg:" + row.key);
+      if (set ? made.length === expect.length && made.every((s, i) => s === expect[i]) : made.length > 0 && made.every(s => O.sameDesign(s, want[0], k => Master.entryFor(k)))) {   // (already made as the link says: for one design, every piece is that drawing, under whichever of its names)
+        /* LINKDONE (Paul, 22 Nov 2026, order 4244297416: "the one necklace charm should have changed which it didn't": the cloud had made it again as SPORTS 12 - BULLSEYE 20 s after the
+           link was saved, but this card, offered while the old piece was still on the sheet, stood "until a person answers it", with the line's hold and no sheet shown): the pieces are what
+           the saved link says now, so this page's own card for that link is taken back and the line is not "changed" any more. A card for an order Etsy changed is never touched here. */
+        if (offered && /\(a saved link\)/.test(String(offered.why || ""))) { try { Review.remove("chg:" + row.key); } catch (_) { /* the card goes with the next read */ } row.changePending = false; row.repoolChanged = false; }
+        return;
+      }
+      if (row.changePending && row.repoolChanged && offered) return;   // (already offered: the card stands until a person answers it, or until the pieces are made as the link says, above)
       if (one && (!made.length || made.some(s => !s))) return;   // (nothing made yet: the line is simply made up from the link; a piece whose record names no design is not guessed at)
       const ids = new Set(row.poolIds || []);
       const fixed = allSheets().filter(sh => replaceLaserWhy(sh) && sh.charms.some(c => ids.has(c.poolId)));   // (IPL2: laser cut only) (INPLACE, Paul 20 Oct 2026: only a sheet the laser has CUT keeps its old piece; a draft, a full sheet, a formed, released or committed set's sheet gives it up and takes the new one in its spot, replaceCutWhy) // (PICKFULL, Paul 19 Oct 2026: a sheet that is only FULL (releaseFull) but still a draft, waiting for its set, has gone nowhere: its old pieces come off and the picked charm goes in; only a sheet out of draft, cut, committed, recalled or with its own QR label is left as it is)
@@ -20936,6 +20943,64 @@ const Review = window.Review = (() => {
     const lidOf = rr => String((rr.line && rr.line.listingId) || "").replace(/\D/g, ""), fromOf = rr => (window.CharmNestReviewLink && CharmNestReviewLink.fromOf ? CharmNestReviewLink.fromOf(rr.line, rr.spec) : String(rr.line.sku || "").toUpperCase());
     return rr => lidOf(rr) === off.lid && (!off.from || fromOf(rr) === off.from);
   }
+  /* REPOLISTING (Paul, 22 Nov 2026: "This type of update must also be the case for all listings/orders updated in the Charm Editor when the charm repo is being updated in the Charm
+     Editor"; order 4239999491 of listing 234758391 kept INITIAL_8391 after 9MM_DISC_8391 was updated from that listing's other order): a charm updated in the repository from an order's
+     piece (the Charm Editor's Update repository) is the charm that order's LISTING is cut as from then on. The listing's link is saved as Change SKU saves it ("listing L · SKU F is cut
+     as S", aliasPut; Etsy is NOT changed), so every later order of the listing is cut as S; and every open order of the listing whose pieces are another charm is made again as S (the
+     cloud's remakeline, as Change SKU asks it; the pieces of S itself are made again by the update's own remake). → { ok, why, lid, from, n (orders asked), text } */
+  async function listingFollow(o) {
+    o = o || {}; const sku = String(o.sku || "").trim().toUpperCase(), say = typeof o.say === "function" ? o.say : () => {}, who = String(o.by || "").trim() || employeeName() || "";
+    if (!sku || !Master.entryFor(sku)) return { ok: false, why: `${sku || "the charm"} is not in the charm repo on this page` };
+    const mine = Orders.rows().filter(r => r && r.order && String(r.order.receiptId) === String(o.order || "") && !r.parentRow && r.line);
+    const row = mine.find(r => (r.poolIds || []).map(String).includes(String(o.piece || ""))) || mine.find(r => String((r.spec && r.spec.designSku) || "").toUpperCase() === sku) || (mine.length === 1 ? mine[0] : null);
+    if (!row) return { ok: false, why: "the order's line is not open on this page" };
+    if (row.fromRecord) await ensureBought(row);
+    const off = editSkuOffer(row); if (!off.ok) return { ok: false, why: off.why };
+    if (off.viaLink) return { ok: false, why: "this listing is cut through a saved option link: change it with Change SKU", lid: off.lid };
+    if (!who) return { ok: false, why: "sign in first: the listing's charm is saved under your name", lid: off.lid };
+    if (off.from && off.from !== sku) {
+      say(`Listing ${off.lid}: “${off.from}” is cut as ${sku} from now on…`);
+      try { savedLink(await api("charmNestLibrary", { op: "aliasPut", listingId: off.lid, sku, fromSku: off.from, by: who, title: String(row.line.title || "").slice(0, 200) || undefined })); }
+      catch (err) { return { ok: false, why: `the listing's charm was not saved: ${(err && err.message) || err}`, lid: off.lid, from: off.from }; }
+      try { await Orders.loadMaps(true); Orders.interpretAll(); syncOrderItems(); Orders.render(); } catch (_) { /* read at the next pass */ }
+    }
+    if (o.remake === false) return { ok: true, lid: off.lid, from: off.from, n: 0, text: `Listing ${off.lid} is cut as ${sku} from now on` };
+    // the listing's open orders whose pieces are another charm (made again as sku); the ones of sku itself are made again by the update
+    const same = editSkuSame(off), pieceSku = id => { try { const r = B.pool.rows.get(String(id)); return r ? String(r.sku || "").toUpperCase() : ""; } catch (_) { return ""; } };
+    const rows = Orders.rows().filter(r => r && same(r) && r.key && !r.hold && !["gone", "committed", "skipped"].includes(r.state) && (r.poolIds || []).length && (r.poolIds || []).some(id => pieceSku(id) !== sku));
+    if (!rows.length) return { ok: true, lid: off.lid, from: off.from, n: 0, text: `Listing ${off.lid} is cut as ${sku}: no other open order of it needs making again` };
+    const keys = [...new Set(rows.map(r => r.key))].slice(0, 80), orders = [...new Set(rows.map(r => String(r.order.receiptId)))];
+    if (!B.run && window.CNViewer && CNViewer.on && CNViewer.on() && typeof window.CNRelayAsk === "function") {
+      say(`Making ${orders.length === 1 ? "order " + orders[0] : orders.length + " orders"} of listing ${off.lid} again as ${sku}…`);
+      const ans = await window.CNRelayAsk({ type: "remakeline", ids: keys, label: `Listing ${off.lid}: ${off.from || "no SKU"} → ${sku} (repository update)`.slice(0, 150) }, t => { try { say(String(t || "").slice(0, 160)); } catch (_) { /* a word only */ } }, 300000, { always: true });
+      return { ok: !!(ans && ans.ok), why: ans && !ans.ok ? `the cloud did not make the listing's orders again: ${(ans && ans.text) || "no answer"}` : "", lid: off.lid, from: off.from, n: orders.length, text: ans && ans.ok ? `Listing ${off.lid}: ${ans.text || "made again"}` : "" };
+    }
+    if (B.run) { for (const rr of rows) { try { await repool(rr); } catch (_) { /* the run makes it up */ } } await saveLinesNow(); return { ok: true, lid: off.lid, from: off.from, n: orders.length, text: `Listing ${off.lid}: ${orders.length} order(s) made again as ${sku}` }; }
+    return { ok: true, lid: off.lid, from: off.from, n: 0, text: `Listing ${off.lid} is cut as ${sku}; the computer that carries the run makes its orders again` };
+  }
+  window.CNListingFollow = listingFollow;
+  /* SYNCNOW (Paul, 22 Nov 2026: "Now it updated, but it took several minutes. This is unacceptable ... Once all the green checkmarks are visible to the user everything by then should
+     have been updated. Nothing should be waiting to update afterwards"): once the cloud has answered, this page reads what it made AT ONCE, never at its next refresh: the cloud's reading
+     of the orders (CloudWorld), the run's lines (the follow), the pieces of the lines changed (poolGet; a row this page wrote later keeps what it knows) and the run's sheets (forced);
+     then everything is drawn again. Only after that does a window say "Updated everywhere". keys: the lines changed; sku: or every line of that charm. → { pieces, sheets } */
+  async function freshNow(o) {
+    o = o || {}; const out = { pieces: 0, sheets: false }, sku = String(o.sku || "").trim().toUpperCase();
+    try { if (window.CloudWorld && typeof CloudWorld.refresh === "function") await CloudWorld.refresh("sku"); } catch (_) { /* the feed brings it */ }
+    const F = window.CharmNestRunFollow;
+    try { if (F && typeof F.now === "function") await F.now("sku"); } catch (_) { /* the feed brings it */ }
+    const keys = new Set((o.keys || []).map(String));
+    if (sku) for (const r of Orders.rows()) { if (!r || !r.key) continue; const ds = String((r.spec && r.spec.designSku) || "").toUpperCase(); if (ds === sku || (r.poolIds || []).some(id => String((B.pool.rows.get(id) || {}).sku || "").toUpperCase() === sku)) keys.add(r.key); }
+    const ids = [...new Set([...keys].flatMap(k => (((B.orders && B.orders.byKey && B.orders.byKey.get(k)) || Orders.rows().find(r => r && r.key === k) || {}).poolIds) || []).filter(Boolean).map(String))];
+    for (let i = 0; i < ids.length; i += 300) {
+      try { const got = await api("charmNestLibrary", { op: "poolGet", poolIds: ids.slice(i, i + 300) }, { quiet: true });
+        for (const [id, p] of Object.entries((got && got.pools) || {})) { const mine = B.pool.rows.get(id); if (!mine) B.pool.rows.set(id, p); else if ((+p.updatedAt || 0) >= (+mine.updatedAt || 0)) B.pool.rows.set(id, Object.assign({}, mine, p)); out.pieces++; } }
+      catch (_) { /* the feed brings it */ }
+    }
+    try { const rid = (F && F.state && F.state().runId) || (B.run && B.run.runId) || ""; if (rid && window.Recall && typeof Recall.follow === "function") { await Recall.follow(rid, { force: true }); out.sheets = true; } } catch (_) { /* the feed brings it */ }
+    try { Orders.interpretAll(); syncOrderItems(); Orders.render(); } catch (_) { /* drawn with the next render */ }
+    return out;
+  }
+  window.CNFreshNow = freshNow;
   /** SKUCARD: the charms Suggest offers (the Review card's own: its numbered designs and lookalikes, then the similar charms; the one it is cut as left out). → [{ sku, why }] */
   function editSkuChoices(row) { try { return fixChoices(row).more.slice(0, 12); } catch (_) { return []; } }
   /** SKUCARD: what an SKU edit of this line changes, for the window's chips: the open orders of the listing and SKU, the sheets their pieces are on, the pieces a cut keeps. */
@@ -20985,7 +21050,11 @@ const Review = window.Review = (() => {
     // (the panel's end: the sheets saved, every view updated, then the Etsy answer; the lines keep their marks until then, so a sweep that waited for a busy sheet is still an SKU edit)
     const end = async (flow, all, linked) => {
       await Promise.resolve(all).catch(() => null);
-      if (linked) { liveSku(); try { flow.line("views", "Updated everywhere: Orders, Review, the order window, the sheets, Library, Design & Engrave and the run banner (other screens at once)", "done"); } catch (_) { /* a word only */ } }
+      if (linked) {
+        try { flow.line("views", "Reading what the cloud made: the orders, their pieces and the sheets…", "work"); } catch (_) { /* a word only */ }
+        await freshNow({ keys: rows.map(r => r.key) }).catch(() => null);   // (SYNCNOW: the views are drawn from what the cloud made before this says so)
+        liveSku(); try { flow.line("views", "Updated everywhere: Orders, Review, the order window, the sheets, Library, Design & Engrave and the run banner (other screens at once)", "done"); } catch (_) { /* a word only */ }
+      }
       const er = await Promise.resolve(etsy).catch(() => null), ls = flow.panel ? flow.panel.lines() : [];
       const ew = er && er.ok ? "Etsy updated" : er && er.skipped ? "Etsy not changed" : "Etsy NOT updated";
       try { if (flow.panel) flow.panel.finish(linked ? `${sku} for listing ${off.lid} · ${ew}` : `Not saved in the app · ${ew}`, ls.some(x => x.state === "failed") ? "bad" : ls.some(x => x.state === "warn") ? "warn" : "ok"); } catch (_) { /* a word only */ }
@@ -21073,7 +21142,7 @@ const Review = window.Review = (() => {
       const rid0 = String(row.order.receiptId), cloudOn = !!(window.CNViewer && CNViewer.on && CNViewer.on());   // (G9: in mode "on" the words name the cloud)
       if (typeof window.CNRelayAsk !== "function") return no(cloudOn ? "The cloud cannot be asked from this page: reload it and try again" : "The run's computer cannot be asked from this page: reload it and try again");
       const ans = await window.CNRelayAsk({ type: "skuonce", ids: [row.key], sku, label: `Just this order: ${sku}` }, t => { try { if (opts && typeof opts.onStep === "function") opts.onStep(t); } catch (_) { /* a word only */ } }, 240000, { always: true });
-      if (ans && ans.ok) return { ok: true, sku, via: "once", rid: rid0, follower: true, text: ans.text };
+      if (ans && ans.ok) { try { if (opts && typeof opts.onStep === "function") opts.onStep("Reading what the cloud made…"); } catch (_) { /* a word only */ } await freshNow({ keys: [row.key] }).catch(() => null); return { ok: true, sku, via: "once", rid: rid0, follower: true, text: ans.text }; }   // (SYNCNOW)
       if (ans && ans.late) return { ok: false, late: true, why: ans.text, retry: ans.retry, later: ans.later };   // (NOWCMD: never "asked" as if done; the window says it in red, the toast carries Try again)
       if (ans && ans.cloud && !ans.ok) return { ok: false, failed: true, why: `The cloud did not change it: ${String(ans.text || "no answer").replace(/\.$/, "")}`, retry: ans.retry };
       if (ans && ans.queued) return { ok: true, queued: true, sku, via: "once", rid: rid0, follower: true, text: ans.text };

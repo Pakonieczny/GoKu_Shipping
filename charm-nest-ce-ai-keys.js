@@ -175,7 +175,7 @@
       }
       if (kind === 'image') list.push(sub('Image Trace', [on(R('obj.retrace', { label: 'Re-trace…' }))]), SEP);
       // Group / Ungroup, Join, Simplify (Illustrator's own order)
-      list.push(s.n > 1 ? R('obj.group') : null, s.anyGroup ? R('obj.ungroup') : null, on(R('obj.join')), on(R('obj.close')), kind !== 'text' ? on(R('obj.simplify')) : null, SEP);
+      list.push(s.n > 1 ? R('obj.group') : null, (s.anyUngroup != null ? s.anyUngroup : s.anyGroup) ? R('obj.ungroup') : null, on(R('obj.join')), on(R('obj.close')), kind !== 'text' ? on(R('obj.simplify')) : null, SEP);
       // the masks and compound paths, then the path operations a charm designer reaches for (Object ▸ Path in Illustrator: the cut line is ours)
       list.push(on(R('obj.clip', { label: 'Make Clipping Mask' })), on(R('obj.unclip', { label: 'Release Clipping Mask' })),
         on(R('obj.compound', { label: 'Make Compound Path' })), on(R('obj.uncompound', { label: 'Release Compound Path' })), SEP);

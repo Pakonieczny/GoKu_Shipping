@@ -221,11 +221,24 @@
       if (!r || !r.ok) { st.err = `Not updated · ${(r && r.text) || 'the repository did not answer'}`; log('repoUpdateRefused', { sku: st.id.sku, size: st.id.size || null, reason: r && r.reason, by: whoNow() }); paint(); return; }
       // the next update is measured from what the repository draws now
       try { const g = entryOf(st.id).geom; if (g && g.charmHash) st.id.charmHash = String(g.charmHash); } catch (_) { /* kept */ }
+      /* REPOLISTING (Paul, 22 Nov 2026: "This type of update must also be the case for all listings/orders updated in the Charm Editor when the charm repo is being updated in the
+         Charm Editor"): updated from an order's piece, the charm is the one the order's LISTING is cut as from now on: its link is saved (Etsy is not changed) and its other open
+         orders are made again with it (charm-nest-bridge.js listingFollow) */
+      let lf = null;
+      if (st.id.kind === 'order' && st.id.order && typeof root.CNListingFollow === 'function') {
+        st.busy = true; paint();
+        try { lf = await root.CNListingFollow({ order: st.id.order, piece: st.id.piece, sku: st.id.sku, by: whoNow(), remake: !st.keep, say }); } catch (e) { lf = { ok: false, why: String((e && e.message) || e) }; }
+        st.busy = false;
+        log('repoListing', { sku: st.id.sku, order: st.id.order, ok: !!(lf && lf.ok), lid: lf && lf.lid, from: lf && lf.from, n: lf && lf.n, why: lf && !lf.ok ? lf.why : null });
+      }
       wrap.dataset.dirty = '0'; wrap.dataset.done = '1'; base = sigOf();
       const order = st.id.kind === 'order' && !st.keep && !r.same;
       st.done = { same: !!r.same, closeOffer: order,
         text: r.same ? `${st.id.sku} already draws exactly this in the repository.`
           : `${st.id.sku}${st.id.size ? ' · ' + st.id.size : ''} now draws this on every computer.${st.keep ? ' Pieces already made keep the drawing they were made from.' : ' Open pieces that are not cut are being made again with it, each back in its own place.'}${order ? ' This order\'s piece is one of them: its work is in the repository now, so the editor can close.' : ''}` };
+      if (lf) st.done.text += lf.ok ? ` ${lf.text || ''}`.replace(/\s+$/, '') + '.' : ` The listing was not changed: ${lf.why}.`;
+      // (SYNCNOW: the card says "updated" only once this page has read what the cloud made: every line of the charm, its pieces and the sheets)
+      if (!r.same && typeof root.CNFreshNow === 'function') { st.busy = true; say('Reading what the cloud made: the orders, their pieces and the sheets…'); try { await root.CNFreshNow({ sku: st.id.sku }); } catch (_) { /* the feed brings it */ } st.busy = false; }
       log('repoUpdate', { sku: st.id.sku, size: st.id.size || null, by: whoNow(), from: r.was || null, to: (r.entry && r.entry.edited && r.entry.edited.to) || null, kind: st.id.kind, order: st.id.order || null, keepPlaced: !!st.keep, same: !!r.same });
       try { if (typeof root.toast === 'function') root.toast(r.same ? `${st.id.sku}: nothing to update` : `${st.id.sku} updated in the charm repository`, 'good', 5000); } catch (_) { /* the card says it */ }
       paint();

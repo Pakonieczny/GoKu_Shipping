@@ -151,7 +151,7 @@
     xe('obj.centre', 'ops.centre', 'Center on the Charm', null, { sub: 'Align' }),
     xe('obj.alignBar', 'ops.alignBar', 'Align & Distribute…', null, { sub: 'Align', menuOk: true }),
     { id: 'obj.group', label: 'Group', key: 'Mod+G', ctx: 'group', on: w => st(w).n > 1, own: true },
-    { id: 'obj.ungroup', label: 'Ungroup', key: 'Mod+Shift+G', ctx: 'ungroup', on: w => st(w).anyGroup, own: true },
+    { id: 'obj.ungroup', label: 'Ungroup', key: 'Mod+Shift+G', ctx: 'ungroup', on: w => st(w).anyUngroup != null ? st(w).anyUngroup : st(w).anyGroup, own: true },   // (ISLANDS: a path of several pieces too)
     { id: 'obj.lock', label: 'Selection', key: 'Mod+2', on: sel, run: act('lock'), sub: 'Lock' },
     xe('obj.lockOthers', 'ops.lockOthers', 'Everything Else', null, { sub: 'Lock' }),
     { id: 'obj.unlockAll', label: 'Unlock All', key: 'Mod+Alt+2', run: act('unlockAll') },
