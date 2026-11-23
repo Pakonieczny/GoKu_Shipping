@@ -384,12 +384,12 @@
 .egEarSwitch.egMany{flex-wrap:wrap;border-radius:14px}
 .egEarSwitch.egMany .egEarTab{flex:0 0 auto;max-width:100%}
 /* PIECECHIPS (Paul, 23 Nov 2026): the pieces of a line of several, one small chip each, in a row that wraps; number, words, and a dot for where it stands */
-.egEarSwitch.egChips,.egCycle .egEarSwitch.egChips{display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;gap:4px;padding:3px;border-radius:12px;width:auto}
-.egChips .egChipSum{font:600 9.5px var(--mono,ui-monospace,monospace);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);padding:0 5px 0 4px;white-space:nowrap}
-.egChips .egEarTab.egChip,.egCycle .egChips .egEarTab.egChip{flex:0 0 auto;flex-wrap:nowrap;gap:5px;padding:2px 9px 2px 2px;border:1px solid var(--line);background:var(--card);border-radius:999px;max-width:16ch;text-align:left}
+.egEarSwitch.egChips,.egCycle .egEarSwitch.egChips{display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;gap:3px;padding:3px;border-radius:12px;width:auto}
+.egChips .egChipSum{font:600 10px var(--mono,ui-monospace,monospace);color:var(--ink45);padding:0 3px 0 4px;white-space:nowrap}
+.egChips .egEarTab.egChip,.egCycle .egChips .egEarTab.egChip{flex:0 0 auto;flex-wrap:nowrap;gap:4px;padding:2px 7px 2px 2px;border:1px solid var(--line);background:var(--card);border-radius:999px;max-width:16ch;text-align:left}
 .egChip .egPiece,.egChip .egEarStage,.egChip .egEarFont{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-.egChip .egChipN{display:inline-grid;place-items:center;min-width:19px;height:19px;border-radius:50%;background:var(--paper2);font:600 10.5px var(--mono,ui-monospace,monospace);color:var(--ink70)}
-.egChip .egEarWords{font:600 12px var(--serif);max-width:8ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.egChip .egChipN{display:inline-grid;place-items:center;min-width:17px;height:17px;border-radius:50%;background:var(--paper2);font:600 10.5px var(--mono,ui-monospace,monospace);color:var(--ink70)}
+.egChip .egEarWords{font:600 12px var(--serif);max-width:6ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .egChip .egChipS{width:8px;height:8px;border-radius:50%;background:var(--ink25);flex:none}
 .egChip[data-st=ok] .egChipS{width:auto;height:auto;background:none;color:#3f7a4c;font:700 11px var(--sans);font-style:normal}.egChip[data-st=ok] .egChipS::before{content:"✓"}
 .egChip[data-st=ok] .egChipN{background:#e3efe4;color:#2f6a3c}

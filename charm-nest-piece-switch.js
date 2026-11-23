@@ -128,7 +128,7 @@
     o = o || {}; const ps = pieces || [], kind = kindOf(ps);
     const aria = kind === 'ears' ? 'The left and the right ear of this piece' : kind === 'discs' ? (ps.length && ps.every(p => p.kind === 'copy') ? 'The pieces of this order, one by one' : 'The discs of this order, one by one') : 'The pieces of this order, one by one';
     const done = ps.filter(p => ['approved', 'written'].includes(p.state)).length, noun = ps.length && ps.every(p => p.kind === 'disc') ? 'discs' : 'pieces';
-    return `<span class="egEarSwitch${kind === 'ears' ? '' : ' egMany egChips'}" role="group" aria-label="${aria}">${kind === 'ears' || o.compact ? '' : `<span class="egChipSum">${ps.length} ${noun} · ${done} ✓</span>`}${ps.map((p, i) => {
+    return `<span class="egEarSwitch${kind === 'ears' ? '' : ' egMany egChips'}" role="group" aria-label="${aria}">${kind === 'ears' || o.compact ? '' : `<span class="egChipSum" title="${done} of ${ps.length} ${noun} approved">${done}/${ps.length} ✓</span>`}${ps.map((p, i) => {
       const on = p.key === key, ft = o.fonts ? fontText(p.font) : '', fn = o.fonts ? fontNote(p.font) : '';
       const what = kind === 'ears' ? 'the ' + p.name.toLowerCase() : p.name.toLowerCase();
       // COMPACT (the order window's "Its pieces" row, ONEROW 12 Oct 2026): the very same switch for a list row that has no room for words and stages: one small tag per piece
