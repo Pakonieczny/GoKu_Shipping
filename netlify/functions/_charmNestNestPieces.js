@@ -103,9 +103,10 @@ function create(o) {
     if (!rc.poolId) throw new Error("a piece that is no order's (dropped on a page by hand) is nested on a computer");
     if (!pool) throw new Error(`its piece record ${rc.poolId} is not in the cloud`);
     // (a custom design is in no master file: it is made from its own file, the one its sheet was cut from: the record's sources)
-    const own = pool.custom || rc.custom ? (rec.sources || []).find(s => s && (s.id === rc.sourceId || s.name === rc.sourceName)) : null;
+    let own = pool.custom || rc.custom ? (rec.sources || []).find(s => s && (s.id === rc.sourceId || s.name === rc.sourceName)) : null;
     const sku = String(pool.sku || rc.sku || "").trim().toUpperCase();
     const entry = own ? null : await fetchEntry(sku);
+    if (!own && !entry && (pool.custom || rc.custom) && pool.aiPath) own = { path: String(pool.aiPath).replace(/#fit-.*$/, "") };   // (OWNFILE, Paul 23 Nov 2026: "why would you stop a sheet from being fully filled just because there's a custom order?": SS Draft 11 placed nothing from the evening of 22 Nov on: order 4241324766's custom drawing was not in the sheet's own list of files (empty), so it was "not in the library", and every nest of the sheet was thrown away. A custom piece's record names its drawing: it is made from that)
     if (!entry && !(own && (own.path || own.url))) throw new Error(`its design ${sku || "(no SKU)"} is not in the library`);
     const src = entry ? await Make.masterCharm(entry, pool.size || null) : await Make.masterCharm({ sku: sku || "CUSTOM", aiPath: own.path || own.url, aiUrl: null }, null);
     // a piece of a pair is cut from its own body, turned over when it is the mirror image (the pool row says which; the record too)

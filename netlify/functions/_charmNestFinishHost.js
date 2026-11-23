@@ -153,24 +153,29 @@ async function makePieces(env) {
     const snaps = await db.getAll(...ids.slice(i, i + 100).map(id => db.collection("Charm_Pool").doc(id)));
     for (const s of snaps) if (s.exists) BB.pool.rows.set(s.id, Object.assign({ poolId: s.id }, s.data()));
   }
-  const charms = [], missing = [];
+  /* ONEBAD (Paul, 23 Nov 2026): a piece that waits on the sheet (no place yet) and cannot be made never stops the sheet from being written: it keeps waiting, said by name (waiting), and every
+     other piece is placed. Only a piece that HAS a place and cannot be made stops the write (missing): writing without it would cut the sheet without it. The record's own list of pieces is never
+     written here, so nothing leaves the sheet. */
+  const charms = [], missing = [], waiting = [];
   for (const { p, c: rc } of placed) {
     if (env.pace) await env.pace();
-    if (!rc) { missing.push(`placement ${p && p.id} names no piece of the sheet`); continue; }
+    const miss = t => (p ? missing : waiting).push(t);
+    if (!rc) { miss(`placement ${p && p.id} names no piece of the sheet`); continue; }
     if (rc.excluded) continue;
-    if (!rc.poolId) { missing.push(`${rc.name || rc.id} is no order's piece (a file dropped on a card): the cloud cannot make it again`); continue; }
+    if (!rc.poolId) { miss(`${rc.name || rc.id} is no order's piece (a file dropped on a card): the cloud cannot make it again`); continue; }
     // (TAKENRELOAD: a piece taken off the sheet leaves its list of pieces at once while its place is still in the layout: it is not drawn back)
     if (rec.dirty === true && Array.isArray(rec.poolIds) && !rec.poolIds.map(String).includes(String(rc.poolId))) continue;
     const pool = BB.pool.rows.get(String(rc.poolId));
-    if (!pool) { missing.push(`${rc.poolId}: its piece record is not in the cloud`); continue; }
+    if (!pool) { miss(`${rc.poolId}: its piece record is not in the cloud`); continue; }
     try {
-      const own = pool.custom || rc.custom ? (rec.sources || []).find(s => s && (s.id === rc.sourceId || s.name === rc.sourceName)) : null;
+      let own = pool.custom || rc.custom ? (rec.sources || []).find(s => s && (s.id === rc.sourceId || s.name === rc.sourceName)) : null;
       const entry = own ? null : await Master.fetchEntry(pool.sku);
-      if (!entry && !(own && (own.url || own.path))) { missing.push(`${pool.orderId || rc.poolId} · ${pool.sku || rc.sku}: no design in the library`); continue; }
+      if (!own && !entry && (pool.custom || rc.custom) && pool.aiPath) own = { path: String(pool.aiPath).replace(/#fit-.*$/, "") };   // (OWNFILE: _charmNestNestPieces.js)
+      if (!entry && !(own && (own.url || own.path))) { miss(`${pool.orderId || rc.poolId} · ${pool.sku || rc.sku}: no design in the library`); continue; }
       const src = entry ? await maker.masterCharm(entry, pool.size) : await maker.masterCharm({ sku: rc.sku || pool.sku, aiPath: own.path || own.url, aiUrl: own.url }, null);
       const piece = PoolPieces.cleanFields(pool).side ? pool : PoolPieces.cleanFields(rc).side ? rc : null;
       const base = await maker.ensureBase(src, piece, rc.hash ? rc : pool).catch(() => null);
-      if (!base) { missing.push(`${pool.orderId || rc.poolId} · ${pool.sku}: its ${piece && piece.side === "L" ? "left" : "right"} body is no longer in the design`); continue; }
+      if (!base) { miss(`${pool.orderId || rc.poolId} · ${pool.sku}: its ${piece && piece.side === "L" ? "left" : "right"} body is no longer in the design`); continue; }
       // (the page's rebuildOnce: the piece's charm, its own artwork edit over it, then the record's and the pool row's facts; it is held where its record placed it)
       const charm = await ArtEdit.piece(maker.cloneCharm(base, String(rc.id)), String(rc.poolId), pool);
       const ae = AE.exec(String(charm.hash || "")), keptHash = String(rc.hash || "").replace(AE, "");
@@ -187,9 +192,9 @@ async function makePieces(env) {
       // (OWNSCALE: a piece saved a little smaller than the standard with no size mark of its own takes its size from its placement, so the checks measure it as it lies)
       if (p) { const ratio = Number.isFinite(+p.scale) && +p.scale > 0 ? +(+p.scale / CHARM_SCALE).toFixed(5) : 1; if (!(man && man.size) && Math.abs(ratio - 1) > 0.0005 && ratio >= 0.8 && ratio <= 1.2) { charm.manual = Object.assign({ by: "", at: 0 }, charm.manual || {}, { size: ratio, fit: "inplace" }); charm.pinned.size = ratio; } }
       charms.push(charm);
-    } catch (e) { missing.push(`${pool.orderId || rc.poolId} · ${pool.sku || rc.sku}: ${String((e && e.message) || e).slice(0, 200)}`); }
+    } catch (e) { miss(`${pool.orderId || rc.poolId} · ${pool.sku || rc.sku}: ${String((e && e.message) || e).slice(0, 200)}`); }
   }
-  return { charms, sources: SS.poolSources, missing };
+  return { charms, sources: SS.poolSources, missing, waiting };
 }
 
 module.exports = { DEFAULTS, STOCK_PRESETS, METAL_LABEL, METAL_TAG, CHARM_SCALE, labelOf, settings, shareFields, stockFor, cornerPtSetting, cornerSheet, handPlacedSheet, insetFor, inflatedArea, shapeSignature,

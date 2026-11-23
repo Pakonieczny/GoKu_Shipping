@@ -546,6 +546,7 @@ async function ready(X, o = {}) {
     const pace = (() => { let at = Date.now(); return async () => { await new Promise(r => setImmediate(r)); if (Date.now() - at > 5000) { X.live(); at = Date.now(); } }; })();
     const made = await X.Host.makePieces({ db: X.db, bucket: X.bucket, rec: X.rec, S: X.S, read: X.read, log: X.log, pace });
     if (made.missing.length) throw new Stop("failed", `${made.missing.length === 1 ? "A piece" : made.missing.length + " pieces"} of ${X.rec.fileBase || X.sheetId} could not be made again from the library: ${made.missing.slice(0, 4).join("; ")}${made.missing.length > 4 ? "…" : ""}`);
+    if ((made.waiting || []).length) X.notes.push(`${made.waiting.length === 1 ? "A piece waits" : made.waiting.length + " pieces wait"} on the sheet, not placed, for a person: ${made.waiting.slice(0, 4).join("; ")}${made.waiting.length > 4 ? "…" : ""}; every other piece goes on`);   // (ONEBAD)
     X.sources = made.sources; X.byId = new Map(made.charms.map(c => [c.id, c]));
     X.sh = sheetOf(X, made.charms);
     // (a Rose Gold / 10K / 14K sheet's stock: its size and the shape left of it, which the geometry check and the corners read; the page's sh.roseStock)
