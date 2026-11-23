@@ -362,11 +362,30 @@ async function pass(env) {
       if (n) out.cmdNow = (out.cmdNow || []).concat([where]).slice(-20);
       return n;
     };
+    /* CMDLANE (Paul, 22 Nov 2026: "Nesting new orders always takes last priority, user updated in the system always must take priority and happen immediately in real-time so users
+       don't need to wait"; a Back on its sheet waited two minutes behind one unit of the run): the requests were looked at only BETWEEN units, so a person waited for the unit in hand.
+       Now while any unit or pass item of the run works, a lane of its own beside it looks at the requests every few seconds (cmdNow, as between units: the same commands item, its
+       claim, this pass's lease and fence, oldest first, each idempotent by its own keys) and does a person's request at once; the run's own work goes on beside it and comes second.
+       One request at a time in the lane; a fence or a hand-back met in the lane ends the pass once the unit in hand returns, as a unit's own does. */
+    const LANE_MS = 3000;
+    const beside = async (fn, where) => {
+      if (!cmdItem) return fn();
+      let stop = false, wake = null, laneErr = null;
+      const nap = ms => new Promise(r => { const t = setTimeout(r, ms); wake = () => { clearTimeout(t); r(); }; });
+      const loop = (async () => {
+        while (!stop) {
+          await nap(LANE_MS); if (stop) break;
+          try { await cmdNow("beside " + where); } catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) { laneErr = e; break; } }
+        }
+      })();
+      try { return await fn(); }
+      finally { stop = true; if (wake) wake(); await loop; if (laneErr) throw laneErr; }   // (a request taken up in the lane is finished before the pass goes on)
+    };
     for (const item of items) {
       if (!item || typeof item.unit !== "function" || !laneOn(cloudSteps, String(item.lane || item.name)) || ["abandoned", "complete"].includes(run.status)) continue;
       if (item.name === "release" && out.releases !== undefined) continue;   // (RELEASEHOLD: this pass ran the release unit already, releasesUnit above)
       if (item.name === "files" && filesLooked) continue;   // (build step 7b: the files lane ran above in this pass already)
-      if ((await runItem(item)) === false) break;
+      if ((await (item === cmdItem ? runItem(item) : beside(() => runItem(item), item.name))) === false) break;   // (CMDLANE)
       if (item !== cmdItem && (!cmdItem || orderOf(item) > orderOf(cmdItem))) await cmdNow("after " + item.name);   // (NOWCMD: after the commands item's own turn, each item that follows it)
     }
     /* (ONSWITCH) a run step's unit may run one lane's pass items again at its moment of the run, each as above (its own budget, cursor and saved state; a failure said, never a
@@ -458,7 +477,7 @@ async function pass(env) {
       ctx.say = say;   // (build step 4: a unit that writes a document of its own fences it on this pass's lease and the run's carrier, as Lib.call does: _charmNestIntake.js fencedWrite)
       let res;
       for (let attempt = 0; ; attempt++) {
-        try { res = await unit(ctx); break; }
+        try { res = await beside(() => unit(ctx), step + " unit " + cursor.i); break; }   // (CMDLANE)
         catch (e) {
           if (e && (e.fenced || e.yielded || e.fatal)) throw e;
           if (e && e.overBudget) { res = { overBudget: true }; break; }
