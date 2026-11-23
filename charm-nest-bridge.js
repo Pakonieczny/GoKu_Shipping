@@ -10642,6 +10642,9 @@ const Engrave = window.Engrave = (() => {
     const pid = ((jobs || []).find(j => j && (j.copies || []).length) || {}).copies; const c = pid && pid[0] ? Pool.charmOf(pid[0]) : null, n = c && c.artEdit && c.artEdit[face];
     return n && (n.added || n.changed || n.removed) ? String(c.hash || "art") : "";   // (a key of the drawing as edited: a new save draws the card's picture of it again)
   }
+  /* ORDERART (Paul, 22 Nov 2026, order 4239655218: "the thumbnails in the order did not get updated with the engraving"): the order window's engraving cards show a face the Charm Editor drew on too, as the
+     Engrave detail's card does (FACEVIEW): both discs carried their words as the Charm Editor's parts on the FRONT, and the order's cards drew only the back job's face, empty */
+  window.CNPieceArtOn = pieceArtOn;
   /** The other face of `job`'s piece as the work area draws it: { view, charm } (its views made once per charm: charmEditView, the view the Charm Editor edits it in), or null. */
   function faceViewOf(job, face) {
     /* WORKPRE (Paul, 11 Nov 2026, order 4220952355: "the grid below is still missing and the options for that are usually available to control"): a piece not on a sheet yet has no drawn charm
