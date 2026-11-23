@@ -5541,10 +5541,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         //  plain "released" step the timeline drew as a red HOLD RELEASED. How it releases is unchanged.)
         const at = Date.now(), who = whoAmI(), seal = { how: "releaseHold", at, by: who, id: `releaseHold:${rid}:${at}` };
         try {
-          for (const r of rows()) { r.heldAt = null; await Review.repool(r); }
-          if (window.RunCtl) RunCtl.poke();
+          /* CLOUDBACK (Paul, 23 Nov 2026, orders 4235923653 and 4230787700: "Order ... is back in line" was said and both stayed on hold): on a computer that follows the cloud the release is the cloud's (CNViewer.release:
+             releaseAsk), never this page's own copy, and it is said only once the cloud released it. */
+          const cloud = !!(window.CNViewer && CNViewer.on && CNViewer.on());
+          if (cloud) { const a = await CNViewer.release(rid, { name: who, seal }); if (!a || !a.ok) throw new Error((a && a.error) || "the cloud did not release it"); }
+          else { for (const r of rows()) { r.heldAt = null; await Review.repool(r); } if (window.RunCtl) RunCtl.poke(); }
           agent({ bridge: true }, "DS", `Order ${rid} put back in line by ${who || "someone"}`);
-          window.SheetEvents?.order({ type: "released", orderId: rid, id: `sw-release-${at}`, by: who, at, text: "Hold released in the sheet window · back in line", data: { seal: "releaseHold", sealAt: at, sealId: seal.id, from: "sheetWindow" } });
+          if (!cloud) window.SheetEvents?.order({ type: "released", orderId: rid, id: `sw-release-${at}`, by: who, at, text: "Hold released in the sheet window · back in line", data: { seal: "releaseHold", sealAt: at, sealId: seal.id, from: "sheetWindow" } });
           if (who && window.ReviewRelease && ReviewRelease.keep) ReviewRelease.keep([rid], seal, "sheetWindow").catch(e => console.warn("sheet window: release seal", e));
           went = true;
         } catch (e) { toast("Hold not released: " + e.message, "bad", 7000); }
