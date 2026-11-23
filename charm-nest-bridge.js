@@ -4830,7 +4830,7 @@ const Pool = window.Pool = (() => {
     const keys=new Set();
     for(const j of d.jobs || [])if((j.copies || []).some(id=>poolIds.has(id)) && j.state!=='skipped') {
       const row=d.orders?.rows?.find(r=>r.key===j.key);
-      j.engravingSeals=CNEngravingSeals.merge(j,row?.engrave);CNEngravingSeals.keep(j);
+      j.engravingSeals=CNEngravingSeals.merge(j,j.slot ? null : row?.engrave);CNEngravingSeals.keep(j);
       Object.assign(j,{state:'ready',view:null,mask:null,fit:null,writtenFit:null,verify:null,backs:[],approvedBy:null,approvedAt:null});keys.add(j.key);
       if(row?.engrave)Object.assign(row.engrave,{state:'ready',approved:false,seals:CNEngravingSeals.merge(row.engrave,j)});
     }

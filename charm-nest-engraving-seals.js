@@ -11,12 +11,21 @@
      every seal already made reads and merges exactly as before, and a front and a back approved in the same instant by the same person are two seals. The face of a seal given by a
      record is that record's own (a front job, a front back-file record); a seal that carries its face keeps it. */
   const frontOf=r=>!!r && (r.face==='front' || (typeof r.key==='string' && r.key.endsWith('~front')));
+  /* PIECESEALS (Paul, 23 Nov 2026: orders 4242795385 and 4236205556: "Some pieces get extra seals"): the pieces of a line engraved by piece (job.slot: C1, C2 …) share ONE record on the line (row.engrave). It kept the seals of the last
+     piece kept, and every piece read them as its own: approving piece 1 put its seal on pieces 2 and 3 too (and the order window, which puts the whole timeline's approvals on the line, put them all). A piece of such a line reads its
+     own seals only; the line keeps them all. A row of one piece (row.slot is the job's: an ear, a disc) has a record of its own and reads it as before. */
+  const sharesLine=j=>!!(j && j.slot && j.row && typeof j.row==='object' && !(j.row.slot && String(j.row.slot)===String(j.slot)));
+  /** The moments the OTHER pieces of the line were approved (the copies an earlier version put on this one are left out by them). */
+  function othersAt(job){try{const E=root?.Engrave,line=job.row.parentRow || job.row;return new Set(((E && E.jobsOf && E.jobsOf(line)) || []).filter(x=>x && x!==job && x.slot && x.slot!==job.slot && faceOf(x)===faceOf(job) && +x.approvedAt>0).map(x=>+x.approvedAt));}catch(_){return new Set();}}
+  const ownOnly=(job,seals)=>{if(!sharesLine(job))return seals;const o=othersAt(job);return o.size?seals.filter(s=>s.how!=='engraveApproved' || +s.at===+job.approvedAt || !o.has(+s.at)):seals;};
+  const lineRec=job=>sharesLine(job)?null:faced(job,job?.row?.engrave);
+  function keepLine(job,seals){if(!job.row)return;job.row.engrave ||= {};job.row.engrave.seals=sharesLine(job)?merge({seals:job.row.engrave.seals || []},{seals}):seals;}
   function merge(...records){
     const stamps=new Map();
     const add=(s,rf)=>{if(!s || !kinds.has(s.how))return;const at=+s.at || 0,by=String(s.by || '').trim(),front=s.face==='front' || (s.face!=='back' && rf),face=front?'front:':'';const identity=`${s.how}:${face}${at}:${by}`,id=s.id || identity;if(!stamps.has(identity))stamps.set(identity,front?{id,how:s.how,at,by,face:'front'}:{id,how:s.how,at,by});};
     for(const r of records.filter(Boolean)){
       const rf=frontOf(r);
-      for(const s of [...(r.engravingSeals || []),...(r.seals || []),...(r.engrave?.seals || []),...(r.row?.engrave?.seals || [])])add(s,rf);
+      for(const s of [...(r.engravingSeals || []),...(r.seals || []),...(r.engrave?.seals || []),...(sharesLine(r)?[]:r.row?.engrave?.seals || [])])add(s,rf);
       if(+r.approvedAt>0)add({how:'engraveApproved',at:+r.approvedAt,by:r.approvedBy || ''},rf);
       if(r.state==='skipped' && +r.decidedAt>0)add({how:'engravePlain',at:+r.decidedAt,by:r.decidedBy || r.decision?.by || ''},rf);
     }
@@ -25,8 +34,8 @@
   /* A FRONT job's own record (job.row.engrave: approvedAt, approvedBy, state, no `key` and no `face`) is read as the job's face: without this its bare approvedAt made a BACK seal of the same instant on the front
      (ENGLINK, 12 Oct 2026: approving the front stamped "BACK ENGRAVING" on the front's card and in the line's seal list). A back's record is read as it always was. */
   const faced=(job,rec)=>rec && typeof rec==='object' && frontOf(job) && rec.face!=='front'?Object.assign({},rec,{face:'front'}):rec;
-  function list(job){const seals=merge(job,faced(job,job?.row?.engrave),...(job?.backs || []),job?.editOriginal);if(!seals.length && (['approved','written','skipped'].includes(job?.state) || job?.needed && job?.approved))seals.push({id:'legacy:'+job.key,how:job.state==='skipped'?'engravePlain':'engraveApproved',at:0,by:job.approvedBy || job.decision?.by || '',...(frontOf(job)?{face:'front'}:{})});return seals;}
-  function keep(job){const seals=list(job);job.engravingSeals=seals;if(job.row){job.row.engrave ||= {};job.row.engrave.seals=seals;}return seals;}
+  function list(job){const seals=ownOnly(job,merge(job,lineRec(job),...(job?.backs || []),job?.editOriginal));if(!seals.length && (['approved','written','skipped'].includes(job?.state) || job?.needed && job?.approved))seals.push({id:'legacy:'+job.key,how:job.state==='skipped'?'engravePlain':'engraveApproved',at:0,by:job.approvedBy || job.decision?.by || '',...(frontOf(job)?{face:'front'}:{})});return seals;}
+  function keep(job){const seals=list(job);job.engravingSeals=seals;keepLine(job,seals);return seals;}
   function fromEvents(events,row){
     const rid=String(row.order?.receiptId || ''),tx=String(row.line?.transactionId || ''),copies=new Set(row.poolIds || []);
     // one ear (or one disc) of a pair: only its own pieces' approvals are its seals (the line's transaction id is shared by the other ear: it must not count)
@@ -39,11 +48,11 @@
     const gone={front:0,back:0};for(const e of own)if(e.type==='engraveChanged' && e.data?.how==='removed')gone[fc(e)]=Math.max(gone[fc(e)],+e.at || 0);
     return merge({seals:own.filter(e=>(e.type==='engraveApproved' || e.type==='engraveChanged' && e.data?.how==='skipped') && (!gone[fc(e)] || atOf(e)>gone[fc(e)])).map(e=>{const s={id:e.id,how:e.type==='engraveApproved'?'engraveApproved':'engravePlain',at:atOf(e),by:e.by || ''};if(e.data?.face==='front')s.face='front';return s;})});
   }
-  function add(job,how,by,at=Date.now()){keep(job);const front=frontOf(job),seal=front?{id:`${how}:front:${at}:${String(by).trim()}`,how,at,by,face:'front'}:{id:`${how}:${at}:${String(by).trim()}`,how,at,by};job.engravingSeals=merge(job,{seals:[seal]});if(job.row){job.row.engrave ||= {};job.row.engrave.seals=job.engravingSeals;}return seal;}
+  function add(job,how,by,at=Date.now()){keep(job);const front=frontOf(job),seal=front?{id:`${how}:front:${at}:${String(by).trim()}`,how,at,by,face:'front'}:{id:`${how}:${at}:${String(by).trim()}`,how,at,by};job.engravingSeals=ownOnly(job,merge(job,{seals:[seal]}));keepLine(job,job.engravingSeals);return seal;}
   const regularSize=()=>root?.Seal?.BASE_SIZE || 50;
   function html(job){const seals=list(job);return seals.length && root?.Seal?`<span class="sealRow engravingSeals" data-seal-group data-seal-count="${seals.length}" role="group" aria-label="Engraving approval history">${seals.map(s=>root.Seal.html(s,regularSize(),'engravingSeal')).join('')}</span>`:'';}
   const esc=s=>String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  function record(e){return {key:e.job?.key,engravingSeals:merge(e.job,faced(e.job,e.job?.row?.engrave),...(e.job?.backs || []),e.job?.editOriginal,e.back,faced(e.job,e.saved)),state:e.kind==='approved'?'approved':e.kind==='skipped'?'skipped':e.job?.state,approvedAt:e.kind==='approved'?e.at:0,approvedBy:e.kind==='approved'?e.by:'',decidedAt:e.kind==='skipped'?e.at:0,decidedBy:e.kind==='skipped'?e.by:''};}
+  function record(e){return {key:e.job?.key,engravingSeals:ownOnly(e.job,merge(e.job,lineRec(e.job),...(e.job?.backs || []),e.job?.editOriginal,e.back,faced(e.job,e.saved))),state:e.kind==='approved'?'approved':e.kind==='skipped'?'skipped':e.job?.state,approvedAt:e.kind==='approved'?e.at:0,approvedBy:e.kind==='approved'?e.by:'',decidedAt:e.kind==='skipped'?e.at:0,decidedBy:e.kind==='skipped'?e.by:''};}
   /* ── the back engraving card, one card for every place an order is shown (the order window's Overview and Sheet tab, the sheet window) ──
    * What it says is read from the real data the host hands over (e: {kind, job, text, note, working, reason, back, by, at, saved,
    * pieceLabel, pieceMeta, compact}): one quiet status, the plain reason what is missing, the words as read (NOWORTH: no reader's notes), the back
