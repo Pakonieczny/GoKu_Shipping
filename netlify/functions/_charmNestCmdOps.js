@@ -278,7 +278,7 @@ module.exports = function make(d) {
       if (gap) {
         const of = setsOf.get(t.id), g = of.length === 1 ? of[0] : null;
         if (!g || t.draft || String(t.setId || "") !== str(gap.setId, 80) || String(g.setId) !== str(gap.setId, 80)) return words(409, `${tn} is not in that one set any more: nothing was moved`, { refused: "gap" });
-        if (g.processReady || g.laserSetPending || num(g.laserDoneAt) > 0 || t.processReady || t.laserSetPending || t.status !== "complete" || t.inplaceHold) return words(409, `${tn}'s set is approved, or the sheet is not finished: nothing was moved`, { refused: "gap" });
+        if ([g, t].some(z => (Array.isArray(z.processSeals) ? z.processSeals : []).some(x => x && x.how === "laserReady")) || g.processReady || g.laserSetPending || num(g.laserDoneAt) > 0 || t.processReady ||   /* (NOTCUT) */ t.laserSetPending || t.status !== "complete" || t.inplaceHold) return words(409, `${tn}'s set is approved, or the sheet is not finished: nothing was moved`, { refused: "gap" });
         if (num(t.takenOffAt) !== num(gap.takenOffAt)) return words(409, `${tn} lost other pieces meanwhile: its room is looked at again`, { conflict: true });
         for (const r of srcs) if (!r.draft || setsOf.get(r.id).length || r.releaseFull || r.processReady || r.laserSetPending || r.intakeFinalized || r.ownerSet || r.keepInSet) return words(409, `${nameOf(r)} is not an unfinished draft any more: nothing was moved`, { refused: "gap" });
         const rids = [...new Set(going.map(ridOfPool))].filter(Boolean), vals = rids.concat(rids.filter(o => Number.isSafeInteger(+o)).map(Number)), inSet = new Set((g.sheetIds || []).map(String));

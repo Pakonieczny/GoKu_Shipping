@@ -35,6 +35,9 @@ const err = r => (r && r.status >= 400 ? str(r.error || "refused", 300) : r && r
 const sha = s => crypto.createHash("sha256").update(String(s)).digest("hex").slice(0, 16);
 const and = l => (l.length < 2 ? l.join("") : l.slice(0, -1).join(", ") + " and " + l[l.length - 1]);
 
+/* NOTCUT (23 Nov 2026, 18:25): a sheet a person approved for cutting carries the seal laserReady (processReady is not set), a sheet whose engraving and order check are done stands at Laser cutting, and a set cut days ago is
+   often not marked: none of them is ever filled. Only a set made in the last two days whose sheet still has work before the laser. */
+const laserReady = r => (Array.isArray(r && r.processSeals) ? r.processSeals : []).some(x => x && x.how === "laserReady"), atLaser = r => laserReady(r) || !!(r && r.stepState && r.stepState.engraving && r.stepState.orders), SET_MS = 48 * 3600000;
 /** A set a sheet's gap may still be filled in: made, not approved for cutting, not sent, not cut. */
 const openSet = s => !!s && !SetEdit.committedSet(s) && !s.processReady && !s.laserSetPending && !(num(s.laserDoneAt) > 0) && !/^superseded/.test(String(s.status || ""));
 /** Why a sheet's gaps are not filled now, in words ("" when they may be). `sets`: the sets that list it. */
@@ -50,6 +53,8 @@ function targetWhy(rec, sets, now) {
   const list = (sets || []).filter(s => (s.sheetIds || []).map(String).includes(String(rec.id)));
   if (rec.draft || !rec.setId || list.length !== 1 || String(list[0].setId) !== String(rec.setId)) return "it is not in one set";
   if (!openSet(list[0])) return "its set is approved, sent or cut";
+  if (atLaser(rec) || laserReady(list[0])) return "it is approved for cutting";
+  const made = num(list[0].formedAt) || ms(list[0].createdAt); if (!(made > 0) || now - made > SET_MS) return "its set is approved, sent or cut";   // (NOTCUT: an older set is as good as cut)
   if (rec.recalled) return "it was recalled";
   if (rec.problem || rec.problemStop) return "it needs a look";
   if (rec.inplaceHold) return "it keeps a place for a piece being made again";
@@ -170,7 +175,7 @@ async function plan(o) {
 }
 
 /* ── the pass item: which sheets are due, and their process started ── */
-const FIELDS = ["metal", "takenOffAt", "archived", "draft", "setId", "status", "nestJob", "filesJob", "roseCutAt", "laserDoneAt", "processReady", "laserSetPending", "committedAt", "inplaceHold", "manualEdit", "keepRelease", "problem", "problemStop", "recalled", "runId", "saving", "fileBase", "sheetIndex", "rosePlanHash", "placedCount"];
+const FIELDS = ["processSeals", "stepState", "metal", "takenOffAt", "archived", "draft", "setId", "status", "nestJob", "filesJob", "roseCutAt", "laserDoneAt", "processReady", "laserSetPending", "committedAt", "inplaceHold", "manualEdit", "keepRelease", "problem", "problemStop", "recalled", "runId", "saving", "fileBase", "sheetIndex", "rosePlanHash", "placedCount"];
 /** What the drafts of a metal hold now, as a word that changes when they do. */
 async function draftSig(db, runId, metal) {
   const q = await db.collection(SHEETS).where("runId", "==", runId).where("draft", "==", true).select("metal", "contentRev", "layoutRev", "setId", "releaseFull", "archived").get();
@@ -187,7 +192,7 @@ async function passUnit(ctx) {
   const q = await ctx.db.collection(SHEETS).where("takenOffAt", ">", now - FRESH_MS).select(...FIELDS).get();
   const recs = q.docs.map(d => Object.assign({}, d.data() || {}, { id: d.id })).filter(r => r.runId === ctx.runId && METALS.includes(r.metal) && r.setId && !r.draft && !r.archived);
   if (!recs.length) return undefined;
-  const [fills, sq] = [await ctx.db.getAll(...recs.map(r => ctx.db.collection(COLL).doc(r.id))), await ctx.db.collection(SETS).where("runId", "==", ctx.runId).select("setId", "sheetIds", "committedAt", "processReady", "laserSetPending", "laserDoneAt", "status").get()];
+  const [fills, sq] = [await ctx.db.getAll(...recs.map(r => ctx.db.collection(COLL).doc(r.id))), await ctx.db.collection(SETS).where("runId", "==", ctx.runId).select("setId", "sheetIds", "committedAt", "processReady", "processSeals", "laserSetPending", "laserDoneAt", "status", "formedAt", "createdAt").get()];
   const sets = sq.docs.map(d => Object.assign({ setId: d.id }, d.data() || {})).filter(s => !/^superseded/.test(String(s.status || ""))), sigs = new Map(); let started = 0;
   for (let i = 0; i < recs.length && started < 2; i++) {
     const r = recs[i], f = fills[i].exists ? fills[i].data() || {} : {}, same = num(f.takenOffAt) === num(r.takenOffAt);
@@ -238,6 +243,7 @@ async function nowFill(o) {
     if (drive.mode !== "on" && drive.mode !== "standby") return end("none", "the drive is off");
     const recs = all.docs.map(d => Object.assign({}, d.data() || {}, { id: d.id })).filter(r => !r.archived), sets = tq.docs.map(d => Object.assign({ setId: d.id }, d.data() || {})).filter(s => !/^superseded/.test(String(s.status || "")));
     const rec = recs.find(r => r.id === sheetId), why = targetWhy(rec, sets, now); if (why) return end(/^(it was cut|it is approved|its set is|it is gone)/.test(why) ? "refused" : "none", why);
+    if (recs.some(r => String(r.setId || "") === String(rec.setId) && !r.draft && laserReady(r))) return end("refused", "it is approved for cutting");   // (NOTCUT: any sheet of its set)
     const name = nameOf(rec), set = sets.find(s => String(s.setId) === String(rec.setId)), mine = [...new Set(active(rec).map(c => ridOf(c.poolId)))];
     const worked = await atStation(db, mine, num(set.formedAt) || ms(set.createdAt)); if (worked) return end("refused", `order ${worked} on it is already being sorted or assembled: the sheet is cut`);
     // a piece taken off to be made again comes back to its own place: the room is its
