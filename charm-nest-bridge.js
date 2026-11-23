@@ -4887,6 +4887,7 @@ const Pool = window.Pool = (() => {
      still open (a draft, or a sheet not yet released, cut or put in a set that is on its way to the laser) is offered it; a piece on a sheet that was released or cut is never touched: the line is left as it was
      and the log says so once. Nothing is written here: the flag is the row's own (changePending, repoolChanged), the card is Review's. Idempotent: asked again it adds nothing. */
   const setToldFixed = new Set();
+  window.CNLinkNotice = (row, live) => noticeSet(row, live);   // (LINKCARD: Review asks it for the lines it finds, below)
   function noticeSet(row, live) {
     try {
       const sp = row.spec, set = O.setDesignsOf(sp);
@@ -20438,6 +20439,9 @@ const Review = window.Review = (() => {
        question itself stood: a line already read is not read again for its pieces (noticeSet). It goes here, with the row's mark, as soon as every live piece is that charm. A change Etsy made is never touched. */
     for (const x of items().slice()) if (String(x.key).startsWith("chg:") && x.row && /\(a saved link\)/.test(String(x.why || ""))) { const r = B.orders.byKey?.get(x.row.key) || x.row; if (linkMade(r)) { r.changePending = false; r.repoolChanged = false; delete r._linkCard; B.review.items = items().filter(y => y !== x); } }
     for (const r of Orders.rows()) if (r._linkCard && r.changePending && !items().some(x => x.key === "chg:" + r.key) && linkMade(r)) { r.changePending = false; r.repoolChanged = false; delete r._linkCard; }
+    /* LINKCARD (Paul, 23 Nov 2026, order 4236768670: its piece was the kiwi while the order read LEMON_7271, and a page opened later had no card for it): the question was raised only by the page that read the line again when
+       the link was saved. Every page finds it now, from the line and its pieces as the cloud holds them: a saved link's line whose live piece is another charm has its card, on a fresh page too. Looked at every 15 s at most. */
+    if (typeof window !== "undefined" && typeof window.CNLinkNotice === "function" && Date.now() - (window.CNLinkNotice.at || 0) > 15000) { window.CNLinkNotice.at = Date.now(); for (const r of Orders.rows()) { try { if (!r || !r.spec || r.spec.skuSource !== "alias" || r.changePending || r.hold || r.parentRow || ["gone", "committed"].includes(r.state) || !staleMade(r).length || items().some(x => x.key === "chg:" + r.key)) continue; const live = (r.poolIds || []).map(id => B.pool.rows.get(id)).filter(x => x && !["abandoned", "superseded"].includes(x.state)); if (live.length) window.CNLinkNotice(r, live); } catch (_) { /* this line is looked at again in 15 s */ } } }
     if (rvViewer()) {
       const CW = window.CloudWorld, rv = CW && typeof CW.review === "function" ? CW.review() : null, cardOf = new Map(((rv && rv.cards) || []).flatMap(c => (c ? [c].concat(Array.isArray(c.members) ? c.members : []) : [])).filter(c => c && /^chg:/.test(String(c.key || ""))).map(c => [String(c.key), c]));   // (ACCEPTONE: a question inside an order's one card keeps its own words and time)
       const waits = r => !!(r && r.order && r.changePending && !["gone", "committed"].includes(r.state));
