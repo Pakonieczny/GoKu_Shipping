@@ -44,7 +44,7 @@ const pairFactOf = q => (+q > 1 ? ` · ${+q} pairs, Left + Right each` : " · Le
 function noWordsShown(t) { const x = String(t == null ? "" : t).trim(); if (!x) return true; try { const W = window.CharmNestEngravePieceWords; return !!(W && W.isNoWords && W.isNoWords(x)); } catch (_) { return false; } }
 function purchaseMarkup(row) {
   const detail=O.purchaseDetails(row.line,row.spec),views=O.optionViews(detail.options,row.line);   // (OPTTIDY: the options as text a person reads; the original is the hover)
-  return `<div class="purchaseType"><span class="purchaseLabel">Jewellery</span><strong>${esc(detail.type)}</strong>${typeof ListMedia !== "undefined" && ListMedia.pairRow(row) ? `<span class="purchasePair">Mismatched pair: Left + Right</span>` : ""}</div><div class="purchaseChoices"><span class="purchaseLabel">Selected options</span>${views.length ? `<dl>${views.map(v=>`<div${v.changed ? ` title="${esc(v.was)}"` : ""}><dt>${esc(v.label || "Option")}</dt><dd>${esc(v.text)}</dd></div>`).join("")}</dl>` : '<span class="purchaseMissing">Selections unavailable</span>'}</div>`;
+  return `<div class="purchaseType"><span class="purchaseLabel">Jewellery</span><strong>${esc(detail.type)}</strong>${typeof ListMedia !== "undefined" && ListMedia.pairRow(row) ? `<span class="purchasePair">Mismatched pair: Left + Right</span>` : ""}</div><div class="purchaseChoices"><span class="purchaseLabel">Selected options</span>${views.length ? `<dl>${views.map(v=>`<div${v.changed ? ` title="${esc(v.was)}"` : ""}><dt>${esc(v.label || "Option")}</dt><dd>${/^https?:\/\/\S+$/i.test(String(v.text || "").trim()) ? "Buyer's picture" : esc(v.text)}</dd></div>`).join("")}</dl>` : '<span class="purchaseMissing">Selections unavailable</span>'}</div>`;
 }
 // Zoom/pan ported from Index(20260922-153718).html, wireTiles review viewer.
 // Keep its transform order, clamp, wheel steps, drag damping and click maths.
@@ -12755,6 +12755,7 @@ const Engrave = window.Engrave = (() => {
   const isApprovedJob = j => j.state === "approved" || j.state === "written" || personNone(j);   // (NONEKEPT)
   const approvedSelect = () => decidedSelect().filter(isApprovedJob);
   const approvedRows = () => listRows(approvedSelect());
+  const ordersIn = rows => new Set((rows || []).map((r, i) => ridOfJob(r && r.lead) || '~' + i)).size;   // (ONEORDER: the cards a set of rows makes)
   const shownList = () => (onApproved() ? approvedSelect() : shownQueue().concat(decidedSelect()));   // (APPTAB: Back / Next stop at what the open tab lists, and at the rest of the piece's own order)
   const listUniverse = () => { const q = queueUniverse(); return q.concat(decidedAll().filter(j => !q.includes(j))); };
   const rowPending = r => !!r && r.jobs.some(j => !DECIDED.includes(j.state));
@@ -13070,7 +13071,7 @@ const Engrave = window.Engrave = (() => {
     renderWorking(v, jobs);
     syncEgFind(v);
     const qrows = rowsIn(queue, queueUniverse()), counts = rowCountsOf(qrows);
-    const n = { place: qrows.length, approved: approvedRows().length };   // (APPTAB: the Approved chip counts the rows it shows, live with every approval: this runs with each render)
+    const n = { place: ordersIn(qrows), approved: ordersIn(approvedRows()) };   // (ONEORDER: the chips count the cards, one per order)   // (APPTAB: the Approved chip counts the rows it shows, live with every approval: this runs with each render)
     v.querySelectorAll(".egTab[data-tab]").forEach(b => {
       b.classList.toggle("on", b.dataset.tab === EG.tab); b.setAttribute("aria-pressed", String(b.dataset.tab === EG.tab));
       const k = n[b.dataset.tab]; let t = b.querySelector("b");
@@ -13356,7 +13357,7 @@ const Engrave = window.Engrave = (() => {
     const out = copyOutgoing();                      // the card in front that is going, copied where it stands (launch, below)
     disposeCards();
     v.innerHTML = `<div class="ordBar egBar">
-        <span class="controlGroup">${tabBtn("place", "Placements", qrows.length, "info")}${tabBtn("approved", "Approved", approvedRows().length, "ok", "the approved engravings and monograms, as they are in Placements")}
+        <span class="controlGroup">${tabBtn("place", "Placements", ordersIn(qrows), "info")}${tabBtn("approved", "Approved", ordersIn(approvedRows()), "ok", "the approved engravings and monograms, as they are in Placements")}
         <span data-eg-working hidden></span>
         </span><span class="controlGroup egSearchGroup"><span class="egFind"${EG.q ? ' data-has="1"' : ""}><input class="ordSearch" id="egQ" placeholder="order, SKU, words…" value="${esc(EG.q || "")}" autocomplete="off" spellcheck="false" title="search every piece by order number, SKU or the engraved words"><button type="button" class="ordFindX" id="egQX" aria-label="Clear search" title="Clear search"${EG.q ? "" : " hidden"}>${CNListActivity.icons.x}</button></span></span>
         </div>
@@ -23296,7 +23297,11 @@ const Review = window.Review = (() => {
     const byKind = new Map(); for (const it of all) byKind.set(chipIt(it), (byKind.get(chipIt(it)) || 0) + 1);
     const customAsk = byKind.get("customOrder") || 0, customN = customAsk + clWait.length;
     if (customN) byKind.set("customOrder", customN); else byKind.delete("customOrder");
-    const doneKind = new Map(); for (const it of finished) doneKind.set(chipIt(it), (doneKind.get(chipIt(it)) || 0) + 1);
+    /* ONEORDER: Resolved counted in cards, one per order (charm-nest-review-core.js cardsN: the same rule) */
+    const ridOfCard = it => it.settled ? String((it.settled.orders || [])[0] || "") : String((it.row && it.row.order && it.row.order.receiptId) || ridOfRow(rowsOf(it)[0]) || it.rid || (it.record && it.record.receiptId) || "");
+    const cardsN = list => { const seen = new Set(); list.forEach((it, i) => seen.add(ridOfCard(it) || "~" + i)); return seen.size; };
+    const doneBy = new Map(); for (const it of finished) { const k = chipIt(it); if (!doneBy.has(k)) doneBy.set(k, []); doneBy.get(k).push(it); }
+    const doneKind = new Map([...doneBy].map(([k, l]) => [k, cardsN(l)]));
     /* CLOUDWORLD (Paul, 20 Nov 2026, Michelle's computer: "when I'm clicking through those tabs under review ... Resolved, Custom orders, needs resolution and held. They changed their quantities"): the numbers this bar
        PAINTS (Open, Resolved and every chip of both) are the cloud's own counts (charm-nest-review-core.js, Charm_World/review), the same at every redraw and on every computer. They were counted again at each press from
        the cards this page held at that moment, filtered by the cloud: a computer still filling its cards in painted other numbers from one press to the next. The cards listed under a chip are still this page's. */
@@ -23338,7 +23343,7 @@ const Review = window.Review = (() => {
     const chip = (id, label, n, cls, title) => `<button class="egTab${(f || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
     // Open or Resolved first, then the filters: the switch holds for every chip, and pressing it shows all it holds
     // (one Resolved count: the cards listed under it, an order in both kinds counted once; "Resolved", RVRESOLVED: Paul, 18 Oct 2026)
-    const openN = cc ? +cc.openCount || 0 : all.length + clWait.length, resolvedN = cc ? +cc.resolved || 0 : finished.length, customShown = cc ? shownOpenKind.get("customOrder") || 0 : customN;
+    const openN = cc ? +cc.openCount || 0 : all.length + clWait.length, resolvedN = cc ? +cc.resolved || 0 : cardsN(finished), customShown = cc ? shownOpenKind.get("customOrder") || 0 : customN;
     screenNow = { at: Date.now(), open: openN, resolved: resolvedN, openChips: Object.fromEntries(ORDER.filter(k => shownOpenKind.has(k)).map(k => [k, k === "customOrder" ? customShown : shownOpenKind.get(k)])), doneChips: Object.fromEntries(ORDER.filter(k => shownDoneKind.has(k)).map(k => [k, shownDoneKind.get(k)])) };
     if (opts.count) return screenNow;
     const seg = `<span class="rvSeg${f ? "" : " all"}" role="group" aria-label="Open or resolved"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="everything that still waits on a person">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything resolved: orders released to the nesting queue (Release Hold), orders whose QR label was printed or that were completed by hand (print again or reopen), custom orders sent to the sheets or on their way to the laser, and every decision answered">Resolved<b>${resolvedN}</b></button></span>`;

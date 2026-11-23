@@ -192,8 +192,27 @@
   /** The one keyed list update: `nodes` in order, in `host`. With opts.animate (the same view as before, drawn already)
    *  what left is seen going (to where its action said, else it fades), what stayed glides into place, and what is new
    *  opens its room, or flies in from where its action said it came from. */
+  /* ONEORDER (Paul, 23 Nov 2026, order 4238855149 on two cards in Engrave: "this cannot be possible anywhere in the system"): every keyed list draws through here, so no list can leave two cards of one order. The nodes of an
+     order (its data-rid, else the order number its own key begins with) stand inside ONE card, where the first of them stood and in their own order; an order with one node is that node, as ever. The card carries no data-rid
+     (what looks a card up by its order finds the rows inside it, as before) and is kept between draws. */
+  const ridOfNode = n => { const d = n && n.dataset; if (!d) return ""; if (d.rid) return String(d.rid); const m = /^(?:[a-z]+:)*(\d{9,13})(?:[_~]|$)/i.exec(d.open || d.row || d.key || ""); return m ? m[1] : ""; };
+  function oneOrder(host, nodes) {
+    const n = new Map(); for (const x of nodes) { const r = ridOfNode(x); if (r) n.set(r, (n.get(r) || 0) + 1); }
+    const kept = host._oneOrder || new Map(), put = new Map(), out = [];
+    for (const x of nodes) {
+      const r = ridOfNode(x); if (!r || n.get(r) < 2) { out.push(x); continue; }
+      if (!put.has(r)) { let card = kept.get(r); if (!card) { card = doc.createElement("div"); card.className = "oneOrder"; card.dataset.oneRid = r; card.dataset.mkey = "one:" + r; card.setAttribute("role", "group"); card.setAttribute("aria-label", "Order " + r); } put.set(r, { card, rows: [] }); out.push(card); }
+      put.get(r).rows.push(x);
+    }
+    const next = new Map();
+    for (const [r, g] of put) { next.set(r, g.card); g.rows.forEach((x, i) => { if (g.card.children[i] !== x) g.card.insertBefore(x, g.card.children[i] || null); }); while (g.card.children.length > g.rows.length) g.card.lastElementChild.remove(); }
+    host._oneOrder = next;
+    return out;
+  }
   function reconcile(host, nodes, opts = {}) {
     if(Seal.defer(host,()=>reconcile(host,nodes,opts)))return;
+    nodes = oneOrder(host, nodes);
+    const inside = new Set(); for (const g of nodes) if (g.classList && g.classList.contains("oneOrder")) for (const c of g.children) if (c.dataset && c.dataset.mkey) inside.add(c.dataset.mkey);   // (a row now inside its order's card has not left the list)
     const on = opts.animate !== false && !reduced() && host.isConnected && host.getClientRects().length > 0;
     const before = new Map(), ctr = on ? containerOf(host, true) : null, cw = ctr ? innerWidthOf(ctr) : null;
     // (a carried row the list holds where it stood: not glided, not copied as it leaves, and not new either)
@@ -209,7 +228,7 @@
     // what left: a copy where it stood goes where it went (its stamp first, when it has one)
     let hold = 0; const gone = [];
     for (const [k, b] of before) {
-      if (now.has(k)) continue;
+      if (now.has(k) || inside.has(k)) continue;
       const spec = take(leaves, k) || (opts.leave ? opts.leave(k, b.node) : null);
       if (!seen(b.rect)) { if (spec && spec.to) arrive(spec.to, spec); continue; }
       const g = ghost(b.node, b.rect, cw, host);

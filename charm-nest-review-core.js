@@ -428,7 +428,11 @@
     const byKind = new Map(); for (const it of all) byKind.set(chipIt(it), (byKind.get(chipIt(it)) || 0) + 1);
     const customAsk = byKind.get("customOrder") || 0, customN = customAsk + clWait.length;
     if (customN) byKind.set("customOrder", customN); else byKind.delete("customOrder");
-    const doneKind = new Map(); for (const it of finished) doneKind.set(chipIt(it), (doneKind.get(chipIt(it)) || 0) + 1);
+    /* ONEORDER (Paul, 23 Nov 2026): Resolved is drawn one card per order too (charm-nest-motion.js oneOrder), so it is counted in cards: an order's answers are one */
+    const ridOfCard = it => it.settled ? str((it.settled.orders || [])[0] || "") : str((it.row && rid(it.row)) || (rowsOf(it)[0] && rid(rowsOf(it)[0])) || it.rid || (it.record && it.record.receiptId) || "");
+    const cardsN = list => { const seen = new Set(); list.forEach((it, i) => seen.add(ridOfCard(it) || "~" + i)); return seen.size; };
+    const doneBy = new Map(); for (const it of finished) { const k = chipIt(it); if (!doneBy.has(k)) doneBy.set(k, []); doneBy.get(k).push(it); }
+    const doneKind = new Map([...doneBy].map(([k, l]) => [k, cardsN(l)]));
 
     // the cards
     const cardOf = (it, state) => {
@@ -450,7 +454,7 @@
     const openCards = openList.map(it => cardOf(it, "Open")).sort((a, b) => (b.at - a.at) || byStr(a.key, b.key));
     const doneCards = finished.map(it => cardOf(it, "Resolved")).sort((a, b) => (b.at - a.at) || byStr(a.key, b.key));
 
-    const counts = { open: all.length + clWait.length, resolved: finished.length, openCount: all.length + clWait.length, reviewCount, customOrders: customN, customAsk, customWait: clWait.length };
+    const counts = { open: all.length + clWait.length, resolved: cardsN(finished), openCount: all.length + clWait.length, reviewCount, customOrders: customN, customAsk, customWait: clWait.length };
     for (const k of ORDER) counts[k] = byKind.get(k) || 0;
     counts.held = counts.heldOrder;
     counts.noChip = { orderChanged: byKind.get("orderChanged") || 0, reviewMark: byKind.get("reviewMark") || 0 };

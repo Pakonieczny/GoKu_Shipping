@@ -703,3 +703,11 @@
 .egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage][data-s=review]{background:#d49a2a}
 .egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]:is([data-s=words],[data-s=blocked]){background:#c2452f}
 .egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]:is([data-s=busy],[data-s=ready],[data-s=fitting],[data-s=classify]){background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink25)}
+/* ONEORDER (Paul, 23 Nov 2026): one card per order in every list (charm-nest-motion.js oneOrder): an order's rows are sections of its one card; the order number and its Release seal are said once, by the first */
+.oneOrder{display:grid;gap:0;min-width:0;width:100%;box-sizing:border-box;background:var(--card);border:1px solid var(--line);border-left-width:3px;border-radius:9px}
+.oneOrder>*{margin:0!important;border:0!important;border-radius:9px!important;box-shadow:none!important;background:transparent!important;transform:none!important}
+.oneOrder>*+*{border-top:1px solid var(--line)!important;border-radius:0 0 9px 9px!important}
+.oneOrder>*:not(:last-child){border-bottom-left-radius:0!important;border-bottom-right-radius:0!important}
+.oneOrder>*:hover{background:rgba(0,0,0,.018)!important}
+.oneOrder>*:not(:first-child) :is(.engravingOrder>b.mono,.engravingOrder>.onum,.egPlacementSeals>.relSeal,.relSealSlot,.mailSlot){display:none!important}
+.oneOrder:focus-within{border-color:var(--ink45)}
