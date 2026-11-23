@@ -663,8 +663,10 @@ async function renest(x) {
 async function moveAndNest(x, src, t, words, o = {}) {
   const r = await put(x, { op: "cmdMovePieces", runId: x.ctx.runId, from: { sheetId: src.id, layoutBase: num(src.layoutRev), contentBase: num(src.contentRev) }, to: { sheetId: t.id, layoutBase: num(t.layoutRev), contentBase: num(t.contentRev) }, by: x.cmd.by || "", why: words }, `move|${src.id}|${t.id}|${num(src.contentRev)}|${num(t.contentRev)}`);
   if (err(r)) return no(err(r));
-  let gone = "";
-  if (o.draft && num(r.from && r.from.left) === 0) { const a = await put(x, { op: "archiveEmptySheet", id: src.id, runId: x.ctx.runId }, `archive|${src.id}`); gone = err(a) ? `${nameOf(src)} stays, empty (${err(a)})` : `${nameOf(src)} was left empty and archived`; if (!err(a)) { const re = await require("./_charmNestCombine").renumberAfter(x.ctx, src, k => `${x.ctx.runId}|cmd|${x.cmd.id}|${k}`); if (re.length) gone += `; ${re.join(", ")}`; } }
+  let gone = "", freed = "";
+  // (RGEMPTY: a Rose Gold draft emptied gives its physical sheet back before it is removed)
+  if (o.release && o.draft && num(r.from && r.from.left) === 0 && src.roseStockId && has("roseRelease")) { const rr = await put(x, { op: "roseRelease", stockId: src.roseStockId, sheetId: src.id, metal: src.metal }, `release|${src.id}|${src.roseStockId}`); freed = err(rr) ? `; its physical sheet stays reserved (${err(rr)})` : "; its physical sheet given back"; }
+  if (o.draft && num(r.from && r.from.left) === 0) { const a = await put(x, { op: "archiveEmptySheet", id: src.id, runId: x.ctx.runId }, `archive|${src.id}`); gone = err(a) ? `${nameOf(src)} stays, empty (${err(a)})` : `${nameOf(src)} was left empty and archived${freed}`; if (!err(a)) { const re = await require("./_charmNestCombine").renumberAfter(x.ctx, src, k => `${x.ctx.runId}|cmd|${x.cmd.id}|${k}`); if (re.length) gone += `; ${re.join(", ")}`; } }
   /* NOWHOLE (Paul, 21 Nov 2026: "nothing can rewrite an entire sheet"): after a merge the pieces already placed on the target stay where they lie; the moved ones are added around them */
   const s = await startNest(x, t.id, false, `${words}, asked by ${x.cmd.by || "a person"}`); if (s.error) return no(`The pieces were moved onto ${nameOf(t)}, but its nest could not start: ${s.error}`);
   return wait(`Nesting ${r.moved} piece(s) on ${nameOf(t)}…`, { stage: "nest", sheets: [{ id: t.id, layoutRev: num(r.to.layoutRev), at: Date.now() }], moved: (src.poolIds || []).map(String), from: nameOf(src), to: nameOf(t), n: r.moved, gone });
@@ -731,6 +733,21 @@ async function empty(x) {
     if (f.source) return no(`Not emptied: ${f.why[0] || "that draft takes no part"}`);
     if (!f.targets.length) return no(`${nameOf(src)} has no other draft that can take all its pieces${f.why.length ? `: ${f.why[0]}` : ""}`);
     return moveAndNest(x, src, f.targets[0], "Empty draft", { draft: true });
+  }
+  /* RGEMPTY (Paul, 23 Nov 2026: "Why did this rose gold draft not get used further and now it started another draft 2"): a Rose Gold DRAFT is emptied onto the Rose Gold draft a person
+     names (both uncut, no green line, in no set, not busy), its pieces nested there around what that draft holds (nothing it holds moves); the emptied draft is removed and its physical
+     sheet given back (roseRelease). Rose Gold only: 10K / 14K below are unchanged. */
+  if (src.metal === "rose") {
+    if (!activeCharms(src).length) return no(`${nameOf(src)} has no pieces`);
+    const t = x.a.targetId ? await sheetRec(x.ctx, x.a.targetId) : null, rsets = await runSets(x.ctx), rnow = Date.now();
+    if (!t || t.id === src.id || t.metal !== "rose" || t.runId !== x.ctx.runId) return no("Name the Rose Gold draft of the run that takes its pieces.");
+    for (const r of [src, t]) {
+      if (cutRec(r)) return no(`${nameOf(r)} was already cut`);
+      if (lineDrawn(r)) return no(`${nameOf(r)} has a green line drawn`);
+      if ((r.setId && !r.draft) || inAnySet(r, rsets)) return no(`${nameOf(r)} is in a set`);
+      const b = busyRec(r, rnow); if (b) return no(`${nameOf(r)} ${b}: ask again once it is done`);
+    }
+    return moveAndNest(x, src, t, "Empty Rose Gold draft", { draft: true, release: true });
   }
   if (!SOLID.has(src.metal)) return no("Sheets are emptied by hand for 10K and 14K Gold and for Gold Filled / Sterling Silver drafts only.");
   if (!activeCharms(src).length) return no(`${nameOf(src)} has no pieces`);
