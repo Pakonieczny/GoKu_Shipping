@@ -218,6 +218,8 @@
   /** THE GATE of Approve: { st: 'approve' | 'need' (an engraved face has no words: faces) | 'blocked' (why) | 'busy' (a face is being read or placed) | 'approved' (calm) | 'ok' (the press is being kept: "Approved ✓") , dirty } */
   function gateOf(vm, d, key) {
     const c = COMMITS.get(key), dirty = dirtyOf(vm, d, key);
+    // (WORDSFIRST, Paul 23 Nov 2026, order 4239999491: until the line's saved words were read from the cloud there is no Approve; the quiet line says they are being loaded)
+    { const ES = root && root.CNEngravingSeals, jb = (vm.jobs || [])[0], u = ES && ES.unread && vm.line ? tryDo(() => ES.unread(jb || { key, row: vm.line }), '') : ''; if (u) return { st: 'loading', why: u, dirty }; }
     // (APPROVECLOUD, Paul 20 Nov 2026: the press of exactly this stage is being kept, or waits its turn: "Approving…", off, with the step it is at said under it; "Approved ✓" only once the cloud's
     //  engraving record holds it (CONFIRMED). data-dirty still says the jobs do not hold it yet)
     /* INSTANTAPPROVE (Paul, 22 Nov 2026: "it took almost 30 seconds for it to actually show the approve stamp and seal. The approval process needs to be instantaneous ... it can't be no
@@ -243,7 +245,7 @@
     // (nothing staged and a face of the piece is being read or placed (the order changed, words just kept), or holds words the laser cannot engrave: Approve waits, off, until the card is drawn again for it)
     // (APPROVECLOUD: after a press that did not approve (d.why says why), Approve is pressable again whatever the faces are doing: the commit waits for them itself)
     const pj = facesOf(d.choice).flatMap(f => (vm.rows.find(r => r.face === f) || { jobs: [] }).jobs || []);
-    if (!d.why && pj.some(j => ['classify', 'reclassify', 'ready', 'fitting'].includes(j.state) || j.state === 'blocked' || (j.state === 'words' && j.missing && j.missing.length))) return { st: 'busy', dirty: false };
+    if (!d.why && pj.some(j => ['classify', 'reclassify', 'ready', 'fitting'].includes(j.keptState || j.state) || j.state === 'blocked' || (j.state === 'words' && j.missing && j.missing.length))) return { st: 'busy', dirty: false };
     return empty.length ? { st: 'need', faces: empty, dirty: false } : { st: 'approve', dirty: false };
   }
 
@@ -450,7 +452,7 @@
   const PENDING = new Map();   // piece key -> the press waiting for the running commit: the LATEST one (a press meanwhile replaces it)
   function pressCommit(ctx) {
     const { key, line, slot, d } = ctx;
-    const snap = { seq: d.seq, draft: d, stage: { choice: d.choice, active: d.active, faces: cloneFaces(d.faces) } };
+    const snap = { seq: d.seq, draft: d, shown: ctx.shown || null, dirty: !!ctx.dirty, stage: { choice: d.choice, active: d.active, faces: cloneFaces(d.faces) } };
     CONFIRMED.delete(key); CLOUDOFF.delete(key);   // (APPROVECLOUD: a new press is not confirmed until the cloud holds it)
     COMMITS.set(key, snap);
     const job = { snap, line, slot, jobKey: ctx.jobKey };
@@ -562,7 +564,13 @@
         const vm = S.read(line, { slot: slot || undefined, jobs: (E.jobsOf ? E.jobsOf(line) : []) || [] });
         const patch = vm ? S.patchOf(vm, { mode: snap.stage.choice, faces: snap.stage.faces }) : {};
         const button = () => (liveBindings(key).map(b => b.stampAt()).find(Boolean)) || null;
-        work = Promise.resolve().then(() => E.commitStage(line, { choice: snap.stage.choice, slot, faces: snap.stage.faces, patch }, Object.assign({ button, step: onStep, overtaken: () => PENDING.has(key) }, ctx.keepOnly ? { approve: false } : {})));   // (overtaken: a newer press waits: it approves, this one only keeps)
+        /* DEADPRESS2 (Paul, 23 Nov 2026, order 4239999491): words being placed again in the background are waited for (CNEngravingSeals.ready, 15 s at most); with nothing staged the press goes on only for the placement and the words the card showed */
+        const ES = root && root.CNEngravingSeals, pairs = ES && ES.ready && !ctx.keepOnly ? (snap.shown || []) : [];
+        const first = pairs.length ? ES.ready(pairs) : '';
+        if (typeof first !== 'string') onStep('face', 'Placing the words on the charm first…');
+        const why = typeof first === 'string' ? first : await first;
+        if (why && !snap.dirty) work = Promise.resolve({ ok: false, message: 'Not approved: ' + why });
+        else work = Promise.resolve().then(() => E.commitStage(line, { choice: snap.stage.choice, slot, faces: snap.stage.faces, patch }, Object.assign({ button, step: onStep, overtaken: () => PENDING.has(key) }, ctx.keepOnly ? { approve: false } : {})));   // (overtaken: a newer press waits: it approves, this one only keeps)
         // (APPROVECLOUD: a commit that approved is read back from the cloud's engraving record before it is called approved; one the cloud does not hold is no approval to show)
         if (!ctx.keepOnly) work = work.then(async r => { if (!r || !r.ok || r.overtaken || r.kept || !(r.approved || []).length) return r; const c = await confirmCloud(ctx, r, onStep); return c.ok ? Object.assign({}, r, { cloud: !c.unchecked }) : Object.assign({}, r, { ok: false, cloudOff: true, message: c.message }); });
       }
@@ -682,6 +690,7 @@
     /** The Approve of the card, drawn from the gate: green Approve / off with the gold pulse / calm "Approved" / "Approved ✓" the moment it was pressed. The card's own approval buttons make way for it. */
     const drawGate = (vm, d) => {
       const g = gateOf(vm, d, key), p = el.querySelector('.engp'), scope = opts.scope || el.parentElement;
+      tryDo(() => noteShown(vm));
       d.dirty = !!g.dirty;
       if (p) {
         if (g.dirty) { p.dataset.dirty = '1'; p.dataset.staged = '1'; } else { delete p.dataset.dirty; delete p.dataset.staged; }
@@ -692,8 +701,8 @@
       for (const n of host.querySelectorAll('[data-a="approve"]:not([data-engp-approve]),[data-a="approved"]:not([data-engp-approve]),[data-a="approveBoth"],[data-a="approveFaces"]')) { const w = n.parentElement && n.parentElement.classList.contains('egApproveWrap') && n.parentElement.children.length === 1 ? n.parentElement : n; w.remove(); }
       for (const n of host.querySelectorAll('.egWrittenNote')) n.hidden = g.st !== 'approved';   // ("Saved to sheet": said only while nothing is staged)
       // (APPROVECLOUD: while a press works, its step is said on the same line, in the calm colour; after one that did not approve, why, until the next change or press)
-      { const why = g.st === 'working' ? str(g.step) : g.st === 'approve' || g.st === 'need' ? str(d.why || g.why) : ''; let n = host.querySelector('.egApproveWhy[data-engp]') || (why ? host.querySelector('.egApproveWhy') : null);   // (the approval's own line, when it wrote one, is the same line: never two)
-        if (!why) { if (n) n.remove(); } else { if (n) n.dataset.engp = '1'; if (!n) { n = doc.createElement('div'); n.className = 'egApproveWhy'; n.dataset.engp = '1'; n.setAttribute('role', 'status'); host.appendChild(n); } if (g.st === 'working') n.dataset.engpStep = '1'; else delete n.dataset.engpStep; if (n.textContent !== why) n.textContent = why; } }
+      { const why = g.st === 'working' ? str(g.step) : g.st === 'loading' ? str(g.why) : g.st === 'approve' || g.st === 'need' ? str(d.why || g.why) : ''; let n = host.querySelector('.egApproveWhy[data-engp]') || (why ? host.querySelector('.egApproveWhy') : null);   // (the approval's own line, when it wrote one, is the same line: never two)
+        if (!why) { if (n) n.remove(); } else { if (n) n.dataset.engp = '1'; if (!n) { n = doc.createElement('div'); n.className = 'egApproveWhy'; n.dataset.engp = '1'; n.setAttribute('role', 'status'); host.appendChild(n); } if (g.st === 'working' || g.st === 'loading') n.dataset.engpStep = '1'; else delete n.dataset.engpStep; if (n.textContent !== why) n.textContent = why; } }
       let b = host.querySelector('[data-engp-approve]');
       if (!b) { const w = doc.createElement('span'); w.className = 'egApproveWrap engpApproveWrap'; b = doc.createElement('button'); b.type = 'button'; b.dataset.engpApprove = '1'; w.appendChild(b); host.insertBefore(w, host.firstChild); }
       if (b.parentElement && !b.parentElement.querySelector(':scope > [data-engp-stamp]')) { const a = doc.createElement('span'); a.className = 'engpStampAt'; a.dataset.engpStamp = '1'; a.setAttribute('aria-hidden', 'true'); b.after(a); }   // (the approval's stamp is pressed here, never on the button itself)
@@ -701,24 +710,28 @@
       { const a = b.parentElement && b.parentElement.querySelector(':scope > [data-engp-stamp]'); if (a && a.hasAttribute('aria-busy') && !COMMITS.has(key) && !HUNG.has(key)) a.removeAttribute('aria-busy'); }   // (the stamp's anchor says busy only while an approval of this piece runs)
       const calm = g.st === 'approved' || g.st === 'ok', working = g.st === 'working', want = g.st === 'ok' ? 'Approved ✓' : calm ? 'Approved' : working ? 'Approving…' : 'Approve';   // (APPROVECLOUD: "Approved ✓" only once the cloud holds it; "Approving…" while it works)
       b.className = 'btn sage sm egApproveButton engpApprove' + (calm ? ' egApproved' : '');
-      b.dataset.a = calm ? 'approved' : 'approve'; b.dataset.gate = g.st;
+      b.dataset.a = calm ? 'approved' : 'approve'; b.dataset.gate = g.st; b.style.display = g.st === 'loading' ? 'none' : '';
       b.disabled = g.st !== 'approve'; b.setAttribute('aria-disabled', String(b.disabled));
       if (working) b.setAttribute('aria-busy', 'true');
       b.title = g.st === 'approve' ? (g.why || 'Approve this engraving') : g.st === 'blocked' ? g.why : working ? str(g.step) : calm ? (g.st === 'ok' ? 'Approved, and the cloud holds it: change anything and press Approve again' : 'Approved: change anything and press Approve again') : '';
       if (b.textContent !== want) b.innerHTML = g.st === 'ok' ? 'Approved<span class="engpTick" aria-hidden="true">✓</span>' : want;
       return g;
     };
+    /* DEADPRESS2: what the card showed of each placement: kept up to date while nothing is being placed, so a press that meets a placing is held against what the person saw */
+    const SHOWN = new Map();
+    const noteShown = vm => { const ES = root && root.CNEngravingSeals; if (!ES || !ES.shownOf) return; for (const j of vm.jobs || []) if (j && !ES.placing(j)) SHOWN.set(j, ES.shownOf(j)); };
+    const shownPairs = (vm, d) => { const ES = root && root.CNEngravingSeals; if (!ES || !ES.ready) return []; return (vm.jobs || []).filter(j => j && (!slot || slotOfJob(j) === slot) && facesOf(d.choice).includes(faceOf(j)) && ES.kept(j) === 'review' && !(ES.accepted && ES.accepted(j))).map(j => [j, SHOWN.get(j) || ES.shownOf(j)]); };
     const gate = () => { const m = dead ? null : tryDo(() => model(), null); if (m) drawGate(m.vm, m.d); };
     /* GATEFRESH (Paul, 23 Nov 2026, order 4242795385: "the little orange dot did not turn green"): Approve was drawn while a record from the cloud was being put on the piece (its state "ready" for a moment) and not again when
        the piece was saved: an approved piece went on showing a lit Approve. Once a second the gate is asked again, and Approve is drawn only when the answer is another one. */
-    let gone = 0; const fresh = setInterval(() => { if (dead) { clearInterval(fresh); return; } if (!el.isConnected) { if (++gone > 60) clearInterval(fresh); return; } gone = 0; const b = button(); if (!b) return; const m = tryDo(() => model(), null), g = m && tryDo(() => gateOf(m.vm, m.d, key), null); if (g && b.dataset.gate !== g.st && (!RUNNING.has(key) || (b.dataset.gate === 'approve' && (g.st === 'ok' || g.st === 'approved')))) drawGate(m.vm, m.d); }, 1000);   // (a press still being kept never leaves a lit Approve standing either)
+    let gone = 0; const fresh = setInterval(() => { if (dead) { clearInterval(fresh); return; } if (!el.isConnected) { if (++gone > 60) clearInterval(fresh); return; } gone = 0; const b = button(); if (!b) return; const m = tryDo(() => model(), null), g = m && tryDo(() => gateOf(m.vm, m.d, key), null); if (m) tryDo(() => noteShown(m.vm)); if (g && b.dataset.gate !== g.st && (!RUNNING.has(key) || (b.dataset.gate === 'approve' && (g.st === 'ok' || g.st === 'approved')))) drawGate(m.vm, m.d); }, 1000);   // (a press still being kept never leaves a lit Approve standing either)
     if (fresh && typeof fresh.unref === 'function') fresh.unref();
     /** A press of Approve (the button, the card's other approval buttons, the A key). */
     const press = () => {
       if (dead) return false; const m = tryDo(() => model(), null); if (!m) return false; const { vm, d } = m;
       const g = gateOf(vm, d, key);
       if (g.st !== 'approve') { if (g.st === 'need') { const p = el.querySelector('.engp'); if (p) { delete p.dataset.need; void p.offsetWidth; p.dataset.need = g.faces.join(' '); } } return false; }   // (pressed while it is kept with nothing new: ignored)
-      d.why = ''; return pressCommit({ key, line, slot, d, jobKey: me.jobKey || d.jobKey });
+      d.why = ''; return pressCommit({ key, line, slot, d, jobKey: me.jobKey || d.jobKey, dirty: !!g.dirty, shown: shownPairs(vm, d) });
     };
     const stop = e => { e.preventDefault(); e.stopImmediatePropagation(); press(); };
     const blockClick = e => { const b = e.target && e.target.closest ? e.target.closest(GATE) : null; if (b && !b.disabled && b.closest('.rvItem') === gateCard) stop(e); };

@@ -190,10 +190,13 @@
         let approve = null;
         if (review.length) {
           const js = review.map(f => f.job), gone = js.some(j => j.row && j.row.state === 'gone');
-          const busy = j => !!(o.isWorking && tryDo(() => o.isWorking(j), false)) || !!(j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving);
+          const again = j => j.keptState === 'review', stands = j => (again(j) && j.keptFit ? Object.assign({}, j, { state: 'review', fit: j.fit || {}, verify: { geometry: { ok: true } } }) : j);   // (DEADPRESS2: a placement whose words are placed again in the background is still the one to approve: its Approve stays, and a press waits for the placing)
+          const unread = tryDo(() => { const S = root && root.CNEngravingSeals; return S && S.unread ? js.map(j => S.unread(j)).find(Boolean) || '' : ''; }, '');   // (WORDSFIRST)
+          const busy = j => !!(!again(j) && o.isWorking && tryDo(() => o.isWorking(j), false)) || !!(j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving);
           if (gone) approve = { jobs: js, ok: false, why: 'This order has left the pull' };
+          else if (unread) approve = { jobs: js, ok: false, why: unread, loading: unread };
           else if (js.length === 1) approve = { jobs: js, ok: !busy(js[0]), why: busy(js[0]) ? 'Still being prepared' : '' };
-          else { const g = F && F.approveAllGate ? tryDo(() => F.approveAllGate(js, { busy, shown: j => !o.seen || o.seen(j) }), { ok: false, why: '' }) : { ok: true, why: '' }; approve = { jobs: js, ok: !!g.ok, why: g.why || '' }; }
+          else { const g = F && F.approveAllGate ? tryDo(() => F.approveAllGate(js.map(stands), { busy, shown: j => !o.seen || o.seen(j) }), { ok: false, why: '' }) : { ok: true, why: '' }; approve = { jobs: js, ok: !!g.ok, why: g.why || '' }; }
         }
         // PIECES: the copies of a line bought several times (and the second pair or set) carry their number as a small tag under the name, the way the discs' tags are told: "Piece 1 of 2", "Disc 1 · set 2" (the title keeps it whole)
         const si = slotInfo(slot), tagWord = !sps && si && (si.kind === 'copy' || (shp && shp.multi)) ? slotWord : (sps && shp && shp.multi && si ? slotWord : '');
@@ -246,6 +249,7 @@
     const row = (n, inner) => `<span class="sealRow egButtonSeal" data-seal-group data-seal-max="${SEAL_PX}" data-seal-count="${n}" role="group" aria-label="Engraving approval history">${inner}</span>`;
     if (piece.approve) {
       const ap = piece.approve;
+      if (ap.loading) return `<span class="by egLoading" data-eg-loading role="status" style="font:11px/1.3 var(--sans);color:var(--ink45)">${esc(ap.loading)}</span>`;   // (WORDSFIRST: no Approve until the saved words are read)
       return `<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton egAsk${ap.ok ? '' : ' egOff'}" data-e="approve"${ap.ok ? '' : ` disabled title="${esc(ap.why || 'Not ready to approve')}"`}>Approve</button>${row(0, '')}</span>`;
     }
     if (seals.length && Seal && S && (piece.state === 'approved' || piece.state === 'plain')) return `<span class="egApproveWrap">${row(seals.length, seals.map(s => Seal.html(s, SEAL_PX, 'engravingSeal')).join(''))}</span>`;
@@ -283,9 +287,10 @@
     const nm = tagged != null ? `<span class="engNm">${esc(tagged)}</span><span class="engPc">${esc(piece.tag)}</span>` : head && tail ? `<span class="engNm">${esc(head)}</span><span class="engTail">${esc(tail)}</span>` : esc(piece.title);
     return `<article class="engCard" data-piece="${esc(piece.pieceKey)}" data-state="${esc(piece.state)}" data-rid="${esc(piece.rid)}" data-key="${esc(piece.lineKey)}"${mt ? ` data-metal="${esc(piece.metalKey)}"` : ''}${piece.slot ? ` data-slot="${esc(piece.slot)}"` : ''}>`
       + `<header class="engHd">${dot}<b class="engName${tagged != null ? ' engTagged' : ''}" title="${esc(piece.title)}">${nm}</b>${act ? `<span class="engAct">${act}</span>` : ''}</header>`
+      + '<div class="engFail" role="alert" hidden></div>'   // (DEADPRESS2: why a press did not approve stands right under the button, never only below the picture)
       + (shown.length ? `<div class="engFaces" data-n="${shown.length}">${shown.map(f => faceHtml(piece, f, cur, o)).join('')}</div>` : '')
       + (o.approve === false ? '' : openHtml(piece))
-      + '<div class="engFail" role="alert" hidden></div></article>';
+      + '</article>';
   }
 
   /* ── the picture of a face: ONE place (thumbOf). The live-font component when it is on the page, else the app's own drawing ── */

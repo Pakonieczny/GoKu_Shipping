@@ -112,6 +112,8 @@
     if(e.kind==='approve'){
       if(!job)return {why:'Not loaded here yet: use Fix in Design & Engrave to approve it.'};
       if(job.row?.state==='gone')return {why:'This order has left the pull (cancelled or shipped), so it is not approved here.'};
+      {const u=unread(job);if(u)return {loading:u};}   // (WORDSFIRST)
+      if(pressing.has(job.key) && kept(job)==='review')return {saving:true};   // (DEADPRESS2: its press waits for the words to be placed)
       if(job.approving && job.state==='review')return {saving:true};   // (SAVING, Paul 23 Nov 2026: approved, and the cloud is saving its file: never a lit Approve again, as if nothing had happened)
       return {ok:true};
     }
@@ -165,6 +167,7 @@
     const reasonId='egWhy'+(++askN);
     let approve='';
     if(kind==='approved')approve=`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton" disabled aria-label="${say('Back engraving approved')}">Approved</button>${sealsHtml}</span>`;
+    else if(ap.loading)approve=`<span class="by egLoading" data-eg-loading role="status">${esc(ap.loading)}</span>`;
     else if(ap.saving)approve=`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton egAsk" data-saving="1" disabled>Approved ✓</button></span>`;
     else if(ap.ok)approve=`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton egAsk" data-e="approve">Approve engraving</button></span>`;
     else if(ap.why)approve=`<span class="egApproveWrap"><button type="button" class="btn sm egApproveButton egAsk egOff" disabled aria-describedby="${reasonId}">Approve engraving</button></span><span class="egOffWhy" id="${reasonId}">${esc(say(ap.why))}</span>`;
@@ -203,32 +206,88 @@
   /* DEADPRESS (Paul, 23 Nov 2026: "the approved button not working", order 4241214165): a press was thrown away without a word whenever the job's placement was another OBJECT than at the card's drawing: words placed after it (PVPLACE), or placed again at the very same spot by the page's own background work. It is the placement itself that is compared now (words, place, size, turn, as drawn): the same, or one drawn since the card had none, is approved; one that moved is said, and the card drawn again. */
   const r2=v=>Math.round((+v || 0)*50),fitSig=f=>!f?'':JSON.stringify([f.lines || [],(Array.isArray(f.centre)?f.centre:[]).map(r2),r2(f.size),r2(f.angle),f.weight || '',!!f.artOnly]),viewSig=v=>!v?'':JSON.stringify([r2(v.upAngle),r2(v.cx),r2(v.cy)]);
   const samePlaced=(f0,v0,f1,v1)=>(!f0 || !f1 || f0===f1 || fitSig(f0)===fitSig(f1)) && (!v0 || !v1 || v0===v1 || viewSig(v0)===viewSig(v1));
+  /* DEADPRESS2 (Paul, 23 Nov 2026, order 4239999491: the first press of Approve did nothing, the second worked): the page places words again in the background (charm-nest-engrave-sync.js fitOne, take) and the piece stood "ready" meanwhile:
+     the press found nothing to approve and ended without a word. A press on Approve is never lost, on any screen, by this one helper:
+       shownOf(job)     what a card shows of a placement when it is drawn: its fit, its view, its words
+       kept(job)        its state as a card reads it (KEPTSTATE: a piece whose words are placed again is what it was) · placing(job): its words are being placed now · placed(job): waits for that, PLACE_MS at most
+       ready(pairs)     [[job, shownOf], ...] of a press: '' = go on · a text = why not, in words, for the line under the button · a Promise of either while the words are being placed
+       unread(job)      WORDSFIRST (the same order: the card showed the words the page had read by itself, with a live Approve, before the cloud's record came): '' once the saved words are read, else what the card says instead of Approve */
+  const PLACE_MS=15000,PLACING='The words are still being placed on the charm. Press Approve again in a moment.',AGAIN='The words are being read again. Approve once they are placed.',DECIDE='The words need a decision first.';
+  const NOTNOW={classify:AGAIN,reclassify:AGAIN,words:DECIDE,blocked:DECIDE,approved:'It is approved already.',written:'It is approved and saved already.',skipped:'It is cut plain.',none:'It has no engraving.'};
+  const run1=v=>(Array.isArray(v)?v.join(' '):String(v ?? '')).replace(/\s+/g,' ').trim(),nap=ms=>new Promise(r=>setTimeout(r,ms)),placeMs=()=>PLACE_MS*Math.max(.001,+root?.CN_SPIN_SCALE || 1);
+  const kept=job=>String((job && (job.keptState || job.state)) || ''),shownOf=job=>job?{fit:job.fit,view:job.view,given:run1(job.lineInput || job.lines),text:run1(job.text)}:{};
+  const sameWords=(s,job)=>{if(!s || s.given===undefined)return true;const n=shownOf(job);return s.given===n.given || (!!n.text && s.text===n.text);};
+  function placing(job){
+    if(!job)return false;if(job.keptState || ['ready','fitting'].includes(job.state))return true;if(job.state!=='review')return false;
+    try{const Y=root?.CharmNestEngraveSync;if(Y && typeof Y.placing==='function' && Y.placing(job))return true;}catch(_){}
+    try{const E=root?.Engrave;return !!(E && typeof E.isWorking==='function' && E.isWorking(job));}catch(_){return false;}
+  }
+  async function placed(job,ms){const end=Date.now()+(ms || placeMs());while(placing(job)){if(Date.now()>=end)return false;await nap(40);}return true;}
+  const LOADING='Loading the saved words…';
+  function unread(job){
+    const Y=root?.CharmNestEngraveSync;if(!job || job.editingBack || !Y || typeof Y.known!=='function')return '';
+    const line=job.row && (job.row.parentRow || job.row),k=line && line.key;if(!k)return '';
+    try{return Y.known(k)?'':(typeof Y.loading==='function' && Y.loading(k)) || LOADING;}catch(_){return '';}
+  }
+  function whyNot(job,s){
+    if(job.row?.state==='gone')return 'This order has left the pull (cancelled or shipped), so it is not approved here.';
+    if(unread(job))return 'The saved words are still being loaded. Approve once they are here.';
+    try{const m=root?.Engrave?.items?.(),n=m && job.key && m.get?.(job.key);if(n && n!==job)return 'This card was out of date. Look at it, then press Approve.';}catch(_){}
+    const st=kept(job);
+    if(!['review','ready','fitting'].includes(st))return NOTNOW[st] || 'It is not ready to approve yet.';
+    if(!sameWords(s,job))return 'The words changed while this card was open. Look at them, then press Approve.';
+    if(!placing(job) && s && !samePlaced(s.fit,s.view,job.fit,job.view))return 'The placement changed while this card was open. Look at it, then press Approve.';
+    return '';
+  }
+  function ready(pairs){
+    const list=(pairs || []).filter(p=>p && p[0]),why=()=>{for(const [j,s] of list){const w=whyNot(j,s);if(w)return w;}return '';},wait=()=>list.some(([j])=>placing(j)),w0=why();
+    if(w0 || !wait())return w0;
+    const t0=Date.now(),end=t0+placeMs();
+    return (async()=>{
+      while(wait()){const w=why();if(w)return w;if(Date.now()>=end)return PLACING;await nap(40);}
+      const w=why();if(w)return w;
+      return list.some(([j,s])=>s && !s.fit && +j.keepLost>=t0)?'The words were placed in a new spot. Look at them, then press Approve.':'';   // (PLACEFIRST: never approved where nobody looked)
+    })();
+  }
+  const pressing=new Set();   // job keys whose press waits for its words to be placed: a card drawn again meanwhile says Approved too, never a second Approve
   function wirePanel(host,e,{approve,approveBoth,open,imageUrl,zoom,stale,pick}={}){
     // Approve engraving: the host's own approval runs (its name bar, Engrave.approve, the BACK ENGRAVING seal pressed on this very button). The wait
     // before the stamp is said on the button, with a small spinner; a refusal gives the button back as it was.
     // A refusal says why where the button is: the line a toast would have said is shown in the card (a toast sits under a modal order window).
-    const key=e.job?.key || '',fit0=e.job?.fit,view0=e.job?.view;
+    const key=e.job?.key || '',shown=e.job?shownOf(e.job):null,again=()=>e.job?ready([[e.job,shown]]):'';
     host.querySelector('[data-e=approve]')?.addEventListener('click',ev=>{
-      const btn=ev.currentTarget;if(btn.disabled || !approve)return;
-      // a card that is out of date approves nothing: only the placement it shows, still waiting for approval (the host draws the card again, and a new press is the person's)
-      if(e.job && (e.job.state!=='review' || !samePlaced(fit0,view0,e.job.fit,e.job.view))){if(e.job.state==='review' && key)fails.set(key,'The placement changed while this card was open. Look at it, then press Approve.');try{stale && stale();}catch(_){}return;}
+      const btn=ev.currentTarget;if(btn.disabled || !approve || (key && pressing.has(key)))return;
       const was=btn.innerHTML,wasToasts=badToasts();let run;
-      if(key)fails.delete(key);host.querySelector('.egFail')?.remove();
-      const tell=err=>{
-        if(!btn.isConnected || btn.closest('[data-state=approved]') || !key || ['approved','written'].includes(e.job.state))return;   // (it went through: nothing to explain)
-        const toasted=[...badToasts()].filter(([n,c])=>wasToasts.get(n)!==c).map(([n])=>n.dataset.msg).filter(Boolean).pop(),msg=toasted || (err && String(err.message || err));
-        if(!msg)return;
-        fails.set(key,msg);
-        const acts=btn.closest('.acts');if(!acts)return;
+      const put=msg=>{   // (DEADPRESS2: the reason stands right under the button; a card drawn again meanwhile is drawn once more with it)
+        if(!msg || !key)return;fails.set(key,msg);
+        const acts=btn.isConnected && btn.closest('.acts');if(!acts){try{stale && stale();}catch(_){}return;}
         let n=acts.parentElement.querySelector('.egFail');if(!n){n=root.document.createElement('div');n.className='egFail';n.setAttribute('role','alert');acts.after(n);}
         n.textContent=msg;
       };
-      try{run=approve(btn);}catch(err){console.warn('engraving card: approve',err);tell(err);return;}
-      if(!run || typeof run.then!=='function')return;
-      if(btn.disabled && btn.isConnected && !/Approved/.test(btn.textContent))btn.innerHTML='<span class="spin"></span>Approving…';   // (INSTANTAPPROVE: the host said "Approved ✓" at the press)
+      const tell=err=>{
+        if((btn.isConnected && btn.closest('[data-state=approved]')) || !key || ['approved','written'].includes(e.job.state) || accepted(e.job))return;   // (it went through: nothing to explain)
+        const toasted=[...badToasts()].filter(([n,c])=>wasToasts.get(n)!==c).map(([n])=>n.dataset.msg).filter(Boolean).pop();
+        put(toasted || (err && String(err.message || err)));
+      };
       const back=()=>{if(btn.isConnected && !btn.closest('[data-state=approved]')){btn.innerHTML=was;btn.removeAttribute('aria-busy');}};
-      run.then(()=>{back();tell();},err=>{console.warn('engraving card: approve',err);back();tell(err);});
+      // a card that is out of date approves nothing: only the placement and the words it shows, still waiting for approval (the host draws the card again, and a new press is the person's)
+      const refuse=why=>{if(btn.isConnected){btn.disabled=false;back();}if(key)fails.set(key,why);if(stale){try{stale();}catch(_){}}if(btn.isConnected)put(why);};
+      const go=()=>{
+        try{run=approve(btn,again);}catch(err){console.warn('engraving card: approve',err);tell(err);return;}
+        if(!run || typeof run.then!=='function')return;
+        if(btn.disabled && btn.isConnected && !/Approved/.test(btn.textContent))btn.innerHTML='<span class="spin"></span>Approving…';   // (INSTANTAPPROVE: the host said "Approved ✓" at the press)
+        run.then(()=>{back();tell();},err=>{console.warn('engraving card: approve',err);back();tell(err);});
+      };
+      const first=again();
+      if(typeof first==='string' && first){refuse(first);return;}
+      if(key)fails.delete(key);host.querySelector('.egFail')?.remove();
+      if(typeof first==='string'){go();return;}
+      // (DEADPRESS2: the words are being placed this moment: "Approved ✓" now, and the press goes on by itself once they are)
+      if(key)pressing.add(key);instantLabel(btn);
+      first.catch(err=>String((err && err.message) || err)).then(why=>{if(key)pressing.delete(key);if(why){refuse(why);return;}go();});
     });
+    // (WORDSFIRST: the card says the saved words are being loaded: drawn again, with its Approve, once they are read)
+    {const ld=host.querySelector('[data-eg-loading]');if(ld && e.job){const t=setInterval(()=>{if(!ld.isConnected){clearInterval(t);return;}const u=unread(e.job);if(u){if(ld.textContent!==u)ld.textContent=u;return;}clearInterval(t);try{stale && stale();}catch(_){}},300);if(t && typeof t.unref==='function')t.unref();}}
     // Approve both faces: the host runs the ordinary approval of each face of the piece in turn (two approvals, two seals, two back files: as if each Approve had been pressed); the wait is said on the button, with a small spinner.
     host.querySelector('[data-e=approveBoth]')?.addEventListener('click',ev=>{
       const btn=ev.currentTarget;if(btn.disabled || !approveBoth)return;
@@ -314,5 +373,5 @@
     row.dataset.sealCount=String(row.querySelectorAll('.seal').length);root.Seal.fit?.(row);button.disabled=true;button.textContent='Approved';button.setAttribute('aria-busy','true');
     try{await root.Seal.press(seal);}finally{button.disabled=wasDisabled;if(wasBusy==null)button.removeAttribute('aria-busy');else button.setAttribute('aria-busy',wasBusy);}
   }
-  return {merge,own:ownOnly,list,keep,add,html,press,record,panel,wirePanel,fromEvents,who,busyLabel,instantLabel,taken,stamped,accepted,samePlaced};
+  return {merge,own:ownOnly,list,keep,add,html,press,record,panel,wirePanel,fromEvents,who,busyLabel,instantLabel,taken,stamped,accepted,samePlaced,kept,shownOf,placing,placed,ready,unread};
 });

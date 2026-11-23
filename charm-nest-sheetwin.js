@@ -2714,7 +2714,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     //  A piece engraved on both faces also has its Front | Back: the same switch, the face shown is the one the card is about)
     const cyc = cycleFor(x, e), shown = cyc ? Object.assign({}, e, { cycle: cyc }) : e;
     host.innerHTML = CNEngravingSeals.panel(shown);
-    CNEngravingSeals.wirePanel(host,shown,{approve:b=>approveHere(x,b),open:b=>goEngrave(x,b),stale:()=>renderEng(x),pick:k=>pickDisc(x,cyc,k),imageUrl:url=>/^https?:/.test(url)?cors(url):url,zoom:{id:'sw:eng',key:(x.rid||'')+'|'+(x.poolId||x.id||x.key||'')}});
+    CNEngravingSeals.wirePanel(host,shown,{approve:(b,again)=>approveHere(x,b,again),open:b=>goEngrave(x,b),stale:()=>renderEng(x),pick:k=>pickDisc(x,cyc,k),imageUrl:url=>/^https?:/.test(url)?cors(url):url,zoom:{id:'sw:eng',key:(x.rid||'')+'|'+(x.poolId||x.id||x.key||'')}});
     if (flash) host.querySelector('.swEng')?.classList.add('flash');
   }
 
@@ -2772,10 +2772,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (it && it.sheetId && it.sheetId !== W.id) { switchSheet(it.sheetId, { select: pid, from: "trail" }); return; }
     toast(`${p.name} is not on a sheet yet: its engraving is in the Design & Engrave tab`, "", 5000);
   }
-  async function approveHere(x, b) {
+  async function approveHere(x, b, again) {
     // (the face the card shows is the one approved: a piece engraved on both faces has two cards, one for each)
     const e0 = x.eng, e1 = e0 && e0.faces ? e0.faces[x._face] || e0.faces.back || e0.faces.front : e0, job = e1 && e1.job; if (!job) return;
-    if (job.state !== 'review') { renderEng(x); return; }   // (a card that is out of date approves nothing: only a placement waiting for approval is approved)
+    if (again) { let why = again(); if (typeof why !== 'string') why = await why; if (why) throw new Error(why); }   // (DEADPRESS2: words being placed again are waited for; what cannot be approved is said under the button)
+    else if (job.state !== 'review') { renderEng(x); return; }   // (a card that is out of date approves nothing: only a placement waiting for approval is approved)
     // (no name yet: the name bar asks; once given, the same button is pressed again through the card's own handler, so the spinner, the plain failure line and
     //  the out-of-date guard are the card's, as for a press with the name known; a card drawn again meanwhile is not pressed for the person)
     const who = needName(() => { if (b.isConnected && !b.disabled) b.click(); }); if (!who) return;

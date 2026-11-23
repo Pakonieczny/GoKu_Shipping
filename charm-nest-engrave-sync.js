@@ -160,7 +160,8 @@
     const body = Array.isArray(orders) ? { op: "engraveSyncGet", orders: orders.slice(0, 600) } : { op: "engraveSyncGet", since: Math.max(0, st.lastAt - 5000) };
     let res; try { res = await api(body); } catch (e) { st.fails++; return 0; }
     const lines = (res && res.lines) || []; let n = 0;
-    for (const l of lines) { st.lastAt = Math.max(st.lastAt, l.at || 0); CLOUD.set(l.key, l); if (await take(l, why)) n++; }   // (KEEPREV: the line's revision is noted by take, once the page holds the record, never for one it turned away)
+    for (const l of lines) { st.lastAt = Math.max(st.lastAt, l.at || 0); CLOUD.set(l.key, l); if (await take(l, why)) n++; }
+    if (Array.isArray(orders)) { const of = new Set(body.orders.map(String)); for (const [k, line] of linesNow()) if (of.has(String(safe(() => line.order.receiptId, "") || k.split("_")[0]))) KNOWN.add(k); }   // (WORDSFIRST: the cloud has none for the others of these orders)   // (KEEPREV: the line's revision is noted by take, once the page holds the record, never for one it turned away)
     if (n) { safe(() => E().render()); safe(() => O().render()); }
     return n;
   }
@@ -171,8 +172,31 @@
     try { const line = linesNow().get(key), rec = line && lineRec(line); if (!rec) return; LOCAL_AT.set(key, Date.now()); await send([{ key, rec, sig: sigOf(line) }]); } catch (_) { /* the next read of the line tries again */ }
   }
   // (SCREENPAINT, Paul 20 Nov 2026: a line whose pieces this computer holds in another state than the cloud's says here why it did not take the cloud's record the last time it was offered: the computer's report carries it)
+  /* WORDSFIRST (Paul, 23 Nov 2026, order 4239999491, disc 2: a page just loaded showed "M initials - 18" inch chain", the words it had read by itself, with a live Approve, until the cloud's record "M" arrived): a line is KNOWN once its saved
+     record was put on this page, or the cloud answered that it has none. Until then no card shows its Approve (CNEngravingSeals.unread) and approveBlocked refuses it. A line that came after the start pass, and a read the cloud did not answer,
+     are read again by themselves (2 s, 4 s ... 30 s), and the card says so. */
+  const KNOWN = new Set(), WANT = new Set(), load = { reading: false, booting: false, again: false, fails: 0, timer: 0 };
+  function known(key) {
+    key = String(key || ""); if (!key || KNOWN.has(key)) return true;
+    WANT.add(key); if (!load.reading && !load.again && (st.started || !load.booting)) wantSoon(120);
+    return false;
+  }
+  const loading = key => (known(key) ? "" : load.fails ? "The cloud did not answer. Loading the saved words again…" : "Loading the saved words…");
+  const wantSoon = ms => { if (!load.timer) load.timer = setTimeout(readWanted, ms); };
+  const backOff = () => Math.min(30000, 2000 * Math.pow(2, Math.max(0, load.fails - 1)));
+  async function readWanted() {
+    const keys = [...WANT].filter(k => !KNOWN.has(k)).slice(0, 200); WANT.clear(); let ok = true;
+    if (keys.length) try {
+      const res = await api({ op: "engraveSyncGet", keys }); if (!res || !Array.isArray(res.lines)) throw new Error("no answer");
+      for (const l of res.lines) { st.lastAt = Math.max(st.lastAt, l.at || 0); CLOUD.set(l.key, l); await take(l, "keys"); }
+      for (const k of keys) KNOWN.add(k); load.fails = 0;
+      safe(() => E().render()); safe(() => O().render());
+    } catch (_) { ok = false; st.fails++; load.fails++; for (const k of keys) WANT.add(k); }
+    load.timer = 0; if (WANT.size) wantSoon(ok ? 120 : backOff());
+  }
+  async function take(l, why) { try { return await takeLine(l, why); } finally { if (l && l.key && !WAITING.has(l.key)) KNOWN.add(l.key); } }
   const WHY = new Map(); const said = (k, w) => { WHY.set(k, w + " " + new Date().toTimeString().slice(0, 8)); if (WHY.size > 400) WHY.delete(WHY.keys().next().value); return false; };
-  async function take(l, why) {
+  async function takeLine(l, why) {
     const all = linesNow(), line = all.get(l.key); if (!l.rec) return said(l.key, "no record");
     if (!line) { WAITING.set(l.key, l); return said(l.key, "line not here"); }   // (NEWLINES, Paul 13 Nov 2026: "What about future orders?"): the line has not reached this computer yet: taken when it does (retryWaiting)
     const mine = l.dev && l.dev === dev(), localAt = LOCAL_AT.get(l.key) || 0;
@@ -208,11 +232,12 @@
         for (const f of JOB_FIELDS) { if (rj[f] === undefined) delete j[f]; else j[f] = plain(rj[f]); }
         if (rj.place && FIT_STATES.has(rj.state) && (j.lineInput || j.lines || []).length) {
           // the same words, in the same font, at the same place: fitJob keeps a placement made for them (keepPlace), then the state it had there goes back on
-          const keepState = rj.state, keepApproved = { approvedAt: rj.approvedAt, approvedBy: rj.approvedBy }; if (keepState === "approved" || keepState === "written") j.keptState = keepState;   // (KEPTSTATE: what it is, while its words are placed again: Approve and the dots read it)
+          const keepState = rj.state, keepApproved = { approvedAt: rj.approvedAt, approvedBy: rj.approvedBy }; 
           j.keepPlace = plain(rj.place); if (j.keepPlace) j.keepPlace.fontKey = j.fontKey || j.keepPlace.fontKey;
           // (LIGHTLOAD, Paul 13 Nov 2026: "THE GRID": the page froze for over 45 s at every load while every piece was refitted and every outline read at once): at the start of the page a piece is not refitted here (its fields are in place); it is outlined and fitted when it is opened (watchOpen)
           if (why === "start" && !onScreenKey(l.key)) { if (!sameFit(j)) { j.fit = null; j.view = null; j.mask = null; } continue; }   // (NOFALLBACK, Paul 13 Nov 2026: "Look at the thumbnails" / "remove these fallbacks, make it work"): a fit this page holds that is the cloud's placement is kept; any other is fitted again in the background (fitMissing)
           const had = j.fit && sameFit(j) && font0 === (j.fontKey || null) ? { fit: j.fit, view: j.view, mask: j.mask, verify: j.verify } : null;   // (FITKEEP: the placement this page holds IS the one the cloud names)
+          if (["approved", "written", "review"].includes(keepState)) { j.keptState = keepState; j.keptFit = !!j.fit; }   // (KEPTSTATE: what it is, while its words are placed again: Approve and the dots read it; DEADPRESS2: a piece to approve too. Set only where it is placed and let go again)
           j.fit = null; j.view = null; j.mask = null; j.state = "ready";
           // (APPROVEDSTAYS, Paul 16 Nov 2026: "on my computer it was approved without any issues. Then when I refreshed the other computer tab my approval showed up ... This can not continue to happen"): the state the
           //  other computer sent (approved, written) is put back WHATEVER happens while the words are fitted here: a piece whose outline or sheet this computer could not read threw out of this step and was left at
@@ -222,7 +247,7 @@
           
             try { await E().fitJob(j); } catch (e) { console.warn("[engrave-sync] fit", l.key, e); }
           } catch (e) { console.warn("[engrave-sync] outline", l.key, e); }
-          finally { j.state = keepState; delete j.keptState; if (keepApproved.approvedAt !== undefined) Object.assign(j, keepApproved); if (!j.fit && had) Object.assign(j, had); }   // (FITKEEP: not placed again here: the same placement stays)
+          finally { j.state = keepState; delete j.keptState; delete j.keptFit; if (keepApproved.approvedAt !== undefined) Object.assign(j, keepApproved); if (!j.fit && had) Object.assign(j, had); }   // (FITKEEP: not placed again here: the same placement stays)
         } else if (!FIT_STATES.has(rj.state)) { j.fit = null; }
       }
       jobsOfLine(line).forEach(recBack);   // (RECBACK)
@@ -269,6 +294,10 @@
   /* ── START ── */
   async function start() {
     if (st.started) return; st.started = true;
+    await readStart(0);
+  }
+  async function readStart(nth) {
+    load.reading = true; load.again = false; let failed = false;
     const lines = linesNow(), orders = [...new Set([...lines.values()].map(l => String(safe(() => l.order.receiptId, "") || l.key.split("_")[0])).filter(Boolean))];
     let have = new Set(); const cloudRaised = new Map();
     try {
@@ -278,22 +307,26 @@
         const res = await api({ op: "engraveSyncGet", orders: orders.slice(i, i + 600) });
         for (const l of (res && res.lines) || []) { have.add(l.key); CLOUD.set(l.key, l); noteRev(l.key, l.rev); cloudRaised.set(l.key, !!(l.rec && l.rec.raised)); st.lastAt = Math.max(st.lastAt, l.at || 0); got.push(l); }
       }
-      const onScreen = new Set(); safe(() => { for (const c of root.document.querySelectorAll(".rvItem")) { const j = c._job; const r = j && j.row && (j.row.parentRow || j.row); if (r && r.key) onScreen.add(r.key); } });
+      const onScreen = new Set(WANT); safe(() => { for (const c of root.document.querySelectorAll(".rvItem")) { const j = c._job; const r = j && j.row && (j.row.parentRow || j.row); if (r && r.key) onScreen.add(r.key); } });
       got.sort((a, b) => (onScreen.has(b.key) ? 1 : 0) - (onScreen.has(a.key) ? 1 : 0));
       const first = got.filter(l => onScreen.has(l.key)), rest = got.filter(l => !onScreen.has(l.key));
       for (const l of first) await take(l, "start");
       if (first.length) { safe(() => E().render()); safe(() => O().render()); }
       let next = 0; await Promise.all(Array.from({ length: Math.min(6, rest.length) }, async () => { while (next < rest.length) { const l = rest[next++]; try { await take(l, "start"); } catch (_) {} } }));
-    } catch (e) { st.fails++; }
+      for (const k of lines.keys()) KNOWN.add(k); load.fails = 0;   // (WORDSFIRST: read; the cloud has none for the rest)
+    } catch (e) { st.fails++; failed = true; load.fails = nth + 1; console.warn("[engrave-sync] the saved words were not read, they are read again", e); }
+    load.reading = false;
     // what this page holds now is the start of what it sends; the computer with the run open seeds the cloud with every line it does not hold yet
     const seed = [];
     for (const [key, line] of linesNow()) {
-      const sig = sigOf(line); SIGS.set(key, sig);
+      const sig = sigOf(line); if (!nth || !SIGS.has(key)) SIGS.set(key, sig);   // (read again: a change made here meanwhile is still sent)
+      if (failed) continue;   // (a page that could not read the cloud's records writes none over them: after the next read)
       if (sig && root.B && root.B.run && (!have.has(key) || (!!(line.spec && line.spec.engraveCandidate) && !cloudRaised.get(key)))) { const rec = lineRec(line); if (rec) seed.push({ key, rec, sig }); }   // (and a line the cloud holds without its raised mark: sent again with it)
     }
     if (seed.length) { st.seeded = true; await send(seed); }
     safe(() => S().schedule());
     safe(() => E().render()); safe(() => O().render());
+    if (failed) { load.again = true; setTimeout(() => { readStart(nth + 1).catch(e => console.warn("[engrave-sync] start", e)); }, backOff()); }
     setTimeout(() => fitMissing(() => setTimeout(prewarm, 1000)), 1500);   // (NOFALLBACK, Paul 13 Nov 2026: "Look at the thumbnails" / "remove these fallbacks, make it work"): every piece with words gets its piece and is fitted in the background, newest first, one at a time; then outlines are read; (LIGHTLOAD, Paul 13 Nov 2026: "THE GRID": the page froze for over 45 s at every load while every piece was refitted and every outline read at once): no bulk refit at start; outlines are read slowly in the background, one every 1.2 s
   }
   /* (GRIDNOW, Paul 13 Nov 2026: "It still shows up without the grid for several seconds"): every piece waiting in Design & Engrave has its charm's outline read in the background, one at a time while the page is idle, so a card opened later draws its grid at once */
@@ -315,10 +348,10 @@
   async function fitOne(j) {
     if (j && !j.fit && (j.lineInput || j.lines || []).length) await ensureCopies(j);
     if (j && !j.fit && !(j.copies || []).length) return false;   // (HELDENGRAVE, Paul 18 Nov 2026, order 4225100553: a job with no piece at all, an order on hold or taken off its sheet, has nothing to be fitted on: it was made "ready" and fitted again and again, and the open card flickered each time)
-    if (!j || j.fit || FITTING.has(j.key) || !["review", "approved", "ready", "written"].includes(j.state) || !(j.lineInput || j.lines || []).length) return !!(j && j.fit);
+    if (!j || j.fit || j.keptState || FITTING.has(j.key) || !["review", "approved", "ready", "written"].includes(j.state) || !(j.lineInput || j.lines || []).length) return !!(j && j.fit);
     const line = j.row && (j.row.parentRow || j.row); if (!line) return false;
     FITTING.add(j.key); TAKING.add(line.key);
-    const keep = { state: j.state, approvedAt: j.approvedAt, approvedBy: j.approvedBy }; if (keep.state === "approved" || keep.state === "written") j.keptState = keep.state;   // (KEPTSTATE)
+    const keep = { state: j.state, approvedAt: j.approvedAt, approvedBy: j.approvedBy }; if (["approved", "written", "review"].includes(keep.state)) { j.keptState = keep.state; j.keptFit = !!j.fit; }   // (KEPTSTATE; DEADPRESS2: a piece to approve stays one while its words are placed)
     try {
       await outline(j);
       { const pid = (j.copies || [])[0]; if (pid && !safe(() => root.Pool.charmOf(pid) || root.Pool.previewCharmOf(pid), null)) return false; }   // (HELDENGRAVE: no charm to fit the words on (an order on hold, its piece taken off): the job is not made "ready" and fitted for nothing, and the card is not drawn again for it)
@@ -326,7 +359,7 @@
       if (rj && rj.place && !j.keepPlace) { j.keepPlace = plain(rj.place); if (j.keepPlace) j.keepPlace.fontKey = j.fontKey || j.keepPlace.fontKey; }
       FITERR.delete(j.key); j.state = "ready"; try { await E().fitJob(j); } catch (e) { FITERR.set(j.key, String((e && e.message) || e).slice(0, 160)); console.warn("[engrave-sync] place", j.key, e); }   // (ENGREC: an error is said (placeNow), never swallowed)
     } finally {
-      j.state = keep.state; delete j.keptState; if (keep.approvedAt !== undefined) { j.approvedAt = keep.approvedAt; j.approvedBy = keep.approvedBy; }
+      j.state = keep.state; delete j.keptState; delete j.keptFit; if (keep.approvedAt !== undefined) { j.approvedAt = keep.approvedAt; j.approvedBy = keep.approvedBy; }
       recBack(j);   // (RECBACK)
       FITTING.delete(j.key); setTimeout(() => { TAKING.delete(line.key); SIGS.set(line.key, sigOf(line)); }, 50);
     }
@@ -339,7 +372,7 @@
   async function placeNow(j) {
     if (!j) return { ok: false, why: "this piece is not on this computer any more" };
     if (j.fit) return { ok: true };
-    if (FITTING.has(j.key)) return { ok: false, busy: true };
+    if (FITTING.has(j.key) || j.keptState) return { ok: false, busy: true };   // (DEADPRESS2: keptState: a record being put on the page places it now; a second placing left it "ready")
     TRIED.delete(j.key);
     const line = j.row && (j.row.parentRow || j.row), c = line && CLOUD.get(line.key), rj = c && c.rec && (c.rec.jobs || []).find(x => x && x.key === j.key), had = j.keepPlace || (rj && rj.place) || null;
     await fitOne(j);
@@ -423,6 +456,7 @@
     };
     go();
   }
-  root.CharmNestEngraveSync = { why: k => WHY.get(String(k)) || "", state: () => Object.assign({}, st, { lines: SIGS.size, cloud: CLOUD.size, raised: RAISED.size }), flush: sweep, pull, raisedPush, sigOf: l => sigOf(lineOf(l)), confirm, cloudJobs, placeNow, _take: take };
+  root.CharmNestEngraveSync = { why: k => WHY.get(String(k)) || "", state: () => Object.assign({}, st, { lines: SIGS.size, cloud: CLOUD.size, raised: RAISED.size }), flush: sweep, pull, raisedPush, sigOf: l => sigOf(lineOf(l)), confirm, cloudJobs, placeNow, known, loading, placing: j => !!(j && FITTING.has(j.key)), _take: take };
+  if (root.document) load.booting = true;
   if (root.document) { if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", boot); else boot(); }
 })(typeof self !== "undefined" ? self : this);

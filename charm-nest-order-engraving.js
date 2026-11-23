@@ -203,7 +203,9 @@
   async function approveFaces(jobs, who, shownJob, shownBtn) {
     for (const j of jobs || []) {
       const held = x => !!(root.CNEngravingSeals && root.CNEngravingSeals.accepted && root.CNEngravingSeals.accepted(x));   // (ACCEPTED)
-      if (j.state !== 'review' || held(j)) continue;
+      const S = root.CNEngravingSeals; if (S && S.placing && S.placing(j)) await S.placed(j);   // (DEADPRESS2: a face whose words are being placed is waited for, never passed over)
+      if (held(j) || DONE.includes(j.state)) continue;
+      if (j.state !== 'review') return { ok: false, failed: j };
       await (root.Engrave.approveTaken || root.Engrave.approveSettled || root.Engrave.approve)(j, who, j === shownJob ? shownBtn || undefined : undefined);   // (SETTLE: followed until the cloud has saved it; judged before that, an approval being saved was called "not approved")
       const now = (root.Engrave.items && tryDo(() => root.Engrave.items().get(j.key), null)) || j;
       if (!DONE.includes(now.state) && !held(now)) return { ok: false, failed: j };
@@ -407,13 +409,23 @@
     /** The one Approve button of a card: the faces of this piece that wait for approval are approved in turn (Front first), each with its own seal and back file, exactly as if each had been pressed. */
     async function approve(piece, btn) {
       const S = root.CNEngravingSeals, k = keyOf(piece); if (!S || !root.Engrave || !btn) return;
-      const cur = last.get(k) || piece, ap = cur.approve; if (!ap || !ap.ok) { refresh(true, true); return; }
-      const jobs = ap.jobs.filter(j => j.state === 'review'); if (!jobs.length) { refresh(false, true); return; }
-      // (a card that is out of date approves nothing: only the placements it showed, still waiting for approval, are approved)
-      const drawn = (btn.closest('.engCard') || {})._drawn;
-      const moved = (was0, j) => !(S.samePlaced ? S.samePlaced(was0[0], was0[1], j.fit, j.view) : was0[0] === j.fit && was0[1] === j.view);   // (DEADPRESS: the placement itself, never the object)
-      if (drawn && jobs.some(j => !drawn.has(j) || moved(drawn.get(j), j))) { fails.set(k, 'The placement changed while this card was open. Look at it, then press Approve.'); refresh(true, true); return; }
-      const was = new Map(jobs.map(j => [j, [j.fit, j.view]]));
+      if (busy.has(k)) return;   // (its button says Approved already)
+      /* DEADPRESS2 (Paul, 23 Nov 2026, order 4239999491): a press that met the words being placed again in the background found nothing "review" and ended without a word. It is judged by the one helper of every screen
+         (CNEngravingSeals.ready): "Approved ✓" now, waits for that placing, goes on by itself; what it cannot approve is said right under the button. */
+      const cur = last.get(k) || piece, ap = cur.approve, drawn = (btn.closest('.engCard') || {})._drawn;
+      const refuse = why => {
+        busy.delete(k); fails.set(k, why);
+        if (btn.isConnected) { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = 'Approve'; showFail(btn.closest('.engCard'), why); }
+        if (!gone) refresh(true, true);
+      };
+      const jobs = ((ap || piece.approve || {}).jobs || []).filter(j => !DONE.includes(S.kept(j)) && !(S.accepted && S.accepted(j)));
+      if (!jobs.length) { refresh(true, true); return; }   // (approved meanwhile: the card says so)
+      // (a card that is out of date approves nothing: only the placements and the words it showed, still waiting for approval, are approved)
+      if (drawn && jobs.some(j => !drawn.has(j))) { refuse('This card was out of date. Look at it, then press Approve.'); return; }
+      const pairs = jobs.map(j => [j, drawn ? drawn.get(j) : S.shownOf(j)]);
+      let go = S.ready(pairs);
+      if (typeof go === 'string' && !go && ap && !ap.ok) go = ap.why || 'It is not ready to approve yet.';
+      if (typeof go === 'string' && go) { refuse(go); return; }
       let who = S.who();
       if (typeof who !== 'string') {
         if (asking) return; asking = true;
@@ -421,11 +433,16 @@
         if (!who || gone) return;
         if (!btn.isConnected) btn = host.querySelector(`.engCard[data-piece="${cssEsc(cur.pieceKey)}"] [data-e=approve]`);   // (the card was drawn again while the name was typed)
         if (!btn || btn.disabled) return;
+        go = S.ready(pairs); if (typeof go === 'string' && go) { refuse(go); return; }
       }
-      const now = (last.get(k) || {}).approve;
-      if (!now || !now.ok || now.jobs.length !== jobs.length || now.jobs.some(j => !was.has(j) || j.state !== 'review' || moved(was.get(j), j))) { refresh(true, true); return; }
       busy.add(k); fails.delete(k); showFail(btn.closest('.engCard'), '');
       S.instantLabel(btn);   // (INSTANTAPPROVE)
+      if (typeof go !== 'string') {   // (the words are being placed this moment: the press waits for them, PLACE_MS at most)
+        try { go = await go; } catch (e) { go = (e && e.message) || 'Not approved'; }
+        if (gone) { busy.delete(k); return; }
+        if (!btn.isConnected) { const b = host.querySelector(`.engCard[data-piece="${cssEsc(cur.pieceKey)}"] [data-e=approve]`); if (b) { btn = b; S.instantLabel(btn); } }
+        if (go) { refuse(go); return; }
+      }
       const wasToasts = badToasts(); let ok = true, msg = '';
       try {
         const run = approveFaces(jobs, who, jobs[0], btn);   // (the first approval starts at once and puts "Approved" on the button: the wait is said again, with its spinner, until the stamp)
@@ -439,7 +456,8 @@
       if (!ok) {
         const toasted = [...badToasts()].filter(([n, c]) => wasToasts.get(n) !== c).map(([n]) => n.dataset.msg).filter(Boolean).pop();
         if (toasted) msg = toasted;
-        if (msg) fails.set(k, msg);
+        if (!msg) msg = 'Not approved. Press Approve to try again.';   // (DEADPRESS2: never without a word)
+        fails.set(k, msg);
         if (btn.isConnected) { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = 'Approve'; showFail(btn.closest('.engCard'), msg); }
       }
       if (gone) return;
@@ -459,9 +477,9 @@
     const mkCardRaw = piece => {
       const C = CARD(), el = C.card(piece, { imageUrl: u => (/^https?:/.test(u) ? cors(u) : u), onOpen: (face, key, btn, p) => openEngrave(face, key, btn, p || piece) });
       // (what each placement looked like when this card was drawn: an approval presses only what the person saw)
-      el._drawn = new Map(piece.jobs.map(j => [j, [j.fit, j.view]]));
+      { const S = root.CNEngravingSeals; el._drawn = new Map(piece.jobs.map(j => [j, S && S.shownOf ? S.shownOf(j) : { fit: j.fit, view: j.view }])); }
       const b = el.querySelector('[data-e=approve]'); if (b) b.addEventListener('click', () => { if (!b.disabled) approve(piece, b); });
-      const f = fails.get(keyOf(piece)); if (f && piece.state === 'approve') showFail(el, f); else fails.delete(keyOf(piece));
+      const f = fails.get(keyOf(piece)); if (f && !['approved', 'plain'].includes(piece.state)) showFail(el, f); else fails.delete(keyOf(piece));
       // (ENGPRE, Paul 13 Oct: "a charm does not have to be placed on that sheet for it to be approved/updated": a piece with no engraving job yet, held, waiting, pulled or not nested, is asked for its job
       //  now, once per line per window: Engrave.early makes it on the charm the piece will have, pools and moves nothing, and the next look at the order draws the real card; it says "Preparing" until then)
       if (!piece.jobs.length) {
@@ -530,6 +548,7 @@
     }
     /** Look again; draw only the cards whose content has changed (or all at once when asked). `quiet`: the host is not told. */
     let onlySeen = '';
+    const wordsNow = p => JSON.stringify([p.state, ['front', 'back'].map(f => { const x = p.faces[f]; return x ? [x.state, x.text] : 0; })]);
     function refresh(force, quiet) {
       if (gone || !host.isConnected) return;
       attached = true;
@@ -571,8 +590,9 @@
       for (const p of r.pieces) {
         const k = keyOf(p), old = cards.get(k);
         // (a piece being approved keeps the card it has until the approval stands)
-        if (old && old.el.isConnected && (busy.has(k) || (!force && old.sig === sigs.get(k)))) { next.set(k, old); els.push(old.el); continue; }
-        const el = mkCard(p); built = true; next.set(k, { el, sig: sigs.get(k) }); els.push(el);
+        // (DEADPRESS2: and a card whose words are being placed again in the background keeps its picture and its Approve until they are: no flicker)
+        if (old && old.el.isConnected && (busy.has(k) || (!force && (old.sig === sigs.get(k) || (old.words === wordsNow(p) && p.state === 'approve' && p.jobs.some(j => j.keptState === 'review')))))) { next.set(k, old); els.push(old.el); continue; }
+        const el = mkCard(p); built = true; next.set(k, { el, sig: sigs.get(k), words: wordsNow(p) }); els.push(el);
       }
       // (MONOUI: the monogram lines' cards stand in their lines' places among the others; a card that is not shown is taken out of the page and kept)
       let all = els;

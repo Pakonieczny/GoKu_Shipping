@@ -9769,6 +9769,7 @@ const Engrave = window.Engrave = (() => {
     const line = lineOf(row), CS = window.CharmNestEngraveSetup;
     if (!CS || !line || !stage) return { ok: false, message: "The engraving is not loaded yet.", approved: [] };
     if (line.state === "gone") return { ok: false, message: "This order is no longer in the run.", approved: [] };
+    if (o.approve !== false) { const Y = window.CharmNestEngraveSync; if (Y && typeof Y.known === "function" && line.key && !Y.known(line.key)) return { ok: false, message: "Not approved: the saved words of this order are still being loaded. Approve once they are here.", approved: [] }; }   // (WORDSFIRST)
     const choice = ["none", "front", "back", "both"].includes(stage.choice) ? stage.choice : null; if (!choice) return { ok: false, message: "Nothing is chosen to approve.", approved: [] };
     const slot = stage.slot ? String(stage.slot) : null, on = choice === "both" ? ["front", "back"] : choice === "none" ? [] : [choice], faces = stage.faces || {};
     const scale = Math.max(0.001, +window.CN_SPIN_SCALE || 1), silence = STAGE_MS * scale, wait = ms => new Promise(r => setTimeout(r, ms));
@@ -9842,7 +9843,7 @@ const Engrave = window.Engrave = (() => {
           if (!said || decided.has(j)) { why = j.reason || `the ${f} words need a decision`; break; } decided.add(j); await decideWords(j, { text: said, by, note: "edited" }); continue; }
         if (["none", "skipped"].includes(j.state)) { why = `the ${f} is not engraved`; break; }
         if (OPENREAD.includes(j.state) && !preparingNow(j) && readsFree(j)) prepareLate(line).catch(() => {});
-        else if (j.state === "ready" && !isWorking(j) && !lateTasks.has(j) && !fitTasks.get(j)) { if (!canFit(j)) { why = `the ${f} words wait for the piece's sheet`; break; } if (!fitting.has(j)) { fitting.add(j); fitJob(j).catch(() => {}); } }
+        else if (j.state === "ready" && !j.keptState && !isWorking(j) && !lateTasks.has(j) && !fitTasks.get(j)) { if (!canFit(j)) { why = `the ${f} words wait for the piece's sheet`; break; } if (!fitting.has(j)) { fitting.add(j); fitJob(j).catch(() => {}); } }
         if (Date.now() > until()) { why = `the ${f} words were not placed: nothing moved for ${minutesOf(silence)}`; break; }
         await wait(60);
       }
@@ -10055,6 +10056,8 @@ const Engrave = window.Engrave = (() => {
   function approveBlocked(job, owner, pendingFit) {
     if (owner.get(job.key) !== job) return "stale";
     if (job.row?.state === "gone") return "Not approved: this order is no longer in the run.";
+    // (WORDSFIRST, Paul 23 Nov 2026, order 4239999491: never the words the page read by itself before the cloud's saved words of the line were read)
+    { const CS = typeof window !== "undefined" && window.CNEngravingSeals, u = CS && typeof CS.unread === "function" ? CS.unread(job) : ""; if (u) return "Not approved: the saved words of this order are still being loaded. Approve once they are here."; }
     if (job.stamping || job.backSaving || job.approvalPreparing) return "Still approving this placement…";
     if (job.state === "review" || job.state === "fitting" && pendingFit) return "";
     return "Not approved: " + ({ fitting: "the words are still being placed. Approve once they are drawn.", ready: "the words are waiting to be placed on the charm. Approve once they are drawn.", classify: "the words are being read again. Approve once they are placed.", reclassify: "the words are being read again. Approve once they are placed.", words: "the words need a decision first.", blocked: "the words need a decision first.", approved: "it is approved already.", written: "it is approved and saved already.", skipped: "it is cut plain.", none: "it has no engraving." }[job.state] || `this placement is ${job.state || "not ready"}.`);
@@ -10109,6 +10112,14 @@ const Engrave = window.Engrave = (() => {
   async function approveOnce(job, by, button, o) {
     { const art=typeof charmEditSaving==="function" ? charmEditSaving(job) : null;   // (APPROVE AFTER THE EDITOR: the Charm Editor's save of this piece is still under way: it is waited for, said at once, and what it left is approved)
       if(art){approveSay(job,"Saving this piece's artwork from the Charm Editor first · the approval follows",null,true);jobStep(job,"art","Saving this piece's artwork from the Charm Editor first…");try{await approveWithin(art,APPROVE_MS.fit,`the artwork was not saved within ${minutesOf(APPROVE_MS.fit)}`);}catch(e){notApproved(job,`Not approved: ${e.message}. Press Approve again once the card says the artwork is saved.`);return;}approveSay(job,"");return approveOnce(job,by,button);} }
+    /* DEADPRESS2 (Paul, 23 Nov 2026, order 4239999491): a piece to approve whose words are placed again in the background (KEPTSTATE) is waited for, 15 s at most, then judged as it is; it was refused, or the press ended without a word */
+    { const CS=window.CNEngravingSeals;
+      if(CS && typeof CS.placed==="function" && job.keptState==="review" && job.state!=="review"){
+        const was=button && button.isConnected && !button.disabled ? button.textContent : null;if(was!=null)CS.instantLabel(button);
+        approveSay(job,"Placing the words on the charm first · the approval follows",null,true);jobStep(job,"face","Placing the words on the charm first…");
+        const ok=await CS.placed(job);if(was!=null && button.isConnected){button.disabled=false;button.textContent=was;}
+        if(!ok){notApproved(job,"Not approved: the words are still being placed on the charm. Press Approve again in a moment.");return;}
+      } }
     const owner=items(),row=job.row,pendingFit=fitTasks.get(job);
     { const why=approveBlocked(job,owner,pendingFit); if(why){approveRefused(job,why);return;} approveSay(job,""); }
     if(neverEngraves(row) && !job.approvalIntent){setNone(job,neverWhy(row));Orders.render();render();return;}   // (NO EARRING IS EVER ENGRAVED: an old open card is put away, nothing is approved)
@@ -27301,7 +27312,7 @@ const OrderWin = window.OrderWin = (() => {
     // (the face picked on the switch for this charm: a charm's Front and Back are two jobs that share its pool piece, so the sheet's own reading, which names one of them, is not what was picked)
     if(cyc0&&cyc0.faces&&job&&SV.face){const pf=cyc0.pieces.find(p=>p.key===SV.face);if(pf&&pf.job!==job&&(pf.job.copies||[]).some(id=>(job.copies||[]).includes(id))){job=pf.job;xeng=null;}}
     const cyc=cyc0&&job?tryDo(()=>OEc.cycleOf(lr,job.key)):cyc0;
-    const eng=job ? {job,back:xeng?.back,saved:cyc?undefined:re,kind:["approved","written"].includes(job.keptState || job.state) || CNEngravingSeals.taken?.(job)?"approved":job.state==="review"?"approve":job.state==="skipped"?"skipped":["words","blocked"].includes(job.state)?"words":job.state==="none"?"none":"preparing",text:job.text,by:job.approvedBy || (CNEngravingSeals.taken?.(job) ? job.approving.by : undefined),at:job.approvedAt || (CNEngravingSeals.taken?.(job) ? job.approving.at : undefined),note:xeng?.note}   // (KEPTSTATE, INSTANTAPPROVE)
+    const eng=job ? {job,back:xeng?.back,saved:cyc?undefined:re,kind:["approved","written"].includes(job.keptState || job.state) || CNEngravingSeals.taken?.(job)?"approved":(job.keptState || job.state)==="review"?"approve":job.state==="skipped"?"skipped":["words","blocked"].includes(job.state)?"words":job.state==="none"?"none":"preparing",text:job.text,by:job.approvedBy || (CNEngravingSeals.taken?.(job) ? job.approving.by : undefined),at:job.approvedAt || (CNEngravingSeals.taken?.(job) ? job.approving.at : undefined),note:xeng?.note}   // (KEPTSTATE, INSTANTAPPROVE)
       : xeng?.kind && xeng.kind!=="none" ? {...xeng,saved:re || xeng.saved}
       : re ? {kind:re.needed?(re.approved?"approved":"words"):re.state==="skipped"?"skipped":"none",text:re.text,by:re.approvedBy,at:re.approvedAt,saved:re}
       : {kind:"none"};
@@ -27371,10 +27382,11 @@ const OrderWin = window.OrderWin = (() => {
       },
       zoom:{id:'ow:sheetEng',key:rid+'|'+(x0&&(x0.poolId||x0.id)||'')+(cyc?'|'+cyc.key:'')},
       stale:()=>{if(SV.info)paintPanel(SV.info);},
-      approve:async ap=>{
+      approve:async (ap,again)=>{
         // (the name kept on this computer, else the small name bar in this window: never a browser pop-up on the order window)
-        if(eng.job?.state!=="review"){if(SV.info)paintPanel(SV.info);return;}   // (a card that is out of date approves nothing: only a placement waiting for approval is approved)
-        let who=CNEngravingSeals.who();if(typeof who!=="string"){who=await who;if(!who)return;if(!ap.isConnected)ap=panel.querySelector('[data-e=approve]');if(!ap || ap.disabled || eng.job.state!=="review")return;}
+        const fresh=async()=>{const why=again?await again():eng.job?.state!=="review"?"This card was out of date. Look at it, then press Approve.":"";if(why)throw new Error(why);};   // (DEADPRESS2: words being placed again are waited for; what cannot be approved is said under the button)
+        if(eng.job?.state!=="review")await fresh();   // (a card that is out of date approves nothing: only a placement waiting for approval is approved)
+        let who=CNEngravingSeals.who();if(typeof who!=="string"){who=await who;if(!who)return;if(!ap.isConnected)ap=panel.querySelector('[data-e=approve]');if(!ap || ap.disabled)return;await fresh();}
         const standsNow=()=>["approved","written"].includes(eng.job.state) || CNEngravingSeals.taken(eng.job);
         CNEngravingSeals.instantLabel(ap);   // (INSTANTAPPROVE: "Approved ✓" at the press, taken back below when it did not go through; its file is written behind it)
         try{
@@ -29072,7 +29084,7 @@ const Session = window.Session = (() => {
     } catch (_) { /* tried again at the next start */ }
     return bestChain;
   }
-  const OMIT = new Set(["parsed", "worker", "workers", "el", "cardEl", "pages", "persisted", "persisting", "bar", "evNest", "evSearch", "_img", "_geomVerify", "pool", "row", "job", "recalledFrom", "backSaving", "stamping", "approvalPreparing"]);
+  const OMIT = new Set(["parsed", "worker", "workers", "el", "cardEl", "pages", "persisted", "persisting", "bar", "evNest", "evSearch", "_img", "_geomVerify", "pool", "row", "job", "recalledFrom", "backSaving", "stamping", "approvalPreparing", "keptState", "keptFit"]);
   // Bytes nothing changes once they are made (a file as read, a written sheet, a traced silhouette) go into the checkpoint
   // as they are: put() copies them itself, in the same task as the capture. Copying each here first held every one twice.
   const SHARED = new Set(["bits", "bytes", "ai", "labelled"]);
