@@ -6,6 +6,8 @@
 //   N3 a saved design keeps arcR / arcX (charm-nest-designs.js clean), so it opens again curved
 //   B  in the editor (Chromium): the Curve text tool is on the rail; a press on a text and a drag up arches it; dragged near the disc's own curve it snaps to fit (concentric with the
 //      disc, "Fits the disc"); one undo step; Fit to the disc and Straighten on the bar; its circle drawn while selected
+//   B6/B7 CURVEKEEP (order 4239655218): the engraving's handed-in words (source 'engrave') curved by the tool or by Fit to the disc become the editor's own words (new id, source 'added'),
+//      so the Save keeps the curve; straightened in the same drag they stay the engraving's
 //   PW_DIR=<dir with playwright-core> CHROMIUM=<chrome> node tests/charm-nest/ce-curve-text.cjs
 'use strict';
 const path = require('path'), assert = require('assert/strict');
@@ -113,6 +115,48 @@ check('N3 a saved design keeps arcR and arcX (it opens again curved)', () => {
     await settle(); let t = await item(id); assert.ok(!(t.arcR), 'straight: ' + t.arcR + ' (' + ranOff + ')');
     const ranFit = await btn('cx.arcFit') || await H(() => { window.CharmEditor.commands['cx.arcFit'].run(window.CharmEditor.current.ctx); return 'run'; });
     await settle(); t = await item(id); assert.ok(t.arcR > 0, 'fitted: ' + t.arcR + ' (' + ranFit + ')');
+  });
+  /* CURVEKEEP (order 4239655218): the words a page hands in as its engraving's (source 'engrave') go back to the engraving on Save, laid out straight by its fit (or, staged, not kept at all),
+     so a curve on them was dropped without a word. Curved, they are the editor's own words: a new id (never the hand-back's "engrave-words-"), source 'added', no `engraving`; the Save then keeps
+     them as drawn and takes the engraving's words of that face off (the bridge's own rule for words deleted in the editor). Straightened in the same drag they are the engraving's again. */
+  const handed = async (hid, dyMm) => {
+    await H(([hid, x, y]) => { const c = window.CharmEditor.current.ctx; c.addItems([{ id: hid, kind: 'text', role: 'hatch', source: 'engrave', name: 'Engraving · 08.15.23', text: '08.15.23', fontKey: 'sans', sizePt: 6, align: 'center', tx: x, ty: y, engraving: { job: 'j1#D1', face: 'front', placed: true } }]); c.commit(); }, [hid, dc[0], dc[1] + dyMm * 72 / 25.4]);
+    await settle();
+  };
+  await step('B6 the engraving\'s words curved with the tool become the editor\'s own words (new id, source added, no engraving link), one undo step; straightened in the same drag they stay the engraving\'s', async () => {
+    const hid = 'engrave-words-front-test1';
+    await handed(hid, 3);
+    await H(() => document.querySelector('[data-tool="curve-text"]').click()); await settle();
+    let b = await cur(`C.box(${JSON.stringify(hid)})`), a = await clientOf((b[0] + b[2]) / 2, (b[1] + b[3]) / 2);
+    // a drag down and back up to where it started: straight again, still the engraving's words
+    await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(a.x, a.y + 14, { steps: 5 }); await settle();
+    const mid = await H(() => window.CharmEditor.current.items().filter(i => /^cecurve-|^engrave-words-/.test(i.id)).map(i => i.id));
+    await page.mouse.move(a.x, a.y, { steps: 5 }); await page.mouse.up(); await settle();
+    const back = await item(hid);
+    assert.deepEqual(mid, ['cecurve-front-test1'], 'mid-drag, curved: the editor\'s own words: ' + JSON.stringify(mid));
+    assert.ok(back && back.source === 'engrave' && !back.arcR && back.engraving, 'straightened in the same drag: the engraving\'s words, as handed in');
+    // a drag that curves them
+    const h1 = (await cur('C.history()')).undo;
+    b = await cur(`C.box(${JSON.stringify(hid)})`); a = await clientOf((b[0] + b[2]) / 2, (b[1] + b[3]) / 2);
+    await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(a.x, a.y + 14, { steps: 6 }); await settle(); await page.mouse.up(); await settle();
+    const gone = await item(hid), own = await item('cecurve-front-test1'), selNow = await cur('C.selection()');
+    assert.ok(!gone, 'the hand-back id is gone from the face');
+    assert.ok(own && own.source === 'added' && own.arcR < 0 && !own.engraving && own.text === '08.15.23' && own.fontKey === 'sans' && own.name === '08.15.23', 'the editor\'s own curved words: ' + JSON.stringify(own && { source: own.source, arcR: own.arcR, engraving: own.engraving, name: own.name }));
+    assert.deepEqual(selNow, ['cecurve-front-test1'], 'selected');
+    assert.equal((await cur('C.history()')).undo, h1 + 1, 'one undo step');
+    const res = await H(() => window.CharmEditor.current.result()), ch = res.changes.front;
+    assert.ok(ch.added.some(x => x.id === 'cecurve-front-test1' && x.arcR < 0 && (x.subpaths || []).length > 0) && !res.faces.front.items.some(x => x.id === hid), 'what Save is handed: no engraving words on the face, the curved words added with their outlines');
+  });
+  await step('B7 Fit to the disc on the engraving\'s words makes them the editor\'s own words too (the selection follows); a text of the editor\'s own keeps its id', async () => {
+    const hid = 'engrave-words-front-test2';
+    await handed(hid, -3.2);
+    await H(() => window.CharmEditor.current.setTool ? window.CharmEditor.current.setTool('select') : null); await settle();
+    await H(([a, b]) => window.CharmEditor.current.ctx.select([a, b]), [hid, id]); await settle();
+    await H(() => window.CharmEditor.commands['cx.arcFit'].run(window.CharmEditor.current.ctx)); await settle();
+    const own = await item('cecurve-front-test2'), mine = await item(id), selNow = await cur('C.selection()');
+    assert.ok(!(await item(hid)) && own && own.source === 'added' && own.arcR > 0 && !own.engraving, 'fitted: the editor\'s own words: ' + JSON.stringify(own && { arcR: own.arcR, source: own.source }));
+    assert.ok(mine && mine.source !== 'engrave' && mine.arcR > 0, 'the editor\'s own text fitted under its own id');
+    assert.deepEqual([...selNow].sort(), ['cecurve-front-test2', id].sort(), 'the selection follows: ' + JSON.stringify(selNow));
   });
   await step('B5 no page error', async () => { assert.deepEqual(errs, []); });
   await browser.close();

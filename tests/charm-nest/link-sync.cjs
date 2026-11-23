@@ -62,6 +62,6 @@ const cut = (from, to) => { const i = src.indexOf(from), j = src.indexOf(to, i);
   ok('3 · Just this order answers done only after freshNow', /if \(ans && ans\.ok\) \{[\s\S]{0,300}?await freshNow\(\{ keys: \[row\.key\] \}\)[\s\S]{0,80}?return \{ ok: true, sku, via: "once"/.test(once));
   const repo = fs.readFileSync(path.join(ROOT, 'charm-nest-ce-repo.js'), 'utf8');
   ok('3 · Update repository says it is done only after freshNow (every line of the charm)', /await root\.CNFreshNow\(\{ sku: st\.id\.sku \}\)/.test(repo) && repo.indexOf('await root.CNFreshNow(') < repo.indexOf("log('repoUpdate'"));
-  ok('3 · the page loads the changed bridge under a new token', /charm-nest-bridge\.js\?v=[^"]*-ld1"/.test(fs.readFileSync(path.join(ROOT, 'charm-nest-1.html'), 'utf8')));
+  ok('3 · the page loads the changed bridge under a new token', /charm-nest-bridge\.js\?v=[^"]*-ld1(?:-\w+)*"/.test(fs.readFileSync(path.join(ROOT, 'charm-nest-1.html'), 'utf8')));
   console.log(failed ? `FAIL link-sync (${failed})` : 'PASS link-sync'); process.exit(failed ? 1 : 0);
 })().catch(e => { console.log('FAIL link-sync: ' + (e && e.stack || e)); process.exit(1); });
