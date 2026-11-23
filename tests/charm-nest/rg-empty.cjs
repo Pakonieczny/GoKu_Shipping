@@ -55,6 +55,15 @@ const state = () => JSON.stringify([sheet(SRC), sheet(TGT), stock(SRC_STOCK), st
   ok('1 · RG Draft 2 is empty and removed (archived)', !!s.archived && !active(s).length, { archived: s.archived, n: active(s).length });
   ok('1 · its fresh plate is free again: no owner, available', st && st.owner == null && st.available === true, st);
   ok('1 · RG Draft 1 owes its nest, holding its placed pieces where they are (append)', !!(t.nestJob || t.nestOwed) && t.appendOnly !== false, { nestJob: t.nestJob, nestOwed: t.nestOwed, appendOnly: t.appendOnly });
+  /* 3 · NESTOWEDREAD: the nest places the three as the live cloud did (00:54: 21 of 21 placed, verified, its job "nested", not dirty) and leaves the nestOwed mark as the reason; the
+       request is answered done at once, not held "Nesting on …" until it runs out of time */
+  { const x = sheet(TGT), moved = active(x).filter(c => srcPieces.includes(String(c.poolId)));
+    x.placements = (x.placements || []).concat(moved.map((c, i) => ({ id: c.id, cxPt: 200 + 20 * i, cyPt: 120, angle: 0, wPt: 15, hPt: 15 })));
+    Object.assign(x, { layoutRev: (+x.layoutRev || 0) + 1, dirty: false, status: 'complete', saving: false, nestJob: { id: 'nest-test', status: 'nested', at: Date.now() }, placedCount: x.placements.length, verification: { ok: true } });
+    F.seed('Charm_Nest_Sheets/' + TGT, x); }
+  ok('3 · the nest left its nestOwed mark (the reason), as the live cloud does', !!sheet(TGT).nestOwed);
+  await pass(); const c3 = cmdOf(r.id);
+  ok('3 · once the nest placed them, the request is answered done in words (3 moved onto it, placed there), not left "Nesting on …"', c3.state === 'done' && /moved onto/.test(String(c3.text || '')) && /3 placed there/.test(String(c3.text || '')), c3);
   /* 2 · refusals */
   for (const [why, edit, target, re] of [
     ['no target named', null, null, /Name the Rose Gold draft/],
