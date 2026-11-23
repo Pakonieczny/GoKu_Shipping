@@ -379,7 +379,21 @@ const jobLive = j => !!(j && LIVE.includes(String(j.status || "")));
 async function linkUnit(ctx) {
   ctx = Assembly.passKeyed(ctx);
   const run = ctx.run; if (!run || !run.runId) return undefined;
-  const db = ctx.db, q = await db.collection("Charm_Nest_Sheets").where("roseLinkCut.by", "==", "Cloud").limit(20).get();
+  const db = ctx.db;
+  /* (the lines that waited for a link cut go on once it is recorded: placed on the leftover by the placement. A resting run comes back to its steps only when a line or a sheet it
+     counts changes, and a cut alone is not one: the order waited on a cut sheet until something else moved (RG Draft 1, 23 Nov 2026, 02:17). The line set back to "pooled" is that
+     change, as the placement's own resume of a wait that is due) */
+  { const L = run.lines || {}, waiting = Object.entries(L).filter(([, l]) => l && l.state === "waiting" && l.wait && l.wait.kind === "green" && l.wait.cut === "link" && l.wait.sheetId);
+    const ids = [...new Set(waiting.map(([, l]) => String(l.wait.sheetId)))], gone = new Set();
+    for (const id of ids) { const r = await readSheet(db, id); if (!r || r.roseCutAt || num(r.laserDoneAt) > 0 || r.releaseFull || (r.setId && !r.draft)) gone.add(id); }
+    const due = waiting.filter(([, l]) => gone.has(String(l.wait.sheetId)));
+    if (due.length) {
+      const lines = Object.fromEntries(due.map(([k, l]) => [k, { state: (l.poolIds || []).length ? "pooled" : "pulled", wait: null, reason: null }]));
+      const r = await ctx.call({ op: "runLinesPatch", runId: run.runId, lines }, `green-link-resume|${run.runId}|${due.map(([k]) => k).sort().join(",")}`);
+      if (ok(r)) { for (const [k, l] of due) Object.assign(l, lines[k]); say("ok", `${due.length} order line(s) that waited for a green line cut go on, onto its leftover`); }
+      else say("warn", `the lines that waited for a green line cut were not set going (${words(r)}); tried again on the next pass`);
+    } }
+  const q = await db.collection("Charm_Nest_Sheets").where("roseLinkCut.by", "==", "Cloud").limit(20).get();
   for (const d of q.docs) {
     if (Date.now() > ctx.budgetEnd) return { more: true };
     const rec = Object.assign({ id: d.id }, d.data());
