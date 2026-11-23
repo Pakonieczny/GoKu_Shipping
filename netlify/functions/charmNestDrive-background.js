@@ -6,17 +6,20 @@
 "use strict";
 const { parseBody } = require("./_charmNestAuth");
 
+/* PASSNOW (23 Nov 2026, items 21 and 22: a press waited 61 s): a worker that found no pass running left its request for the next one and started none, so it waited for the cron, up to a minute. It asks for a pass now (driveSoon: never while the drive is off; one that runs already is asked to go again). */
+const passFor = async (r, what) => { if (!r || !r.again || r.again === "the run is closed") return; try { await require("./charmNestLibrary").driveSoon(what + " waits"); } catch (e) { console.warn("[drive] no pass asked:", (e && e.message) || e); } };
+
 exports.handler = async (event) => {
   const body = parseBody(event), nonce = String(body.nonce || "");
   /* APPROVENOW: the file of one approval, asked by engraveApprove with the approval's own single-use key: written here, beside the driver's pass and under ITS lease (every write is fenced on it), never waiting on the pass's own work */
   if (!nonce && body.engrave && body.key) {
-    try { const r = await require("./_charmEngraveFiles").nowTask({ db: require("./firebaseAdmin").firestore(), Lib: require("./charmNestLibrary"), taskId: String(body.engrave).slice(0, 220), key: String(body.key).slice(0, 80), say: t => console.log(t) }); console.log("[engrave now]", String(body.engrave).slice(0, 120), JSON.stringify(r).slice(0, 300)); }
+    try { const r = await require("./_charmEngraveFiles").nowTask({ db: require("./firebaseAdmin").firestore(), Lib: require("./charmNestLibrary"), taskId: String(body.engrave).slice(0, 220), key: String(body.key).slice(0, 80), say: t => console.log(t) }); console.log("[engrave now]", String(body.engrave).slice(0, 120), JSON.stringify(r).slice(0, 300)); await passFor(r, "engrave"); }
     catch (e) { console.error("[engrave now] failed:", (e && e.message) || e); }
     return { statusCode: 200, body: "done" };
   }
   /* CMDFAST: one person's request (a Change SKU, a piece made again), asked by runCmdPut with the request's own key: done here, beside the pass and under its lease */
   if (!nonce && body.cmd && body.runId && body.key) {
-    try { const r = await require("./_charmNestCmdUnit").nowRun({ db: require("./firebaseAdmin").firestore(), Lib: require("./charmNestLibrary"), runId: String(body.runId).slice(0, 80), id: String(body.cmd).slice(0, 40), key: String(body.key).slice(0, 80), say: t => console.log(t) }); console.log("[cmd now]", String(body.cmd).slice(0, 40), JSON.stringify(r).slice(0, 300)); }
+    try { const r = await require("./_charmNestCmdUnit").nowRun({ db: require("./firebaseAdmin").firestore(), Lib: require("./charmNestLibrary"), runId: String(body.runId).slice(0, 80), id: String(body.cmd).slice(0, 40), key: String(body.key).slice(0, 80), say: t => console.log(t) }); console.log("[cmd now]", String(body.cmd).slice(0, 40), JSON.stringify(r).slice(0, 300)); await passFor(r, "cmd"); }
     catch (e) { console.error("[cmd now] failed:", (e && e.message) || e); }
     return { statusCode: 200, body: "done" };
   }

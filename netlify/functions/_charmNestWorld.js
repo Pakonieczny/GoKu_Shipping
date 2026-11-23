@@ -584,4 +584,19 @@ async function readNow(o) {
   return out;
 }
 
-module.exports = { readNow, masterNow, flowOf, sheetFactsOf, placeOfLine, build, lineOf, reviewOf, masterIndex, readLine, afterRead, runFacts, isOpenReceipt, LINES, WORLD, ETSY };
+/** RELNOW (23 Nov 2026, item 23: a page opened seconds after a Release Hold still showed the order ON HOLD, until the next reading of all orders, up to a minute later): what the run holds of these lines NOW is put on
+ *  their stored reading; nothing else of it is read again (the next build reads it whole). lines: { lineKey: the run's line }. → how many lines were put right */
+async function runNow(o) {
+  const { db } = o, L = o.lines || {}; let n = 0;
+  for (const k of Object.keys(L).slice(0, 80)) n += await db.runTransaction(async tx => {
+    const ref = db.collection(LINES).doc(k), s = await tx.get(ref), d = s.exists ? s.data() || {} : null; if (!d || d.gone) return 0;
+    let x = null; try { x = JSON.parse(d.data || "{}"); } catch (_) { x = null; } if (!x || !x.order || !x.line) return 0;
+    const run = runFacts(L[k]), kinds = run.releaseAnyway && Array.isArray(run.releaseAnyway.kinds) ? run.releaseAnyway.kinds : [], was = String(run.state || "pulled"), state = x.spec && x.spec.noDesign && was === "pulled" ? "noDesign" : was;
+    const data = J(Object.assign({}, x, { run, state, reason: run.reason || null, problems: (Array.isArray(x.problems) ? x.problems : []).filter(p => !(p && kinds.includes(p.kind))) })); if (data === d.data) return 0;
+    tx.set(ref, Object.assign({}, d, { state, sig: sha(data), at: Date.now(), gone: false, data }), { merge: false });
+    return 1;
+  });
+  return n;
+}
+
+module.exports = { readNow, runNow, masterNow, flowOf, sheetFactsOf, placeOfLine, build, lineOf, reviewOf, masterIndex, readLine, afterRead, runFacts, isOpenReceipt, LINES, WORLD, ETSY };

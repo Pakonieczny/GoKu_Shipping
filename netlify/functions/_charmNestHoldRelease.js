@@ -80,7 +80,7 @@ function make(d) {
       let lines = {};
       if (had.length) { const docs = await Promise.all(had.map(x => tx.get(d.col(RUN_LIVE).doc(x)))); if (docs.some(s => !s.exists)) throw new Error("the run was saved while its lines were read: try again"); for (const s of docs) Object.assign(lines, JSON.parse(s.data().json || "{}")); }
       else lines = Object.assign({}, old.lines || {});
-      const at = Date.now(), changed = [], out = {};
+      const at = Date.now(), changed = [], out = {}, full = {};
       let holds = 0;
       for (const k of Object.keys(lines)) {
         if (!k.startsWith(rid + "_")) continue;
@@ -99,7 +99,7 @@ function make(d) {
         Object.assign(next, cleanAside(o.asides[k]));
         delete next.releasing;   // (a release under way on a page is this one)
         next._lp = { at, dev: CLOUD_DEV, by: o.by };
-        lines[k] = next; changed.push(k); out[k] = pick(next);
+        lines[k] = next; changed.push(k); out[k] = pick(next); full[k] = next;
       }
       if (!changed.length) return { runId, changed, lines: out, at: 0, holds };
       const parts = d.liveParts(runId, lines);
@@ -108,7 +108,7 @@ function make(d) {
       for (const p of parts) if (!have.has(p.id)) tx.set(d.col(RUN_LIVE).doc(p.id), { runId, json: p.json, bytes: p.bytes, lines: p.lines, seq: p.seq, createdAt: FV.serverTimestamp() });
       for (const x of had) if (!keep.has(x)) tx.delete(d.col(RUN_LIVE).doc(x));
       tx.set(ref, { liveLines: { ids: parts.map(p => p.id), lines: parts.reduce((n, p) => n + p.lines, 0), bytes: parts.reduce((n, p) => n + p.bytes, 0) }, lines: FV.delete(), lineEditAt: at, updatedAt: FV.serverTimestamp() }, { merge: true });
-      return { runId, changed, lines: out, at, holds };
+      return { runId, changed, lines: out, at, holds, full };
     });
   }
 
@@ -153,6 +153,8 @@ function make(d) {
       // 3 · the run's lines
       const runId = await runOf(b.runId || job.runId);
       const lineRes = runId ? await releaseLines(runId, rid, { heldKeys, askKeys: new Set(job.askKeys || []), frontAt, by, seal: job.seal || null, asides: job.asides || {}, queue: job.queue === true }) : { runId: null, changed: [], lines: {}, at: 0 };
+      // (RELNOW: the reading a fresh page takes says it too, at once; it said "on hold" until the next reading of all orders)
+      let worldSaid = 0; if (!d.prefix() && lineRes.full) try { worldSaid = await require("./_charmNestWorld").runNow({ db, lines: lineRes.full }); } catch (e) { console.warn("[release] the reading is put right by its next build:", (e && e.message) || e); }
       // (what steps 2 and 3 did is kept in the journal before the timeline step: a press sent again, or the driver's unit, finds nothing held any more and still knows this release released something)
       const pieces = held.length + num(job.pieces), linesDone = [...new Set((Array.isArray(job.lines) ? job.lines : []).concat(lineRes.changed))];
       if (held.length || lineRes.changed.length) await db.runTransaction(async tx => { await d.fenceTx(tx); tx.set(jref, { pieces, lines: linesDone, runId: lineRes.runId || job.runId || null, beatAt: Date.now() }, { merge: true }); });
@@ -167,7 +169,7 @@ function make(d) {
       // 5 · done
       await db.runTransaction(async tx => { await d.fenceTx(tx); tx.set(jref, { state: "done", doneAt: Date.now(), runId: lineRes.runId || job.runId || null, lines: linesDone, pieces, released, error: null }, { merge: true }); });
       d.feedOrders(b, [[rid]]);
-      if (lineRes.runId && lineRes.changed.length) d.revTouch(b, ["r:" + lineRes.runId]);
+      if (lineRes.runId && lineRes.changed.length) d.revTouch(b, ["r:" + lineRes.runId].concat(worldSaid ? ["w:world"] : []));
       return Object.assign({ ok: true, orderId: rid, frontAt, at: lineRes.at || Date.now(), stamp: lineRes.at ? { at: lineRes.at, dev: CLOUD_DEV, by } : null, runId: lineRes.runId || null, lines: lineRes.lines, pieces, released }, released ? {} : { already: true });
     } catch (e) {
       if (e && e.fenced) throw e;   // (the cloud's own call: another pass holds the lease; nothing more is written)
