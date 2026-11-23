@@ -709,6 +709,10 @@
       return g;
     };
     const gate = () => { const m = dead ? null : tryDo(() => model(), null); if (m) drawGate(m.vm, m.d); };
+    /* GATEFRESH (Paul, 23 Nov 2026, order 4242795385: "the little orange dot did not turn green"): Approve was drawn while a record from the cloud was being put on the piece (its state "ready" for a moment) and not again when
+       the piece was saved: an approved piece went on showing a lit Approve. Once a second the gate is asked again, and Approve is drawn only when the answer is another one. */
+    let gone = 0; const fresh = setInterval(() => { if (dead) { clearInterval(fresh); return; } if (!el.isConnected) { if (++gone > 60) clearInterval(fresh); return; } gone = 0; const b = button(); if (!b || RUNNING.has(key)) return; const m = tryDo(() => model(), null), g = m && tryDo(() => gateOf(m.vm, m.d, key), null); if (g && b.dataset.gate !== g.st) drawGate(m.vm, m.d); }, 1000);
+    if (fresh && typeof fresh.unref === 'function') fresh.unref();
     /** A press of Approve (the button, the card's other approval buttons, the A key). */
     const press = () => {
       if (dead) return false; const m = tryDo(() => model(), null); if (!m) return false; const { vm, d } = m;
@@ -881,7 +885,7 @@
       CHAINS.set(key, run.catch(() => {})); return run;
     };
     return { draw, refresh: draw, setFace: f => setActive(f, 'host'), setActive, beforeMove, moved, commit: commitNow, press, stageNone, stagePos: stagePosHere, paint: k => paint(k || 'refresh'), key,
-      destroy() { dead = true; untrack(); sweepSoon(); for (const [t, f] of ev) el.removeEventListener(t, f); if (gateCard) { gateCard.removeEventListener('click', blockClick, true); gateCard.removeEventListener('keydown', blockKey, true); } },
+      destroy() { dead = true; clearInterval(fresh); untrack(); sweepSoon(); for (const [t, f] of ev) el.removeEventListener(t, f); if (gateCard) { gateCard.removeEventListener('click', blockClick, true); gateCard.removeEventListener('keydown', blockKey, true); } },
       paintAll: () => paint('refresh') };
   }
 

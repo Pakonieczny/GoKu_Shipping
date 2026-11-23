@@ -98,6 +98,7 @@
     if(e.kind==='approve'){
       if(!job)return {why:'Not loaded here yet: use Fix in Design & Engrave to approve it.'};
       if(job.row?.state==='gone')return {why:'This order has left the pull (cancelled or shipped), so it is not approved here.'};
+      if(job.approving && job.state==='review')return {saving:true};   // (SAVING, Paul 23 Nov 2026: approved, and the cloud is saving its file: never a lit Approve again, as if nothing had happened)
       return {ok:true};
     }
     return {};
@@ -150,6 +151,7 @@
     const reasonId='egWhy'+(++askN);
     let approve='';
     if(kind==='approved')approve=`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton" disabled aria-label="${say('Back engraving approved')}">Approved</button>${sealsHtml}</span>`;
+    else if(ap.saving)approve=`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton egAsk" data-saving="1" disabled aria-busy="true"><span class="spin"></span>Saving…</button></span>`;
     else if(ap.ok)approve=`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton egAsk" data-e="approve">Approve engraving</button></span>`;
     else if(ap.why)approve=`<span class="egApproveWrap"><button type="button" class="btn sm egApproveButton egAsk egOff" disabled aria-describedby="${reasonId}">Approve engraving</button></span><span class="egOffWhy" id="${reasonId}">${esc(say(ap.why))}</span>`;
     // one press for both faces of the piece shown ("Approve both faces"): offered by the host (e.both = { ok, why }) only when this piece has a Front and a Back still to approve; off, with the reason as its tip, until both placements have been looked at

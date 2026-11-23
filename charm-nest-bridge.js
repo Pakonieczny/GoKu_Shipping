@@ -10087,6 +10087,7 @@ const Engrave = window.Engrave = (() => {
   async function approveSettled(job, by, button, o) {
     await approve(job,by,button,o);
     const now=()=>items().get(job.key) || job, t0=Date.now();
+    if(!["approved","written"].includes(now().state) && now().approving && now().approving.cloud && button && button.isConnected){try{button.disabled=true;window.CNEngravingSeals?.busyLabel?.(button);}catch(_){}}   // (SAVING: the button pressed says it is still being saved, never a plain Approve again)
     while(!["approved","written"].includes(now().state) && now().approving && now().approving.cloud && Date.now()-t0<APPROVE_MS.fit) await new Promise(res=>setTimeout(res,250));
     return ["approved","written"].includes(now().state);
   }
