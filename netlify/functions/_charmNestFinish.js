@@ -45,7 +45,9 @@ const BUDGET_MS = 12 * 60000, TAIL_MS = 90000, RENEW_MS = 20000, WORK = "charmne
 const STEPS = ["S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"];
 const ENDED = new Set(["done", "superseded", "failed", "skipped", "waiting"]);
 const num = v => (Number.isFinite(+v) ? +v : 0);
-const sha = (s, n) => crypto.createHash("sha256").update(String(s)).digest("hex").slice(0, n || 24);
+/** ONCEWHOLE: the pieces a nest's keepOrdersWhole took off (lifted, a pair's or order's mates, the order's pieces left behind): they fitted, they went on to keep the order whole and oldest first. */
+const liftedOf = r => { const w = r && r.ordersWhole; return w ? ["lifted", "mates", "wholeMates", "behind"].flatMap(k => (Array.isArray(w[k]) ? w[k] : [])).map(String) : []; };
+const sha =(s, n) => crypto.createHash("sha256").update(String(s)).digest("hex").slice(0, n || 24);
 const newToken = () => (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"));
 const urlOf = (bucket, path, token) => "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket.name) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(token);
 const torontoDay = t => { try { return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(t)); } catch (_) { return new Date(t).toISOString().slice(0, 10); } };
@@ -165,7 +167,7 @@ STEP.S0 = async X => {
     if (result && Array.isArray(result.placements)) {
       const base = j.layoutRev != null ? num(j.layoutRev) : j.input && j.input.layoutRev != null ? num(j.input.layoutRev) : null;
       if (base != null && base !== num(rec.layoutRev)) throw new Stop("superseded", `the nest ${want.nestJobId} was made for layout ${base}; the sheet is at ${num(rec.layoutRev)} now: it is not written`);
-      nest = { jobId: String(want.nestJobId), result, appendOnly: j.appendOnly != null ? !!j.appendOnly : j.input && j.input.appendOnly != null ? !!j.input.appendOnly : null,
+      nest = { jobId: String(want.nestJobId), result, appendOnly: j.appendOnly != null ? !!j.appendOnly : result.appendOnly != null ? !!result.appendOnly : j.input && j.input.appendOnly != null ? !!j.input.appendOnly : null,   // (ONCEWHOLE: the cloud's pick says it in its result)
         intakePhase: j.auto && String(j.mode || "auto") !== "fresh" ? "fill" : null };   // (build step 7b: the cloud's own ask of a nest is the page's live intake, its quick gap fill: phase "fill")
     }
   }
@@ -600,8 +602,19 @@ async function layoutOf(X) {
   placements = placements.filter(p => byId.has(p.id)); rejects = rejects.filter(id => byId.has(id));
   if (gone) X.notes.push(`${gone === 1 ? "A piece" : gone + " pieces"} left the sheet while it was nested; the sheet is arranged again next`);
   sh.placements = placements; sh.rejects = rejects; sh.nestInitial = (rec.placements || []).filter(p => p && byId.has(String(p.id))).map(norm);
-  try { NP.keepOrdersWhole(sh, byId, new Set(r.pocketFilled || []), { orderKey: NP.orderKey, orderRank: c => NP.orderRank(c, X.O), groupOf: c => (c && c.groupKey && +c.groupSize > 1 ? String(c.groupKey) : null), agent: (who, kind, text) => X.notes.push(text) }); }
-  catch (e) { X.notes.push("orders kept whole: " + e.message); }
+  /* ONCEWHOLE (Paul, 22 Nov 2026: "I need to know why it marked this sheet as full"; RG Sheet 1, 21:16-21:18): a remade BULLSEYE, twice its old size, had no room on the sheet. The nest's
+     own pick kept the orders whole and oldest first knowing the sheet's 29 pieces were saved where they lay (appendOnly: lifted none); the writer then ran the rule AGAIN on a sheet it made
+     with appendOnly false, and lifted the 11 saved pieces of the 9 orders younger than the BULLSEYE's. They went to a new draft, were counted as 9 more orders with no room ("12 different
+     orders in a row"), and the sheet was released full and cut with their room empty. Now the rule runs once: not again when the nest's pick ran it (result.ordersWhole.done); for a nest
+     that did not (an older job), with the sheet's saved layout held as the nest held it (the job's appendOnly, else the record's). What it lifts is said in the result (lifted): it fitted. */
+  const pickWhole = !!(r.ordersWhole && r.ordersWhole.done), lifted = pickWhole ? liftedOf(r) : [];
+  if (!pickWhole) {
+    const wasAppend = sh.appendOnly; sh.appendOnly = nest.appendOnly === true || (nest.appendOnly == null && rec.appendOnly === true);
+    try { const w = NP.keepOrdersWhole(sh, byId, new Set(r.pocketFilled || []), { orderKey: NP.orderKey, orderRank: c => NP.orderRank(c, X.O), groupOf: c => (c && c.groupKey && +c.groupSize > 1 ? String(c.groupKey) : null), agent: (who, kind, text) => X.notes.push(text) });
+      lifted.push(...liftedOf({ ordersWhole: { lifted: (w.lifted || []).map(p => p.id), mates: (w.mates || []).map(p => p.id), wholeMates: (w.wholeMates || []).map(p => p.id), behind: w.behind || [] } })); }
+    catch (e) { X.notes.push("orders kept whole: " + e.message); }
+    finally { sh.appendOnly = wasAppend; }
+  }
   /* G8 (Paul 21 Nov 2026): a charm a person pinned while the sheet was nested (sheetPinPatch moves no revision, so the nest never saw it) stays exactly where it is pinned: the
      record's pins as they are now are merged into the nest's layout (_charmNestNest.js pinMerge); a piece the nest put where the pin stands makes room and is nested again around
      it (the sheet's next nest: it is left unplaced, not turned away). The record's write says which pins this layout holds (pinsBase): one pressed after it is never written over. */
@@ -627,6 +640,7 @@ async function layoutOf(X) {
   sh.nestInitial = sh.placements.filter(p => was.has(p.id)).map(p => Object.assign({}, p));   // (the saved layout as this write holds it: the checks and the fixes keep it where it lies)
   return { placements: sh.placements, rejects: sh.rejects.filter(id => !ids.has(id)), nestInitial: sh.nestInitial, dirty: gone > 0 || pm.lifted.length > 0, pinKey,
     result: { params: r.params || {}, endedBy: r.endedBy || "complete", trials: num0(r.trials), elapsedMs: num0(r.elapsedMs), density: num0(r.density), usablePt2: num0(r.usablePt2), freePt2: num0(r.freePt2), placedPt2: num0(r.placedPt2), pocket: r.pocket || null, metrics: r.metrics || null, pocketFilled: r.pocketFilled || [],
+      lifted: [...new Set(lifted.map(String))],   // (ONCEWHOLE: pieces taken off to keep orders whole and oldest first: they fitted, so they are no "no room" (finish-core noRoomRunOf))
       // (build step 7b: what sheetFull and topupSettle read of a nest's result, and the later orders it left waiting their turn, feedWait)
       rejects: (r.rejects || []).map(String), feedWait: (r.feedWait || []).map(String), ...(r.smallRoom === false || r.smallRoom === true ? { smallRoom: r.smallRoom } : {}), ...(r.timedOut ? { timedOut: true, noRoom: (r.noRoom || []).map(String), capped: (r.capped || []).map(String) } : {}) } };
 }
@@ -705,4 +719,4 @@ async function membershipCheck(X) {
   return { own, wanted, differs, why: differs ? "NOPARTIALSET: a partial sheet its set does not list is a draft; the writer changes no membership (P4): the assembly unit drafts it" : null, at: Date.now() };
 }
 
-module.exports = { run, carries, STEPS, STEP, WRITER_FIELDS, workDir, FINISH, BUDGET_MS, afterNestMarks, pathsOf };
+module.exports = { run, carries, STEPS, STEP, WRITER_FIELDS, workDir, FINISH, BUDGET_MS, afterNestMarks, pathsOf, layoutOf, sheetOf, liftedOf };

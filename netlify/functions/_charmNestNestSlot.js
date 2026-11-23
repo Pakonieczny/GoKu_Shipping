@@ -337,6 +337,7 @@ async function finishCheck(ctx) {
     let text = layoutText(pick); if (text.length > 400000) text = null;
     result = { placements: sh.placements.map(flat), rejects: sh.rejects.map(String), endedBy, trials: finals.reduce((n, f) => n + num(f.trials), 0), elapsedMs: Math.max(...finals.map(f => num(f.elapsedMs)), 0),
       density: num(pick.density), usablePt2: num(pick.usablePt2), freePt2: num(pick.freePt2), placedPt2: num(pick.placedPt2), pieces, slots: n,
+      appendOnly: !!sh.appendOnly,   // (ONCEWHOLE: whether the nest held the sheet's saved layout where it lay, for the writer)
       ordersWhole: { done: true, lifted: whole.lifted.map(p => String(p.id)), mates: whole.mates.map(p => String(p.id)), wholeMates: whole.wholeMates.map(p => String(p.id)), behind: (whole.behind || []).map(String) },
       verification, feedWait: (meta.feedWait || []).map(String), missing: (meta.missing || []).map(flat), notes: notes.slice(0, 20), layoutJson: text, retainedBest: !!pick.retainedBest, ...(meta.whole ? { whole: true, appended } : {}) };
   }
