@@ -21,6 +21,8 @@ let fails = 0, checks = 0;
 const say = (name, ok, seen) => { checks++; if (!ok) fails++; console.log(`${ok ? 'OK  ' : 'FAIL'} ${name}${ok || seen === undefined ? '' : ' :: ' + (typeof seen === 'string' ? seen : JSON.stringify(seen))}`); };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const sorted = xs => xs.slice().sort();
+// (ONECARD, Paul 23 Nov 2026: "The system is not allowed under any circumstances to create multiple cards for a given order")
+const oneCard = got => { const seen = new Map(); for (const c of got.cards.filter(x => x.state === 'Open')) for (const o of c.orders) seen.set(o, (seen.get(o) || 0) + 1); return [...seen.values()].every(n => n === 1); };
 const diff = (a, b) => { const A = sorted(a), B = sorted(b), x = A.filter(k => !B.includes(k)), y = B.filter(k => !A.includes(k)); return { coreOnly: x, pageOnly: y, core: A.length, page: B.length }; };
 
 /* ── the orders (made up) ── */
@@ -130,7 +132,7 @@ async function act(w, list) {
       one('4301000015', 'NOPE_9', 'Unknown Gone', SILVER, 'silver', 1811000015, 15)                  // asks, but its line left Etsy
     ]);
     await act(w, [{ do: 'gone', key: KEY('4301000015') }]);
-    await check(w, 'world 1 (questions)', got => ({ 'eight decisions open (one Unknown SKU for three orders, one option for two) and a custom order waiting on a person': got.counts.reviewCount === 8 && got.counts.open === 9, 'Need Resolution holds Unknown SKU + Options + metal (5)': got.counts.needResolution === 5, 'a blocked SKU, a size and two custom orders (one asking, one waiting)': got.counts.blockedSku === 1 && got.counts.missingSize === 1 && got.counts.customOrders === 2 && got.counts.customAsk === 1 && got.counts.customWait === 1 }));
+    await check(w, 'world 1 (questions)', got => ({ 'eight decisions open (one Unknown SKU for three orders, one option for two), shown as ONE card per order (ONECARD, 23 Nov 2026): 14 cards': got.counts.reviewCount === 8 && got.counts.open === 14, 'Need Resolution holds the 9 orders of Unknown SKU + Options + metal': got.counts.needResolution === 9, 'every order is in exactly one Open card': oneCard(got), 'a blocked SKU (two orders), a size and two custom orders (one asking, one waiting)': got.counts.blockedSku === 2 && got.counts.missingSize === 1 && got.counts.customOrders === 2 && got.counts.customAsk === 1 && got.counts.customWait === 1 }));
 
     /* ═══ 2 · holds, Hold Order marks, Etsy changes ═══ */
     await W.lines(w, [
@@ -153,7 +155,7 @@ async function act(w, list) {
       { do: 'change', key: KEY('4302000008') }, { do: 'change', key: KEY('4302000009') }
     ]);
     await act(w, [{ do: 'gone', key: KEY('4302000009') }]);
-    await check(w, 'world 2 (holds, marks, changes)', got => ({ 'two held orders no card covers (a held line whose order still asks, or that is held in Review, is covered; a cancelled one is not listed)': got.counts.held === 2 && got.cards.some(x => x.key === 'held:4302000003') && !got.cards.some(x => x.key === 'held:4302000004' || x.key === 'held:4302000002' || x.key === 'held:4302000006'), 'an open mark and an Etsy change are cards with no chip': got.counts.noChip.reviewMark === 3 && got.counts.noChip.orderChanged === 1, 'a resolved mark is under Resolved': got.cards.some(x => x.state === 'Resolved' && x.kind === 'reviewMark') }));
+    await check(w, 'world 2 (holds, marks, changes)', got => ({ 'two held orders no card covers (a held line whose order still asks, or that is held in Review, is covered; a cancelled one is not listed)': got.counts.held === 2 && got.cards.some(x => x.key === 'held:4302000003') && !got.cards.some(x => x.key === 'held:4302000004' || x.key === 'held:4302000002' || x.key === 'held:4302000006'), 'an open mark and an Etsy change are cards with no chip (a mark on an order that also asks a question is inside that order\'s one card)': got.counts.noChip.reviewMark === 2 && got.counts.noChip.orderChanged === 1, 'every order is in exactly one Open card': oneCard(got), 'a resolved mark is under Resolved': got.cards.some(x => x.state === 'Resolved' && x.kind === 'reviewMark') }));
 
     /* ═══ 3 · custom orders ═══ */
     await W.lines(w, [
