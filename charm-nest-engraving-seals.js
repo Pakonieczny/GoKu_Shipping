@@ -297,5 +297,5 @@
     row.dataset.sealCount=String(row.querySelectorAll('.seal').length);root.Seal.fit?.(row);button.disabled=true;button.textContent='Approved';button.setAttribute('aria-busy','true');
     try{await root.Seal.press(seal);}finally{button.disabled=wasDisabled;if(wasBusy==null)button.removeAttribute('aria-busy');else button.setAttribute('aria-busy',wasBusy);}
   }
-  return {merge,list,keep,add,html,press,record,panel,wirePanel,fromEvents,who,busyLabel,stamped};
+  return {merge,own:ownOnly,list,keep,add,html,press,record,panel,wirePanel,fromEvents,who,busyLabel,stamped};
 });

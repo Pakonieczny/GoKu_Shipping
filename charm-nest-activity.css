@@ -696,8 +696,8 @@
 .egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar .egEnd{grid-column:auto;grid-row:auto;display:inline-flex!important;flex:none!important;margin:0!important;width:auto!important;min-width:0!important}
 .egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]{font-size:0!important;line-height:0!important;display:inline-block!important;width:8px!important;height:8px!important;padding:0!important;margin:0!important;border-radius:50%;background:var(--ink25);overflow:hidden}
 .egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]::before,.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]::after{display:none}
-.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]:is([data-s=approved],[data-s=written]){width:auto!important;height:auto!important;background:none;font:700 11px/1 var(--sans)!important;color:#3f7a4c;overflow:visible}
-.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]:is([data-s=approved],[data-s=written])::before{content:"✓";display:inline!important}
+/* NOSAVED (Paul, 23 Nov 2026: "I don't want to see these green Saved to sheet UI pills"): an approved or saved piece's chip says it by its green number alone; the label (which spilled over the next chip) and its tick are not drawn. */
+.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]:is([data-s=approved],[data-s=written]){display:none!important}
 .egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar:has([data-s=approved],[data-s=written])::before{background:#e3efe4;color:#2f6a3c}
 .egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage][data-s=review]{background:#d49a2a}
 .egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]:is([data-s=words],[data-s=blocked]){background:#c2452f}

@@ -144,7 +144,11 @@
     const S = root && root.CNEngravingSeals; if (!S || !S.merge) return [];
     // (the line's own record, row.engrave, is the piece's only when the piece has one job: with a Front and a Back it is shared and carries no face, so it would read as a second Back seal)
     const recs = [], shared = (jobs || []).length < 2; for (const j of jobs || []) recs.push(j, shared && j && j.row && j.row.engrave, ...((j && j.backs) || []), j && j.editOriginal);
-    return tryDo(() => S.merge(...recs, ...(extra || [])), []) || [];
+    const all = tryDo(() => S.merge(...recs, ...(extra || [])), []) || [];
+    // (PIECESEALS: a copy of another piece's approval is not shown on this piece: CNEngravingSeals.own, the rule every list of the page uses)
+    if (typeof S.own !== 'function') return all;
+    const front = x => !!x && (x.face === 'front' || String(x.key || '').endsWith('~front'));
+    return all.filter(s => { const j = (jobs || []).find(x => x && front(x) === (s.face === 'front')) || (jobs || [])[0]; return !j || tryDo(() => S.own(j, [s]).length > 0, true); });
   }
 
   /** TRUE RELATIVE SIZE (SETBAR, Paul, 13 Oct 2026: "see both bar charms side-by-side"): the pieces of ONE line that is a set of different designs are drawn at one scale. `rel` (0..1) is a piece's long side over the longest
