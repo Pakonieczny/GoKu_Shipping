@@ -1145,6 +1145,15 @@
   const sagOf = (R, w) => (!fin(R) || !R ? 0 : w * w / (8 * R));
   const radOf = (h, w) => (Math.abs(h) < 1e-6 ? null : w * w / (8 * h));
   const bentPatch = (it, R, x) => { const n = Object.assign({}, it); if (R == null) { delete n.arcR; delete n.arcX; } else { n.arcR = r4(R); n.arcX = r4(x); } return n; };
+  /* CURVEKEEP (order 4239655218, 22 Nov 2026: the date curved round the disc was not kept on Save). The words a page hands in as its ENGRAVING's (source 'engrave': a face's words, or the
+     words staged in the engraving card) go back to the engraving on Save and are laid out again by its fit, in straight lines (charm-nest-ce-words.js diff, charm-nest-bridge.js
+     charmEditWordsApply), and staged words are not kept at all (the bridge's stagedOnly): a curve put on them was dropped without a word. Curved, they become the editor's own words on this
+     face (a new id, source 'added'), kept as drawn like any words typed here; the page takes the engraving's words of that face off, as for words deleted here (CEREMOVE). Straightened in
+     the same drag, they are the engraving's words again. */
+  const handedIn = it => !!it && it.source === 'engrave';
+  const ownWords = it => { const n = Object.assign({}, it, { id: 'cecurve-' + String(it.id).replace(/^engrave-words-/, ''), source: 'added', name: String(it.text || '').split('\n').map(s => s.trim()).filter(Boolean).join(' ').slice(0, 40) || 'Text' }); delete n.engraving; return n; };
+  const curvedPatch = (it, R, x) => { const n = bentPatch(it, R, x); return R != null && handedIn(it) ? ownWords(n) : n; };
+  const OWN_SAID = 'Curved: these words are now drawn on this face as you see them · Save takes the engraving\'s own words off this face';
   const mmOf = v => (Math.abs(v) / PT).toFixed(1);
   const curveTool = {
     id: 'curve-text', title: 'Curve text', icon: IC.curve, cursor: 'ns-resize', tip: 'Drag a text up or down to curve it round the disc',
@@ -1157,7 +1166,7 @@
       if (!e) { ctx.say('Press on a text to curve it'); return; }
       const f = bendFacts(ctx, e); if (!f) { ctx.say('That text has no letters to curve'); return; }
       ctx.select([e.it.id]);
-      this.g = Object.assign(f, { id: e.it.id, it0: e.it, p0: [p.x, p.y], h0: isArced(e.it) ? sagOf(+e.it.arcR, f.w) : 0 });
+      this.g = Object.assign(f, { id: e.it.id, cur: e.it.id, it0: e.it, p0: [p.x, p.y], h0: isArced(e.it) ? sagOf(+e.it.arcR, f.w) : 0 });
     },
     onMove(ctx, ev, p) {
       const g = this.g; if (!g || !p || !(ev && ev.buttons)) return;
@@ -1166,14 +1175,16 @@
       const snap = !(ev && ev.altKey) && R != null && g.fitR != null && Math.sign(R) === Math.sign(g.fitR) && Math.abs(R - g.fitR) < 0.15 * Math.abs(g.fitR);
       if (snap) { R = g.fitR; x = g.fitX; said = 'Fits the disc · radius ' + mmOf(R) + ' mm'; }
       else said = R == null ? 'Straight' : (R > 0 ? 'Arched' : 'Curved') + ' · radius ' + mmOf(R * Math.sqrt(Math.abs(g.W[0] * g.W[3] - g.W[1] * g.W[2]))) + ' mm';
-      ctx.replaceItems({ [g.id]: bentPatch(g.it0, R, x) });
-      const en = ctx.entry(g.id); let b = null; try { b = en && ctx.geo.drawn(en.it, en.P); } catch (x2) { b = null; }
+      const next = curvedPatch(g.it0, R, x);   // (CURVEKEEP: the engraving's words curved are the editor's own words, under their own id)
+      ctx.replaceItems({ [g.cur]: next }); if (next.id !== g.cur) { g.cur = next.id; ctx.select([g.cur]); }
+      const en = ctx.entry(g.cur); let b = null; try { b = en && ctx.geo.drawn(en.it, en.P); } catch (x2) { b = null; }
       if (b && typeof ctx.live === 'function') ctx.live({ box: b, text: said });
       g.R = R; g.snapped = snap;
     },
     onUp(ctx) {
       const g = this.g; this.g = null; if (!g || g.R === undefined) return;
       ctx.commit(g.R == null ? 'Straighten text' : 'Curve text');
+      if (g.cur !== g.id) ctx.say(OWN_SAID, 4200);
       log('textCurve', { face: ctx.face(), fits: !!g.snapped, radiusMm: g.R == null ? 0 : +mmOf(g.R) * Math.sign(g.R) });
     }
   };
@@ -1181,10 +1192,11 @@
   function arcFitRun(ctx) {
     const es = curvedSel(ctx); if (!es.length) return;
     const map = {}; let n = 0, far = 0;
-    for (const e of es) { const f = bendFacts(ctx, e); if (!f || f.fitR == null) { far++; continue; } map[e.it.id] = bentPatch(e.it, f.fitR, f.fitX); n++; }
+    for (const e of es) { const f = bendFacts(ctx, e); if (!f || f.fitR == null) { far++; continue; } map[e.it.id] = curvedPatch(e.it, f.fitR, f.fitX); n++; }
     if (!n) { ctx.say(far ? 'The words sit on the disc\'s middle: move them up or down first' : 'No words to fit'); return; }
-    ctx.replaceItems(map); ctx.commit('Fit text to the disc');
-    ctx.say(n === 1 ? 'Curved to fit the disc · drag with Curve text to change it' : `${n} texts curved to fit the disc`, 2600); log('textCurve', { face: ctx.face(), fits: true, n });
+    const own = Object.keys(map).some(id => map[id].id !== id), was = ctx.selection();   // (CURVEKEEP: the engraving's words fitted to the disc are the editor's own words now)
+    ctx.replaceItems(map); if (own) ctx.select(was.map(id => (map[id] ? map[id].id : id))); ctx.commit('Fit text to the disc');
+    ctx.say(own ? OWN_SAID : n === 1 ? 'Curved to fit the disc · drag with Curve text to change it' : `${n} texts curved to fit the disc`, own ? 4200 : 2600); log('textCurve', { face: ctx.face(), fits: true, n });
   }
   function arcOffRun(ctx) {
     const es = sel(ctx).filter(e => isArced(e.it)); if (!es.length) return;

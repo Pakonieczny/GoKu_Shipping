@@ -11823,7 +11823,11 @@ const Engrave = window.Engrave = (() => {
     //  the card shows what was saved (an Approve already being kept is left to land)
     tryDo(() => { const PNL = window.CharmNestEngravePanel; if (!PNL || !PNL.DRAFTS) return;
       const rows = Orders.rows().filter(r => (r.poolIds || []).some(id => ids.includes(String(id)))), keys = new Set(rows.map(r => String(r.key)));
-      for (const k of [...PNL.DRAFTS.keys()]) { const base = String(k).split("#")[0]; if ((keys.has(String(k)) || keys.has(base)) && !(PNL.COMMITS && PNL.COMMITS.has(k))) PNL.DRAFTS.delete(k); } });
+      const gone = new Set();
+      for (const k of [...PNL.DRAFTS.keys()]) { const base = String(k).split("#")[0]; if ((keys.has(String(k)) || keys.has(base)) && !(PNL.COMMITS && PNL.COMMITS.has(k))) { PNL.DRAFTS.delete(k); gone.add(svPieceKeyOf(k)); } }
+      // (STAGEGONE, order 4239655218, 22 Nov 2026: the draft went, but the card's own copy of its stage (SV_STAGES: what the work area draws, and the staged words the next Charm Editor is
+      //  handed) stayed, and the panel kept showing it: the staged Front stayed on screen and the editor opened on the staged front words again. The panel and the stage follow the draft now)
+      for (const k of gone) { for (const c of svCardsOf(k).on) if (c._pieceMount && c._pieceMount.refresh) c._pieceMount.refresh(); const job = [...items().values()].find(j => j && !j.editingBack && svPieceKeyOf(pieceKeyOfJob(j)) === k); if (job && SV_STAGES.has(k)) svShowStage(job, null); } });
     tryDo(() => window.CharmNestMadeThumb?.changed("art", ids));
     // (CES4, Paul 9 Nov 2026: "why can't you speed this up?": a Save is a finished change, not a run of moves: the piece's new picture goes to the cloud as soon as its look has been taken
     //  (charm-nest-made-thumb.js sweep, 120 ms), not after its 1.5 to 6 s pause, so other computers show it a few seconds sooner; a face still being fitted again still waits for its words)
