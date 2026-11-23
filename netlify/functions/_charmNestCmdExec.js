@@ -385,7 +385,7 @@ async function inplace(x, label) {
       // (a line is made again whole or not at all: a sheet that keeps what it holds (cut, behind a green line, in a set sent to the station) keeps the whole line as it is)
       const keeps = [...bySheet.keys()].find(s => cutRec(s) || lineDrawn(s) || committedSheet(s, sets));
       if (keeps) { why.push(`${ridOf(k)}: ${nameOf(keeps)} ${cutRec(keeps) ? "was already cut" : lineDrawn(keeps) ? "is behind a green line" : "is in a set sent to the station"}: its pieces stay as they are`); vac[k] = { skip: true }; continue; }
-      if ([...bySheet.keys()].some(s => busyRec(s, now))) { await stopFor(x, [...bySheet.keys()], `${label} (a person's request goes first)`); busy++; continue; }   // (FIRSTNOW)
+      if (!x.swap && [...bySheet.keys()].some(s => busyRec(s, now))) { await stopFor(x, [...bySheet.keys()], `${label} (a person's request goes first)`); busy++; continue; }   // (FIRSTNOW)
       /* ORIGINHOME (Paul, 22 Nov 2026: order 4231992262's discs, made again on a draft, "should have gone back to the original sheet"): pieces that came onto a draft after being made
          again from a sheet (their records' vacatedFrom, the Nov 18 set's sheet) keep that sheet as their home: taken off the draft, their records still name it, and once made again they
          go back to it (cmdMovePieces lets a set's sheet take its own order back), not to the draft. */
@@ -393,7 +393,7 @@ async function inplace(x, label) {
       const origin0 = vfs.size === 1 && !vfs.has("") ? [...vfs][0] : "", origin = origin0 && [...bySheet.keys()].every(s => s.id !== origin0 && s.draft && !s.setId) ? origin0 : "";
       const left = [], kept = [];
       for (const [s, ids] of bySheet) {
-        const r = await put(x, Object.assign({ op: "cmdVacate", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: s.id, poolIds: ids, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "", why: label }, origin ? { origin } : {}), `vacate|${k}|${s.id}|${num(s.contentRev)}`);
+        const r = await put(x, Object.assign({ op: "cmdVacate", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: s.id, poolIds: ids, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "", why: label }, origin ? { origin } : {}, x.swap ? { swap: true } : {}), `vacate|${k}|${s.id}|${num(s.contentRev)}`);
         if (err(r)) { if (r.keep) { kept.push(...ids); why.push(`${ridOf(k)}: ${err(r)}`); } else busy++; continue; }
         left.push(s.id);
       }
@@ -433,7 +433,7 @@ async function inplace(x, label) {
     return wait("Putting the new pieces in place…", Object.assign({}, w, { stage: "back", ready, late: waiting, why }));
   }
   if (w.stage === "back") {
-    const run = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (run && run.run && run.run.lines) || lines(ctx), placedOn = new Map(), why = (w.why || []).slice(), unvac = {}, loose = [];
+    const run = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (run && run.run && run.run.lines) || lines(ctx), placedOn = new Map(), why = (w.why || []).slice(), unvac = {}, loose = [], swapped = new Set();
     for (const k of w.ready || []) {
       const l = L[k], home = ((w.vac[k] || {}).sheets || [])[0]; unvac[k] = { vacated: null };
       if (!l) continue;
@@ -446,10 +446,10 @@ async function inplace(x, label) {
       //  once it is pooled, so they were never "described" and every put-back gave up. They are described now from their own records, as the placement describes a piece)
       if (!mine.length && s) mine = (await describeLine(ctx, l.poolIds)).filter(c => (!c.metal || c.metal === s.metal));
       if (!s || !mine.length) { why.push(`${ridOf(k)}: placed as a new piece (${!s ? "its sheet is gone" : "its new pieces are not described yet"})`); loose.push(k); continue; }
-      const r = await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: home, poolIds: mine.map(c => String(c.poolId)), charms: mine, keepBacks: !!x.keepBacks, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "" }, `back|${k}|${home}|${num(s.contentRev)}`);
+      const r = await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: home, poolIds: mine.map(c => String(c.poolId)), charms: mine, keepBacks: !!x.keepBacks, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "", ...(x.swap ? { swap: true } : {}) }, `back|${k}|${home}|${num(s.contentRev)}`);
       if (err(r) && r.busy && now - num(w.backAt || now) < FIRST_MS) { await stopFor(x, [s], `${label} (a person's request goes first)`); return wait(`Putting the new pieces back as soon as ${nameOf(s)} is still…`, Object.assign({}, w, { backAt: num(w.backAt) || now, why })); }   // (FIRSTNOW)
       if (err(r)) { why.push(`${ridOf(k)}: ${err(r)}; it is placed as any piece is`); loose.push(k); continue; }
-      if (!r.noop) placedOn.set(home, { id: home, layoutRev: num(r.layoutRev), at: now });
+      swapped.add(k); if (!r.noop) placedOn.set(home, { id: home, layoutRev: num(r.layoutRev), at: now });
       const origin = (w.vac[k] || {}).origin;   // (ORIGINHOME: then on to the sheet they first came from)
       if (origin && origin !== home) {
         const f = await sheetRec(ctx, home), t = await sheetRec(ctx, origin);
@@ -460,6 +460,7 @@ async function inplace(x, label) {
         else { placedOn.delete(home); placedOn.set(origin, { id: origin, layoutRev: num(m.to && m.to.layoutRev), at: now }); }
       }
     }
+    if (x.swap) for (const k of w.todo || []) if (!swapped.has(k)) for (const sid of (w.vac[k] || {}).sheets || []) await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, sheetId: sid, release: true, swap: true, drop: true }, `drop|${k}|${sid}`);   // (SWAPNOW)
     // every place still kept for these lines is let go (a line not put back is placed as any line), then the lines are placed by the cloud's placement as usual
     for (const k of (w.ready || []).concat(w.late || [])) for (const sid of (w.vac[k] || {}).sheets || []) await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, sheetId: sid, release: true }, `release|${k}|${sid}`);
     for (const k of w.late || []) { unvac[k] = { vacated: null }; why.push(`${ridOf(k)}: its pieces were not made again in time; the intake makes them and they are placed as new pieces`); }
@@ -571,9 +572,38 @@ async function backhome(x) {
   await startNest(x, home, false, `${ridOf(key)}: back on the sheet it came from`);
   return wait("Nesting the order on its sheet…", { stage: "nest", sheets: [{ id: home, layoutRev: num(r.to && r.to.layoutRev), at: Date.now() }], ids: live.map(p => String(p.poolId)) });
 }
+/* SWAPNOW (Paul, 23 Nov 2026, order 4245035194: "It took over 3 min to update the SKU, this is completely unacceptable", "You have a budget of 30 sec", "Make this simple"): Change SKU waited for every open order to be
+   read again, stopped its sheet's nest, took the piece off, made a new one and put it back; and a piece the intake had already made right was taken off and made once more. Now: the lines asked for are read again at once
+   (_charmNestWorld.js readNow), a line whose pieces were already made as it reads is answered as it is, and the new piece takes the old one's entry on its own sheet in one write (cmdVacate / cmdPutBack { swap }). */
+async function readLinesNow(x, keys, extra) {
+  try {
+    const ops = {}; for (const op of ["masterList", "optionMapGet", "aliasGet", "noDesignGet", "customGet", "listingSkus", "customSheetGet"]) ops[op] = b => x.ctx.read(Object.assign({ op }, b || {}));
+    const got = await require("./_charmNestWorld").readNow({ db: x.ctx.db, ops, keys, lines: Object.assign({}, lines(x.ctx), extra || {}) });
+    return got && got.size === keys.length ? got : null;
+  } catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; if (x.ctx.say) x.ctx.say(`[cmd] the lines were not read again now: ${str((e && e.message) || e, 160)}`); return null; }
+}
+/** The lines of `keys` whose pieces were made, since the request, as the line reads now: nothing to make again. */
+async function madeSince(x, keys, read) {
+  const L = lines(x.ctx), asked = num(x.cmd.at) || 0, done = new Map();
+  for (const k of keys) {
+    const l = L[k], sp = read && read.get(k) && read.get(k).spec, want = String((sp && sp.designSku) || "").toUpperCase(); if (!l || !want || !(l.poolIds || []).length) continue;
+    const rows = [...(await pools(x.ctx, l.poolIds)).values()];
+    if (rows.length === l.poolIds.length && rows.every(r => !r.custom && !["abandoned", "superseded"].includes(String(r.state || "")) && String(r.sku || "").toUpperCase() === want && (!sp.material || !r.material || r.material === sp.material) && ms(r.createdAt) >= asked - 90000)) done.set(k, rows);
+  }
+  return done;
+}
 async function remakeline(x) {
-  x.keepBacks = true;
-  x.pick = async () => [...new Set((x.a.ids || []).map(String))].filter(k => OPEN_LINE(lines(x.ctx)[k]));
+  x.keepBacks = true; x.swap = true;
+  const ask = [...new Set((x.a.ids || []).map(String))];
+  if (!x.work.stage) {
+    const open = ask.filter(k => OPEN_LINE(lines(x.ctx)[k])), read = open.length ? await readLinesNow(x, open) : null;
+    if (read) {
+      const done = await madeSince(x, open, read);
+      if (open.length && done.size === open.length) { const on = listedBy(await runSheets(x.ctx)), names = new Set(); let n = 0; for (const rows of done.values()) for (const r of rows) { n++; const sh = on.get(String(r.poolId)); if (sh) names.add(nameOf(sh)); } return ok(`Made as it reads now: ${plural(n, "piece")}${names.size ? " on " + and([...names]) : ", being placed"}`); }
+      x.skip = new Set(done.keys()); x.noWorld = true;
+    }
+  }
+  x.pick = async () => ask.filter(k => OPEN_LINE(lines(x.ctx)[k]) && !(x.skip && x.skip.has(k)));
   x.none = "Those lines are not open lines of the run";
   return inplace(x, "Making the order's pieces again");
 }
@@ -620,10 +650,11 @@ async function skuonce(x) {
     const at = Date.now(), who = String(x.cmd.by || "").trim() || "a person", say = `Just this order: ${was || "no SKU"} → ${sku} (the listing and Etsy are not changed)`;
     let r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: { [key]: { skuOverride: { sku, by: who, at, was }, repoolChanged: (l.poolIds || []).length > 0 } } }, `once|${key}|${sku}`); if (err(r)) return no(err(r));
     r = await put(x, { op: "timelineAdd", events: [{ orderId: ridOf(key), type: "decided", id: `${key}.once.${at}`, at, by: who, station: "sorter", text: `Decided by ${who} · ${say}`.slice(0, 200), data: { sku, once: true, was: was || null } }] }, `once|tl|${key}|${sku}`);
-    if (!(l.poolIds || []).length) return ok(`${sku} for order ${ridOf(key)} only: its pieces are made at the next intake`);
-    x.work = { stage: "world", asked: at, at, once: { key, sku } };
-    return wait(`${sku} for this order only… waiting for the order to be read again`, x.work);
+    if (!(l.poolIds || []).length) { await readLinesNow(x, [key], { [key]: Object.assign({}, l, { skuOverride: { sku, by: who, at, was } }) }); return ok(`${sku} for order ${ridOf(key)} only: its pieces are made at the next intake`); }
+    if (await readLinesNow(x, [key], { [key]: Object.assign({}, l, { skuOverride: { sku, by: who, at, was } }) })) x.work = { stage: "pick", asked: at, at, once: { key, sku } };   // (SWAPNOW: this order's line alone, read at once)
+    else { x.work = { stage: "world", asked: at, at, once: { key, sku } }; return wait(`${sku} for this order only… waiting for the order to be read again`, x.work); }
   }
+  x.swap = true;
   x.pick = async () => [key].filter(k => OPEN_LINE(lines(ctx)[k]));
   const res = await inplace(x, `${sku} for this order only`);
   if (res.done && res.done.ok) res.done.text = `${sku} for order ${ridOf(key)} only · ${res.done.text}`.slice(0, 380);

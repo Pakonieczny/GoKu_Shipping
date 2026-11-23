@@ -376,13 +376,14 @@ module.exports = function make(d) {
       const s = await tx.get(ref); if (!s.exists) return words(404, "That sheet is not in the cloud");
       const r = Object.assign({ id: s.id }, s.data()), n = nameOf(r);
       if (r.archived || r.runId !== runId) return words(409, `${n} is not a sheet of the open run`);
-      if (typeof b.layoutBase === "number" && num(r.layoutRev) !== b.layoutBase) return words(409, `${n} changed since this was planned`, { conflict: true });
-      if (typeof b.contentBase === "number" && num(r.contentRev) !== b.contentBase) return words(409, `${n} changed since this was planned`, { conflict: true });
+      const swap = b.swap === true;   // (SWAPNOW)
+      if (!swap && typeof b.layoutBase === "number" && num(r.layoutRev) !== b.layoutBase) return words(409, `${n} changed since this was planned`, { conflict: true });
+      if (!swap && typeof b.contentBase === "number" && num(r.contentRev) !== b.contentBase) return words(409, `${n} changed since this was planned`, { conflict: true });
       if (cutRec(r)) return words(409, `${n} was already cut: its pieces stay as they are`, { keep: true });
       if (lineDrawn(r)) return words(409, `${n} is behind a green line: it is never re-arranged`, { keep: true });
       if (manualLive(r, now)) return words(409, `${n} is open in Manual Control right now`);
-      const busy = busyRec(r, now); if (busy) return words(409, `${n} ${busy}`, { busy: true });
-      if (r.inplaceHold && r.inplaceHold.lineKey && r.inplaceHold.lineKey !== lineKey && now - num(r.inplaceHold.at) < KEEP_RELEASE_MS) return words(409, `${n} keeps a place for another order line right now`, { busy: true });
+      const busy = swap ? "" : busyRec(r, now); if (busy) return words(409, `${n} ${busy}`, { busy: true });
+      if (!swap && r.inplaceHold && r.inplaceHold.lineKey && r.inplaceHold.lineKey !== lineKey && now - num(r.inplaceHold.at) < KEEP_RELEASE_MS) return words(409, `${n} keeps a place for another order line right now`, { busy: true });
       const sets = await listingSets(tx, r.id);
       if (sets.some(x => SetEdit.committedSet(x.data()))) return words(409, `${n}'s set went to the station: its pieces stay as they are`, { keep: true });
       const w = without(r, ids); if (!w.going.length) return { ok: true, noop: true, sheetId };
@@ -390,6 +391,13 @@ module.exports = function make(d) {
       if (rows.some(x => x.exists && x.data().state === "committed")) return words(409, "Its pieces were already committed", { keep: true });
       const hold = { lineKey, rid, at: now, by, why: str(b.why, 120), poolIds: [...ids], placements: w.poses.map(p => ({ id: p.id, cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle || 0 })), backPool: w.backsGoing };
       const keptOrders = new Set(orderList(w.charms).concat(w.poolIds.map(ridOfPool)));
+      /* SWAPNOW (Paul, 23 Nov 2026: "I don't understand why things are being put on removed put back ... Make this simple"; "You have a budget of 30 sec"): nothing leaves the sheet. Its piece is only marked as the old one
+         (its record), the new piece is made, and cmdPutBack { swap } puts the new drawing in its entry of the sheet in one write. A nest or a file write under way is not waited for: the swap moves the sheet's
+         contentRev, so a result made for the sheet as it was is never written over it (the writer's own rule). */
+      if (swap) {
+        for (const x of rows) if (x.exists) tx.set(x.ref, { state: "superseded", sheetId: null, sheetName: r.fileBase || x.data().sheetName || null, supersededAt: now, supersededBy: by, vacatedFrom: r.id, swapAt: now, updatedAt: FV.serverTimestamp() }, { merge: true });
+        return { ok: true, sheetId, name: n, removed: w.going.length, layoutRev: num(r.layoutRev), contentRev: num(r.contentRev), swap: true };
+      }
       tx.set(ref, { charms: w.charms, placements: w.placements, poolIds: w.poolIds, rejects: w.rejects, feedWait: w.feedWait, backPool: w.backPool,
         orders: (Array.isArray(r.orders) ? r.orders : []).map(String).filter(o => keptOrders.has(o) || o === rid), inplaceHold: hold,
         layoutRev: num(r.layoutRev) + 1, contentRev: num(r.contentRev) + 1, filesOwed: now, dirty: true, updatedAt: FV.serverTimestamp() }, { merge: true });
@@ -411,23 +419,32 @@ module.exports = function make(d) {
       await fenceTx(tx);
       const s = await tx.get(ref); if (!s.exists) return words(404, "That sheet is not in the cloud");
       const r = Object.assign({ id: s.id }, s.data()), n = nameOf(r), hold = r.inplaceHold || null;
+      // (SWAPNOW: the new piece was not made, or could not take the old one's entry: the old one leaves the sheet, so it is never cut; every other piece stays exactly as it lies)
+      if (b.release === true && b.swap === true && b.drop === true) {
+        const old = new Set((r.poolIds || []).map(String).filter(x => x.startsWith(lineKey + "_"))); if (!old.size || r.archived || r.runId !== runId || cutRec(r) || lineDrawn(r)) return { ok: true, released: true, dropped: 0 };
+        const w = without(r, old); tx.set(ref, { charms: w.charms, placements: w.placements, poolIds: w.poolIds, rejects: w.rejects, feedWait: w.feedWait, backPool: w.backPool, filesOwed: now, dirty: true, layoutRev: num(r.layoutRev) + 1, contentRev: num(r.contentRev) + 1, updatedAt: FV.serverTimestamp() }, { merge: true });
+        return { ok: true, released: true, dropped: w.going.length };
+      }
       if (b.release === true) { if (hold && hold.lineKey === lineKey) tx.set(ref, { inplaceHold: FV.delete(), updatedAt: FV.serverTimestamp() }, { merge: true }); return { ok: true, released: true }; }
-      if (!hold || hold.lineKey !== lineKey) return words(409, `${n} no longer keeps a place for this line`, { gone: true });
+      const swap = b.swap === true, oldIds = new Set(swap ? (r.poolIds || []).map(String).filter(x => x.startsWith(lineKey + "_")) : []);   // (SWAPNOW: the line's entries the sheet holds now, the old pieces)
+      if (!swap && (!hold || hold.lineKey !== lineKey)) return words(409, `${n} no longer keeps a place for this line`, { gone: true });
+      if (swap && !oldIds.size) return words(409, `${n} no longer holds this line`, { gone: true });
       if (r.archived || r.runId !== runId || cutRec(r) || lineDrawn(r)) return words(409, `${n} can no longer take it back`, { gone: true });
-      if (typeof b.layoutBase === "number" && num(r.layoutRev) !== b.layoutBase) return words(409, `${n} changed since this was planned`, { conflict: true });
-      if (typeof b.contentBase === "number" && num(r.contentRev) !== b.contentBase) return words(409, `${n} changed since this was planned`, { conflict: true });
-      const busy = busyRec(r, now); if (busy) return words(409, `${n} ${busy}`, { busy: true });
+      if (!swap && typeof b.layoutBase === "number" && num(r.layoutRev) !== b.layoutBase) return words(409, `${n} changed since this was planned`, { conflict: true });
+      if (!swap && typeof b.contentBase === "number" && num(r.contentRev) !== b.contentBase) return words(409, `${n} changed since this was planned`, { conflict: true });
+      const busy = swap ? "" : busyRec(r, now); if (busy) return words(409, `${n} ${busy}`, { busy: true });
       const charms = Placement.cleanCharms(Array.isArray(b.charms) ? b.charms : []), ids = charms.map(c => String(c && c.poolId || "")).filter(x => x.startsWith(lineKey + "_"));
       if (!ids.length || ids.length !== charms.length) return words(400, "the line's new pieces are not named");
-      const have = new Set((r.poolIds || []).map(String)); if (ids.some(id => have.has(id))) return { ok: true, noop: true };
+      const base = swap ? without(r, oldIds) : r;   // (SWAPNOW: the sheet without the line's old entries; every other piece stays exactly as it lies)
+      const have = new Set((base.poolIds || []).map(String)); if (!swap && ids.some(id => have.has(id))) return { ok: true, noop: true };
       const rows = await txGetAll(tx, ids.map(id => col(POOL).doc(id)));
       if (rows.some(x => !x.exists)) return words(409, "the line's new pieces are not made yet", { notMade: true });
       if (rows.some(x => Placement.takenOff(x.data()) || x.data().state === "committed" || (x.data().sheetId && x.data().sheetId !== sheetId))) return words(409, "the line's new pieces are elsewhere or taken off", { gone: true });
       for (let i = 0; i < ids.length; i += 30) { const q = await tx.get(col(SHEETS).where("poolIds", "array-contains-any", ids.slice(i, i + 30))); if (q.docs.some(x => x.id !== sheetId && !x.data().archived)) return words(409, "a sheet already holds one of the line's new pieces", { gone: true }); }
-      const placed = (r.placements || []).length > 0, idSet = new Set(ids);
-      const backs = b.keepBacks === true ? (hold.backPool || []).filter(x => x && idSet.has(String(x.poolId))) : [];
-      const next = { charms: (r.charms || []).concat(charms.map(c => Object.assign({}, c, { pinned: null, metal: r.metal }))), poolIds: [...have, ...ids], orders: [...new Set((Array.isArray(r.orders) ? r.orders : []).map(String).concat([rid]))],
-        backPool: (r.backPool || []).concat(backs), nestOwed: { at: now, n: ids.length, by: "cloud", why: "made again in place" }, appendOnly: placed, intakeAppend: placed, status: "ready", dirty: true,
+      const placed = (base.placements || []).length > 0, idSet = new Set(ids);
+      const backs = b.keepBacks === true ? ((swap ? base.backsGoing : hold.backPool) || []).filter(x => x && idSet.has(String(x.poolId))) : [];
+      const next = { ...(swap ? { placements: base.placements, rejects: base.rejects, feedWait: base.feedWait, filesOwed: now } : {}), charms: (base.charms || []).concat(charms.map(c => Object.assign({}, c, { pinned: null, metal: r.metal }))), poolIds: [...have, ...ids], orders: [...new Set((Array.isArray(r.orders) ? r.orders : []).map(String).concat([rid]))],
+        backPool: (base.backPool || []).concat(backs), nestOwed: { at: now, n: ids.length, by: "cloud", why: "made again in place" }, appendOnly: placed, intakeAppend: placed, status: "ready", dirty: true,
         inplaceHold: FV.delete(), layoutRev: num(r.layoutRev) + 1, contentRev: num(r.contentRev) + 1, updatedAt: FV.serverTimestamp() };
       if (bytesOf(Object.assign({}, r, next, { inplaceHold: null, updatedAt: 0 })) > SHEET_DOC_BYTES) return words(413, `${n} cannot hold these pieces in one record`, { gone: true });
       tx.set(ref, next, { merge: true });

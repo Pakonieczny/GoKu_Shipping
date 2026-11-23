@@ -540,4 +540,36 @@ async function changeMarks(db, rows, moved, prevSigs, runLines, M, now) {
 function lineOf(d) { if (!d) return null; if (d.gone) return { key: d.key, gone: true, at: d.at }; let x = {}; try { x = JSON.parse(d.data || "{}"); } catch (_) { x = {}; } return Object.assign(x, { key: d.key, sig: d.sig, at: d.at }); }
 function reviewOf(d) { if (!d) return null; let x = {}; try { x = JSON.parse(d.data || "{}"); } catch (_) { x = {}; } return Object.assign({ v: d.v, at: d.at, counts: d.counts || {} }, x); }
 
-module.exports = { flowOf, sheetFactsOf, placeOfLine, build, lineOf, reviewOf, masterIndex, readLine, afterRead, runFacts, isOpenReceipt, LINES, WORLD, ETSY };
+/* ── READNOW (Paul, 23 Nov 2026: "You have a budget of 30 sec to make the update ... This should be a simple process"): a Change SKU waited for the next reading of EVERY open order, a minute or more.
+   The lines named here are read again at once, and only them: each line's order as it was last read (no Etsy, no mail), with the saved links, options and the charm repository as they are NOW, by the very
+   reading the build makes (readLine, afterRead). Written where the build writes them (Charm_World_Lines), so whoever makes the pieces reads it; the next build writes the same. Whether one line's choices mean
+   what they do is also told by the listing's other lines (seenSkus): the stored lines of the same listing are read for it. ── */
+async function readNow(o) {
+  const { db, ops } = o, keys = [...new Set((o.keys || []).map(String))].slice(0, 80), runLines = o.lines || {}, now = Date.now(), out = new Map(); if (!keys.length) return out;
+  const docs = new Map(); for (let i = 0; i < keys.length; i += 300) for (const d of await db.getAll(...keys.slice(i, i + 300).map(k => db.collection(LINES).doc(k)))) if (d.exists) docs.set(d.id, d.data() || {});
+  const rows = []; for (const k of keys) { const d = docs.get(k); if (!d || d.gone) continue; let x = null; try { x = JSON.parse(d.data || "{}"); } catch (_) { x = null; } if (!x || !x.order || !x.line) continue; const facts = runFacts(runLines[k]); rows.push({ d, x, row: Object.assign({ key: k, order: x.order, line: x.line, state: "pulled", reason: null, poolIds: [] }, facts, { etsyOpen: !!x.etsyOpen, inRun: !!runLines[k], _run: facts }) }); }
+  if (!rows.length) return out;
+  const lids = [...new Set(rows.map(r => String(r.row.line.listingId || "")).filter(Boolean))];
+  const entriesNow = async () => { const first = await ops.masterList({ limit: 3000 }), sig = J(first.index || null); if (CACHE.masterEntries && CACHE.masterSig === sig && sig !== "null") return CACHE.masterEntries; const list = (first.entries || []).slice(); let cursor = first.next; for (let i = 0; cursor && i < 20; i++) { const r = await ops.masterList({ limit: 3000, cursor }); list.push(...(r.entries || [])); cursor = r.next; } CACHE.masterSig = sig; CACHE.masterEntries = list; return list; };
+  const [entries, om, al, nd, cl, ls, cs, reads] = await Promise.all([entriesNow(), ops.optionMapGet({}), ops.aliasGet({}), ops.noDesignGet({}), ops.customGet({}), ops.listingSkus({ listingIds: lids, cacheOnly: true }), ops.customSheetGet({ lineKeys: rows.map(r => r.row.key) }), db.getAll(...rows.map(r => db.collection("Charm_Nest_CustomRead").doc(r.row.key)))]);
+  const M = CACHE.index && CACHE.indexOf === entries ? CACHE.index : (CACHE.indexOf = entries, CACHE.index = masterIndex(entries));
+  const maps = { optionMaps: (om && om.maps) || {}, aliases: (al && al.aliases) || {}, noDesign: (nd && nd.list) || { patterns: [], skus: [], rows: [] } }; try { O.cleanMaps(maps.aliases, maps.noDesign); } catch (_) { /* as read */ }
+  const customDone = {}; for (const [k, v] of Object.entries((cl && cl.records) || {})) if (v && v.kind !== "reviewMark" && v.state !== "open") customDone[k] = v;
+  const byKey = new Map(rows.map(r => [r.row.key, r.row])), customRead = {}, customDecided = {};
+  for (const d of reads) { if (!d.exists) continue; const x = d.data() || {}, r = byKey.get(d.id), rd = x.reads || {}, h = r && r.crh && rd[r.crh] ? r.crh : x.latest; if (h && rd[h]) customRead[d.id] = rd[h]; if (x.decided && x.decided.kind) customDecided[d.id] = x.decided; }
+  const idx = new Map(); for (const e of Object.values((cs && cs.records) || {})) if (e && (e.sent || e.sendIntent)) for (const k of Object.keys((e.sent || e.sendIntent).lines || {})) idx.set(k, e);
+  const sentOf = row => { const e = idx.get(row.key); if (!e) return null; const list = (((e.sent || e.sendIntent).lines || {})[row.key] || []).filter(pc => !(pc && pc.removed)), pc = list[0], F = pc && (e.files || []).find(f => f.id === pc.f); return { metal: (F && F.metal) || null, pieces: list.length, sent: !!e.sent }; };
+  const ctx = { optionMaps: maps.optionMaps, aliases: maps.aliases, noDesign: maps.noDesign, customDone, customRead, customDecided, listingSkus: Object.assign({}, (ls && (ls.tables || ls.listings)) || {}), seen: O.seenSkus ? O.seenSkus((o.seenLines || []).concat(rows.map(r => r.row.line))) : {},
+    masterEntry: M.entryFor, masterLoose: M.looseFor, masterShared: M.sharedFor, masterLike: M.likeFor, masterSkus: () => [...M.entries.keys()] };
+  const batch = db.batch(); let n = 0;
+  for (const { d, x, row } of rows) {
+    row.spec = readLine(row, ctx); afterRead(row, null, sentOf(row));
+    const doc = Object.assign({}, x, { v: VERSION, key: row.key, receiptId: String(row.key).split("_")[0], order: row.order, line: row.line, spec: row.spec || null, problems: row.problems || [], state: row.state || "pulled", reason: row.reason || null, run: row._run });
+    const data = J(doc); out.set(row.key, { spec: row.spec, problems: row.problems || [], state: row.state });
+    if (data && data !== d.data) { batch.set(db.collection(LINES).doc(row.key), Object.assign({}, d, { state: doc.state, sig: sha(data), at: now, gone: false, data }), { merge: false }); n++; }
+  }
+  if (n) await batch.commit();
+  return out;
+}
+
+module.exports = { readNow, flowOf, sheetFactsOf, placeOfLine, build, lineOf, reviewOf, masterIndex, readLine, afterRead, runFacts, isOpenReceipt, LINES, WORLD, ETSY };
