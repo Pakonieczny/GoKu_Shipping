@@ -203,7 +203,7 @@ async function passUnit(ctx) {
     if (same && f.state === "refused") continue;
     if (!sigs.has(r.metal)) sigs.set(r.metal, await draftSig(ctx.db, ctx.runId, r.metal));
     const sig = sigs.get(r.metal), ended = same && ["done", "none"].includes(f.state);
-    if (ended && (f.sig === sig || num(f.again) >= MAX_AGAIN || now - num(f.endedAt) < AGAIN_MS)) continue;   // (one try a take-off; again only when the drafts changed)
+    if (ended && (f.sig === sig || num(f.again) >= MAX_AGAIN || now - num(f.endedAt) < (/nesting|saving|written|busy/i.test(String(f.text || "")) ? 15000 : AGAIN_MS))) continue;   // (one try a take-off; again only when the drafts changed)
     if (same && !ended && num(f.kicks) >= MAX_KICKS) continue;
     const key = crypto.randomBytes(16).toString("hex");
     await ctx.db.collection(COLL).doc(r.id).set({ sheetId: r.id, runId: ctx.runId, key, state: "asked", kickedAt: now, beatAt: 0, takenOffAt: num(r.takenOffAt), sig, kicks: same && !ended ? num(f.kicks) + 1 : 1, again: ended ? num(f.again) + 1 : same ? num(f.again) : 0, expireAt: new Date(now + 14 * 86400000) }, { merge: true });
@@ -251,7 +251,7 @@ async function nowFill(o) {
     // a piece taken off to be made again comes back to its own place: the room is its
     const back = await db.collection(POOL).where("vacatedFrom", "==", sheetId).get();
     if (back.docs.some(d => { const r = d.data() || {}; return !DEAD.has(String(r.state || "")) && !recs.some(x => (x.poolIds || []).map(String).includes(d.id)); }) || Object.values(run.lines || {}).some(l => l && l.vacated && JSON.stringify(l.vacated).includes(String(sheetId)))) return end("none", "a piece made again comes back to its place on it first", { sig: null });
-    const sources = recs.filter(r => r.metal === rec.metal && r.id !== rec.id && !sourceWhy(r, sets, run, now));
+    const sources = recs.filter(r => r.metal === rec.metal && r.id !== rec.id && ["", "busy"].includes(sourceWhy(r, sets, run, now)));   // (DRAFTBUSY: a draft being nested gives its orders once it is still)
     if (!sources.length) return end("none", `no unfinished ${LABEL[rec.metal]} draft to take an order from`);
     const rids = [...new Set(sources.flatMap(s => active(s).map(c => ridOf(c.poolId))))].filter(r => /^\d{4,20}$/.test(r)), keys = Object.keys(run.lines || {}).filter(k => rids.includes(ridOf(k)));
     const [rows, world, cx] = await Promise.all([rowsOfOrders(db, rids), worldOf(db, keys), read({ op: "cancelCheck", orderIds: rids.slice(0, 400) })]);
@@ -278,7 +278,16 @@ async function nowFill(o) {
     const nap = t => new Promise(r => setTimeout(r, t)), lease = async t => { for (const e = Date.now() + t; ;) { const l = await db.collection("Charm_Nest_Drive").doc("lease").get(), L = l.exists ? l.data() || {} : {}; if (L.state === "running" && L.nonce) return L.nonce; if (Date.now() > e) return null; await nap(400); } };
     let nonce = await lease(o.leaseMs == null ? 20000 : o.leaseMs); if (!nonce && Lib.driveSoon) { await Lib.driveSoon("fill waits").catch(() => null); nonce = await lease(o.leaseMs == null ? 60000 : o.leaseMs); }
     if (!nonce) { await ref.set({ state: "asked", kickedAt: 0, beatAt: 0 }, { merge: true }); return { again: "no pass runs" }; }
-    const r = await Lib.call({ op: "cmdHopPieces", runId, from, to: { sheetId: rec.id, layoutBase: num(rec.layoutRev) }, poses: spots.map(s => ({ poolId: s.poolId, cxPt: s.cxPt, cyPt: s.cyPt, angle: s.angle, wPt: s.wPt, hPt: s.hPt })), fill: true, gap: { setId: String(set.setId), takenOffAt: num(rec.takenOffAt), note: text }, by: "Cloud", person: "Cloud" }, { unit: `gapfill|${rec.id}|${num(rec.takenOffAt)}|${num(rec.layoutRev)}|${sha(spots.map(s => s.poolId).sort().join(","))}`, fence: { path: "Charm_Nest_Drive/lease", nonce, runId } });
+    /* DRAFTBUSY (23 Nov 2026, 18:41, GF Sheet 2: "GF Draft 22 is nesting: try again once it is done"): the draft orders come from is nested again at every new order, minutes of every quarter hour: the plan was made and thrown away, and the
+       next try was 20 minutes later. The write waits for a moment the draft is still (its pieces' places on the draft do not matter: they leave it), six minutes at most; then the next pass asks again. */
+    const write = n => Lib.call({ op: "cmdHopPieces", runId, from, to: { sheetId: rec.id, layoutBase: num(rec.layoutRev) }, poses: spots.map(s => ({ poolId: s.poolId, cxPt: s.cxPt, cyPt: s.cyPt, angle: s.angle, wPt: s.wPt, hPt: s.hPt })), fill: true, gap: { setId: String(set.setId), takenOffAt: num(rec.takenOffAt), note: text }, by: "Cloud", person: "Cloud" }, { unit: `gapfill|${rec.id}|${num(rec.takenOffAt)}|${num(rec.layoutRev)}|${sha(spots.map(s => s.poolId).sort().join(","))}|${n}`, fence: { path: "Charm_Nest_Drive/lease", nonce, runId } });
+    let r = null; for (const until = Date.now() + (o.busyMs == null ? 6 * 60000 : o.busyMs), step = o.busyStep == null ? 2500 : o.busyStep, t0 = { n: 0 }; ;) {
+      r = await write(t0.n++);
+      if (!(r && (r.busy || r.fenced)) || Date.now() > until) break;
+      await ref.set({ beatAt: Date.now() }, { merge: true }).catch(() => {}); await nap(step);
+      const fresh = await lease(o.leaseMs == null ? 60000 : o.leaseMs); if (!fresh) break; nonce = fresh;
+    }
+    if (r && (r.busy || r.fenced)) { say(`[fill] ${name}: ${err(r)}: asked again at the next pass`); await ref.set({ state: "asked", kickedAt: 0, beatAt: 0, kicks: 0 }, { merge: true }); return { again: err(r) || "busy" }; }
     if (err(r) || !r) { const w = err(r) || "no answer"; say(`[fill] ${name}: ${w}`); return r && (r.conflict || r.busy || r.gone || r.fenced || r.taken) ? end("none", w, { sig: null }) : end("none", w); }
     await Lib.call({ op: "timelineAdd", events: got2.orders.map(x => ({ orderId: x.rid, type: "note", by: "Cloud", station: "sorter", sheetId: rec.id, sheet: str(name, 80), id: `gapfill-${rec.id}-${num(rec.takenOffAt)}`, at: Date.now(), text: `Moved to ${name} to fill the room an order left there`.slice(0, 200), data: { gapFill: true, from } })) }, { unit: `gapfill-note|${rec.id}|${num(rec.takenOffAt)}|${sha(text)}`, fence: { path: "Charm_Nest_Drive/lease", nonce, runId } }).catch(() => null);
     say(`[fill] ${text} (${Math.round(100 * got2.fill)}% full)`);
