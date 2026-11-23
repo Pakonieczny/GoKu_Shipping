@@ -36,8 +36,10 @@ const sha = s => crypto.createHash("sha256").update(String(s)).digest("hex").sli
 const and = l => (l.length < 2 ? l.join("") : l.slice(0, -1).join(", ") + " and " + l[l.length - 1]);
 
 /* NOTCUT (23 Nov 2026, 18:25): a sheet a person approved for cutting carries the seal laserReady (processReady is not set), a sheet whose engraving and order check are done stands at Laser cutting, and a set cut days ago is
-   often not marked: none of them is ever filled. Only a set made in the last two days whose sheet still has work before the laser. */
-const laserReady = r => (Array.isArray(r && r.processSeals) ? r.processSeals : []).some(x => x && x.how === "laserReady"), atLaser = r => laserReady(r) || !!(r && r.stepState && r.stepState.engraving && r.stepState.orders), SET_MS = 48 * 3600000;
+   often not marked: none of them is ever filled. */
+const laserReady = r => (Array.isArray(r && r.processSeals) ? r.processSeals : []).some(x => x && x.how === "laserReady"), atLaser = r => laserReady(r) || !!(r && r.stepState && r.stepState.engraving && r.stepState.orders);
+/* FORWARD (Paul, 23 Nov 2026, 18:28: "I only want you to fill this one sheet don't fill any of the other historical sheets. All this is just moving forward"): only sets made from 18:30 that day on, and the one sheet he named (GF_Nov.23.26_Set-1_Sheet-2). */
+const FROM = 1795476600000, ONE_SHEET = "d-346bcfde8d3776d7";
 /** A set a sheet's gap may still be filled in: made, not approved for cutting, not sent, not cut. */
 const openSet = s => !!s && !SetEdit.committedSet(s) && !s.processReady && !s.laserSetPending && !(num(s.laserDoneAt) > 0) && !/^superseded/.test(String(s.status || ""));
 /** Why a sheet's gaps are not filled now, in words ("" when they may be). `sets`: the sets that list it. */
@@ -54,7 +56,7 @@ function targetWhy(rec, sets, now) {
   if (rec.draft || !rec.setId || list.length !== 1 || String(list[0].setId) !== String(rec.setId)) return "it is not in one set";
   if (!openSet(list[0])) return "its set is approved, sent or cut";
   if (atLaser(rec) || laserReady(list[0])) return "it is approved for cutting";
-  const made = num(list[0].formedAt) || ms(list[0].createdAt); if (!(made > 0) || now - made > SET_MS) return "its set is approved, sent or cut";   // (NOTCUT: an older set is as good as cut)
+  const made = num(list[0].formedAt) || ms(list[0].createdAt); if (rec.id !== ONE_SHEET && !(made >= FROM)) return "its set is approved, sent or cut";   // (FORWARD: a set made before the rule)
   if (rec.recalled) return "it was recalled";
   if (rec.problem || rec.problemStop) return "it needs a look";
   if (rec.inplaceHold) return "it keeps a place for a piece being made again";
