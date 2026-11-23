@@ -411,10 +411,13 @@
      derives itself (LIVE_ASKS) that its line no longer raises is not a blocker. Everything else (a hold, a question of the engraving or of a custom order, a line this page does not
      hold) reads exactly as before. */
   const LIVE_ASKS = new Set(["needsMaterial", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "engraveWords"]);   // (engraveWords: only a line that never engraves drops it, KEYNOENG: the host answers null for every other line, so the record stands)
+  /* LINKBOX (23 Nov 2026, order 4239999491): "Changed: Now 9MM_DISC_8391 (a saved link). Accept the new order ..." stayed in the head card after its pieces were made up as the new charm by a remake, which writes no answer. A saved
+     link's question is dropped when the page says it is made (asks false); a change on Etsy itself ("orderChanged" with no saved link) stands until a person answers it, as before. */
+  const LINKED = /\(a saved link\)/;
   /** What is holding this order up, in plain words: a hold nobody released, or a question nobody answered (live: the questions its lines still raise, optional). */
   function blockerOf(events, live) {
     let hold = null; const need = new Map(), byHand = new Map(), dropped = new Set();
-    const gone = e => { const d = e.data || {}; return !!live && typeof live.asks === "function" && !!e.lineKey && !d.custom && LIVE_ASKS.has(String(d.kind || "")) && live.asks(String(e.lineKey), String(d.kind)) === false; };
+    const gone = e => { const d = e.data || {}; return !!live && typeof live.asks === "function" && !!e.lineKey && !d.custom && (LIVE_ASKS.has(String(d.kind || "")) || (d.kind === "orderChanged" && LINKED.test(String(d.why || e.text || "")))) && live.asks(String(e.lineKey), String(d.kind)) === false; };   // (LINKBOX)
     for (const e of events || []) {
       // a line completed with Complete Order, or with its QR label printed, answers its question (a person finished it by hand); a Reopen asks it again
       const op = handStepOf(e), l = e.lineKey;
