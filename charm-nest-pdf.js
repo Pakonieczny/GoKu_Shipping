@@ -103,6 +103,34 @@
   const scaleOf = m => Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) || 1;
   const cmyk = (c, m, y, k) => [(1 - c) * (1 - k), (1 - m) * (1 - k), (1 - y) * (1 - k)];
   const lum = c => c ? (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) : 0;
+  /** TRUESIZE 2: the box of what is drawn, on the curves themselves (each cubic's turning points, never its control points), as the Charm Editor measures W and H. members: segs with
+   *  subpaths [["m", p] | ["l", p] | ["c", c1, c2, p] | ["h"]]; one with no subpaths (words) counts by its own box. → [x0, y0, x1, y1] | null */
+  const trueBoxOf = members => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const add = (x, y) => { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; };
+    const bez = (a, b, c, d, t) => { const u = 1 - t; return u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d; };
+    const turns = (a, b, c, d, f) => { const d0 = b - a, d1 = c - b, d2 = d - c, A = d0 - 2 * d1 + d2, B = 2 * (d1 - d0), C = d0;
+      if (Math.abs(A) < 1e-12) { if (Math.abs(B) > 1e-12) { const t = -C / B; if (t > 0 && t < 1) f(t); } return; }
+      const D = B * B - 4 * A * C; if (D < 0) return; const q = Math.sqrt(D); for (const t of [(-B + q) / (2 * A), (-B - q) / (2 * A)]) if (t > 0 && t < 1) f(t); };
+    for (const m of members || []) {
+      const sps = m && Array.isArray(m.subpaths) ? m.subpaths : null;
+      if (!sps || !sps.length) { if (m && m.bbox) { add(m.bbox[0], m.bbox[1]); add(m.bbox[2], m.bbox[3]); } continue; }
+      for (const sub of sps) {
+        let cur = null, start = null;
+        for (const op of sub || []) {
+          const k = op && op[0];
+          if (k === "m" || k === "l") { add(op[1][0], op[1][1]); cur = op[1]; if (k === "m") start = op[1]; }
+          else if (k === "c") {
+            const p1 = op[1], p2 = op[2], p3 = op[3]; add(p3[0], p3[1]);
+            if (cur) { const a = cur, at = t => add(bez(a[0], p1[0], p2[0], p3[0], t), bez(a[1], p1[1], p2[1], p3[1], t)); turns(a[0], p1[0], p2[0], p3[0], at); turns(a[1], p1[1], p2[1], p3[1], at); }
+            else { add(p1[0], p1[1]); add(p2[0], p2[1]); }
+            cur = p3;
+          } else if (k === "h") cur = start;
+        }
+      }
+    }
+    return x0 <= x1 ? [x0, y0, x1, y1] : null;
+  };
   const bboxOf = pts => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const p of pts) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1]; } return pts.length ? [x0, y0, x1, y1] : null; };
   const bbUnion = (a, b) => !a ? b : !b ? a : [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
   const bbArea = b => b ? Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1]) : 0;
@@ -2191,7 +2219,9 @@
       // TRUESIZE (Paul, 22 Nov 2026: "I had to set the size to 8.1 mm in order for the system to recognize it as 9 mm ... They must be considered the same size"): widthPt / heightPt are the
       // silhouette's frame (the shape plus half its line and 1 pt on every side, for its picture and the nest), not the charm's size. drawnPt is the shape as drawn, the size Illustrator and the
       // Charm Editor's W and H give (the line the laser follows): the size every person reads.
-      c.drawnPt = [+(c.bbox[2] - c.bbox[0]).toFixed(3), +(c.bbox[3] - c.bbox[1]).toFixed(3)];
+      // (TRUESIZE 2, Paul 22 Nov 2026: "still ... 9.2 mm when I put 9.0": a path's bbox here holds its curves' control points, which stand outside a circle the Charm Editor wrote; the size is
+      //  measured on the curves themselves, where each one turns, as the Charm Editor's own W and H are (charm-nest-charm-editor.js bboxOf, cubicExt))
+      { const tb = trueBoxOf(c.members && c.members.length ? c.members : [c.outline]) || c.bbox; c.drawnPt = [+(tb[2] - tb[0]).toFixed(3), +(tb[3] - tb[1]).toFixed(3)]; }
       c.centerPt = [(bx0 + bx1) / 2, (by0 + by1) / 2];   // rotation centre, PDF user space
       if (onProgress) onProgress(ci + 1, charms.length);
       await new Promise(r => setTimeout(r, 0));
