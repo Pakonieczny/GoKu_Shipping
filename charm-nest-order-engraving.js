@@ -203,8 +203,9 @@
   async function approveFaces(jobs, who, shownJob, shownBtn) {
     for (const j of jobs || []) {
       if (j.state !== 'review') continue;
-      await root.Engrave.approve(j, who, j === shownJob ? shownBtn || undefined : undefined);
-      if (!DONE.includes(j.state)) return { ok: false, failed: j };
+      await (root.Engrave.approveSettled || root.Engrave.approve)(j, who, j === shownJob ? shownBtn || undefined : undefined);   // (SETTLE: followed until the cloud has saved it; judged before that, an approval being saved was called "not approved")
+      const now = (root.Engrave.items && tryDo(() => root.Engrave.items().get(j.key), null)) || j;
+      if (!DONE.includes(now.state)) return { ok: false, failed: j };
     }
     return { ok: true, failed: null };
   }
@@ -427,7 +428,7 @@
         S.busyLabel(btn);
         const done = await run;
         if (!done.ok) { ok = false; msg = `The ${faceOf(done.failed)} was not approved`; }
-        else if (jobs.some(j => !DONE.includes(j.state))) ok = false;
+        else if (jobs.some(j => !DONE.includes(((root.Engrave.items && tryDo(() => root.Engrave.items().get(j.key), null)) || j).state))) ok = false;
         if (!ok && jobs.some(j => j.row && j.row.state === 'gone')) msg = 'This order has left the pull (cancelled or shipped)';
       } catch (e) { ok = false; msg = (e && e.message) || 'Not approved'; }
       finally { busy.delete(k); }

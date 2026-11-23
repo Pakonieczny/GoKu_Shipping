@@ -288,7 +288,7 @@
   const onScreenKey = k => safe(() => { for (const c of root.document.querySelectorAll(".rvItem.full")) { const j = c._job, r = j && j.row && (j.row.parentRow || j.row); if (r && r.key === k) return true; } return false; }, false);
   async function outline(j) { const P = root.Pool, pid = j && (j.copies || [])[0], line = j && j.row && (j.row.parentRow || j.row); if (!P || !pid || !line) return; if (safe(() => P.charmOf(pid) || P.previewCharmOf(pid), null)) return; try { await P.preview(line); } catch (_) {} if (!safe(() => P.charmOf(pid) || P.previewCharmOf(pid), null) && P.previewHeld) { try { await P.previewHeld(pid); } catch (_) {} } }   // (HELDCHARM: a custom piece on hold is read from its design file)
   /** (FITFIRST, Paul 13 Nov 2026: "the bottom options below the grid are not working" / "the grid seems to ALWAYS update after 1-2 minutes"): a job with words and no fit (fitted before its outline was here, or never) is fitted now, at the place the cloud says; its state stays. -> true when it has a fit */
-  const FITTING = new Set();
+  const FITTING = new Set(), FITERR = new Map();   // (FITERR: job key -> why its last placing stopped)
   /** (NOFALLBACK, Paul 13 Nov 2026: "Look at the thumbnails" / "remove these fallbacks, make it work"): the fit a job holds is the cloud's placement (same words, same centre and size) */
   function sameFit(j) { const f = j && j.fit, k = j && j.keepPlace; if (!f || !k || !Array.isArray(f.centre) || !Array.isArray(k.centre)) return false; return (f.lines || []).join("\n") === (k.lines || j.lines || []).join("\n") && Math.abs(f.centre[0] - k.centre[0]) < 0.05 && Math.abs(f.centre[1] - k.centre[1]) < 0.05 && Math.abs((+f.size || 0) - (+k.size || 0)) < 0.02; }
   /** (NOFALLBACK, Paul 13 Nov 2026: "Look at the thumbnails" / "remove these fallbacks, make it work"): a piece not on a sheet yet carries the ids its piece WILL get (Pool.previewIds, the way the computer that made the job did, ENGPRE); a job that arrived here without them is given them, its preview made when this page has none */
@@ -311,7 +311,7 @@
       { const pid = (j.copies || [])[0]; if (pid && !safe(() => root.Pool.charmOf(pid) || root.Pool.previewCharmOf(pid), null)) return false; }   // (HELDENGRAVE: no charm to fit the words on (an order on hold, its piece taken off): the job is not made "ready" and fitted for nothing, and the card is not drawn again for it)
       const c = CLOUD.get(line.key), rj = c && c.rec && (c.rec.jobs || []).find(x => x.key === j.key);
       if (rj && rj.place && !j.keepPlace) { j.keepPlace = plain(rj.place); if (j.keepPlace) j.keepPlace.fontKey = j.fontKey || j.keepPlace.fontKey; }
-      j.state = "ready"; try { await E().fitJob(j); } catch (_) {}
+      FITERR.delete(j.key); j.state = "ready"; try { await E().fitJob(j); } catch (e) { FITERR.set(j.key, String((e && e.message) || e).slice(0, 160)); console.warn("[engrave-sync] place", j.key, e); }   // (ENGREC: an error is said (placeNow), never swallowed)
     } finally {
       j.state = keep.state; if (keep.approvedAt !== undefined) { j.approvedAt = keep.approvedAt; j.approvedBy = keep.approvedBy; }
       FITTING.delete(j.key); setTimeout(() => { TAKING.delete(line.key); SIGS.set(line.key, sigOf(line)); }, 50);
@@ -320,18 +320,20 @@
   }
   /** The piece open on screen is outlined and fitted at once (it does not wait for the background pass) */
   const TRIED = new Map();   // (HELDENGRAVE: job key -> { at, n }: a pass that changed nothing; the next waits longer, 15 s, 30 s ... 2 min)
+  const samePlace = (f, k) => !Array.isArray(f.centre) || !Array.isArray(k.centre) || (Math.abs(f.centre[0] - k.centre[0]) < 0.25 && Math.abs(f.centre[1] - k.centre[1]) < 0.25 && Math.abs((+f.size || 0) - (+k.size || 0)) < 0.1);
   /** PLACEFIRST (Paul, 23 Nov 2026): the words of a job with no placement here, placed now at the place the cloud says (fitOne), for an Approve that needs them. -> { ok } | { ok: false, busy } (being placed already) | { ok: false, why } */
   async function placeNow(j) {
     if (!j) return { ok: false, why: "this piece is not on this computer any more" };
     if (j.fit) return { ok: true };
     if (FITTING.has(j.key)) return { ok: false, busy: true };
     TRIED.delete(j.key);
+    const line = j.row && (j.row.parentRow || j.row), c = line && CLOUD.get(line.key), rj = c && c.rec && (c.rec.jobs || []).find(x => x && x.key === j.key), had = j.keepPlace || (rj && rj.place) || null;
     await fitOne(j);
-    if (j.fit) return { ok: true };
+    if (j.fit) return had && (j.keepLost || !samePlace(j.fit, had)) ? { ok: true, moved: true } : { ok: true };   // (moved: the place the cloud named could not be kept: nobody has looked at this one)
     const pid = (j.copies || [])[0];
     if (!pid) return { ok: false, why: "the words have no piece to be placed on yet (the order has none on a sheet)" };
     if (!safe(() => root.Pool.charmOf(pid) || root.Pool.previewCharmOf(pid), null)) return { ok: false, why: "the charm's drawing could not be read on this computer" };
-    return { ok: false, why: j.reason || "the words could not be placed on the charm" };
+    return { ok: false, why: j.reason || (FITERR.has(j.key) ? `the words could not be placed on the charm (${FITERR.get(j.key)})` : "the words could not be placed on the charm") };
   }
   function watchOpen() {
     setInterval(() => { safe(() => {

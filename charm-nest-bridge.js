@@ -9071,6 +9071,10 @@ const Engrave = window.Engrave = (() => {
       ...(keepFor(job) ? {keep:keepFor(job)} : {})};   // (KEEP: after a charm edit the words stay where they were placed: CharmNestEngraveFit keepPlacement)
   }
   const fitStamp = ({charm, ...options}) => JSON.stringify(options);
+  /* ENGREC (Paul, 23 Nov 2026, orders 4242795385 and 4236205556: approvals stuck on every computer): a line read from the run's record may carry no engraving record (row.engrave). Placing its words wrote to it all the same
+     and stopped on "Cannot set properties of undefined (setting 'state')", after the old placement was taken away: the piece stood to check with no placement however often it was tried, and the error was never said
+     (50 pieces of 29 orders on 23 Nov). The record is made when there is none. */
+  function engRec(row) { return row.engrave || (row.engrave = { needed: true, state: "review", approved: false }); }
   const fitTasks = new WeakMap(), fitCut = new WeakSet();   // (fitCut: FITKEEP, the jobs whose placing a change cut short)
   /* EDITOR WORDS (27 Oct 2026): the placement of a face whose engraving is the charm editor's parts and no words. Its view and mask are the ones a fit makes (fitInput's own options, made here: with
      nothing to fit, no worker), its fit holds no letters (`artOnly`, set in the middle of the metal) and its check has no ink to check. So the face waits for Approve as any placement does, and the
@@ -9103,7 +9107,9 @@ const Engrave = window.Engrave = (() => {
   function fitJob(job) {
     if (fitTasks.has(job)) return fitTasks.get(job);
     // (FITKEEP: a placing cut short while the piece was asked for again joins this very task, so it is made once more for the piece as it is now; never left unplaced behind a finished promise)
-    const task = Promise.resolve().then(() => fitJobOnce(job)).then(async r => { if (fitCut.delete(job) && !job.fit && job.state === "ready" && canFit(job)) { r = await fitJobOnce(job); fitCut.delete(job); } return r; }).finally(() => { fitTasks.delete(job); render(); });
+    // (FITSAFE: a placing that stopped on an error leaves the piece as it was: its state, and the placement it had; the error is said, never swallowed)
+    const was = { state: job.state, fit: job.fit, view: job.view, mask: job.mask, verify: job.verify, lines: job.lines };
+    const task = Promise.resolve().then(() => fitJobOnce(job)).catch(e => { if (job.state === "fitting") job.state = was.state === "fitting" ? "ready" : was.state; if (!job.fit && was.fit) Object.assign(job, { fit: was.fit, view: was.view, mask: was.mask, verify: was.verify, lines: was.lines }); console.warn("Engraving: the words could not be placed", job.key, e); throw e; }).then(async r => { if (fitCut.delete(job) && !job.fit && job.state === "ready" && canFit(job)) { r = await fitJobOnce(job); fitCut.delete(job); } return r; }).finally(() => { fitTasks.delete(job); render(); });
     fitTasks.set(job, task);
     return task;
   }
@@ -9142,14 +9148,14 @@ const Engrave = window.Engrave = (() => {
     if (items() !== currentItems || currentItems.get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== state || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return cut();
     if (!G.glyphCoverage(fontFor("Regular", job), job.lines.join("\n")).ok) return setReady(job);
     const poolId = job.copies[0]; const charm = charmFor(job); if (!charm) { job.state = "ready"; return job; }
-    job.state = "fitting"; job.row.engrave.state = "fitting"; render();
+    job.state = "fitting"; engRec(job.row).state = "fitting"; render();
     const entry = Master.entryFor(job.row.spec.designSku) || {};
     const input = fitInput(job, charm, entry), stamp = fitStamp(input);
     let result;
     try { result = await fitClient().run(input); }
     catch (e) {
       if (items() !== currentItems || items().get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== "fitting" || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return cut();
-      job.state = "blocked"; job.reason = e.message; job.flipError = e; job.row.engrave.state = "blocked"; job.row.engrave.reason = job.reason;
+      job.state = "blocked"; job.reason = e.message; job.flipError = e; engRec(job.row).state = "blocked"; engRec(job.row).reason = job.reason;
       Review.add({ kind: e.stage === "flip" ? "flipFailed" : "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason, checks:e.checks, images:e.images });
       agent({engrave:true}, "warn", `${job.row.order.receiptId}: ${job.reason}`);
       // A failed back check holds this engraving; other jobs and sheets continue.
@@ -9167,12 +9173,12 @@ const Engrave = window.Engrave = (() => {
     job.artAtBy = artStampsOf(job);   // (ARTSTAMP, Paul 15 Nov 2026: "I wanna make sure they're absolutely rock solid between the cloud and all the computers": the art-edit stamp of each piece's face this fit was made around; the Approve sends it and the cloud refuses it when the drawing was edited since)
     job.view=view; job.mask=mask; if(job.turnUp == null && view && Number.isFinite(view.upAngle))job.upSystem=view.upAngle; job.lines=lines; job.text=lines.join("\n"); job.fit=fit; job.fitAt=Date.now(); job.materialVersion=2; if(!input.viewOptions?.holeOnly)job.orientVersion=G.ORIENT;   // (a view kept as it was saved is not one made with the long-axis rule)
     if(!fit) {
-      job.state="review";job.reason=result.reason;job.row.engrave.state="review";
+      job.state="review";job.reason=result.reason;engRec(job.row).state="review";
       if(!job.editingBack)Review.add({kind:"placement",key:"eng:"+job.key,row:(job.row.parentRow || job.row),job,why:result.reason});
       render();return job;
     }
     if (!kept) job.wantSize=fit.size; job.verify={geometry:check,at:Date.now()};   // (KEEP: the size a person asked for stands; the fit says what fits now)
-    job.state = "review"; job.row.engrave.state = "review"; job.claude = null;
+    job.state = "review"; engRec(job.row).state = "review"; job.claude = null;
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: "${job.lines.join(" / ")}" fits at ${fit.size.toFixed(2)} pt (cap ${fit.capMm.toFixed(2)} mm, ${fit.weight}${fit.angle ? `, ${fit.angle}°` : ""}${fit.small ? ", SMALL" : ""}${fit.thin ? ", strokes under the engraver limit" : ""}) — awaiting a person`);
     if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job });
     if (!kept && !input.keep) { try { applyAsks(job); } catch (e) { console.warn("Engrave: the buyer's asks", e); } }   // (FOLLOWASK: the state stays review; Approve is a person's)
@@ -9242,7 +9248,7 @@ const Engrave = window.Engrave = (() => {
     const owner = items(), jobs = [...owner.values()].filter(j => !j.editingBack && j.state === "ready" && j.row.state !== "gone" && canFit(j) && !isWorking(j));
     let fitted = 0;
     // a job counts only when the fit moved it on: one left "ready" (its charm not found on the sheet yet) changed nothing
-    for (const j of jobs) { if (items() !== owner || owner.get(j.key) !== j || j.state !== "ready" || j.row.state === "gone") continue; const row = j.row, sh = j.copies.length && Pool.sheetOf(j.copies[0]); if ((!sh || !sh.fileBase) && !j.pre) continue; try { await fitJob(j); } catch (e) { if (items() !== owner || owner.get(j.key) !== j || j.row !== row || row.state === "gone" || ["approved", "written", "skipped", "none"].includes(j.state) || j.approvalPreparing || j.stamping) continue; j.state = "blocked"; j.reason = e.message; j.row.engrave.state = "blocked"; agent({ engrave: true }, "warn", `${j.row.order.receiptId}: ${e.message}`); Review.add({ kind: "flipFailed", key: "eng:" + j.key, row: (j.row.parentRow || j.row), job: j, why: e.message }); } if (items() === owner && owner.get(j.key) === j && j.state !== "ready" && !unplacedPre(j)) fitted++; }   // (ENGPRE: a placement fitted for a piece not on a sheet is no work for the run: it saves and wakes nothing)
+    for (const j of jobs) { if (items() !== owner || owner.get(j.key) !== j || j.state !== "ready" || j.row.state === "gone") continue; const row = j.row, sh = j.copies.length && Pool.sheetOf(j.copies[0]); if ((!sh || !sh.fileBase) && !j.pre) continue; try { await fitJob(j); } catch (e) { if (items() !== owner || owner.get(j.key) !== j || j.row !== row || row.state === "gone" || ["approved", "written", "skipped", "none"].includes(j.state) || j.approvalPreparing || j.stamping) continue; j.state = "blocked"; j.reason = e.message; engRec(j.row).state = "blocked"; agent({ engrave: true }, "warn", `${j.row.order.receiptId}: ${e.message}`); Review.add({ kind: "flipFailed", key: "eng:" + j.key, row: (j.row.parentRow || j.row), job: j, why: e.message }); } if (items() === owner && owner.get(j.key) === j && j.state !== "ready" && !unplacedPre(j)) fitted++; }   // (ENGPRE: a placement fitted for a piece not on a sheet is no work for the run: it saves and wakes nothing)
     if (items() !== owner || !fitted) return 0;
     // the run record follows the work without holding it up (see RunCtl.loopNow); a failed save shows on the banner
     if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); RunCtl.save(run).catch(() => {}); }
@@ -9553,7 +9559,7 @@ const Engrave = window.Engrave = (() => {
   }
   function sendBack(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, neverWhy(job.row)); CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job);
     if (typeof faceHasEditorArt === "function" && !engravedWords(job).length && faceHasEditorArt(job) && artOnlyPlacement(job)) { render(); Orders.render(); return; }   // (EDITOR WORDS: a face the charm editor drew, with no words, goes back to its Approve, never to a words step it has nothing for)
-    job.state = "words"; job.reason = why || `sent back from the placement review — a decision on the ${facedJob(job) ? faceWord(job) + " " : ""}words is needed`; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); Orders.render(); }
+    job.state = "words"; job.reason = why || `sent back from the placement review — a decision on the ${facedJob(job) ? faceWord(job) + " " : ""}words is needed`; engRec(job.row).state = "words"; engRec(job.row).approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); Orders.render(); }
   /* ── NODECIDED (Paul, 16 Oct 2026: "Get rid of this Decided view. Instead just open the existing detailed Engraving modal without needing to 'Re-Open' the order. The user should be free to update/modify any already Approved
      engraving order and simply need to press the 'Approve' button again after the second change. This would then produce a second brand new seal.") ──
      There is no Decided tab and no Reopen step. A piece that is approved (or saved to its sheet, or cut plain) opens in the same detailed card as any other piece; looking at it changes nothing. The FIRST change a person makes to it
@@ -9812,7 +9818,7 @@ const Engrave = window.Engrave = (() => {
         jobs[f] = j;
         if (["approved", "written"].includes(j.state)) break;
         if (j.state === "review" && j.fit && j._placeAt && !lateTasks.has(j) && !isWorking(j)) { const pc = j._placeAt; delete j._placeAt; if (j.view && !j.fit.artOnly) { const c = viewPointOf(j.view, pc); try { if (c && moveTo(j, c)) j.nudged = true; } catch (_) { /* the system's place stands */ } } const lk = j._placeLook; delete j._placeLook; if (lk) applyLook(j, lk); }   // (fitted by another path than prepareLate: the dragged place is put on it here)
-        if (j.state === "review" && j.fit && !isWorking(j) && !lateTasks.has(j) && !j._placeAt && !fitTasks.get(j)) break;
+        if (j.state === "review" && j.fit && !isWorking(j) && !lateTasks.has(j) && !j._placeAt && !fitTasks.get(j)) { const p0 = placing.get(j); if (p0 && !p0.done) { await wait(60); continue; } if (p0 && p0.res && p0.res.moved) why = `the ${f} words were placed in a new spot. Look at them, then press Approve`; break; }   // (PLACEFIRST: never approved where nobody looked)
         /* PLACEFIRST (Paul, 23 Nov 2026, order 4242795385 piece 3: "Not approved: the back words were not placed: nothing moved for 4 minutes"): a face to check whose words have NO placement on this page (a
            sync that could not place them, a placing another change cut short) matched no step of this wait, so the press waited out the silence and failed. It is placed first, at the place the cloud says
            (CharmNestEngraveSync.placeNow); one that cannot be placed says why at once. Two tries; a placing under way is waited for. */
@@ -10069,6 +10075,21 @@ const Engrave = window.Engrave = (() => {
     try { agent({ engrave: true }, "warn", `${job.row?.order?.receiptId || job.key}: the approval stopped on an error (${msg})`); } catch (_) {}
     notApproved(job, `Not approved: something went wrong while approving (${msg}). Your changes are kept: press Approve to try again.`);
   }
+  /** PLACEFIRST: the words of a job with no placement, placed (CharmNestEngraveSync.placeNow; a placing under way is waited for). -> { ok, why, moved } */
+  async function placeWords(job) {
+    const Y=window.CharmNestEngraveSync;
+    if(Y && typeof Y.placeNow==="function"){ for(;;){ const r=await Y.placeNow(job); if(!(r && r.busy)) return r; await new Promise(res=>setTimeout(res,150)); if(job.fit) return {ok:true}; } }
+    if(!canFit(job)) return {ok:false,why:"the words wait for the piece's sheet"};
+    const was=job.state; job.state="ready"; try{await fitJob(job);}finally{if(job.state==="ready")job.state=was;}
+    return {ok:!!job.fit,why:job.reason || "the words could not be placed on the charm"};
+  }
+  /** SETTLE: an approval followed to its end: the cloud saves the file of most approvals, seconds after the press (job.approving); a window that judged the press before that said "not approved" of one being saved. -> true when approved */
+  async function approveSettled(job, by, button, o) {
+    await approve(job,by,button,o);
+    const now=()=>items().get(job.key) || job, t0=Date.now();
+    while(!["approved","written"].includes(now().state) && now().approving && now().approving.cloud && Date.now()-t0<APPROVE_MS.fit) await new Promise(res=>setTimeout(res,250));
+    return ["approved","written"].includes(now().state);
+  }
   async function approve(job, by, button, o) {
     if(job._approvalTask){approveSay(job,"Still approving this placement…",null,true);return;}   // (APPROVEFIX: every wait of the task has a time limit, so this ends)
     const task=approveOnce(job,by,button,o).catch(e=>approveThrew(job,e));job._approvalTask=task;   // (HELDREL: an approval that threw says so, never a silent press)
@@ -10093,6 +10114,17 @@ const Engrave = window.Engrave = (() => {
         return;
       }
       { const why=items()!==owner || job.row!==row ? "stale" : approveBlocked(job,owner,null); if(why){approveRefused(job,why);return;} }
+    }
+    /* PLACEFIRST (Paul, 23 Nov 2026: "I can't have approved not work. It has to work everywhere"): the ONE approval every Approve runs (Design & Engrave, the order window, the sheet window, the Library): a piece to check
+       whose words have no placement on this page is placed first, at the place the cloud says, then approved; one that cannot be placed says why; words placed in a new spot are looked at before they are approved. */
+    if(job.state==="review" && !job.fit && !job.approvalIntent && !job.approving) {
+      approveSay(job,"Placing the words on the charm first · the approval follows",null,true);
+      jobStep(job,"face","Placing the words on the charm first…");
+      let placed=null;
+      try{placed=await approveWithin(placeWords(job),APPROVE_MS.fit,`the words were not placed within ${minutesOf(APPROVE_MS.fit)}`);}catch(e){notApproved(job,`Not approved: ${(e && e.message) || e}`);return;}
+      { const why=items()!==owner || job.row!==row ? "stale" : approveBlocked(job,owner,null); if(why){approveRefused(job,why);return;} }
+      if(!job.fit){notApproved(job,`Not approved: ${(placed && placed.why) || job.reason || "the words could not be placed on the charm"}`);return;}
+      if(placed && placed.moved){notApproved(job,"Not approved: the words were placed in a new spot. Look at them, then press Approve.");return;}
     }
     if(EG.cardKey === job.key && EG.card?._previewFailed) { notApproved(job, "Not approved: refit the words to restore the preview before approving.", 4000); return; }
     if(EG.cardKey===job.key) EG.card?._flushSpacing?.();
@@ -10193,7 +10225,7 @@ const Engrave = window.Engrave = (() => {
     const by = job.approving.by;
     try { CNEngravingSeals.add(job, "engraveApproved", by, +at); } catch (e) { console.warn("Engraving seal", e); }
     job.state = "written"; job.approvedBy = by; job.approvedAt = +at; job.expectedApprovedAt = +at; job.reason = null;
-    if (job.row && job.row.engrave) job.row.engrave.state = "written";
+    if (job.row && job.row.engrave) engRec(job.row).state = "written";
     delete job.approving; delete job.approvalIntent;
     try { await syncEditedBack(job, { cloud: true }); } catch (e) { console.warn("Edited back: the sheet's backs were not read again", e); }
     toast(`${isFront(job) ? "Front" : "Back"} engraving updated`, "ok");
@@ -10223,7 +10255,7 @@ const Engrave = window.Engrave = (() => {
         delete job.backPending; delete job.poolPending; backRetry.n = 0; agent({ engrave: true }, "warn", `${job.row.order.receiptId}: this approval was replaced in the cloud by a newer one; it is not saved again (${e.message})`); Session.schedule(); }
       else if (!e.engravingInvalid) {
         job.backPending = e.message; agent({ engrave: true }, "warn", `${job.row.order.receiptId}: the approved back file waits for the cloud (${e.message})`); retryBacksLater(); render(); }
-      else { job.state = "review"; job.row.engrave.state = "review"; job.row.engrave.approved = false; job.reason = "back file failed: " + e.message; refreshBacks(); agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); } }
+      else { job.state = "review"; engRec(job.row).state = "review"; engRec(job.row).approved = false; job.reason = "back file failed: " + e.message; refreshBacks(); agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); } }
     finally { job.backSaving = false; Session.schedule(); if (EG.cardKey === job.key) { try { render(); } catch (_) { /* drawn with the next render */ } } }   // (NODECIDED: the card of an approved piece in front follows the end of its back file's saving: its position buttons)
     // the run looks again only when the save changed something (a save with nothing to write would start it over and over)
     if(!job.editingBack && (job.state !== was || (job.backs || []).length !== had)) RunCtl.backgroundSettled();
@@ -12512,7 +12544,7 @@ const Engrave = window.Engrave = (() => {
     if(!current())return;
     delete job.poolPending;
     if (job.approving) { try { finalizeApproval(job); } catch (e) { throw Object.assign(e instanceof Error ? e : new Error(String(e)), { approvalThrew: true }); } }   // (SEALAFTERSAVE: its back is saved in the cloud: now the approval, its seal and its event)
-    job.state = "written"; job.row.engrave.state = "written";
+    job.state = "written"; engRec(job.row).state = "written";
     // (the piece's other face was still being written when this one's flags were saved: the last face to finish marks the piece engraved)
     if (!job.editingBack && !othersDone && jobsOf(job.row).filter(o => (o.copies || []).some(id => job.copies.includes(id))).every(o => ["written", "skipped", "none"].includes(o.state))) Pool.update(job.copies, { state: "engraved" }).catch(() => {});
     if(job.editingBack) {await syncEditedBack(job);toast(`${isFront(job) ? "Front" : "Back"} engraving updated`,"ok");}
@@ -14332,7 +14364,7 @@ const Engrave = window.Engrave = (() => {
       } else if (j.view || j.mask || j.fit) {
         holdDrawing(j); keepPlace(j);
         Object.assign(j, { view: null, mask: null, fit: null, verify: null });
-        if (["review", "blocked", "fitting"].includes(j.state)) { j.state = "ready"; if (j.row && j.row.engrave) j.row.engrave.state = "ready"; }
+        if (["review", "blocked", "fitting"].includes(j.state)) { j.state = "ready"; if (j.row && j.row.engrave) engRec(j.row).state = "ready"; }
         n++;
       } else continue;
       try { Review.remove("eng:" + j.key); } catch (_) { /* nothing to take down */ }
@@ -14342,7 +14374,7 @@ const Engrave = window.Engrave = (() => {
     return n;
   }
   artChanged._again = new Map();
-  return { viewFaceOf, setViewFace, showFace, showStage: svShowStage, stageNow: svStageNow, stageSeq: k => { const r = SV_STAGES.get(String(k == null ? "" : k)); return r ? r.seq : 0; }, stagePlaceOf: svPlaceOf, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, heldNoPiece, unplacedPre, settleStuckBacks, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, discardStaged, stageFace, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, pendingOrderIds, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, placeOf, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, cloudEditSaved, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { approveSettled, viewFaceOf, setViewFace, showFace, showStage: svShowStage, stageNow: svStageNow, stageSeq: k => { const r = SV_STAGES.get(String(k == null ? "" : k)); return r ? r.seq : 0; }, stagePlaceOf: svPlaceOf, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, heldNoPiece, unplacedPre, settleStuckBacks, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, discardStaged, stageFace, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, pendingOrderIds, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, placeOf, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, cloudEditSaved, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PLACEORDERS (Paul, 23 Nov 2026: RG Draft 1 on its plate's leftover read "3/3 · 4% · 0 orders" for three pieces of one order): a sheet's orders are the ones its record names and those of
 every piece it lists (a piece's id starts with its order number), each once: a record the cloud placed pieces on before it named their orders still counts them */
@@ -26276,7 +26308,12 @@ const OrderWin = window.OrderWin = (() => {
     const mine = e => !!live && live.size > 0 && (live.has(e) || ((e.type === "sealCompleted" || e.type === "sealPrinted") && liveLines.has(e.lineKey || "")));
     // (all pieces of an order of several: its step is its slowest piece's, as the rail says)
     const ms = evs && lastOf(slowestEvents() || evs, e => ((T[e.type] && T[e.type].milestone) || e.milestone) && !back(e) && !mine(e));
-    const last = evs && lastOf(evs, e => e.type !== "note" && e.type !== "teamMessage" && e.type !== "customerMessage" && !back(e) && !mine(e));
+    /* NOWASK (Paul, 23 Nov 2026, orders 4243367845 and 4236205556: "the system chooses the correct SKU/charm but still says that it's an unknown SKU"): a page read the order before its charm library was there and wrote
+       "Unknown SKU" as the order's last word; the line reads its charm, and no question is open. A question its line no longer raises (liveAsks: this page's own reading), and the reading that raised it, is not where the
+       order is now; the Timeline keeps both. Not known (the line is not on this page, the library not here): the record stands. */
+    const asksNow = evs ? tryDo(() => liveAsks(r)) : null, goneAsk = e => !!(asksNow && e && e.type === "needsDecision" && e.lineKey && asksNow.asks(String(e.lineKey), String((e.data || {}).kind || "")) === false);
+    const goneAt = (evs || []).filter(goneAsk), staleAsk = e => goneAsk(e) || (e.type === "interpreted" && goneAt.some(q => q.lineKey === e.lineKey && Math.abs(+q.at - +e.at) < 5000));
+    const last = evs && lastOf(evs, e => e.type !== "note" && e.type !== "teamMessage" && e.type !== "customerMessage" && !back(e) && !mine(e) && !staleAsk(e));
     // (the pill and the card's head say where the order IS now: a piece placed once and taken off since, held or released and not placed again, is on no sheet,
     //  whatever the last milestone of the history says: the PLACEMENT, the same answer as the rows, the chips and the rail; history past the laser stands)
     const pl = placeInScope();
@@ -27187,7 +27224,7 @@ const OrderWin = window.OrderWin = (() => {
         let who=CNEngravingSeals.who();if(typeof who!=="string"){who=await who;if(!who)return;if(!ap.isConnected)ap=panel.querySelector('[data-e=approve]');if(!ap || ap.disabled || eng.job.state!=="review")return;}
         CNEngravingSeals.busyLabel(ap);
         try{
-          const run=Engrave.approve(eng.job,who,ap);CNEngravingSeals.busyLabel(ap);   // (it puts "Approved" on the button as it starts: the wait is said again until the stamp)
+          const run=(Engrave.approveSettled || Engrave.approve)(eng.job,who,ap);CNEngravingSeals.busyLabel(ap);   // (it puts "Approved" on the button as it starts: the wait is said again until the stamp)
           // (the card turns Approved as soon as the stamp is down, the saving of the back file said under it; not when that saving is over)
           await CNEngravingSeals.stamped(eng.job,run);
           if(!["approved","written"].includes(eng.job.state)){await run;ap.disabled=false;return;}

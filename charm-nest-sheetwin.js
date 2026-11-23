@@ -2778,7 +2778,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const who = needName(() => { if (b.isConnected && !b.disabled) b.click(); }); if (!who) return;
     CNEngravingSeals.busyLabel(b);   // (a small spinner and "Approving…" until the stamp: Engrave.approve puts "Approved" on the button as it starts, so the wait is said again after it)
     try {
-      const run = Engrave.approve(job, who, b); CNEngravingSeals.busyLabel(b);
+      const run = (Engrave.approveSettled || Engrave.approve)(job, who, b); CNEngravingSeals.busyLabel(b);   // (SETTLE: until the cloud has saved it)
       await run;
       if (W.sel !== x) return;
       if (!["approved", "written"].includes(job.state)) { b.disabled = false; return; }
