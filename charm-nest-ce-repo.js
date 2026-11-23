@@ -36,6 +36,10 @@
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const up = s => String(s == null ? '' : s).trim().toUpperCase();
   const mm = pt => { const v = (+pt || 0) * MM; return (Math.round(v * 10) / 10).toFixed(1); };
+  /* TRUESIZE (Paul, 22 Nov 2026: "I had to set the size to 8.1 mm in order for the system to recognize it as 9 mm"): the size a person reads is the charm as drawn, the very W and H of the editor
+     and of Illustrator (drawnPt); widthPt / heightPt are the reader's frame (the shape plus half its line and 1 pt on every side). An entry saved before drawnPt was kept is read without that 1 pt. */
+  const drawnOf = g => { if (!g) return null; const d = Array.isArray(g.drawnPt) && g.drawnPt.length === 2 ? g.drawnPt : null; if (d) return d; const w = +g.widthPt || 0, h = +g.heightPt || 0; return w > 0 && h > 0 ? [w > 2 ? w - 2 : w, h > 2 ? h - 2 : h] : null; };
+  const sizeWords = g => { const d = drawnOf(g); return d ? ` · ${mm(d[0])} × ${mm(d[1])} mm` : ''; };
   const ap = (m, p) => [m[0] * p[0] + m[2] * p[1] + m[4], m[1] * p[0] + m[3] * p[1] + m[5]];
 
   /* ── the pure parts ── */
@@ -142,7 +146,7 @@
     if (L.skipped && L.skipped.length) throw new Error(`${L.skipped.length} part${L.skipped.length === 1 ? '' : 's'} of the drawing cannot be written (words with no outlines)`);
     const bytes = await CP.pdfOf(L, id.sku), read = await CP.readOf(bytes, id.sku + '.pdf'), c = read.charm;
     let thumb = c.thumb || ''; if (!thumb && typeof P.thumbnail === 'function') { try { thumb = await P.thumbnail(c, 168); } catch (_) { thumb = ''; } }
-    return { charm: c, parsed: read.parsed, thumb, widthPt: c.widthPt, heightPt: c.heightPt };
+    return { charm: c, parsed: read.parsed, thumb, widthPt: c.widthPt, heightPt: c.heightPt, drawnPt: c.drawnPt || null };
   }
 
   /* one control per open workspace */
@@ -168,8 +172,8 @@
       if (!st.id.ok) { h += `<div class="ce-repo__why">${esc(st.id.why)}</div><div class="ce-repo__note">Open a charm from the Library (Charm library) to edit the repository's own drawing.</div>`; card.innerHTML = h; return; }
       h += `<div class="ce-repo__sku">${name}</div><div class="ce-repo__file">${esc(entry && entry.masterName ? 'from ' + entry.masterName : entry ? '' : 'not in the library this page holds')}${entry && entry.edited && entry.edited.by ? ` · last updated here by ${esc(entry.edited.by)}` : ''}</div>`;
       const thumbNow = entry ? (geom && geom.thumbUrl) || entry.thumbUrl || '' : '';
-      h += `<div class="ce-repo__cmp"><div><div class="ce-repo__pic">${picOf(thumbNow)}</div><div class="ce-repo__cap">In the repository${geom && geom.widthPt ? ` · ${mm(geom.widthPt)} × ${mm(geom.heightPt)} mm` : ''}</div></div><div class="ce-repo__arrow">→</div>`
-        + `<div><div class="ce-repo__pic" data-new>${st.made ? picOf(st.made.thumb) : st.err ? '<span>—</span>' : '<span>Reading your drawing…</span>'}</div><div class="ce-repo__cap">Your drawing${st.made ? ` · ${mm(st.made.widthPt)} × ${mm(st.made.heightPt)} mm` : ''}</div></div></div>`;
+      h += `<div class="ce-repo__cmp"><div><div class="ce-repo__pic">${picOf(thumbNow)}</div><div class="ce-repo__cap">In the repository${sizeWords(geom)}</div></div><div class="ce-repo__arrow">→</div>`
+        + `<div><div class="ce-repo__pic" data-new>${st.made ? picOf(st.made.thumb) : st.err ? '<span>—</span>' : '<span>Reading your drawing…</span>'}</div><div class="ce-repo__cap">Your drawing${st.made ? sizeWords(st.made) : ''}</div></div></div>`;
       if (st.done) {
         h += `<div class="ce-repo__ok"><b>${st.done.same ? 'Nothing to update' : 'Repository updated'}</b><br>${esc(st.done.text)}</div>`;
         if (st.done.closeOffer) h += `<button type="button" class="ce-repo__go" data-go="close">Close the editor</button><button type="button" class="ce-repo__go ce-repo__go--plain" data-go="stay">Keep editing</button>`;

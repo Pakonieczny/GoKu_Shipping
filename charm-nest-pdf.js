@@ -2188,6 +2188,10 @@
       c.hash = fnv(signature(bits, w, h) + "|" + Math.round((bx1 - bx0) * 2) + "x" + Math.round((by1 - by0) * 2) + "|" + c.members.length);
       c.thumb = await thumbnail(c, 168);
       c.widthPt = bx1 - bx0; c.heightPt = by1 - by0;
+      // TRUESIZE (Paul, 22 Nov 2026: "I had to set the size to 8.1 mm in order for the system to recognize it as 9 mm ... They must be considered the same size"): widthPt / heightPt are the
+      // silhouette's frame (the shape plus half its line and 1 pt on every side, for its picture and the nest), not the charm's size. drawnPt is the shape as drawn, the size Illustrator and the
+      // Charm Editor's W and H give (the line the laser follows): the size every person reads.
+      c.drawnPt = [+(c.bbox[2] - c.bbox[0]).toFixed(3), +(c.bbox[3] - c.bbox[1]).toFixed(3)];
       c.centerPt = [(bx0 + bx1) / 2, (by0 + by1) / 2];   // rotation centre, PDF user space
       if (onProgress) onProgress(ci + 1, charms.length);
       await new Promise(r => setTimeout(r, 0));
