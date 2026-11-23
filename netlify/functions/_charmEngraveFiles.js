@@ -83,7 +83,11 @@ async function envOf(ctx) {
   E = { settings, piece, P: piece.P, G: Pdf.Geom, Fonts: require("./_charmEngraveFonts"), sheets: new Map(), world: new Map() };
   E.bucket = () => ctx.bucket || require("./firebaseAdmin").storage().bucket();
   E.sheet = async id => { if (!id) return null; if (E.sheets.has(id)) return E.sheets.get(id); const r = await ctx.read({ op: "getSheet", id }); const s = (r && r.sheet) || null; if (s && !s.id) s.id = id; E.sheets.set(id, s); return s; };
-  E.worldLine = async key => { if (E.world.has(key)) return E.world.get(key); let d = null; try { const s = await ctx.db.collection(WORLD_LINES).doc(key).get(); d = s.exists ? s.data() || null : null; } catch (_) { d = null; } E.world.set(key, d); return d; };
+  E.worldLine = async key => { if (E.world.has(key)) return E.world.get(key); let d = null; try { const s = await ctx.db.collection(WORLD_LINES).doc(key).get(); d = s.exists ? s.data() || null : null; } catch (_) { d = null; }
+    /* WORLDDATA (Paul, 23 Nov 2026: order 4239999491, two discs approved 21 Nov, "its pieces are not made yet" ever since): the record keeps its reading as text (data), and it was read as if it were the record: no line had a spec here,
+       so a line of discs had no Disc 1 and Disc 2, and no approval of one could find its piece. */
+    if (d && typeof d.data === "string") { try { d = JSON.parse(d.data); } catch (_) { d = null; } }
+    E.world.set(key, d); return d; };
   ENVS.set(ctx.run, E);
   return E;
 }
@@ -100,8 +104,8 @@ function fitOpts(job, s, mask, byHand) {
 async function lineContext(ctx, E, lineKey, other) {
   const line = (ctx.run.lines || {})[lineKey] || other || null; if (!line) return null;
   const world = await E.worldLine(lineKey), ws = (world && world.spec) || {};
-  const spec = Object.assign({ designSku: line.sku || null, quantity: line.quantity || 1, pieceCount: line.pieceCount || line.quantity || 1 }, ws);
-  const row = { key: lineKey, state: line.state, poolIds: (line.poolIds || []).slice(), spec, line: { quantity: spec.quantity || line.quantity || 1, transactionId: line.transactionId || String(lineKey).split("_")[1] }, order: { receiptId: line.orderId || String(lineKey).split("_")[0] } };
+  const spec = Object.assign({}, ws, { designSku: line.sku || ws.designSku || null, quantity: line.quantity || ws.quantity || 1, pieceCount: line.pieceCount || ws.pieceCount || line.quantity || 1 });   // (WORLDDATA: what the run holds of the line wins, as it always did here)
+  const row = { key: lineKey, state: line.state, poolIds: (line.poolIds || []).slice(), spec, line: Object.assign({}, (world && world.line) || {}, { quantity: spec.quantity || line.quantity || 1, transactionId: line.transactionId || String(lineKey).split("_")[1] }), order: { receiptId: line.orderId || String(lineKey).split("_")[0] } };
   if (row.poolIds.length) await E.piece.poolRows(row.poolIds);
   return { line, row, spec, world };
 }
@@ -163,7 +167,10 @@ async function patchRunLine(ctx, lineKey, summary, unit) {
 /** A job the fit takes: words read and waiting for their place ("ready"), or one a page left in the middle of its fit long ago. Never a decided, approved or archived one. */
 const needsFit = (j, l) => !!j && !j.archived && !j.approving && (j.state === "ready" || (j.state === "fitting" && Date.now() - num(l.at) > STALE_FITTING_MS));
 /** A job approved before its piece reached a sheet (ENGPRE), its back file not written yet: the cloud writes it once the piece is on a sheet (the page's resumeBacks). */
-const needsResume = (j, l) => !!j && !j.archived && !j.approving && j.state === "approved" && num(j.approvedAt) > 0 && !!j.approvedBy && !!j.place && Date.now() - num(l.at) > RESUME_AFTER_MS;
+/* ARTAPPROVED (Paul, 23 Nov 2026: GF_Nov.22.26_Set-2_Sheet-1, 18 approved in its window, 17 on its card: the front of 4238830221, Charm Editor artwork and no words, approved by Michelle_R on 19 Nov, never had its file written): a face that carries
+   only the editor's artwork keeps no place in its record, so its approval was never taken up. Its place is the artwork itself (artOnly). */
+const wordless = j => !!j && !(Array.isArray(j.lines) ? j.lines : []).join("").trim() && !String(j.text == null ? "" : j.text).trim();
+const needsResume = (j, l) => !!j && !j.archived && !j.approving && j.state === "approved" && num(j.approvedAt) > 0 && !!j.approvedBy && (!!j.place || wordless(j)) && Date.now() - num(l.at) > RESUME_AFTER_MS;
 
 async function fitUnit(ctx) {
   if (["stopped", "abandoned", "complete"].includes(ctx.run.status)) return;   // (as the page: the automatic fit runs beside a run that is not stopped; a person's approvals are written whatever the run does)
@@ -179,6 +186,7 @@ async function fitUnit(ctx) {
     const r = await ctx.read({ op: "engraveSyncGet", since }), got = (r && r.lines) || [];
     for (const l of got) { newest = Math.max(newest, num(l.at)); if (lines[l.key]) keys.add(l.key); }
     if (got.length >= 500) more = true;
+    if (num(cur.artLook) < 1) for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.engrave && /"state":"approved"/.test(JSON.stringify(l.engrave))) keys.add(k);   // (ARTAPPROVED: the lines approved before this rule, whose file was never written, looked at once)
   }
   const all = [...keys], pending = {};
   for (const k of all.slice(400)) pending[k] = true;   // (more than one read's worth: the rest at the next pass)
@@ -216,7 +224,7 @@ async function fitUnit(ctx) {
     }
   }
   const pend = Object.keys(pending).slice(0, 1500);
-  await ctx.db.runTransaction(async tx => { await fenceTx(ctx, tx); tx.set(cref, { runId: ctx.runId, since: newest, pending: Object.fromEntries(pend.map(k => [k, true])), at: Date.now() }); });
+  await ctx.db.runTransaction(async tx => { await fenceTx(ctx, tx); tx.set(cref, { runId: ctx.runId, artLook: 1, since: newest, pending: Object.fromEntries(pend.map(k => [k, true])), at: Date.now() }); });
   return more ? { more: true } : undefined;
 }
 
@@ -336,11 +344,12 @@ const taskIdOf = (jobKey, at) => `${String(jobKey).replace(/\//g, "_")}@${Math.r
 async function resumeTask(ctx, E, lc, l, job) {
   const copies = copiesOf(E, lc, job); if (!copies.length) return "wait";
   for (const id of copies) if (!(await sheetOf(E, id))) return "wait";
+  if (!job.place) { await E.piece.poolRows(copies); if (!wordless(job) || !copies.every(id => { const a = artAtOf(E.piece.rows.get(id), Faces.faceOf(job) === "front" ? "front" : "back"); return a > 0 && a <= num(job.approvedAt) + 2000; })) return "none"; }   // (ARTAPPROVED: only artwork that has not been changed since it was approved)
   const id = taskIdOf(job.key, job.approvedAt), ref = ctx.db.collection(TASKS).doc(id), now = Date.now();
   return ctx.db.runTransaction(async tx => {
     await fenceTx(ctx, tx);
     const s = await tx.get(ref); if (s.exists) return "had";
-    tx.create(ref, { id, runId: ctx.runId, lineKey: l.key, jobKey: job.key, face: Faces.faceOf(job), slot: Faces.parseKey(job.key).slot || null, at: num(job.approvedAt), by: String(job.approvedBy), text: job.text == null ? "" : String(job.text), place: job.place,
+    tx.create(ref, { id, runId: ctx.runId, lineKey: l.key, jobKey: job.key, face: Faces.faceOf(job), slot: Faces.parseKey(job.key).slot || null, at: num(job.approvedAt), by: String(job.approvedBy), text: job.text == null ? "" : String(job.text), place: job.place || { artOnly: true, upAngle: null },
       artAtBy: null, origin: "resume", state: "waiting", stage: "check", copies: null, done: {}, staged: {}, files: {}, sheets: {}, errors: 0, createdAt: now, updatedAt: now, expireAt: new Date(now + 30 * 86400000) });
     return "made";
   });
@@ -440,6 +449,8 @@ async function runTask(ctx, E, t0) {
   await E.piece.poolRows(copies);
   // a piece taken off its sheet (cancelled, held, released): no sheet can hold a back for it
   if (copies.every(id => { const p = E.piece.rows.get(id); return p && ["abandoned", "superseded"].includes(p.state); })) return end(ctx, t, "failed", "its pieces were taken off their sheets: nothing to save");
+  // MADEAGAIN (4239999491): a piece made again after it was approved (its charm taken back and replaced: supersededAt) is not the piece the person looked at: it is asked again, in words, never saved by itself and never waited for
+  if (t.origin !== "resume" && copies.some(id => { const p = E.piece.rows.get(id); return p && num(p.supersededAt) > num(t.at) && !(t.staged && t.staged[id]); })) return endInvalid(ctx, E, t, "This piece was made again after it was approved: look at it and approve it again");
   // ARTSTAMP: the artwork of a piece's face was edited after the fit the person approved
   for (const id of copies) { const was = t.artAtBy && t.artAtBy[id] != null ? num(t.artAtBy[id]) : null; if (was != null && artAtOf(E.piece.rows.get(id), face) > was) return endInvalid(ctx, E, t, "This charm's artwork changed while it was being approved — approve it again"); }
   // the font the approval was made in (never a cut in another font)

@@ -68,9 +68,11 @@ async function completedOf(db, rids) {
   catch (_) { return null; }
 }
 /** The run's sheet records (and its sets), for what a page knows of its own sheets: the pieces they list, the pieces a cleanup took off on purpose, a sheet being nested or written. */
-async function sheetsOfRun(db, runId) {
+/** slim (CMDFAST): only what the piece maker asks of a sheet, for a person's few lines: which pieces it lists, what a cleanup took off, whether it is cut. */
+const SLIM = ["runId", "archived", "poolIds", "cleanup", "roseCutAt", "laserDoneAt"];
+async function sheetsOfRun(db, runId, slim) {
   const sheets = new Map(), listed = new Set(), cleared = new Set();
-  const [ss, st] = await Promise.all([db.collection(SHEETS).where("runId", "==", runId).get(), db.collection(SETS).where("runId", "==", runId).get().catch(() => ({ docs: [] }))]);
+  const [ss, st] = await Promise.all([(slim ? db.collection(SHEETS).where("runId", "==", runId).select(...SLIM) : db.collection(SHEETS).where("runId", "==", runId)).get(), db.collection(SETS).where("runId", "==", runId).get().catch(() => ({ docs: [] }))]);
   for (const d of ss.docs) { const s = Object.assign({ id: d.id }, d.data() || {}); sheets.set(d.id, s); if (!s.archived) for (const id of s.poolIds || []) listed.add(String(id)); if (s.cleanup) for (const id of [].concat(s.cleanup.removedPoolIds || [])) cleared.add(String(id)); }
   for (const d of st.docs) { const x = d.data() || {}; if (x.cleanup) for (const id of [].concat(x.cleanup.removedPoolIds || [])) cleared.add(String(id)); }
   return { sheets, listed, cleared };
@@ -276,7 +278,7 @@ async function pool(c, o = {}) {
   if (!cand.length) return out;
   // the reads, together: the world's reading of each line, the run's sheets, the lines' pieces, the ledger, the cancels, the sends to sheet, the settings
   const keys = cand.map(([k]) => k), rids = [...new Set(keys.map(ridOf))];
-  const [wls, sh, ledger, cancelled] = await Promise.all([worldLines(db, keys), c.sheetsRead || sheetsOfRun(db, runId), docsOf(db, LEDGER, keys), cancelledOf(db, rids), settingsOf(c)]);
+  const [wls, sh, ledger, cancelled] = await Promise.all([worldLines(db, keys), c.sheetsRead || sheetsOfRun(db, runId, !!o.only), docsOf(db, LEDGER, keys), cancelledOf(db, rids), settingsOf(c)]);
   const settings = { settings: c.settings, stockPreset: c.stockPreset };
   const poolIds = [...new Set(cand.flatMap(([, l]) => (l.poolIds || []).map(String)))], rows = await docsOf(db, POOL, poolIds);
   const sends = new Map();

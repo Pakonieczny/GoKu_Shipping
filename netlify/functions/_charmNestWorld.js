@@ -544,13 +544,25 @@ function reviewOf(d) { if (!d) return null; let x = {}; try { x = JSON.parse(d.d
    The lines named here are read again at once, and only them: each line's order as it was last read (no Etsy, no mail), with the saved links, options and the charm repository as they are NOW, by the very
    reading the build makes (readLine, afterRead). Written where the build writes them (Charm_World_Lines), so whoever makes the pieces reads it; the next build writes the same. Whether one line's choices mean
    what they do is also told by the listing's other lines (seenSkus): the stored lines of the same listing are read for it. ── */
+/** The library's records as masterList gives them, read side by side by the first letter of their SKU; null unless every record its signature counts was read. */
+const MASTER_AT = [null].concat("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""), ["["]);
+async function masterNow(db, index) {
+  const n = index && Number.isFinite(+index.count) ? +index.count : -1; if (n < 0) return null;
+  const Master = require("./_charmNestMaster"), ID = require("./firebaseAdmin").firestore.FieldPath.documentId(), out = []; let docs = 0;
+  const parts = await Promise.all(MASTER_AT.map((lo, i) => { let q = db.collection(Master.INDEX); if (lo != null) q = q.where(ID, ">=", lo); const hi = MASTER_AT[i + 1]; if (hi != null) q = q.where(ID, "<", hi); return q.get(); }));
+  for (const s of parts) for (const d of s.docs) { docs++; const e = d.data(), r = e && e.sku ? Master.slimEntry(e) : null; if (r) out.push(r); }
+  return docs === n ? out.sort((x, y) => x.sku.localeCompare(y.sku)) : null;
+}
 async function readNow(o) {
   const { db, ops } = o, keys = [...new Set((o.keys || []).map(String))].slice(0, 80), runLines = o.lines || {}, now = Date.now(), out = new Map(); if (!keys.length) return out;
   const docs = new Map(); for (let i = 0; i < keys.length; i += 300) for (const d of await db.getAll(...keys.slice(i, i + 300).map(k => db.collection(LINES).doc(k)))) if (d.exists) docs.set(d.id, d.data() || {});
   const rows = []; for (const k of keys) { const d = docs.get(k); if (!d || d.gone) continue; let x = null; try { x = JSON.parse(d.data || "{}"); } catch (_) { x = null; } if (!x || !x.order || !x.line) continue; const facts = runFacts(runLines[k]); rows.push({ d, x, row: Object.assign({ key: k, order: x.order, line: x.line, state: "pulled", reason: null, poolIds: [] }, facts, { etsyOpen: !!x.etsyOpen, inRun: !!runLines[k], _run: facts }) }); }
   if (!rows.length) return out;
   const lids = [...new Set(rows.map(r => String(r.row.line.listingId || "")).filter(Boolean))];
-  const entriesNow = async () => { const first = await ops.masterList({ limit: 3000 }), sig = J(first.index || null); if (CACHE.masterEntries && CACHE.masterSig === sig && sig !== "null") return CACHE.masterEntries; const list = (first.entries || []).slice(); let cursor = first.next; for (let i = 0; cursor && i < 20; i++) { const r = await ops.masterList({ limit: 3000, cursor }); list.push(...(r.entries || [])); cursor = r.next; } CACHE.masterSig = sig; CACHE.masterEntries = list; return list; };
+  // (CMDFAST: the library's signature alone first, then, only when it moved, the whole library side by side; it was read 500 records at a time, 20 reads one after another, seconds of every Change SKU)
+  const entriesNow = async () => { const sg = await ops.masterList({ limit: 1 }), sig = J(sg.index || null); if (CACHE.masterEntries && CACHE.masterSig === sig && sig !== "null") return CACHE.masterEntries;
+    const quick = await masterNow(db, sg.index).catch(() => null); if (quick) { CACHE.masterSig = sig; CACHE.masterEntries = quick; return quick; }
+    const first = await ops.masterList({ limit: 3000 }), list = (first.entries || []).slice(); let cursor = first.next; for (let i = 0; cursor && i < 20; i++) { const r = await ops.masterList({ limit: 3000, cursor }); list.push(...(r.entries || [])); cursor = r.next; } CACHE.masterSig = sig; CACHE.masterEntries = list; return list; };
   const [entries, om, al, nd, cl, ls, cs, reads] = await Promise.all([entriesNow(), ops.optionMapGet({}), ops.aliasGet({}), ops.noDesignGet({}), ops.customGet({}), ops.listingSkus({ listingIds: lids, cacheOnly: true }), ops.customSheetGet({ lineKeys: rows.map(r => r.row.key) }), db.getAll(...rows.map(r => db.collection("Charm_Nest_CustomRead").doc(r.row.key)))]);
   const M = CACHE.index && CACHE.indexOf === entries ? CACHE.index : (CACHE.indexOf = entries, CACHE.index = masterIndex(entries));
   const maps = { optionMaps: (om && om.maps) || {}, aliases: (al && al.aliases) || {}, noDesign: (nd && nd.list) || { patterns: [], skus: [], rows: [] } }; try { O.cleanMaps(maps.aliases, maps.noDesign); } catch (_) { /* as read */ }
@@ -572,4 +584,4 @@ async function readNow(o) {
   return out;
 }
 
-module.exports = { readNow, flowOf, sheetFactsOf, placeOfLine, build, lineOf, reviewOf, masterIndex, readLine, afterRead, runFacts, isOpenReceipt, LINES, WORLD, ETSY };
+module.exports = { readNow, masterNow, flowOf, sheetFactsOf, placeOfLine, build, lineOf, reviewOf, masterIndex, readLine, afterRead, runFacts, isOpenReceipt, LINES, WORLD, ETSY };

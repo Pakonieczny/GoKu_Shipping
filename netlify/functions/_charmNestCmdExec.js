@@ -54,6 +54,23 @@ async function runSheets(ctx, metal) {
   let q = ctx.db.collection(SHEETS).where("runId", "==", ctx.runId); if (metal) q = q.where("metal", "==", metal);
   const s = await q.get(); return s.docs.map(d => Object.assign({ id: d.id }, d.data())).filter(r => !r.archived);
 }
+/* CMDFAST (Paul, 23 Nov 2026: "You have a budget of 30 sec", "I cannot wait. This is taking too long"): a person's change of one order read every sheet of the run, whole (50 records of hundreds of KB, seconds), at each of
+   its steps, only to find the one or two sheets that list the order's pieces. Those sheets are asked for by their pieces (the query placeOnSheet already runs). */
+async function sheetsWith(ctx, ids) {
+  const list = [...new Set((ids || []).map(String).filter(Boolean))], out = new Map(), parts = [];
+  for (let i = 0; i < list.length; i += 30) parts.push(list.slice(i, i + 30));
+  for (const s of await Promise.all(parts.map(p => ctx.db.collection(SHEETS).where("poolIds", "array-contains-any", p).get()))) for (const d of s.docs) { const r = Object.assign({ id: d.id }, d.data()); if (r.runId === ctx.runId && !r.archived) out.set(d.id, r); }
+  return [...out.values()];
+}
+/** The run as the cloud holds it, read again after 8 s or after a write of its lines by this request (runChanged): the steps of one request follow each other within a second and read it four times. */
+const RUN_FRESH_MS = 8000;
+async function runNow(ctx) {
+  const c = ctx._runNow; if (c && Date.now() - c.at < RUN_FRESH_MS && Date.now() >= c.at) return c.run;
+  const r = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), run = (r && r.run) || null;
+  if (run) ctx._runNow = { at: Date.now(), run };
+  return run;
+}
+const runChanged = ctx => { ctx._runNow = null; };
 async function sheetRec(ctx, id) { if (!id) return null; const s = await ctx.db.collection(SHEETS).doc(String(id)).get(); return s.exists ? Object.assign({ id: s.id }, s.data()) : null; }
 async function runSets(ctx) { const s = await ctx.db.collection(SETS).where("runId", "==", ctx.runId).get(); return s.docs.map(d => Object.assign({ setId: d.id, id: d.id }, d.data())); }
 async function setRec(ctx, id) { if (!id) return null; const s = await ctx.db.collection(SETS).doc(String(id)).get(); return s.exists ? Object.assign({ setId: s.id, id: s.id }, s.data()) : null; }
@@ -240,7 +257,7 @@ async function strandedFix(x, o = {}) {
 /** How many of these lines' pieces a sheet seats now. → { pieces, placed, names, waiting:[reason], open } */
 async function placedNow(ctx, keys) {
   const run = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (run && run.run && run.run.lines) || lines(ctx);
-  const sheets = await runSheets(ctx), on = listedBy(sheets), out = { pieces: 0, placed: 0, names: new Set(), waiting: [], open: 0 };
+  const sheets = await sheetsWith(ctx, keys.flatMap(k => (L[k] && L[k].poolIds) || [])), on = listedBy(sheets), out = { pieces: 0, placed: 0, names: new Set(), waiting: [], open: 0 };
   for (const k of keys) {
     const l = L[k]; if (!l || !OPEN_LINE(l)) continue;
     if (["pulled", "pooled", "waiting", "contended"].includes(l.state) && !(l.poolIds || []).length) { out.open++; if (l.reason) out.waiting.push(String(l.reason)); continue; }
@@ -377,7 +394,7 @@ async function inplace(x, label) {
     return wait("Taking the old pieces off…", Object.assign({}, w, { stage: "vacate", keys: keys.slice(0, 40), done: [], why: [], vac: {} }));
   }
   if (w.stage === "vacate") {
-    const L = lines(ctx), sheets = await runSheets(ctx), sets = await runSets(ctx), on = listedBy(sheets), vac = Object.assign({}, w.vac || {}), why = (w.why || []).slice(), patch = {};
+    const L = lines(ctx), [sheets, sets] = await Promise.all([sheetsWith(ctx, w.keys.flatMap(k => (L[k] && L[k].poolIds) || [])), runSets(ctx)]), on = listedBy(sheets), vac = Object.assign({}, w.vac || {}), why = (w.why || []).slice(), patch = {};
     let busy = 0;
     for (const k of w.keys) {
       if (vac[k]) continue; const l = L[k]; if (!l || !OPEN_LINE(l)) { vac[k] = { skip: true }; continue; }
@@ -403,7 +420,7 @@ async function inplace(x, label) {
       // (the line goes back to the intake whole: its pieces keep their ids (O.poolId), so a piece a sheet kept after all (cut a moment ago) is still listed there and is not placed twice)
       patch[k] = Object.assign({ state: "pulled", poolIds: [], repoolChanged: true, wait: null, reason: null }, left.length ? { vacated: { sheetIds: left, at: now } } : {});
     }
-    if (Object.keys(patch).length) { const r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: patch }, `inplace|pulled|${Object.keys(patch).sort().join(",").slice(0, 400)}`); if (err(r)) return no(`Not made again: ${err(r)}`); }
+    if (Object.keys(patch).length) { const r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: patch }, `inplace|pulled|${Object.keys(patch).sort().join(",").slice(0, 400)}`); if (err(r)) return no(`Not made again: ${err(r)}`); runChanged(ctx); }
     const pending = w.keys.filter(k => !vac[k]);
     if (pending.length && now - num(w.at) < NEST_MS) return wait("Taking the old pieces off… (a sheet is busy)", Object.assign({}, w, { vac, why }));
     const todo = w.keys.filter(k => vac[k] && !vac[k].skip);
@@ -414,15 +431,15 @@ async function inplace(x, label) {
     /* NOWCMD (Paul 21 Nov 2026: a Change SKU sat 15 minutes at "Making the pieces again… 0 of 1 made": the line went back to the intake, whose gate opens only at the run's checkpoint or
        when it rests, and the run waited at commit for the Etsy freshness gate). The request makes its own lines' pieces now, as a person's Send to Sheet does (CUSTOMSEND): the intake's
        pool with only these lines, past the run-step gate, every other rule kept (a blocked SKU, a design missing, a size its design lacks: the line is held with its words) */
-    const got0 = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), fresh = got0 && got0.run;
+    const fresh = await runNow(ctx);
     if (fresh && fresh.lines) {
       const pend = (w.todo || []).filter(k => { const l = fresh.lines[k]; return l && OPEN_LINE(l) && ["pulled", "pooled", "waiting", "contended"].includes(String(l.state)) && !(l.poolIds || []).length; });
       if (pend.length) {
         try { await require("./_charmNestIntake").pool({ db: ctx.db, run: Object.assign({}, fresh, { runId: ctx.runId }), runId: ctx.runId, call: ctx.call, read: ctx.read, drive: ctx.drive || {}, cloudSteps: ctx.cloudSteps || [], fence: ctx.fence, say: ctx.say || (() => {}), budgetEnd: num(ctx.budgetEnd) || Date.now() + 45000, settings: null, stockPreset: null }, { step: true, only: new Set(pend) }); }
-        catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; if (ctx.say) ctx.say(`[cmd] ${label}: the pieces were not made now: ${str((e && e.message) || e, 200)}`); }
+        catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; runChanged(ctx); if (ctx.say) ctx.say(`[cmd] ${label}: the pieces were not made now: ${str((e && e.message) || e, 200)}`); }
       }
     }
-    const run = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (run && run.run && run.run.lines) || lines(ctx), ready = [], waiting = [], why = (w.why || []).slice();
+    const run = await runNow(ctx), L = (run && run.lines) || lines(ctx), /* (CMDFAST: the intake keeps the lines it wrote in the run it was given) */ ready = [], waiting = [], why = (w.why || []).slice();
     for (const k of w.todo) {
       const l = L[k];
       if (l && l.state === "pooled" && (l.poolIds || []).length) ready.push(k);
@@ -433,7 +450,7 @@ async function inplace(x, label) {
     return wait("Putting the new pieces in place…", Object.assign({}, w, { stage: "back", ready, late: waiting, why }));
   }
   if (w.stage === "back") {
-    const run = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (run && run.run && run.run.lines) || lines(ctx), placedOn = new Map(), why = (w.why || []).slice(), unvac = {}, loose = [], swapped = new Set();
+    const run = await runNow(ctx), L = (run && run.lines) || lines(ctx), placedOn = new Map(), why = (w.why || []).slice(), unvac = {}, loose = [], swapped = new Set();
     for (const k of w.ready || []) {
       const l = L[k], home = ((w.vac[k] || {}).sheets || [])[0]; unvac[k] = { vacated: null };
       if (!l) continue;
@@ -468,14 +485,14 @@ async function inplace(x, label) {
     // every place still kept for these lines is let go (a line not put back is placed as any line), then the lines are placed by the cloud's placement as usual
     for (const k of (w.ready || []).concat(w.late || [])) for (const sid of (w.vac[k] || {}).sheets || []) await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, sheetId: sid, release: true }, `release|${k}|${sid}`);
     for (const k of w.late || []) { unvac[k] = { vacated: null }; why.push(`${ridOf(k)}: its pieces were not made again in time; the intake makes them and they are placed as new pieces`); }
-    if (Object.keys(unvac).length) await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: unvac }, `inplace|unvac|${Object.keys(unvac).sort().join(",").slice(0, 400)}`);
+    if (Object.keys(unvac).length) await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: unvac }, `inplace|unvac|${Object.keys(unvac).sort().join(",").slice(0, 400)}`); if (loose.length) runChanged(ctx);
     /* NOWCMD: a line that could not go back to its kept place is placed now by the placement unit's own rules (only these lines; SETSHUT and the rest kept), not at the run's next nest step,
        and every sheet that took one is asked to nest now, so the request answers only once the new pieces are on a sheet */
     if (loose.length) {
       try {
-        const g2 = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), fr = g2 && g2.run;
+        const fr = await runNow(ctx);
         if (fr && fr.lines) await require("./_charmNestPlaceUnit").placeAll(Object.assign({}, ctx, { run: Object.assign({}, fr, { runId: ctx.runId }), only: new Set(loose) }));
-        const g3 = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L3 = (g3 && g3.run && g3.run.lines) || {}, on = listedBy(await runSheets(ctx));
+        runChanged(ctx); const g3 = await runNow(ctx), L3 = (g3 && g3.lines) || {}, on = listedBy(await sheetsWith(ctx, loose.flatMap(k => (L3[k] && L3[k].poolIds) || [])));
         for (const k of loose) for (const id of (L3[k] || {}).poolIds || []) { const s = on.get(String(id)); if (s && !placedOn.has(s.id) && (owesNest(s, now) || !seated(s, id))) placedOn.set(s.id, { id: s.id, layoutRev: num(s.layoutRev), at: now }); }
       } catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; why.push(`the new pieces were not placed now: ${str((e && e.message) || e, 160)}`); }
     }
@@ -483,7 +500,7 @@ async function inplace(x, label) {
     /* SKUFAST (Paul, 22 Nov 2026: "updating SKUs … needs to be near instant and all the computers need to be updated near instantly"): the request is answered as soon as every new piece is on
        its sheet (listed there, the sheet's nest asked): the nest and the sheet's files go on by themselves, as after any placement, and every computer sees them through the changes feed. It
        no longer waits a minute or two more for that nest. A piece not on a sheet yet keeps the request at its nest step, which says how it ended. */
-    { const g = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L2 = (g && g.run && g.run.lines) || {}, on2 = listedBy(await runSheets(ctx)), names = new Set(); let pieces = 0, listed = 0;
+    { const g = await runNow(ctx), L2 = (g && g.lines) || {}, on2 = listedBy(await sheetsWith(ctx, (w.ready || []).flatMap(k => (L2[k] && L2[k].poolIds) || []))), names = new Set(); let pieces = 0, listed = 0;
       for (const k of w.ready || []) for (const id of (L2[k] || {}).poolIds || []) { pieces++; const sh = on2.get(String(id)); if (sh) { listed++; names.add(nameOf(sh)); } }
       if ((w.ready || []).length && pieces && listed === pieces && !(w.late || []).length)
         return ok(`${(w.ready || []).length} order line(s) made again: ${listed} piece(s) on ${and([...names])}, being nested${why.length ? " · " + why.join("; ") : ""}`); }
@@ -503,16 +520,18 @@ async function inplace(x, label) {
    open line of the run one by one, two reads a line (its world reading, its pieces), about 1,400 lines: two minutes, past the unit's one-minute limit. The unit was cut off when it went to save
    what it found, so every pass read them all again from the start, for good, and every request after it waited. The world readings and the pieces are read now in a few batched reads
    (300 a read), a few seconds for the whole run. */
+/** Many documents, 300 a read, the reads side by side. */
+async function getMany(ctx, coll, ids) { const parts = []; for (let i = 0; i < ids.length; i += 300) parts.push(ids.slice(i, i + 300)); return (await Promise.all(parts.map(p => ctx.db.getAll(...p.map(id => ctx.db.collection(coll).doc(String(id))))))).flat(); }
 async function staleLines(ctx, skus) {
   const want = new Set(skus.map(s => String(s).trim().toUpperCase()).filter(Boolean)), L = lines(ctx), out = [], entries = new Map();
   const entryOf = async sku => { if (!entries.has(sku)) { const s = await ctx.db.collection(MASTER).doc(sku).get(); entries.set(sku, s.exists ? s.data() : null); } return entries.get(sku); };
   const keys = Object.keys(L).filter(k => { const l = L[k]; return OPEN_LINE(l) && (l.poolIds || []).length && !l.hold; });
   const world = new Map(), rowsAll = new Map();
-  for (let i = 0; i < keys.length; i += 300) for (const s of await ctx.db.getAll(...keys.slice(i, i + 300).map(k => ctx.db.collection(WORLD_LINES).doc(k)))) {
+  for (const s of await getMany(ctx, WORLD_LINES, keys)) {
     if (!s.exists) continue; const d = s.data() || {}; if (d.gone) continue; try { world.set(s.id, JSON.parse(d.data || "{}")); } catch (_) { /* a reading that does not parse: the run line's own SKU is used */ }
   }
   const ids = [...new Set(keys.flatMap(k => (L[k].poolIds || []).map(String)))];
-  for (let i = 0; i < ids.length; i += 300) for (const s of await ctx.db.getAll(...ids.slice(i, i + 300).map(id => ctx.db.collection(POOL).doc(id)))) if (s.exists) rowsAll.set(s.id, s.data());
+  for (const s of await getMany(ctx, POOL, ids)) if (s.exists) rowsAll.set(s.id, s.data());
   for (const k of keys) {
     const l = L[k];
     const wl = world.get(k) || null, design = String((wl && wl.spec && wl.spec.designSku) || l.sku || "").toUpperCase(), rows = new Map((l.poolIds || []).map(String).filter(id => rowsAll.has(id)).map(id => [id, rowsAll.get(id)]));
@@ -603,7 +622,7 @@ async function remakeline(x) {
     const open = ask.filter(k => OPEN_LINE(lines(x.ctx)[k])), read = open.length ? await readLinesNow(x, open) : null;
     if (read) {
       const done = await madeSince(x, open, read);
-      if (open.length && done.size === open.length) { const on = listedBy(await runSheets(x.ctx)), names = new Set(); let n = 0; for (const rows of done.values()) for (const r of rows) { n++; const sh = on.get(String(r.poolId)); if (sh) names.add(nameOf(sh)); } return ok(`Made as it reads now: ${plural(n, "piece")}${names.size ? " on " + and([...names]) : ", being placed"}`); }
+      if (open.length && done.size === open.length) { const on = listedBy(await sheetsWith(x.ctx, [...done.values()].flatMap(rows => rows.map(r => r.poolId)))), names = new Set(); let n = 0; for (const rows of done.values()) for (const r of rows) { n++; const sh = on.get(String(r.poolId)); if (sh) names.add(nameOf(sh)); } return ok(`Made as it reads now: ${plural(n, "piece")}${names.size ? " on " + and([...names]) : ", being placed"}`); }
       x.skip = new Set(done.keys()); x.noWorld = true;
     }
   }
@@ -622,17 +641,31 @@ function linkedSkus(d) {
   for (const k of ["sku", "huggie", "bySku", "pairBySku", "map"]) walk(d && d[k], 0);
   return out;
 }
-async function linkedLately(ctx, skus, since, asked) {
+async function linkedLately(ctx, skus, since, asked, lids) {   // (lids: the listings linked, CMDFAST)
   const want = new Set((skus || []).map(s => String(s).trim().toUpperCase()).filter(Boolean)); let at = 0; if (!want.size) return 0;
   try {
-    for (const name of LINKS) for (const s of (await ctx.db.collection(name).where("updatedAt", ">=", new Date(since)).limit(100).get()).docs) { const d = s.data() || {}, got = linkedSkus(d); if ([...want].some(w => got.has(w))) at = Math.max(at, ms(d.updatedAt) || asked); }
+    for (const name of LINKS) for (const s of (await ctx.db.collection(name).where("updatedAt", ">=", new Date(since)).limit(100).get()).docs) { const d = s.data() || {}, got = linkedSkus(d); if ([...want].some(w => got.has(w))) { at = Math.max(at, ms(d.updatedAt) || asked); if (lids) { const lid = String(d.listingId || s.id || "").replace(/\D/g, ""); lids.add(lid || "?"); } } }
     return at;
   } catch (_) { return asked; }
 }
+/** CMDFAST: the open lines of these listings read again now (readNow), so a saved link is seen at once and not at the next reading of all orders, minutes later. true when every one was (or there is none). */
+async function readListingsNow(x, lids) {
+  if (!lids || !lids.size || lids.has("?")) return false;
+  try {
+    const L = lines(x.ctx), keys = Object.keys(L).filter(k => OPEN_LINE(L[k])), mine = [];
+    for (const s of await getMany(x.ctx, WORLD_LINES, keys)) {
+      if (!s.exists) continue; const d = s.data() || {}; if (d.gone) continue;
+      const r = JSON.parse(d.data || "{}"); if (!r || !r.line) return false;
+      if (lids.has(String(r.line.listingId || "").replace(/\D/g, ""))) mine.push(s.id);
+    }
+    if (!mine.length) return true;
+    return mine.length <= 80 && !!(await readLinesNow(x, mine));
+  } catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; return false; }
+}
 async function keepsync(x) {
   if (!x.work.stage) {   // (LINKLATE: from the link's own time: the reading its save starts is the one waited for, not the one after it)
-    const asked = num(x.cmd.at) || Date.now(), at = await linkedLately(x.ctx, x.a.ids || [], asked - LINK_MS, asked);
-    if (at) x.work = { stage: "world", asked: at, at: Date.now() };
+    const asked = num(x.cmd.at) || Date.now(), lids = new Set(), at = await linkedLately(x.ctx, x.a.ids || [], asked - LINK_MS, asked, lids);
+    if (at && !(await readListingsNow(x, lids))) x.work = { stage: "world", asked: at, at: Date.now() };   // (CMDFAST: the linked listings' own lines are read again now; a line that cannot be told waits for the next reading, as before)
   }
   x.noWorld = true;   // (KEEPNOW)
   x.pick = () => staleLines(x.ctx, x.a.ids || []);

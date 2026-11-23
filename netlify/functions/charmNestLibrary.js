@@ -6104,7 +6104,21 @@ async function op_runCmdPut(b) {
     tx.set(ref, { runId, cmds: out, expireAt: new Date(now + 30 * 86400000) });
   });
   revTouch(b, ["r:" + runId]);
+  if (NOW_CMDS.has(c.type) && !PREFIX) await cmdKick(runId, id);   // (CMDFAST: done now, in a process of its own)
   return { ok: true, id, cmd };
+}
+/* CMDFAST: the kinds _charmNestCmdUnit.js NOW_TYPES; its process is started with the request's own key (Charm_Nest_Cmd_Hold/<id>); one that could not be started is the pass's, as before. Never while the drive is off; at most 0.9 s of the press */
+const NOW_CMDS = new Set(["skuonce", "remakeline", "keepsync", "remake", "backhome"]);
+async function cmdKick(runId, id) {
+  try {
+    if (driveModeOf(await driveDoc()) === "off") return false;
+    const key = require("crypto").randomBytes(16).toString("hex"), ref = db.collection("Charm_Nest_Cmd_Hold").doc(id), fetch = require("node-fetch"), origin = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
+    await ref.set({ runId, key, by: null, at: 0, kickedAt: Date.now(), expireAt: new Date(Date.now() + 2 * 86400000) });
+    let started = false;
+    await Promise.race([fetch(`${String(origin).replace(/\/+$/, "")}/.netlify/functions/charmNestDrive-background`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cmd: id, runId, key }) }).catch(() => null), new Promise(r => setTimeout(r, 900))]).then(r => { started = !!(r && r.status >= 200 && r.status < 300); });
+    if (!started) await ref.set({ kickedAt: 0 }, { merge: true }).catch(() => {});
+    return started;
+  } catch (_) { return false; }
 }
 async function op_runCmdList(b) {
   const runId = str(b.runId, 80); if (!isId(runId)) return { error: "bad run" };

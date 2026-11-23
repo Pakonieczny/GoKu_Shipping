@@ -14,6 +14,12 @@ exports.handler = async (event) => {
     catch (e) { console.error("[engrave now] failed:", (e && e.message) || e); }
     return { statusCode: 200, body: "done" };
   }
+  /* CMDFAST: one person's request (a Change SKU, a piece made again), asked by runCmdPut with the request's own key: done here, beside the pass and under its lease */
+  if (!nonce && body.cmd && body.runId && body.key) {
+    try { const r = await require("./_charmNestCmdUnit").nowRun({ db: require("./firebaseAdmin").firestore(), Lib: require("./charmNestLibrary"), runId: String(body.runId).slice(0, 80), id: String(body.cmd).slice(0, 40), key: String(body.key).slice(0, 80), say: t => console.log(t) }); console.log("[cmd now]", String(body.cmd).slice(0, 40), JSON.stringify(r).slice(0, 300)); }
+    catch (e) { console.error("[cmd now] failed:", (e && e.message) || e); }
+    return { statusCode: 200, body: "done" };
+  }
   if (!nonce) return { statusCode: 200, body: "not this pass's turn" };
   const admin = require("./firebaseAdmin"), db = admin.firestore(), Drive = require("./_charmNestDrive"), Lease = require("./_charmNestLease");
   let out = null;
