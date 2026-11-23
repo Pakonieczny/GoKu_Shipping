@@ -522,6 +522,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
         for(let r=rev-1;r>=1;r--){
           const q=await tx.get(sref.collection('cuts').where('revision','==',r).limit(1)),c=q.docs[0]?q.docs[0].data():null;
           if(asideRevs.has(r)&&(!c||c.sheetId===b.sheetId))continue;
+          if(c&&c.setAsideAt)continue;   // (RGMERGE: the cut of a sheet merged into another is set aside on its own record)
           const p=c?parse(c.planJson):null;
           if(!p||!p.profile)throw new Error(`The outline ${name}'s physical sheet had before its green line was recorded could not be read: its charms stay as they are`);
           return JSON.stringify(p.profile);

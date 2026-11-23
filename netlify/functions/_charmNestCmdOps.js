@@ -35,6 +35,8 @@
  *    cmdRestoreNest { runId, sheetId, jobId, from, by, dry? } (CLOUD_ONLY) RGRESTORE: the pieces a finished, verified nest of a sheet placed, that a later write moved off onto
  *                                                         a draft, go back onto the sheet exactly where that nest left them (nothing nested; files and green line owed again);
  *                                                         a draft left empty is emptied whole (its problem and run stop words go). Refusals in words (below).
+ *    cmdRoseMerge { runId, sheetId, targetId, by, dry? } (CLOUD_ONLY) RGMERGE: two Rose Gold sheets of one open set, cut (green line) one after the other from ONE physical sheet, become
+ *                                                         one sheet in one transaction: every piece stays where it lies, the line between them goes. Refusals in words (below).
  *
  *  Never calls Etsy, never builds the world, never starts an agent. Every write of the cloud's own call is fenced (fenceTx), and a page's call of the PRODUCTION op is refused in
  *  mode "on" by the handler (the cloud does it).                                                                                                                              */
@@ -44,6 +46,8 @@ const crypto = require("crypto");
 const SetEdit = require("../../charm-nest-set-edit.js");
 const SheetName = require("../../charm-nest-sheet-name.js");
 const Placement = require("./_charmNestPlacement");
+const CutLine = require("../../charm-nest-rose.js"), RoseStock = require("./_charmNestRoseStock");   // (RGMERGE: the green line's outline, and a layout's fingerprint)
+const Core = require("../../charm-nest-assembly-core.js");   // (GAPFILL: asSet, addCopies, setPatch: a set's order list)
 const PoolPieces = require("../../charm-nest-pool-pieces.js");   // (SRCLIST: carrySources, the design files of pieces that move go with them)
 
 const CMDS = "Charm_Nest_Run_Cmds", WORK = "Charm_Nest_Cmd_Work", SHEETS = "Charm_Nest_Sheets", SETS = "Charm_Nest_Sets", POOL = "Charm_Pool", RUNS = "Charm_Nest_Runs";
@@ -227,7 +231,11 @@ module.exports = function make(d) {
     const tRef = col(SHEETS).doc(T.sheetId), fRefs = froms.map(id => col(SHEETS).doc(id)), now = Date.now(), SOLID_HOP = ["gold10k", "gold14k"];
     /* GAP G1 (Paul 21 Nov 2026): "Fill the freed room" / Place in the sheet window from a viewer is this same request (fill: true): the pieces go into the room freed on the
        target where the page planned them, nothing is nested again. The freed room is filled on any sheet but Rose Gold (its green line decides), so fill takes those metals too */
-    const METALS_OK = fill ? ["gold", "silver", "gold10k", "gold14k"] : SOLID_HOP;
+    /* GAPFILL (Paul, 23 Nov 2026: "Whenever this happens, you must automatically fill the empty gaps from orders in unfinished draft sheets"): the cloud's own fill of a finished Gold Filled / Sterling Silver sheet of a set nobody
+       approved yet that lost pieces (_charmNestAutoFill.js): the ONE exception to SETSHUT, and only for it: gap { setId, takenOffAt, note }. Checked here, in this transaction: that set and no other lists the sheet, is open (not approved,
+       sent or cut), the sheet lost its pieces at that moment; every piece comes from an unfinished draft in no set; every order whole (each live piece of it moves with it, or lies in that set). The pieces are not a person's pins. */
+    const gap = fill && b.gap && typeof b.gap === "object" && str(b.gap.setId, 80) && num(b.gap.takenOffAt) > 0 ? b.gap : null;
+    const METALS_OK = gap ? ["gold", "silver"] : fill ? ["gold", "silver", "gold10k", "gold14k"] : SOLID_HOP;
     const out = await db.runTransaction(async tx => {
       await fenceTx(tx);
       const snaps = await txGetAll(tx, [tRef, ...fRefs]);
@@ -266,7 +274,21 @@ module.exports = function make(d) {
         if (live.filter(c => !ids.has(String(c.poolId))).length < 1) return words(409, `${nameOf(r)} would be left empty: a sheet is never emptied by a move (Merge sheets, in its Options, moves everything)`, { refused: "empty" });
       }
       const going = [...want.keys()];
-      if ((t.setId && !t.draft) || setsOf.get(t.id).length) {
+      let gapSet = null, gapRows = new Map();
+      if (gap) {
+        const of = setsOf.get(t.id), g = of.length === 1 ? of[0] : null;
+        if (!g || t.draft || String(t.setId || "") !== str(gap.setId, 80) || String(g.setId) !== str(gap.setId, 80)) return words(409, `${tn} is not in that one set any more: nothing was moved`, { refused: "gap" });
+        if (g.processReady || g.laserSetPending || num(g.laserDoneAt) > 0 || t.processReady || t.laserSetPending || t.status !== "complete" || t.inplaceHold) return words(409, `${tn}'s set is approved, or the sheet is not finished: nothing was moved`, { refused: "gap" });
+        if (num(t.takenOffAt) !== num(gap.takenOffAt)) return words(409, `${tn} lost other pieces meanwhile: its room is looked at again`, { conflict: true });
+        for (const r of srcs) if (!r.draft || setsOf.get(r.id).length || r.releaseFull || r.processReady || r.laserSetPending || r.intakeFinalized || r.ownerSet || r.keepInSet) return words(409, `${nameOf(r)} is not an unfinished draft any more: nothing was moved`, { refused: "gap" });
+        const rids = [...new Set(going.map(ridOfPool))].filter(Boolean), vals = rids.concat(rids.filter(o => Number.isSafeInteger(+o)).map(Number)), inSet = new Set((g.sheetIds || []).map(String));
+        for (let i = 0; i < vals.length; i += 30) for (const d of (await tx.get(col(POOL).where("orderId", "in", vals.slice(i, i + 30)))).docs) gapRows.set(d.id, d.data() || {});
+        const gone = new Set(["abandoned", "superseded"]), split = [...gapRows].find(([id, r]) => !gone.has(String(r.state || "")) && !want.has(id) && !inSet.has(String(r.sheetId || "")));
+        if (split) return words(409, `Order ${ridOfPool(split[0])} has a piece outside the set: it is never split, and nothing was moved`, { refused: "gapSplit" });
+        if (going.some(id => !gapRows.has(id) || gone.has(String(gapRows.get(id).state || "")))) return words(409, "A piece's record is not live any more: nothing was moved", { gone: true });
+        gapSet = g;
+      }
+      if (!gap && ((t.setId && !t.draft) || setsOf.get(t.id).length)) {
         const own = new Set(orderList(t.charms).concat((t.poolIds || []).map(ridOfPool)).filter(Boolean)), shut = [...new Set(going.map(ridOfPool))].filter(o => o && !own.has(o));
         if (shut.length) return words(409, `${tn} is in a set: it takes no new order (${shut.slice(0, 3).join(", ")}${shut.length > 3 ? "…" : ""})`, { refused: "setShut" });
       }
@@ -298,7 +320,7 @@ module.exports = function make(d) {
       const tCharms = (t.charms || []).filter(c => !(c && cids.has(c.id))).concat(moving.map(m => {
         const p = want.get(String(m.c.poolId)), size = num(p.size) > 0 && num(p.size) !== 1 ? { size: +p.size } : {};
         const x = Object.assign({}, m.c, { metal: t.metal, pinned: Object.assign({ cxPt: +p.cxPt, cyPt: +p.cyPt, angle: angleOf(p.angle) }, size), manual: Object.assign({ by, at: now }, size) });
-        delete x.arrivalPin; return x;
+        delete x.arrivalPin; if (gap) { x.pinned = null; delete x.manual; } return x;
       }));
       const tPl = (t.placements || []).filter(q => !(q && cids.has(q.id))).concat(moving.map(m => {
         const p = want.get(String(m.c.poolId)), was = m.was || { id: m.c.id, name: m.c.name || "", scale: 1 }, turned = Math.abs(angleOf(p.angle) - angleOf(was.angle || 0)) % 180 === 90;
@@ -309,16 +331,21 @@ module.exports = function make(d) {
       const tNext = { charms: tCharms, placements: tPl, poolIds: [...new Set((t.poolIds || []).map(String).concat(going))], orders: [...new Set((Array.isArray(t.orders) ? t.orders : []).map(String).concat(orderList(moving.map(m => m.c))))], ...(carry || {}),
         backPool: (t.backPool || []).filter(x => !(x && want.has(String(x.poolId)))).concat(backsTo(tBacks, t)), charmCount: tCharms.length, placedCount: tPl.length,
         layoutRev: num(t.layoutRev) + 1, contentRev: num(t.contentRev) + 1, filesOwed: now, updatedAt: FV.serverTimestamp(), ...label(t), ...line(t) };
+      if (gap) { if (t.label) tNext.labelOwed = now; tNext.fillNote = { at: now, by, n: moving.length, orders: orderList(moving.map(m => m.c)), text: str(gap.note, 300) }; }   // (its QR label names its orders: made again, as after a take-off)
       if (Array.isArray(t.rejects)) tNext.rejects = t.rejects.filter(x => !cids.has(x && typeof x === "object" ? x.id : x));
       if (Array.isArray(t.feedWait)) tNext.feedWait = t.feedWait.filter(x => !cids.has(x));
       if (bytesOf(Object.assign({}, t, tNext, { updatedAt: 0 })) > SHEET_DOC_BYTES) return words(413, `${tn} cannot hold that many more pieces in one record: move fewer at a time`);
       tx.set(tRef, tNext, { merge: true });
       carryBacks(tx, bKeys, t, now);
+      if (gapSet) {   // (the set's order list takes the new copies, as it does when a sheet joins it: what dropFromSets takes away at a take-off)
+        const st = Core.asSet(gapSet); Core.addCopies(st, { sheetId: t.id, fileBase: t.fileBase || t.id, charms: moving.map(m => m.c), placements: moving.map(m => ({ id: m.c.id })) }, id => gapRows.get(String(id)) || {});
+        tx.update(col(SETS).doc(String(gapSet.setId)), { orders: Core.setPatch(st).orders, updatedAt: FV.serverTimestamp() });
+      }
       const tName = t.fileBase || null;
-      for (const m of moving) tx.set(col(POOL).doc(String(m.c.poolId)), Object.assign({ sheetId: t.id, movedFrom: m.from.id, movedTo: t.id, movedBy: by, movedAt: now, movedHow: fill ? "fill" : free ? "hand-free" : "hand", updatedAt: FV.serverTimestamp() }, tName ? { sheetName: tName } : {}), { merge: true });
+      for (const m of moving) tx.set(col(POOL).doc(String(m.c.poolId)), Object.assign({ sheetId: t.id, movedFrom: m.from.id, movedTo: t.id, movedBy: by, movedAt: now, movedHow: gap ? "gapfill" : fill ? "fill" : free ? "hand-free" : "hand", updatedAt: FV.serverTimestamp() }, tName ? { sheetName: tName } : {}), { merge: true });
       return { ok: true, moved: moving.length, free, orders: orderList(moving.map(m => m.c)), from: left, to: { sheetId: t.id, name: tn, layoutRev: tNext.layoutRev, contentRev: tNext.contentRev } };
     });
-    if (out && out.ok && !out.dry) { revTouch(b, ["s:" + T.sheetId].concat(froms.map(id => "s:" + id))); feedOrders(b, [out.orders]); }
+    if (out && out.ok && !out.dry) { revTouch(b, ["s:" + T.sheetId].concat(froms.map(id => "s:" + id), gap ? ["t:" + str(gap.setId, 80)] : [])); feedOrders(b, [out.orders]); }
     return out;
   }
 
@@ -617,10 +644,137 @@ module.exports = function make(d) {
     return out;
   }
 
-  return { runCmdClaim, cmdWorkPut, cmdMovePieces, cmdHopPieces, cmdLeaveSet, cmdVacate, cmdPutBack, cmdRestoreNest };
+  /* ── cmdRoseMerge (RGMERGE, Paul 23 Nov 2026: "Those pieces should've been part of sheet one without the green cut line"; "Move the 7 pieces from RG Sheet 1 onto the 19-piece sheet, with no
+     green line: YES") ── { runId, sheetId: the sheet that empties, targetId, by, dry? } → { ok, moved, orders, set, lift, ... } | { ok, noop }
+     Two Rose Gold sheets of ONE set that were cut (green line recorded, nothing on the laser) from the SAME physical sheet, one after the other, become ONE sheet, in ONE transaction:
+       · both recorded cuts are set aside (their records stay, marked): the physical sheet is the target's again with the outline it had before its first cut (whole when none stands before);
+         the leftovers those cuts made are never offered again
+       · the pieces go onto the target EXACTLY where they lie: both layouts are on one physical sheet and the second was nested past the first's line (checked again here, outline by outline),
+         so nothing is nested and nothing the target holds moves. The target owes its files, then ONE green line and its cut (its set's automatic cut, or Cut Sheet)
+       · the emptied sheet leaves its set (the set's list, its order copies now on the target, its label files) and is archived; the pieces' records and approved engravings name the target
+       · a draft in no set that holds the last leftover gives it back (its pieces stay as they lie): the request seats it again once the new line is cut
+     Refused in words, nothing written: cut on the laser, the set approved, waiting at or sent to the station, not one set or one physical sheet, a layout changed since its cut, a third sheet cut
+     from or (cut, in a set, with a line) seated on the plate, a piece unplaced, taken off, committed or being made again, a sheet busy or open by hand. Asked again once done: { ok, noop }. */
+  async function cmdRoseMerge(b) {
+    const runId = str(b.runId, 80), srcId = str(b.sheetId, 80), toId = str(b.targetId, 80), by = str(b.person || b.by, 80) || "a person", dry = b.dry === true, now = Date.now();
+    if (!isId(runId) || !isId(srcId) || !isId(toId) || srcId === toId) return words(400, "Pick two sheets");
+    const fRef = col(SHEETS).doc(srcId), tRef = col(SHEETS).doc(toId), json = s => { try { return s ? JSON.parse(s) : null; } catch (_) { return null; } };
+    // the layout as the cut recorded it (a piece's own artwork edit changes its hash, never its place)
+    const places = s => JSON.stringify((Array.isArray(s) ? s : []).map(p => p.slice(0, 5)).sort((x, y) => (String(x[0]) < String(y[0]) ? -1 : 1))), asCut = r => places(json(r.roseFingerprint)) === places(json(RoseStock.fingerprint(r)));
+    const out = await db.runTransaction(async tx => {
+      await fenceTx(tx);
+      const [fs, ts] = await txGetAll(tx, [fRef, tRef]);
+      if (!fs.exists || !ts.exists) return words(404, "That sheet is not in the cloud");
+      const f = Object.assign({ id: fs.id }, fs.data()), t = Object.assign({ id: ts.id }, ts.data()), fn = nameOf(f), tn = nameOf(t);
+      if (f.archived && f.mergedInto && f.mergedInto.to === t.id) return Object.assign({ ok: true, noop: true }, f.mergedInto);
+      for (const [r, n] of [[f, fn], [t, tn]]) {
+        if (r.archived) return words(409, `${n} was repacked into other sheets`);
+        if (r.runId !== runId) return words(409, "Both sheets must be sheets of the open run");
+        if (r.metal !== "rose") return words(409, "Only two Rose Gold sheets of one set are made one sheet");
+        if (num(r.laserDoneAt) > 0) return words(409, `${n} has been cut on the laser: its charms can no longer change`, { refused: "cut" });
+        if (manualLive(r, now) && str(r.manualEdit.by, 80) !== by) return words(409, `${n} is open in Manual Control by ${str(r.manualEdit.by, 80) || "someone"} on another screen`, { refused: "held" });
+        if (holdingLive(r, now)) return words(409, `${n} is being held right now`, { refused: "held" });
+        if (r.inplaceHold) return words(409, `${n} keeps a place for an order being made again: try again once it is done`, { busy: true });
+        const busy = busyRec(r, now); if (busy) return words(409, `${n} ${busy}: try again once it is done`, { busy: true });
+      }
+      if (t.processReady) return words(409, `${tn} is approved for laser cutting: its charms stay as they are`, { refused: "approved" });
+      // one open set
+      const inSet = r => (r.setId && !r.draft && r.solidIncluded !== false ? String(r.setId) : null), setId = inSet(t);
+      if (!setId || inSet(f) !== setId) return words(409, `${fn} and ${tn} are not in one set`, { refused: "set" });
+      const setRef = col(SETS).doc(setId), ss = await tx.get(setRef); if (!ss.exists) return words(404, "Their set is not in the cloud");
+      const set = Object.assign({ setId }, ss.data()), sw = SetEdit.setWord(set);
+      for (const id of [f.id, t.id]) { const ls = await listingSets(tx, id); if (ls.length !== 1 || ls[0].id !== setId) return words(409, `${id === f.id ? fn : tn} is not listed by ${sw} alone`, { refused: "set" }); }
+      if (num(set.laserDoneAt) > 0) return words(409, `${sw} was cut on the laser: its charms can no longer change`, { refused: "cut" });
+      if (SetEdit.committedSet(set)) return words(409, `${sw} was sent to the station: its charms stay as they are`, { refused: "committed" });
+      if (set.processReady || set.laserSetPending) return words(409, `${sw} is approved for laser cutting: its charms stay as they are`, { refused: "approved" });
+      // the physical sheet, its cuts and leftovers
+      const stockId = str(t.roseStockId, 120);
+      if (!stockId || str(f.roseStockId, 120) !== stockId) return words(409, `${fn} and ${tn} are not on one physical sheet`, { refused: "stock" });
+      if (!f.roseCutAt || !t.roseCutAt || f.roseCutRevision == null || t.roseCutRevision == null) return words(409, `${f.roseCutAt ? tn : fn} has no recorded green line: move its pieces as any sheet's`, { refused: "line" });
+      const fr = num(f.roseCutRevision), tr = num(t.roseCutRevision), stRef = col("Charm_Nest_Rose_Stock").doc(stockId), sd = await tx.get(stRef), stock = sd.exists ? sd.data() || {} : null;
+      if (!stock || stock.deleted) return words(409, "Their physical sheet is not in the cloud", { refused: "stock" });
+      if (!(tr >= 1 && tr < fr)) return words(409, `${tn} was cut after ${fn}: the sheet cut first takes the other's pieces`, { refused: "stock" });
+      if (num(stock.revision) !== fr) return words(409, `The leftover ${fn}'s green line made has been cut from since, by another sheet: its metal is that sheet's now`, { refused: "stock" });
+      const cuts = (await tx.get(stRef.collection("cuts"))).docs.map(d => Object.assign({ _ref: d.ref, _id: d.id }, d.data())).filter(c => !c.setAsideAt);
+      const fCut = cuts.find(c => c.sheetId === f.id && num(c.revision) === fr), tCut = cuts.find(c => c.sheetId === t.id && num(c.revision) === tr), between = cuts.find(c => num(c.revision) > tr && c !== fCut);
+      if (!fCut || !tCut) return words(409, `The record of ${fCut ? tn : fn}'s green line cannot be read`, { refused: "stock" });
+      if (between) return words(409, `A third sheet was cut from this physical sheet between ${tn} and ${fn}`, { refused: "stock" });
+      const before = cuts.filter(c => num(c.revision) < tr).sort((x, y) => num(y.revision) - num(x.revision))[0] || null, bp = before ? json(before.planJson) : null;
+      if (before && !(bp && bp.profile)) return words(409, "The outline their physical sheet had before could not be read", { refused: "stock" });
+      const prior = bp ? JSON.stringify(bp.profile) : null, third = (await tx.get(col(SHEETS).where("roseStockId", "==", stockId))).docs.map(d => Object.assign({ id: d.id }, d.data())).filter(r => !r.archived && r.id !== f.id && r.id !== t.id && !(r.roseCutAt && r.roseCutRevision != null && num(r.roseCutRevision) < tr));
+      for (const r of third) {
+        const n = nameOf(r);
+        if (cutRec(r) || r.runId !== runId || r.metal !== "rose" || (r.setId && !r.draft) || (await listingSets(tx, r.id)).length) return words(409, `Their physical sheet is used by a third sheet (${n}): nothing was changed`, { refused: "stock" });
+        if (lineDrawn(r)) return words(409, `${n}, on the leftover of their physical sheet, has a green line drawn: nothing was changed`, { refused: "stock" });
+        if (manualLive(r, now) && str(r.manualEdit.by, 80) !== by) return words(409, `${n}, on the leftover of their physical sheet, is open in Manual Control on another screen`, { refused: "held" });
+        const busy = busyRec(r, now); if (busy) return words(409, `${n}, on the leftover of their physical sheet, ${busy}: try again once it is done`, { busy: true });
+      }
+      const mine = new Set([f.id, t.id].concat(third.map(r => r.id)));
+      if (stock.owner && !mine.has(stock.owner)) return words(409, "Their physical sheet is held by another sheet: nothing was changed", { refused: "stock" });
+      const rems = []; for (let r = tr; r <= fr; r++) { const ref = col("Charm_Nest_Remnants").doc(`${stockId}-${r}`), d = await tx.get(ref); rems.push({ ref, id: `${stockId}-${r}`, exists: d.exists, data: d.exists ? d.data() || {} : null }); }
+      for (const r of rems) if (r.exists && ((r.data.status === "inUse" && r.data.inUseBySheetId && !mine.has(r.data.inUseBySheetId)) || (r.data.status === "used" && r.data.usedBySheetId && !mine.has(r.data.usedBySheetId)))) return words(409, `The leftover of their physical sheet is taken by ${r.data.inUseBySheetName || r.data.usedBySheetName || "another sheet"}: nothing was changed`, { refused: "stock" });
+      // the pieces: all placed, where their green lines were drawn round them, the source's past the target's line
+      const going = (f.charms || []).filter(c => c && !c.excluded), gid = new Set(going.map(c => String(c.id))), fPl = (f.placements || []).filter(p => p && gid.has(String(p.id)));
+      if (!going.length) return words(409, `${fn} has no pieces to move`);
+      if (going.some(c => !c.poolId) || (f.charms || []).some(c => c && c.excluded && c.poolId)) return words(409, `${fn} holds a piece that is not an order's: move it by hand first`);
+      if (fPl.length !== going.length) return words(409, `${going.length - fPl.length} of ${fn}'s pieces ${going.length - fPl.length === 1 ? "is" : "are"} not placed: nest it first`, { refused: "unplaced" });
+      for (const [r, n] of [[f, fn], [t, tn]]) if (!asCut(r)) return words(409, `${n}'s layout changed since its green line was recorded: nothing was changed`, { refused: "layout" });
+      const fPlan = json(fCut.planJson), tPlan = json(tCut.planJson), shaped = new Set(((fPlan && fPlan.shapes) || []).map(s => String(s.id)));
+      if (!fPlan || !tPlan || !tPlan.profile || fPl.some(p => !shaped.has(String(p.id)))) return words(409, `${fn}'s green line does not hold every piece on it: nothing was changed`, { refused: "layout" });
+      for (const s of fPlan.shapes) for (const path of s.paths || []) for (let i = 0; i < path.length; i++) {
+        const p = path[i], q = path[(i + 1) % path.length], n = Math.max(1, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) * 4));
+        for (let j = 0; j <= n; j++) if (CutLine.intersects(tPlan.profile, p[0] + (q[0] - p[0]) * j / n, p[1] + (q[1] - p[1]) * j / n, 0, 0)) return words(409, `A piece of ${fn} lies inside ${tn}'s green line: nothing was changed`, { refused: "overlap" });
+      }
+      const own = new Set((t.poolIds || []).map(String)); if (going.some(c => own.has(String(c.poolId)) || (t.charms || []).some(x => x && String(x.id) === String(c.id)))) return words(409, `A piece of ${fn} is on ${tn} already: nothing was changed`, { refused: "twice" });
+      const ids = going.map(c => String(c.poolId)), rows = await txGetAll(tx, ids.map(id => col(POOL).doc(id)));
+      const off = rows.filter(r => r.exists && Placement.takenOff(r.data())).map(r => r.id), done = rows.filter(r => r.exists && r.data().state === "committed").map(r => r.id), gone = rows.filter(r => !r.exists).map(r => r.id), away = rows.filter(r => r.exists && r.data().sheetId && String(r.data().sheetId) !== f.id).map(r => r.id);
+      if (off.length) return words(409, `Order ${ridOfPool(off[0])} was put on hold or cancelled: take it off ${fn} first`, { taken: off.slice(0, 20) });
+      if (done.length) return words(409, `${done.length} of these pieces were already committed: nothing was moved`);
+      if (gone.length || away.length) return words(409, `${(gone[0] || away[0])} is not recorded on ${fn}: nothing was moved`, { refused: "pool" });
+      const idSet = new Set(ids), w = without(f, idSet), bKeys = await standingKeys(tx, w.backsGoing), orders = orderList(going), tOrders = orderList(t.charms);
+      const lift = third.map(r => ({ sheetId: r.id, name: nameOf(r) })), say = { to: t.id, toName: tn, fromName: fn, set: sw, n: going.length, stockId, fromRevision: fr, lift, at: now, by };
+      if (dry) return Object.assign({ ok: true, dry: true, moved: going.length, orders }, say);
+      // ── the writes ──
+      for (const c of [fCut, tCut]) tx.update(c._ref, { setAsideAt: now, setAsideBy: by });
+      tx.update(stRef, { profileJson: prior, owner: t.id, available: false, reopenedAt: now, reopenedBy: by, updatedAt: FV.serverTimestamp() });
+      for (const r of rems) if (d.remnantSync) d.remnantSync.setAside(tx, r, { sheetId: t.id, sheetName: tn, by, at: now, reason: `${fn} and ${tn} became one sheet` });
+      for (const r of third) tx.set(col(SHEETS).doc(r.id), { roseStockId: null, rosePlanJson: null, rosePlanHash: null, roseLifted: { stockId, from: t.id, at: now, by }, updatedAt: FV.serverTimestamp() }, { merge: true });
+      const aside = (r, rev) => [...(Array.isArray(r.roseReseated) ? r.roseReseated : []).slice(-9), { at: now, by, fromStockId: stockId, toStockId: stockId, plan: !!r.rosePlanJson, kept: !!r.roseProtectedJson, reopen: true, merge: true, cut: { at: num(r.roseCutAt) || null, revision: rev, stockId, leftover: `${stockId}-${rev}`, how: "discarded" } }];
+      const noCut = { roseCutAt: null, roseCutRevision: null, rosePlanJson: null, rosePlanHash: null, roseFingerprint: null, roseProtectedJson: null };
+      const moving = going.map(c => { const x = Object.assign({}, c, { metal: "rose", pinned: null }); delete x.arrivalPin; return x; });
+      const tPl = (t.placements || []).concat(fPl.map((p, i) => Object.assign({}, p, { n: (t.placements || []).length + i + 1 }))), carry = PoolPieces.carrySources(t, moving, [f]), took = moving.reduce((n, c) => n + (num(c.areaPt2) || 0), 0);
+      const tNext = Object.assign({ charms: (t.charms || []).concat(moving), placements: tPl, poolIds: [...new Set((t.poolIds || []).map(String).concat(ids))], orders: [...new Set((Array.isArray(t.orders) ? t.orders : []).map(String).concat(orders))] }, carry || {},
+        w.backsGoing.length ? { backPool: (t.backPool || []).filter(x => !(x && idSet.has(String(x.poolId)))).concat(backsTo(w.backsGoing, t)) } : {}, noCut,
+        num(t.freePt2) > 0 && num(t.usablePt2) > 0 ? { freePt2: Math.max(0, Math.round(num(t.freePt2) - took)), density: Math.min(1, Math.max(0, 1 - Math.max(0, num(t.freePt2) - took) / num(t.usablePt2))) } : {},
+        { charmCount: (t.charms || []).concat(moving).filter(c => c && !c.excluded).length, placedCount: tPl.length, nestOwed: null, dirty: false, movedOn: null, autoCutOff: false, roseStockId: stockId, roseRevision: num(stock.revision), roseReseated: aside(t, tr),
+          roseReopened: { at: now, by, lines: 0, cut: true, cutAt: num(t.roseCutAt) || null }, roseRedraw: { at: now, by, line: true, cut: true }, layoutRev: num(t.layoutRev) + 1, contentRev: num(t.contentRev) + 1, filesOwed: now, merged: { from: f.id, fromName: fn, n: going.length, at: now, by }, updatedAt: FV.serverTimestamp() });
+      if (bytesOf(Object.assign({}, t, tNext, { updatedAt: 0 })) > SHEET_DOC_BYTES) return words(413, `${tn} cannot hold these pieces in one record`);
+      const history = r => (Array.isArray(r.flowHistory) ? r.flowHistory : []);
+      tx.set(tRef, tNext, { merge: true });
+      tx.set(fRef, Object.assign({ charms: [], placements: [], poolIds: [], orders: [], rejects: [], feedWait: null, backPool: [], charmCount: 0, placedCount: 0, rejectCount: 0, status: "idle", dirty: false, nestOwed: null, problem: null, problemStop: null, filesOwed: null, label: null,
+        draft: true, setId: null, setSeq: null, sheetIndex: null, leftSet: null, autoMatched: null, autoCutWhy: null, roseStockId: null, roseRedraw: null, roseReopened: null, roseReseated: aside(f, fr), archived: true, archivedReason: `its pieces are on ${tn}`, current: false, mergedInto: say,
+        flowHistory: history(f).concat([{ id: `merged-${now}-${f.id}`, at: now, by, type: "setLeave", note: `Its pieces moved onto ${tn}: one Rose Gold sheet in ${sw}`, setId, laserDoneAt: null }]).slice(-100), layoutRev: num(f.layoutRev) + 1, contentRev: num(f.contentRev) + 1, updatedAt: FV.serverTimestamp() }, noCut), { merge: true });
+      // the set: without the emptied sheet, its copies now on the target (each copy keeps what it says: its ear, its back)
+      const onT = c => (String(c.sheetId) === f.id ? Object.assign({}, c, { sheetId: t.id, sheet: t.fileBase || t.folder || tn }) : c), so = {};
+      for (const [rid, o] of Object.entries(set.orders || {})) { const ls = o && o.lines, map = l => Object.assign({}, l, { copies: (l.copies || []).map(onT) }); so[rid] = Object.assign({}, o, { lines: Array.isArray(ls) ? ls.map(map) : Object.fromEntries(Object.entries(ls || {}).map(([k, l]) => [k, map(l)])) }); }
+      tx.update(setRef, { sheetIds: (set.sheetIds || []).filter(i => String(i) !== f.id), orders: so, labelFiles: (set.labelFiles || []).filter(x => !(x && String(x.sheetId) === f.id)), labels: null, setEdit: { at: now, by },
+        flowHistory: history(set).concat([{ id: `merge-${now}-${setId}`, at: now, by, type: "setEdit", out: [f.id], in: [], note: `${fn}'s pieces moved onto ${tn}: one Rose Gold sheet` }]).slice(-100), updatedAt: FV.serverTimestamp() });
+      carryBacks(tx, bKeys, t, now);
+      for (const id of ids) tx.set(col(POOL).doc(id), Object.assign({ sheetId: t.id, movedFrom: f.id, movedTo: t.id, movedBy: by, movedAt: now, movedHow: "merge", updatedAt: FV.serverTimestamp() }, t.fileBase ? { sheetName: t.fileBase } : {}), { merge: true });
+      return Object.assign({ ok: true, moved: going.length, orders, kept: tOrders.filter(o => !orders.includes(o)), setId, layoutRev: tNext.layoutRev }, say);
+    });
+    if (out && out.ok && !out.dry && !out.noop) {
+      revTouch(b, ["s:" + srcId, "s:" + toId, "t:" + out.setId].concat(out.lift.map(l => "s:" + l.sheetId))); feedOrders(b, [out.orders.concat(out.kept)]);
+      if (d.stamp) { const ev = (o, text, type) => ({ orderId: String(o), type, at: out.at, by, station: "sorter", sheetId: toId, sheet: out.toName, setId: out.setId, text, data: { merged: true, from: srcId, fromName: out.fromName }, id: `rgmerge-${toId}-${out.at}` });
+        try { await d.stamp(out.orders.map(o => ev(o, `Moved from ${out.fromName} to ${out.toName}: one Rose Gold sheet in ${out.set}`, "moved")).concat(out.kept.map(o => ev(o, `${out.toName}: ${out.moved} pieces of ${out.fromName} joined it, so its green line is drawn again`, "note"))), "rose merge"); } catch (_) { /* the timeline is best-effort, as everywhere */ } }
+    }
+    return out;
+  }
+
+  return { runCmdClaim, cmdWorkPut, cmdMovePieces, cmdHopPieces, cmdLeaveSet, cmdVacate, cmdPutBack, cmdRestoreNest, cmdRoseMerge };
 };
 module.exports.claimHeld = claimHeld;
 module.exports.busyRec = busyRec;
 module.exports.WORK = WORK;
 module.exports.CLAIM_STALE_MS = CLAIM_STALE_MS;
-module.exports.OPS = ["runCmdClaim", "cmdWorkPut", "cmdMovePieces", "cmdHopPieces", "cmdLeaveSet", "cmdVacate", "cmdPutBack", "cmdRestoreNest"];
+module.exports.OPS = ["runCmdClaim", "cmdWorkPut", "cmdMovePieces", "cmdHopPieces", "cmdLeaveSet", "cmdVacate", "cmdPutBack", "cmdRestoreNest", "cmdRoseMerge"];

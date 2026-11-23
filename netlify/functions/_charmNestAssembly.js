@@ -162,6 +162,8 @@ async function assemblyUnit(ctx, o) {
   // (G3, Paul 21 Nov 2026: a person's Library drop of a sheet on an open set, asked from a viewer: that set is the sheet's hand set for this look, as the page's joinSet marks it
   //  (sh.handSet): the core lets the set a person chose take it, by every other rule as before; the core forgets it at the end of the look)
   if (o && o.hand && o.hand.sheetId && o.hand.setId) { const p = V.pages.find(q => q.sheetId === String(o.hand.sheetId)); if (p) p.handSet = String(o.hand.setId); }
+  // (RGTWO: a person's own Include / Cut Sheet press on this sheet: it may be a set's second partial Rose Gold sheet, charm-nest-assembly-core.js rgSecond; forgotten at the end of the look)
+  if (o && o.press && o.press.sheetId) { const p = V.pages.find(q => q.sheetId === String(o.press.sheetId)); if (p) p.rgPress = true; }
   const io = cloudIo(ctx, V, rows);
   const out = await G.assemble(io);
   await saveJournal(ctx, V, G, { lastLook: { at: V.now, formed: out.formed || 0, sets: out.sets || [], heldSheets: num(out.heldSheets) } });

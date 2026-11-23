@@ -279,6 +279,14 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
       tx.update(rem.ref, patch); bump(tx);
       return patch;
     },
+    /* setAside (RGMERGE, Paul 23 Nov 2026): a leftover of a plate whose cuts are set aside because their sheets became ONE sheet: its metal is that sheet's, whatever the record said (free, held by or used by a sheet
+       of the merge). It is never on offer again and cannot be put back by hand (usedBySheetId, no person's mark). Nothing is removed. */
+    setAside(tx, rem, { sheetId, sheetName, by, at, reason }) {
+      if (!rem || !rem.exists || rem.data.status === 'deleted') return null;
+      const who = person(by), name = String(sheetName || sheetId).slice(0, 80), patch = { status: 'discarded', statusAt: at, statusBy: who, marked: false, reason: String(reason || SUPERSEDED_REASON).slice(0, 160), supersededAt: at, supersededBy: who, supersededSheetId: sheetId, supersededSheetName: name, usedBySheetId: sheetId, usedBySheetName: name, usedAt: at, usedBy: who, ...NOT_HELD };
+      tx.update(rem.ref, patch); bump(tx);
+      return patch;
+    },
     released(tx, rem, { sheetId, at }) {
       if (!rem || !rem.exists) return null;
       const r = rem.data, own = r.status === 'inUse' && r.inUseBySheetId === sheetId, undone = r.status === 'used' && r.usedBySheetId === sheetId && !r.marked;   // (used through partialUse, never cut: giving the sheet back undoes it)

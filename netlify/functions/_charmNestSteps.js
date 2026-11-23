@@ -47,6 +47,7 @@ tryUnits("./_charmEngraveFiles", () => require("./_charmEngraveFiles"));       /
 tryUnits("./_charmEngraveStep", () => require("./_charmEngraveStep"));         // ONSWITCH: the run's "engrave" step: the engraving lane once more at its moment, then what waits; never blocks
 tryUnits("./_charmNestCommit", () => require("./_charmNestCommit"));           // build step 12: commit, complete (sending finished sets to the Design Station)
 tryUnits("./_charmNestCmdUnit", () => require("./_charmNestCmdUnit"));   // build step 13: a person's requests (cmd:<type>), order 40
+tryUnits("./_charmNestAutoFill", () => require("./_charmNestAutoFill"));   // GAPFILL (23 Nov 2026): lane "takeoff", order 35: a finished sheet of an open set that lost pieces takes whole orders of the unfinished drafts
 tryUnits("./_charmNestSweeps", () => require("./_charmNestSweeps"));     // build step 13: the repair sweeps (lane "sweeps"), order 90: after every other pass item
 // NOAUTOCOMBINE (Paul, 21 Nov 2026: "Nothing can engage this automatically and this is a very strict rule. The system is not allowed to have access to this option"): the cloud's own
 // combine of underfilled Gold Filled / Sterling Silver drafts (COMBINEDRAFTS, _charmNestCombine.js combineUnit) is no longer a pass item; only a person combines or empties sheets

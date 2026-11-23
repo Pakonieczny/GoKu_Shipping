@@ -81,6 +81,8 @@ CLOUD_WRITES.push(...words(`runCmdClaim cmdWorkPut cmdMovePieces cmdHopPieces cm
 /* RGRESTORE (Paul, 22 Nov 2026): a nest's verified layout put back on its sheet, the pieces a later write moved onto a draft brought back where that nest left them (_charmNestCmdOps.js
    cmdRestoreNest; the request "restorenest", _charmNestCmdExec.js). The cloud's own write only, never a page's; no Etsy call follows from it. */
 CLOUD_ONLY.add("cmdRestoreNest"); CLOUD_WRITES.push("cmdRestoreNest");
+/* RGMERGE (Paul, 23 Nov 2026): two Rose Gold sheets of one set and one physical sheet made one (_charmNestCmdOps.js cmdRoseMerge; the request "rgmerge"). The cloud's own write only; no Etsy call follows from it. */
+CLOUD_ONLY.add("cmdRoseMerge"); CLOUD_WRITES.push("cmdRoseMerge");
 CLOUD_ONLY.add("finishOverflow"); CLOUD_WRITES.push("finishOverflow");   // (build step 7b: the sheet writer's overflow, what a nest turned away moved on to the next sheet: _charmNestFinishOps.js)
 const CLOUD_OPS = new Set([...CLOUD_READS, ...CLOUD_WRITES]);
 /* RELEASEHOLD (Paul, 20 Nov 2026; build step 13, live): a person's Release Hold press, done in the cloud at once (_charmNestHoldRelease.js): releaseAsk is a PRESS from a page and the cloud's own

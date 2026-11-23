@@ -23,6 +23,12 @@ exports.handler = async (event) => {
     catch (e) { console.error("[cmd now] failed:", (e && e.message) || e); }
     return { statusCode: 200, body: "done" };
   }
+  /* GAPFILL: one finished sheet's gaps filled, asked by the pass with the sheet's own key: its pieces' outlines are made here, beside the pass; its one write is under the running pass's lease */
+  if (!nonce && body.fill && body.runId && body.key) {
+    try { const r = await require("./_charmNestAutoFill").nowFill({ db: require("./firebaseAdmin").firestore(), Lib: require("./charmNestLibrary"), sheetId: String(body.fill).slice(0, 80), runId: String(body.runId).slice(0, 80), key: String(body.key).slice(0, 80), say: t => console.log(t) }); console.log("[fill now]", String(body.fill).slice(0, 40), JSON.stringify(r).slice(0, 300)); }
+    catch (e) { console.error("[fill now] failed:", (e && e.message) || e); }
+    return { statusCode: 200, body: "done" };
+  }
   if (!nonce) return { statusCode: 200, body: "not this pass's turn" };
   const admin = require("./firebaseAdmin"), db = admin.firestore(), Drive = require("./_charmNestDrive"), Lease = require("./_charmNestLease");
   let out = null;

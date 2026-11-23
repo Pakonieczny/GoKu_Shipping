@@ -22,6 +22,7 @@ const Rose = require("../../charm-nest-rose.js");
 const RoseStock = require("./_charmNestRoseStock");
 const Shapes = require("./_charmNestRoseShapes");
 const Assembly = require("./_charmNestAssembly");
+const Place = require("../../charm-nest-place.js");
 const { COLLECTIONS } = require("./_charmNestCloudSetOps");
 
 const AUTO_BY = "Brites Manager (automatic)";
@@ -55,9 +56,9 @@ async function include(ctx, p, set, o = {}) {
     const r = await ctx.call({ op: "putSheet", sheet: { id: rec.id, draft: false, setId: set.setId, setSeq: set.seq } }, `green-rejoin|${rec.id}|${set.setId}`);
     return ok(r) ? { ok: true, rejoined: true } : { refused: true, why: words(r) };
   }
-  const r = await ctx.call({ op: "putSheet", sheet: Object.assign({ id: rec.id, solidIncluded: true }, o.via === "auto" ? { autoMatched: set.setId } : {}, o.cutApproved ? { cutApproved: true } : {}) }, `green-yes|${rec.id}|${set.setId}|${o.via || ""}`);
+  const r = await ctx.call({ op: "putSheet", sheet: Object.assign({ id: rec.id, solidIncluded: true }, o.via === "auto" ? { autoMatched: set.setId } : rec.metal === "rose" && rec.autoMatched ? { autoMatched: null } : {}, o.cutApproved ? { cutApproved: true } : {}) }, `green-yes|${rec.id}|${set.setId}|${o.via || ""}`);
   if (!ok(r)) return { refused: true, why: words(r) };
-  await Assembly.assemblyUnit(ctx);   // (the include is a look at the sets with the sheet's own yes: tendSet numbers it, names its files and lists it, as the page's assemble does)
+  await Assembly.assemblyUnit(ctx, o.via === "auto" ? undefined : { press: { sheetId: rec.id } });   // (the include is a look at the sets with the sheet's own yes: tendSet numbers it, names its files and lists it, as the page's assemble does; RGTWO: a person's press, never the system's, may add a second partial Rose Gold sheet)
   const V = await Assembly.loadView({ db: ctx.db, run: ctx.run, now: Date.now() }), sh = V.pages.find(q => q.sheetId === rec.id);
   if (sh && sh.setId === set.setId && !sh.draft) return { ok: true, made: true };
   const G = Core.gate(V), why = sh ? (sh.setWait || sh.cardinalHold || G.policy(sh, set.seq).reason || "") : "";
@@ -96,12 +97,12 @@ async function member(ctx, p, ask) {
       left = await setName(setNow);
     }
     const cur = left ? (await readSheet(ctx.db, rec.id)) || rec : rec;
-    const patch = Object.assign({ id: rec.id }, gold ? { solidIncluded: true } : {}, cur.leftSet ? { leftSet: null } : {}, rose && cur.autoCutOff ? { autoCutOff: false } : {});
+    const patch = Object.assign({ id: rec.id }, gold ? { solidIncluded: true } : {}, cur.leftSet ? { leftSet: null } : {}, rose && cur.autoCutOff ? { autoCutOff: false } : {}, rose && cur.autoMatched ? { autoMatched: null } : {});   // (RGTWO: the yes is the person's now, not the system's match)
     if (Object.keys(patch).length > 1) {
       const r = await ctx.call({ op: "putSheet", sheet: patch }, `member-yes|${rec.id}|${num(ask.seq)}`);
       if (!ok(r)) return { ok: false, why: left ? `${name} was taken out of ${left}, but it could not be put in again: ${words(r)}` : words(r) };
     }
-    await Assembly.assemblyUnit(ctx, to ? { hand: { sheetId: rec.id, setId: to } } : undefined);   // (the include is a look at the sets with the sheet's own yes, as the page's changeMembership then assemble)
+    await Assembly.assemblyUnit(ctx, Object.assign({ press: { sheetId: rec.id } }, to ? { hand: { sheetId: rec.id, setId: to } } : {}));   // (the include is a look at the sets with the sheet's own yes, as the page's changeMembership then assemble)
     const V = await Assembly.loadView({ db: ctx.db, run: ctx.run, now: Date.now() }), G = Core.gate(V), sh = V.pages.find(q => q.sheetId === rec.id), first = left ? `taken out of ${left}, ` : "";
     if (sh && sh.setId && !sh.draft) {
       const set = V.sets.find(s => s.setId === sh.setId), where = set && set.seq ? "Set " + set.seq : (set && set.name) || "its set";
@@ -143,10 +144,10 @@ async function joinCut(ctx, p, ask) {
   if (kept) return { ok: false, why: `${name} is listed by ${await setName(kept.setId)}, which was sent to the station: drop it on ${await setName(kept.setId)} in the Library to put it back there (the set's own edit). Nothing was cut` };
   const pv = V.pages.find(q => q.sheetId === rec.id) || p, home = G.homeSetOf(pv);
   if (rec.ownerSet && typeof rec.ownerSet === "object" && (!rec.ownerSet.setId || (home && String(rec.ownerSet.setId) !== String(home.setId)))) return { ok: false, why: `${name} stays where the owner put it (${rec.ownerSet.setId ? await setName(rec.ownerSet.setId) : "in no set"})` };
-  const patch = Object.assign({ id: rec.id, solidIncluded: true }, rec.leftSet ? { leftSet: null } : {}, rose && rec.autoCutOff ? { autoCutOff: false } : {});
+  const patch = Object.assign({ id: rec.id, solidIncluded: true }, rec.leftSet ? { leftSet: null } : {}, rose && rec.autoCutOff ? { autoCutOff: false } : {}, rose && rec.autoMatched ? { autoMatched: null } : {});   // (RGTWO)
   const r = await ctx.call({ op: "putSheet", sheet: patch }, `g4-yes|${rec.id}|${num(ask && ask.seq)}`);
   if (!ok(r)) return { ok: false, why: `${name} is not in a set: ${words(r)}` };
-  await Assembly.assemblyUnit(ctx);   // (its yes, then a look at the sets: tendSet numbers it, names its files and lists it, as the page's changeMembership then assemble)
+  await Assembly.assemblyUnit(ctx, { press: { sheetId: rec.id } });   // (its yes, then a look at the sets: tendSet numbers it, names its files and lists it, as the page's changeMembership then assemble)
   V = await Assembly.loadView({ db, run: ctx.run, now: Date.now() }); G = Core.gate(V);
   const sh = V.pages.find(q => q.sheetId === rec.id);
   if (sh && sh.setId && !sh.draft) return { ok: true, why: `${name} is in ${await where(sh.setId)} now. Its green line was cut already, so nothing was cut again` };
@@ -241,11 +242,11 @@ async function autoUnit(ctx) {
     if (t && now - num(t.at) < 30000) continue;
     next.tried[key] = { at: now };
     const ow = c.foreign.length === 1 ? `order ${c.foreign[0]}` : `orders ${c.foreign.join(", ")}`, name = G.sheetNameOf(p);
-    next.said[p.sheetId] = `${c.setName}: ${ow} ${c.foreign.length === 1 ? "has" : "have"} pieces in another set, so ${c.foreign.length === 1 ? "it goes" : "they go"} past the green line of ${name}; the sheet is nested again, then cut`;
+    next.said[p.sheetId] = `${c.setName}: ${ow} ${c.foreign.length === 1 ? "has" : "have"} pieces that go with another set, so ${c.foreign.length === 1 ? "it goes" : "they go"} past the green line of ${name}; the sheet is nested again, then cut`;
     if (p.roseCutAt) { const r = await ctx.call({ op: "roseReopen", sheetId: p.sheetId, replace: true, force: true, by: "Brites Manager (automatic: orders of another set go past the green line)" }, `rg-clear-reopen|${p.sheetId}|${p.roseCutAt}`); if (!ok(r)) { say("warn", `${name}: its orders of another set could not be taken off yet (${words(r)}); tried again shortly`); continue; } }
     let all = true;
     for (const o of c.foreign) {
-      const r = await ctx.call({ op: "takeOffAsk", orderId: o, kind: "sheetOff", scope: "sheet", sheetId: p.sheetId, note: `Past the green line of ${name}: its other pieces are in another set`, by: AUTO_BY }, `rg-clear|${p.sheetId}|${o}`);
+      const r = await ctx.call({ op: "takeOffAsk", orderId: o, kind: "sheetOff", scope: "sheet", sheetId: p.sheetId, note: `Past the green line of ${name}: its other pieces go with another set`, by: AUTO_BY }, `rg-clear|${p.sheetId}|${o}`);
       if (ok(r)) { next.clearHeld[o] = { sheetId: p.sheetId, at: now }; say("ok", `Order ${o}: taken off ${name} automatically; it goes past its green line, with its own set`); }
       else { all = false; say("warn", `Order ${o} could not come off ${name} yet (${notCloudOp(r) ? "the cloud's take-off is not here yet" : words(r)}); tried again shortly`); }
     }
@@ -370,12 +371,20 @@ async function askUnit(ctx) {
 
 /* ── RGLINK: the link cut (Paul, 23 Nov 2026: "another multi piece mixed order arrives to the GF draft sheet and forces the Green Cut line to occure so as to not connect 2 GF or SS sheets
    to a single RG sheet"; "It's much more challenging to cut the green line after parts have been nested") ──
-   A Rose Gold draft the placement marked (roseLinkCut: an order would tie it to a second GF / SS sheet, charm-nest-place.js chooseSheet, _charmNestPlaceUnit.js markLinkCut) has its green
+   A Rose Gold draft the placement marked (roseLinkCut: an order would mix the pieces of a second SET on it, charm-nest-place.js roseLinkWhy / chooseSheet, _charmNestPlaceUnit.js markLinkCut) has its green
    line drawn around what it holds and its cut recorded AT ONCE, in no set yet: the order that waits on it then goes on the leftover of the same plate (the next draft), and the cut draft
    joins the set its own GF / SS sheet forms (the cardinal home; a recorded cut is its yes, goldGap). Rose Gold only: roseRecordCut via "auto" refuses 10K / 14K. A draft being nested or
-   written waits for the next pass (drawLine asks a saved, verified, written layout); a cut refused sets the line this pass drew aside again (NOLINE) and is tried again next pass. ── */
+   written waits for the next pass (drawLine asks a saved, verified, written layout); a cut refused sets the line this pass drew aside again (NOLINE) and is tried again next pass.
+   RGSETS (Paul, 23 Nov 2026: the line only when the pieces belong to a different set): the reason is read again just before the cut (linkStill): a draft whose sheets are in one set by now, or in none, is not cut, its mark
+   goes and the order that waited is placed again (a mark made by the rule before this one is let go the same way). ── */
 const LIVE = ["queued", "running", "starting", "claimed"];
 const jobLive = j => !!(j && LIVE.includes(String(j.status || "")));
+/** RGSETS: why this marked draft still needs its link cut ("set" | "third"), "" when it does not any more; null when it cannot be told (the mark names no order, the sheet is not in the view): it is cut as asked. */
+function linkStill(V, run, rec) {
+  const oid = rec.roseLinkCut && rec.roseLinkCut.orderId, p = V.pages.find(q => q.sheetId === rec.id); if (!oid || !p) return null;
+  const pages = V.pages.filter(q => !q.recalled), R = Place.create({ sheets: () => pages, pagesOf: m => pages.filter(q => q.metal === m), closed: () => false, cuts: m => Place.CUT_METALS.includes(m), fast: m => Place.FAST.includes(m), r16On: () => true, run: () => run, setTakes: id => Place.setTakesIn(id, V.sets, pages) });
+  return R.roseLinkWhy(p, String(oid), run);
+}
 async function linkUnit(ctx) {
   ctx = Assembly.passKeyed(ctx);
   const run = ctx.run; if (!run || !run.runId) return undefined;
@@ -385,7 +394,7 @@ async function linkUnit(ctx) {
      change, as the placement's own resume of a wait that is due) */
   { const L = run.lines || {}, waiting = Object.entries(L).filter(([, l]) => l && l.state === "waiting" && l.wait && l.wait.kind === "green" && l.wait.cut === "link" && l.wait.sheetId);
     const ids = [...new Set(waiting.map(([, l]) => String(l.wait.sheetId)))], gone = new Set();
-    for (const id of ids) { const r = await readSheet(db, id); if (!r || r.roseCutAt || num(r.laserDoneAt) > 0 || r.releaseFull || (r.setId && !r.draft)) gone.add(id); }
+    for (const id of ids) { const r = await readSheet(db, id); if (!r || r.roseCutAt || num(r.laserDoneAt) > 0 || r.releaseFull || (r.setId && !r.draft) || !r.roseLinkCut) gone.add(id); }   // (RGSETS: no mark any more: no cut is coming, the line is placed again)
     const due = waiting.filter(([, l]) => gone.has(String(l.wait.sheetId)));
     if (due.length) {
       const lines = Object.fromEntries(due.map(([k, l]) => [k, { state: (l.poolIds || []).length ? "pooled" : "pulled", wait: null, reason: null }]));
@@ -394,6 +403,7 @@ async function linkUnit(ctx) {
       else say("warn", `the lines that waited for a green line cut were not set going (${words(r)}); tried again on the next pass`);
     } }
   const q = await db.collection("Charm_Nest_Sheets").where("roseLinkCut.by", "==", "Cloud").limit(20).get();
+  let V = null;
   for (const d of q.docs) {
     if (Date.now() > ctx.budgetEnd) return { more: true };
     const rec = Object.assign({ id: d.id }, d.data());
@@ -402,16 +412,22 @@ async function linkUnit(ctx) {
       await ctx.call({ op: "putSheet", sheet: { id: rec.id, roseLinkCut: null } }, `green-link-done|${rec.id}|${num(rec.roseLinkCut && rec.roseLinkCut.at)}`); continue;
     }
     if (rec.saving || rec.dirty || num(rec.filesOwed) > 0 || jobLive(rec.nestJob) || jobLive(rec.filesJob) || (rec.manualEdit && Date.now() - num(rec.manualEdit.at) < 90000)) continue;   // (being nested, written or moved by hand: next pass)
+    if (!V) V = await Assembly.loadView({ db, run, now: Date.now() });
+    const why = linkStill(V, run, rec);
+    if (why === "") {
+      await ctx.call({ op: "putSheet", sheet: { id: rec.id, roseLinkCut: null } }, `green-link-off|${rec.id}|${num(rec.roseLinkCut.at)}`);
+      say("ok", `${nameOf(rec)}: its green line is not cut (order ${rec.roseLinkCut.orderId}'s other pieces do not go with another set): that order goes on it`); continue;
+    }
     const p = { sheetId: rec.id }, dl = await drawLine(ctx, p, rec, "Not cut: ");
     if (dl.why) { say("warn", `${nameOf(rec)}: its link cut waits (${dl.why})`); continue; }
     const r2 = dl.rec, at = num(rec.roseLinkCut && rec.roseLinkCut.at);
-    const r = await ctx.call({ op: "roseRecordCut", sheetId: r2.id, metal: r2.metal, stockId: r2.roseStockId, revision: r2.roseRevision, planHash: r2.rosePlanHash, by: AUTO_BY + " (a second GF / SS sheet would tie to it)", device: "cloud", via: "auto" }, `green-link|${r2.id}|${r2.rosePlanHash}`);
+    const r = await ctx.call({ op: "roseRecordCut", sheetId: r2.id, metal: r2.metal, stockId: r2.roseStockId, revision: r2.roseRevision, planHash: r2.rosePlanHash, by: AUTO_BY + (why === "third" ? " (a third GF / SS sheet would tie to it)" : " (the next order goes with another set)"), device: "cloud", via: "auto" }, `green-link|${r2.id}|${r2.rosePlanHash}`);
     if (!ok(r) || !r.cut) {
       if (dl.drew) { const now = await readSheet(db, r2.id); if (now && !now.roseCutAt) await ctx.call({ op: "roseReopen", sheetId: r2.id, replace: true, force: true, by: AUTO_BY }, `green-link-noline|${r2.id}|${r2.rosePlanHash}`); }
       say("warn", `${nameOf(rec)}: its link cut was not recorded (${words(r)}); tried again on the next pass`); continue;
     }
     await ctx.call({ op: "putSheet", sheet: { id: r2.id, roseLinkCut: null, roseLinkCutAt: num(r.cut.at) || Date.now() } }, `green-link-done|${r2.id}|${at}`);
-    say("ok", `${nameOf(rec)}: green line cut (order ${(rec.roseLinkCut && rec.roseLinkCut.orderId) || "?"} would have tied it to a second Gold Filled / Sterling Silver sheet); that order goes on its leftover`);
+    say("ok", `${nameOf(rec)}: green line cut (order ${(rec.roseLinkCut && rec.roseLinkCut.orderId) || "?"} ${why === "third" ? "would have tied it to a third Gold Filled / Sterling Silver sheet" : "goes with another set"}); that order goes on its leftover`);
   }
   return undefined;
 }

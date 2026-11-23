@@ -11,6 +11,7 @@
  *    nest          renest · consolidate · empty · seat   (consolidate / empty: 10K / 14K sheets, and Gold Filled / Sterling Silver drafts of the run: COMBINEDRAFTS)
  *    pieces        customsend (CUSTOMSEND, 21 Nov 2026: a card's sent designs made into pieces by the cloud's intake and placed by its placement)
  *    nest          restorenest (RGRESTORE, 22 Nov 2026: a nest's verified layout put back on its sheet; its cut set aside first, the draft its pieces went to emptied and removed)
+ *    record only   rgmerge (RGMERGE, 23 Nov 2026: two Rose Gold sheets of one set and one physical sheet made one, every piece where it lies, the green line between them gone)
  *
  *  What it needs of the other steps, by op name (an op that is not the cloud's in this build makes the request answer in words, never wait): nestStart (build step 6),
  *  placeOnSheet (step 5), releaseAsk (Release Hold in the cloud), roseClaim (step 6), roseRelease, runLinesRetire (step 10a). The lanes a request needs must be in
@@ -1145,5 +1146,57 @@ async function restoreSettled(x, w) {
   return settleNests(x, `Nesting ${and(R.names || [])} on ${R.toName || "the sheet"}…`, async late => ok(tail(await sheetRec(x.ctx, R.to), late)));
 }
 
-const EXEC = { reorder, delete: del, leaveset, setrebuild, unkeep, repicture, placewaiting, pairnow, sendhome, remakeline, keepsync, remake, skuonce, release, renest, consolidate, empty, seat, customsend, hop, backhome, restorenest };
+/* ═══ RGMERGE (Paul, 23 Nov 2026: "Those pieces should've been part of sheet one without the green cut line") ═══ rgmerge { sheetId: the sheet that empties, targetId }: two Rose Gold sheets of one
+   open set that a green line divided (cut one after the other from one physical sheet, nothing on the laser) become one sheet. The whole change is ONE write (cmdRoseMerge: the cuts set aside, the
+   pieces moved where they lie, the empty sheet out of its set and archived), so a pass that ends midway leaves the sheets as they were or as they are to be, never between. Then: the emptied
+   sheet's own files go (archiveEmptySheet), a set whose labels were made has them made again (labelsAsk), and a draft that was on the last leftover is seated again once the target's new line is
+   cut (its pieces stay where they lie when that line is clear of them; else it is nested again). The files, the QR label, the line and its cut are the cloud's, as after any change. */
+const MERGE_MS = 15 * 60000, MERGE_CUT_MS = 25 * 60000;
+/** Every piece of a layout lies outside an outline (each piece's own box, as it is turned): the metal under it is not the line's. */
+const clearOf = (rec, p) => !!p && (rec.placements || []).length > 0 && (rec.placements || []).every(q => num(q.wPt) > 0 && num(q.hPt) > 0 && !CutLine.intersects(p, num(q.cxPt) - q.wPt / 2, num(q.cyPt) - q.hPt / 2, +q.wPt, +q.hPt, 0));
+const insideOf = (now, was) => !!(now && was && now.axis === was.axis && now.step === was.step && now.values.length === was.values.length && now.values.every((v, i) => v <= was.values[i] + 0.5));
+async function rgmerge(x) {
+  const ctx = x.ctx, a = x.a, by = x.cmd.by || "", now = Date.now(), w = Object.assign({}, x.work);
+  if (!lane(ctx, "nest") || !["cmdRoseMerge", "archiveEmptySheet", "nestStart", "roseClaim"].every(has)) return no("Making two Rose Gold sheets one is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
+  if (w.stage === "cut") return mergeSeated(x, w);
+  const S = await sheetRec(ctx, str(a.sheetId, 80)), T = await sheetRec(ctx, str(a.targetId, 80)), tries = `t${num(w.tries)}`;
+  if (!S || !T || S.runId !== ctx.runId || T.runId !== ctx.runId) return no("Pick two sheets of the run the cloud carries.");
+  const merged = S.archived && S.mergedInto && S.mergedInto.to === T.id;
+  if (!merged) {
+    const again = (why, rec) => { const first = num(w.firstNowAt) || now; return now - first > MERGE_MS ? no(`Not moved: ${nameOf(rec)} ${why} after 15 minutes; ask again`) : wait(`Moving ${nameOf(S)}'s pieces as soon as ${nameOf(rec)} is still (${why})…`, Object.assign({}, w, { firstNowAt: first, tries: num(w.tries) + 1 })); };
+    const held = T.roseStockId ? (await runSheets(ctx, "rose")).filter(r => r.roseStockId === T.roseStockId && r.id !== S.id && r.id !== T.id && !cutRec(r)) : [], live = [S, T].concat(held), busy = live.find(r => liveNest(r) || busyRec(r, now));
+    const body = { op: "cmdRoseMerge", runId: ctx.runId, sheetId: S.id, targetId: T.id, by, person: by }, at = `${S.id}|${num(S.layoutRev)}.${num(S.contentRev)}|${T.id}|${num(T.layoutRev)}.${num(T.contentRev)}|${tries}`;
+    const dry = await put(x, Object.assign({}, body, { dry: true }), `rgmerge-dry|${at}`);
+    if (err(dry) && !dry.busy) return no(`Not moved: ${err(dry)}`);   // (a refusal is said before anything is stopped for it)
+    if (busy || dry.busy) { await stopFor(x, live, `${nameOf(S)} and ${nameOf(T)} become one sheet (a person's request goes first)`); return busy ? again(busyRec(busy, now) || "is nesting", busy) : again(err(dry).replace(/^.*? (is|has|keeps) /, "$1 ").replace(/: try again.*$/, ""), T); }
+    const r = await put(x, body, `rgmerge|${at}`);
+    if (err(r)) return r.busy ? again(err(r).replace(/^.*? (is|has|keeps) /, "$1 ").replace(/: try again.*$/, ""), T) : no(`Not moved: ${err(r)}`);
+  }
+  const E = await sheetRec(ctx, S.id), m = (E && E.mergedInto) || {}, lift = Array.isArray(m.lift) ? m.lift : [];
+  if (!w.cleared) { await put(x, { op: "archiveEmptySheet", id: S.id, runId: ctx.runId }, `rgmerge-files|${S.id}`); w.cleared = true; }   // (its own files; its record stays, archived)
+  if (!w.asked) { await hopRefile(x, [T.id]); w.asked = true; }
+  w.said = `${plural(num(m.n), "piece")} of ${m.fromName || nameOf(S)} moved onto ${nameOf(T)} where ${num(m.n) === 1 ? "it lies" : "they lie"} (nothing was nested), the green line between them is gone and ${m.fromName || nameOf(S)} was removed from ${m.set || "the set"}; ${nameOf(T)}'s files, QR label and one green line are made again`;
+  if (!lift.length) return ok(w.said);
+  return wait(`Waiting for ${nameOf(T)}'s new green line, then ${and(lift.map(l => l.name))} goes on its leftover…`, Object.assign({}, w, { stage: "cut", at: num(w.at) || now }));
+}
+async function mergeSeated(x, w) {
+  const ctx = x.ctx, now = Date.now(), T = await sheetRec(ctx, str(x.a.targetId, 80)), E = await sheetRec(ctx, str(x.a.sheetId, 80)), m = (E && E.mergedInto) || {}, notes = [];
+  const left = []; for (const l of Array.isArray(m.lift) ? m.lift : []) { const r = await sheetRec(ctx, l.sheetId); if (r && !r.archived && !r.roseStockId && activeCharms(r).length) left.push(r); }   // (one that found a seat of its own meanwhile keeps it)
+  if (!left.length) return ok(w.said);
+  if (!T || !T.roseCutAt) {
+    if (T && now - num(w.at) <= MERGE_CUT_MS) return wait(`Waiting for ${nameOf(T)}'s new green line…`, w);
+    return ok(`${w.said}. Its green line is not cut yet${T && T.autoCutWhy ? ` (${str(T.autoCutWhy, 120)})` : ""}: ${and(left.map(nameOf))} ${left.length === 1 ? "takes its" : "take their"} plate at the next nest`);
+  }
+  const stockId = str(T.roseStockId, 120), ss = await ctx.db.collection(STOCK).doc(stockId).get(), stock = ss.exists ? ss.data() || {} : null, parse = s => { try { return s ? JSON.parse(s) : null; } catch (_) { return null; } };
+  const cq = await ctx.db.collection(STOCK).doc(stockId).collection("cuts").where("revision", "==", num(m.fromRevision)).limit(1).get(), was = cq.docs[0] ? (parse(cq.docs[0].data().planJson) || {}).profile : null, p = stock && parse(stock.profileJson);
+  for (const L of left) {
+    const b = busyRec(L, now); if (b) return wait(`Waiting for ${nameOf(L)} (${b})…`, w);
+    let seat = false;
+    if (stock && !stock.owner && (insideOf(p, was) || clearOf(L, p))) { const c = await put(x, { op: "roseClaim", sheetId: L.id, sheetName: nameOf(L), stockId, revision: num(stock.revision), exact: true, metal: "rose", wPt: num(stock.wPt), hPt: num(stock.hPt), by: x.cmd.by || "Cloud" }, `rgmerge-seat|${L.id}|${stockId}|${num(stock.revision)}`); seat = !err(c); if (seat) { stock.owner = L.id; notes.push(`${nameOf(L)} is on its leftover, its pieces where they were`); } }
+    if (!seat) { const s = await startNest(x, L.id, true, `${nameOf(T)}'s green line was drawn again`); notes.push(s.error ? `${nameOf(L)} takes its plate at its next nest (${s.error})` : `${nameOf(L)} is nested again on its leftover`); }
+  }
+  return ok(`${w.said}. ${notes.join("; ")}`);
+}
+
+const EXEC = { reorder, delete: del, leaveset, setrebuild, unkeep, repicture, placewaiting, pairnow, sendhome, remakeline, keepsync, remake, skuonce, release, renest, consolidate, empty, seat, customsend, hop, backhome, restorenest, rgmerge };
 module.exports = { EXEC, strandedFix, placedNow, staleLines, runSheets, runSets, sheetRec, nameOf, cutRec, lineDrawn, listedBy, seated, has, lane, WORK };
