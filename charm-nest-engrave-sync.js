@@ -151,7 +151,7 @@
     const body = Array.isArray(orders) ? { op: "engraveSyncGet", orders: orders.slice(0, 600) } : { op: "engraveSyncGet", since: Math.max(0, st.lastAt - 5000) };
     let res; try { res = await api(body); } catch (e) { st.fails++; return 0; }
     const lines = (res && res.lines) || []; let n = 0;
-    for (const l of lines) { st.lastAt = Math.max(st.lastAt, l.at || 0); CLOUD.set(l.key, l); noteRev(l.key, l.rev); if (await take(l, why)) n++; }
+    for (const l of lines) { st.lastAt = Math.max(st.lastAt, l.at || 0); CLOUD.set(l.key, l); if (await take(l, why)) n++; }   // (KEEPREV: the line's revision is noted by take, once the page holds the record, never for one it turned away)
     if (n) { safe(() => E().render()); safe(() => O().render()); }
     return n;
   }
@@ -168,6 +168,10 @@
     if (!line) { WAITING.set(l.key, l); return said(l.key, "line not here"); }   // (NEWLINES, Paul 13 Nov 2026: "What about future orders?"): the line has not reached this computer yet: taken when it does (retryWaiting)
     const mine = l.dev && l.dev === dev(), localAt = LOCAL_AT.get(l.key) || 0;
     if (Date.now() - localAt < OWN_HOLD) return said(l.key, "own press");   // (a press made here a moment ago: it is sent, and wins)
+    /* KEEPREV (order 4242795385, 22 Nov 2026: piece 3 of 3 lost its cloud-saved approval three times): a record turned away above (own press, line not here) is NOT this page's revision. It used to be
+       noted all the same (pull, before take), so this page's next write of the line carried the newest baseRev with its OLD jobs, the cloud took it as an informed write, and an approval the cloud had just
+       saved went back to Review. Not noted, that write is answered `stale` and the cloud's copy is put on this page (staleAgain), as ENGREV says. */
+    noteRev(l.key, l.rev);
     /* (ENGSAME, Paul 20 Nov 2026: three pieces were "Saved to sheet" in the cloud and on Michelle's computer and "blocked" on Paul's, which never took the cloud's record: the record still carried the signature Paul's computer
        had sent, so it was read as this computer's own write. The signature is trusted only when every piece's state is the cloud's too: a piece in another state than the record's takes the record.) */
     const items0 = safe(() => E().items(), null), statesDiffer = (l.rec.jobs || []).some(rj => { const j = items0 && rj && items0.get(rj.key); return !!j && !j.archived && String(j.state || "") !== String(rj.state || ""); });
@@ -229,7 +233,10 @@
     let res; try { res = await api({ op: "engraveSyncGet", keys: [key] }); } catch (e) { return { ok: false, why: "the cloud did not answer (" + String((e && e.message) || e).slice(0, 80) + ")", retry: true }; }
     const l = ((res && res.lines) || []).find(x => x && x.key === key);
     if (!l || !l.rec) return { ok: false, why: "the cloud holds no engraving for this order line yet", retry: true };
-    CLOUD.set(key, l); noteRev(key, l.rev); st.lastAt = Math.max(st.lastAt, l.at || 0);
+    CLOUD.set(key, l); st.lastAt = Math.max(st.lastAt, l.at || 0);
+    // (KEEPREV: a record newer than this page's own last write is another's, the cloud's save of this very approval: it is put on this page, as a stale write's answer is, never only noted;
+    //  noted and not taken, every retry of this loop wrote the page's pre-approval copy back over the cloud's approval for SILENCE_MS)
+    if (!(REVS.get(key) >= +l.rev)) { LOCAL_AT.delete(key); noteRev(key, l.rev); try { await take(l, "stale"); } catch (_) { /* the next read takes it */ } }
     const jobs = (l.rec.jobs || []).filter(Boolean), bad = [];
     for (const w of wants || []) {
       const rj = jobs.find(x => x.key === w.key), face = w.face || "piece", states = Array.isArray(w.states) && w.states.length ? w.states : ["approved", "written"];
