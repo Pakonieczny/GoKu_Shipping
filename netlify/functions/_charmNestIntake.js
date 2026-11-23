@@ -532,7 +532,13 @@ async function passIntake(env) {
            nest (the pass's NESTNOW pump starts it) */
         /* FLOWNOW: pieces made earlier and still on no sheet (a line "pooled") are placed too, at every pass the run waits at revalidate / labels / commit, not only in the pass that made them */
         const waitingPieces = Object.values(run.lines || {}).some(l => l && l.state === "pooled" && Array.isArray(l.poolIds) && l.poolIds.length);
-        if (waitsAtEnd(run) && cs.includes("nest") && (p.pooled || p.made || waitingPieces)) {
+        /* PLACENOW (Paul, 23 Nov 2026, orders 4235923653, 4230787700 and 4238855149: made in the right metal and on no sheet; 11 pieces of the day stood so): the nest step places new pieces once, before its nests, and
+           then waits for them all: while SS Draft 11 was nested one order at a time, half an hour, no new piece of any metal went on a sheet. A run at its nest step places them at every pass too, by the same unit and
+           rules (a sheet being nested still waits by itself, NESTBUSY); only when a made piece really stands on no sheet. */
+        const atNest = run.status === "running" && run.step === "nest" && cs.includes("nest") && waitingPieces;
+        if (atNest && !c.sheetsRead) c.sheetsRead = await sheetsOfRun(c.db, c.runId);
+        const stray = atNest && (p.pooled || p.made || Object.values(run.lines || {}).some(l => l && l.state === "pooled" && (l.poolIds || []).some(id => !c.sheetsRead.listed.has(String(id)))));
+        if ((waitsAtEnd(run) || stray) && cs.includes("nest") && (p.pooled || p.made || waitingPieces)) {
           const got = await c.read({ op: "runGet", runId: c.runId }).catch(() => null), fr = got && got.run;
           if (fr && fr.lines) {
             const pl = await require("./_charmNestPlaceUnit").placeAll(Object.assign({}, env, { run: Object.assign({}, fr, { runId: c.runId }) }));
