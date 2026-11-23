@@ -3382,6 +3382,42 @@ function keepApproving(curJson, nextJson) {
   });
   return kept ? JSON.stringify(n) : nextJson;
 }
+/* KEEPWRITTEN (Paul, 22 Nov 2026: "This piece did not get approved correctly even though it's approved ... I don't ever wanna see these ... the approved button ... must be 100% resilient"; orders 4242795385
+   piece 3 and 4243151567: an approval the cloud had saved, with its back file, was written back to Review by a computer re-sending its own older copy of the line). The cloud's approved back file
+   (Charm_Pool_Back) is what an approval made: while it stands (not invalidated) for the very same words, font and place, a computer's write of that job un-approved does not take the approval away,
+   whatever copy that computer held. Every real change still un-approves: new art invalidates the back file (backInvalidate), and words, font, a move or a resize no longer match it; None, skipped and
+   words-to-confirm are a person's decision and pass. Only a page's write (never the cloud's own), only a job the cloud holds approved or written now. */
+const KW_WRITTEN = ["approved", "written"], KW_OPEN = ["review", "ready", "fitting"];
+const kwNear = (a, b, e) => Number.isFinite(+a) && Number.isFinite(+b) && Math.abs(+a - +b) <= e;
+const kwPlaceIs = (p, bk) => !!p && Array.isArray(p.centre) && Array.isArray(bk.centre) && kwNear(p.centre[0], bk.centre[0], 0.02) && kwNear(p.centre[1], bk.centre[1], 0.02) && kwNear(p.size, bk.sizePt, 0.01) && kwNear(+p.angle || 0, +bk.angle || 0, 0.5);
+/** The approved back files of one job of a line (its transaction, its slot, its face) among the backs of its order. */
+const kwBacksOf = (job, lineKey, backs) => { const tr = String(lineKey).split("_")[1] || "", slot = job.slot || null, front = job.face === "front";
+  return (backs || []).filter(bk => bk && String(bk.transactionId || String(bk.poolId || "").split("_")[1] || "") === tr && (bk.slot || null) === slot && (bk.face === "front") === front); };
+/** Whether a page's write of a line would take an approval the cloud holds off one of its jobs (then the line's back files are read). */
+function writtenAtRisk(curJson, nextJson) {
+  let c, n; try { c = JSON.parse(curJson); n = JSON.parse(nextJson); } catch (_) { return false; }
+  if (!c || !n || !Array.isArray(c.jobs) || !Array.isArray(n.jobs)) return false;
+  return n.jobs.some(nj => nj && KW_OPEN.includes(nj.state) && c.jobs.some(cj => cj && cj.key === nj.key && KW_WRITTEN.includes(cj.state) && +cj.approvedAt > 0));
+}
+function keepWritten(curJson, nextJson, lineKey, backs) {
+  let c, n; try { c = JSON.parse(curJson); n = JSON.parse(nextJson); } catch (_) { return nextJson; }
+  if (!c || !n || !Array.isArray(c.jobs) || !Array.isArray(n.jobs)) return nextJson;
+  let kept = 0;
+  n.jobs = n.jobs.map(nj => {
+    if (!nj || !KW_OPEN.includes(nj.state)) return nj;
+    const cj = c.jobs.find(x => x && x.key === nj.key);
+    if (!cj || !KW_WRITTEN.includes(cj.state) || !(+cj.approvedAt > 0) || +nj.approvedAt > +cj.approvedAt) return nj;
+    if (String(nj.text == null ? "" : nj.text) !== String(cj.text == null ? "" : cj.text) || JSON.stringify(nj.lines || []) !== JSON.stringify(cj.lines || [])) return nj;   // (other words: a person's edit)
+    if (nj.fontKey && cj.fontKey && nj.fontKey !== cj.fontKey) return nj;   // (another font)
+    const mine = kwBacksOf(cj, lineKey, backs);
+    if (!mine.length || mine.some(bk => bk.invalidated || +bk.approvedAt !== +cj.approvedAt || String(bk.text == null ? "" : bk.text) !== String(cj.text == null ? "" : cj.text))) return nj;   // (no standing approved file: new art, or never written)
+    if (nj.place && !mine.every(bk => kwPlaceIs(nj.place, bk))) return nj;   // (moved, turned or resized by a person)
+    kept++;
+    const seals = new Map(); for (const s of [].concat(cj.engravingSeals || [], nj.engravingSeals || [])) if (s && s.id && !seals.has(s.id)) seals.set(s.id, s);
+    return Object.assign({}, nj, { state: cj.state, approvedAt: cj.approvedAt, approvedBy: cj.approvedBy, engravingSeals: [...seals.values()] }, cj.place ? { place: cj.place } : {});
+  });
+  return kept ? JSON.stringify(n) : nextJson;
+}
 async function op_engraveSyncPut(b) {
   const list = Array.isArray(b.lines) ? b.lines.slice(0, 40) : [], dev = MADE_DEV.test(String(b.dev || "")) ? String(b.dev) : null, by = str(b.by, 80).trim() || null;
   const out = [], stale = [], todo = [];
@@ -3399,6 +3435,13 @@ async function op_engraveSyncPut(b) {
     const res = await db.runTransaction(async tx => {
       if (FENCE) await fenceTx(tx);   // (CLOUDDRIVE P7/C7)
       const snaps = await tx.getAll(...todo.map(t => col(ENGR).doc(t.key))), done = [], old = [];
+      // (KEEPWRITTEN: the approved back files of an order whose stored approval a page's write would take away, read before anything is written)
+      const backsOf = new Map();
+      if (!MARKED) for (let i = 0; i < todo.length; i++) {
+        const t = todo[i], cur = snaps[i].exists ? snaps[i].data() : null, rev = cur && Number.isFinite(+cur.rev) ? +cur.rev : 0, order = orderOfKey(t.key);
+        if (!cur || !cur.rec || (t.base != null && t.base !== rev) || !order || backsOf.has(order) || !writtenAtRisk(cur.rec, t.json)) continue;
+        try { backsOf.set(order, (await tx.get(col(BACK).where("order", "==", order).limit(200))).docs.map(d => d.data())); } catch (_) { backsOf.set(order, []); }
+      }
       todo.forEach((t, i) => {
         const cur = snaps[i].exists ? snaps[i].data() : null, rev = cur && Number.isFinite(+cur.rev) ? +cur.rev : 0;
         if (t.base != null && cur && t.base !== rev) { old.push({ key: t.key, rev }); return; }
@@ -3406,6 +3449,7 @@ async function op_engraveSyncPut(b) {
         if (cur && cur.rec) t.json = keepPlaced(cur.rec, t.json);   // (KEEPPLACED)
         if (cur && cur.rec && placedAll) t.json = keepPlacedAll(cur.rec, t.json);
         if (cur && cur.rec && !MARKED && cur.rec.indexOf('"approving"') >= 0) t.json = keepApproving(cur.rec, t.json);   // (CLOUDDRIVE step 11, dormant: an approval the cloud is writing stays waiting)
+        if (cur && cur.rec && !MARKED && backsOf.has(orderOfKey(t.key))) t.json = keepWritten(cur.rec, t.json, t.key, backsOf.get(orderOfKey(t.key)));   // (KEEPWRITTEN)
         tx.set(col(ENGR).doc(t.key), { key: t.key, order: t.key.split("_")[0], rec: t.json, at, by, dev, sig: t.sig, rev: next, updatedAt: FV.serverTimestamp() });
         done.push({ key: t.key, at, rev: next });
       });
