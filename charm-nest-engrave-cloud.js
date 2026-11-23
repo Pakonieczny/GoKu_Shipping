@@ -20,7 +20,7 @@
    this page sent, one small read every 4 s (engraveFilesGet), until it is written. */
 (function (root) {
   "use strict";
-  const FRESH_MS = 60000, POLL_MS = 4000, WATCH_MAX_MS = 30 * 60000;
+  const FRESH_MS = 60000, POLL_MS = 4000, FAST_MS = 1000, WATCH_MAX_MS = 30 * 60000;
   const FIELD_KEYS = ["lines", "lineInput", "lineMode", "lineGap", "fontKey", "fontName", "fontAsked", "wantSize", "nudged", "turnUp", "upSystem", "orientVersion", "decision", "decidedAt", "decidedBy"];
   const st = { runId: null, carrierCloud: false, carrierAt: 0, drive: null, driveAt: 0, driveAsk: null, watch: new Map(), timer: 0, polls: 0, sent: 0, last: null };
   const safe = (f, d) => { try { const v = f(); return v === undefined ? d : v; } catch (_) { return d; } };
@@ -107,7 +107,7 @@
   // (ITEM 9: an edit is watched under its own card's key; its task is the line's job's, `jobKey`)
   function watch(job, at, taskId, jobKey) { st.watch.set(job.key, { job, at: +at, taskId: taskId || null, since: Date.now(), order: String(jobKey || job.key).split("_")[0], jobKey: jobKey || null }); schedule(); }
   const taskKeyOf = (key, w) => (w && w.jobKey) || key;
-  function schedule() { if (st.timer || !st.watch.size) return; st.timer = setTimeout(() => { st.timer = 0; poll().catch(() => {}).finally(schedule); }, POLL_MS); }
+  function schedule() { if (st.timer || !st.watch.size) return; st.timer = setTimeout(() => { st.timer = 0; poll().catch(() => {}).finally(schedule); }, [...st.watch.values()].some(w => Date.now() - w.since < 30000) ? FAST_MS : POLL_MS); }   // (APPROVENOW: an approval just pressed is looked at every second)
   async function poll() {
     if (!st.watch.size) return;
     st.polls++;

@@ -276,7 +276,15 @@
     const wait=waiting();
     if(img){const im=root.document.createElement('img');im.alt=aboutFace('The full approved back engraving',faceOf(job));im.crossOrigin='anonymous';if(B_){B_.on(slot,'img');im.onload=im.onerror=()=>B_.off(slot,'img');}im.src=imageUrl?imageUrl(img):img;slot.replaceChildren(im);zoomPreview(slot,zoom,job,false);if(B_)B_.sync(slot);}
     else if(wait){slot.classList.add('egPvWait');slot.innerHTML=`<span class="by">${aboutFace('Drawing the engraving…',faceOf(job))}</span>`;}
-    else{slot.classList.add('egPvNone');slot.innerHTML=`<span class="by">${aboutFace('No preview here: see the back in Design & Engrave',faceOf(job))}</span>`;return;}
+    else{
+      /* PVPLACE (Paul, 23 Nov 2026: "Approve" in the sheet window beside "No preview here", order 4241367962): a piece whose words this page has not placed yet is placed now, at the place the cloud says (CharmNestEngraveSync.placeNow, as Approve itself does), and drawn; the words only when it cannot be. */
+      const none=()=>{slot.classList.remove('egPvWait');slot.classList.add('egPvNone');slot.innerHTML=`<span class="by">${aboutFace('No preview here: see the back in Design & Engrave',faceOf(job))}</span>`;if(B_)B_.off(slot,'face');};
+      const Sy=root.CharmNestEngraveSync,key=job && job.key;
+      if(!Sy || typeof Sy.placeNow!=='function' || !['review','approved','written'].includes(job && job.state) || (slot._pvAsked===key && Date.now()-(slot._pvAt||0)<20000)){none();return;}
+      slot._pvAsked=key;slot._pvAt=Date.now();slot.classList.remove('egPvNone');slot.classList.add('egPvWait');slot.innerHTML=`<span class="by">${aboutFace('Drawing the engraving…',faceOf(job))}</span>`;if(B_)B_.on(slot,'face');
+      Promise.resolve().then(()=>Sy.placeNow(job)).catch(()=>null).then(()=>{if(!slot.isConnected || slot._pvAsked!==key)return;if(B_)B_.off(slot,'face');if(!draw())none();});
+      return;
+    }
     if(wait && B_){B_.on(slot,'face');if(MT && MT.onSweep){let n=0;const stop=MT.onSweep(()=>{if(!slot.isConnected || ++n>60){stop();B_.off(slot,'face');return;}if(draw()){stop();return;}if(!waiting()){stop();B_.off(slot,'face');}});}}
   }
   async function press(button,stamp){

@@ -7243,7 +7243,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const entry = { at: Date.now(), p: null, rec: null }, St = window.CharmNestStore;
     const p = (async () => {
       const held = St && St.holds("sheetFull", id) ? St.get("sheetFull", id) || await St.load("sheetFull", id) : null, rev = held ? St.rev("sheetFull", id) : "";
-      if (held && !fresh) { entry.rec = held; setTimeout(() => { recFor(id, { fresh: true }).catch(() => {}); }, 0); return held; }
+      if (held && !fresh) { entry.rec = held; entry.behind = new Promise(res => setTimeout(() => { recFor(id, { fresh: true }).then(res, () => res(null)); }, 0)); return held; }   // (NEWPLATE: what was asked behind it, for the plate drawn from the copy)
       const r = await api("charmNestLibrary", { op: "getSheet", id, ...(held && rev ? { ifRev: rev } : {}) }, { quiet: true, timeoutMs: 12000 });
       if (r && r.unchanged && held) { entry.rec = held; entry.at = Date.now(); return held; }
       if (!r || !r.sheet) { if (St && r && r.sheet === null) St.drop("sheetFull", id); throw new Error("This sheet is no longer in the Library."); }
@@ -7254,6 +7254,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     entry.p = p; orderRecs.set(id, entry); if (orderRecs.size > 12) orderRecs.delete(orderRecs.keys().next().value);
     return p;
   }
+  /* NEWPLATE (Paul, 23 Nov 2026, order 4238823369: made again as LEMON_7271 and placed at 12:35, and at 2:07 the order window's Sheet tab still drew and named the KIWI FRUIT the sheet held before): the tab drew this
+     computer's older copy (its local record, or the sheet as the page had brought it back after a reload, not read again yet), asked the cloud behind it, and drew nothing when the answer was newer. drawnSig: what a
+     plate draws of a record (each piece's design, where it lies); newerThan: the record says a later layout than the copy a computer that FOLLOWS the run holds (one it has no change of its own waiting on). */
+  const drawnSig = r => !r ? "" : JSON.stringify([(r.charms || []).map(c => [c && c.id, c && c.poolId, String((c && c.sku) || "").toUpperCase(), (c && c.hash) || ""]), (r.placements || []).map(q => q && [q.id, Math.round(+q.cxPt * 100), Math.round(+q.cyPt * 100), Math.round((+q.angle || 0) * 100)])]);
+  const newerThan = (rec, pg) => !!rec && !!pg && pg.followed === true && !pg.dirty && !pg.saveOwed && pg.layoutRev != null && (+rec.layoutRev || 0) > (+pg.layoutRev || 0) && !["nesting", "finishing", "queued"].includes(pg.status);
   /** The order window's Sheet tab keeps a sheet's record for a minute (recFor): read it again now, and say whether the pieces or orders it lists, its set or its cut mark are not what the kept
       copy said (a Hold, a take-off, a piece put on it, a sheet deleted: on any computer). A sheet no longer there is a change. */
   async function refreshRecord(id) {
@@ -7595,11 +7600,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   async function drawOrder(cv, target, orderId, opts = {}) {
     const rid = String(orderId || ""), page = target && typeof target === "object" ? target : null, id = page ? page.sheetId || "" : String(target || "");
-    const live = page || (id ? liveOf(id) : null), claim = cv._claim = {};
+    const held0 = page ? null : id ? liveOf(id) : null, live = page || (opts.cloudRec ? null : held0), claim = cv._claim = {};   // (NEWPLATE: cloudRec: the cloud's record, newer than the sheet this page holds)
     const was = cv._order; if (was && was.dispose) was.dispose(); else if (was) { cancelAnimationFrame(was.raf); cancelAnimationFrame(was.soon); was.raf = was.soon = 0; }
     cv._order = null;
     const current = () => cv._claim === claim && cv.isConnected && (!opts.isCurrent || !!tryDo(opts.isCurrent));
-    const saved = id ? recFor(id) : null;
+    const saved = id ? recFor(id) : null, asked = id ? orderRecs.get(id) : null;
     // The page already has the actual placed charms: draw it now. A slow metadata read must never blank it.
     const hit = id && orderRecs.get(id);
     let rec = live && hit && hit.rec || null;
@@ -7663,6 +7668,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (active() && G.backSide) ensureBacks(G, readOpts); else if (active()) ensureFront(G);
     preview();
     redraw();
+    // (NEWPLATE: once the cloud answered what was asked behind the copy drawn: a later sheet is drawn in its place, once; the page's own older copy is read again by its own way, CharmNestCloudSheets)
+    if (asked && !page && !opts.newest) asked.p.then(r => asked.behind ? asked.behind.then(n => n || r) : r).then(now => {
+      if (!now || !active()) return;
+      const older = !!live && newerThan(now, live); if (live ? !older : drawnSig(now) === drawnSig(rec)) return;
+      if (older) tryDo(() => { const CS = window.CharmNestCloudSheets; if (CS && typeof CS._changed === "function") Promise.resolve(CS._changed(["s:" + id])).catch(() => {}); });
+      drawOrder(cv, target, orderId, Object.assign({}, opts, { newest: true, cloudRec: older || !!opts.cloudRec, back: G.backSide })).catch(() => {});
+    }).catch(() => {});
     // A tab hidden during an early read has a zero-sized box. Observe that box so returning to Sheet draws it even
     // when every source had already finished; no window resize or second approval is needed.
     if (active() && window.ResizeObserver && cv.parentElement) {

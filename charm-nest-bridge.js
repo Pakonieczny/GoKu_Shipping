@@ -4905,7 +4905,7 @@ const Pool = window.Pool = (() => {
         /* LINKDONE (Paul, 22 Nov 2026, order 4244297416: "the one necklace charm should have changed which it didn't": the cloud had made it again as SPORTS 12 - BULLSEYE 20 s after the
            link was saved, but this card, offered while the old piece was still on the sheet, stood "until a person answers it", with the line's hold and no sheet shown): the pieces are what
            the saved link says now, so this page's own card for that link is taken back and the line is not "changed" any more. A card for an order Etsy changed is never touched here. */
-        if (offered && /\(a saved link\)/.test(String(offered.why || ""))) { try { Review.remove("chg:" + row.key); } catch (_) { /* the card goes with the next read */ } row.changePending = false; row.repoolChanged = false; }
+        if (offered ? /\(a saved link\)/.test(String(offered.why || "")) : row._linkCard) { try { Review.remove("chg:" + row.key); } catch (_) { /* the card goes with the next read */ } row.changePending = false; row.repoolChanged = false; delete row._linkCard; }
         return;
       }
       if (row.changePending && row.repoolChanged && offered) return;   // (already offered: the card stands until a person answers it, or until the pieces are made as the link says, above)
@@ -4930,7 +4930,7 @@ const Pool = window.Pool = (() => {
         }
         return;
       }
-      row.changePending = true; row.repoolChanged = true;
+      row.changePending = true; row.repoolChanged = true; row._linkCard = true;   // (LINKDONE2: this page's own question about a saved link, not a change Etsy made)
       const was = made.length ? (one ? [...new Set(made)] : made).join(" + ") : "nothing yet", pcs = one ? Math.max(1, Math.round(+sp.pieceCount || expect.length)) : expect.length;
       Review.add({ kind: "orderChanged", key: "chg:" + row.key, row, old: { text: "", spec: { designSku: was, material: sp.material, form: sp.form || "", size: sp.size || "", personalization: sp.personalization } },
         why: `Now ${one ? want[0] : (want.length === 2 ? "two" : want.length) + " charms, " + want.join(" + ")} (a saved link). Accept the new order in Review (or press the pencil, then Make it again) to make it up again as ${pcs} piece${pcs === 1 ? "" : "s"}: it takes the old ${was}'s place on its sheet. A sheet already cut is never touched.` });
@@ -9346,7 +9346,7 @@ const Engrave = window.Engrave = (() => {
       await early(r);
     }
   }
-  function revokeBacks(job) {
+  function revokeBacks(job, why) {   // (WITHDRAWNSAID, Paul 23 Nov 2026: why, and by whom, go with it: the order's timeline says an approval was taken back)
     CNEngravingSeals.keep(job);
     const unwritten = unplacedPre(job) && !(job.backs || []).length && !(job.stagedBacks || []).length && job.state !== "written";   // (ENGPRE: approved before its piece was on a sheet: no back record exists to withdraw)
     job.approvedAt = null; job.backs = []; delete job._backPreview; delete job.writtenFit; delete job._shelveTried;
@@ -9354,12 +9354,12 @@ const Engrave = window.Engrave = (() => {
       if (sh.backPool.length !== had && !sh.recalled && !(+sh.laserDoneAt > 0) && !sh.roseCutAt && typeof scheduleBackOutputs === "function") scheduleBackOutputs(sh); }   // (NONEPLAIN, Paul 29 Oct 2026: "all sheets that contain such an order ... must also be updated in real-time to remove the offending engraving": the sheet's back index and report are drawn again without it)
     refreshBacks();
     if(unwritten)return;   // (the cloud's invalidation would write a record for a piece that never had one)
-    const invalidate=()=>api("charmNestLibrary", {op:"backInvalidate", poolIds:job.copies, ...(isFront(job) ? {face:"front"} : {})});
+    const invalidate=()=>api("charmNestLibrary", {op:"backInvalidate", poolIds:job.copies, why:String(why || "").slice(0,160), by:employeeName(), ...(isFront(job) ? {face:"front"} : {})});
     const task = window.CharmNestOperations ? window.CharmNestOperations.run({key:'back-remove:'+job.key,label:'Updating engraving',resources:['production:'+(job.editSheet?.runId || B.run?.runId || job.editSheet?.sheetId || 'manual')]},invalidate) : backQueue.catch(()=>{}).then(invalidate);
     backQueue = task; task.catch(e=>{ job.reason = "Back removal not saved: " + e.message; RunCtl.stopIfRunning(job.reason, "Reconnect and reopen this engraving before continuing."); toast(job.reason,"bad"); });
   }
   function invalidate(row, why) { for (const j of jobsOf(row)) { invalidateJob(j, why); if ((j.slot || isFront(j) || j.linked) && j.engraveRec) Object.assign(j.engraveRec, { invalidatedBy: why, approved: false, state: "reclassify" }); } }
-  function invalidateJob(j, why) { if (!j) return; if (j.state === "approved" || j.state === "written" || j.state === "review" || j.state === "ready") { revokeBacks(j); j.previous = { text: j.text, fit: j.fit && (({ layout, glyphs, cmds, ...f }) => f)(j.fit), approvedBy: j.approvedBy }; j.state = "classify"; j.fit = null; j.approvedBy = null; j.approvedAt = null; j.reason = why; Review.remove("eng:" + j.key); } }
+  function invalidateJob(j, why) { if (!j) return; if (j.state === "approved" || j.state === "written" || j.state === "review" || j.state === "ready") { revokeBacks(j, why); j.previous = { text: j.text, fit: j.fit && (({ layout, glyphs, cmds, ...f }) => f)(j.fit), approvedBy: j.approvedBy }; j.state = "classify"; j.fit = null; j.approvedBy = null; j.approvedAt = null; j.reason = why; Review.remove("eng:" + j.key); } }
 
   /* ── 7.5 · the review controls ── */
   /* One fitting policy for dragging, rotation and manual size: change the
@@ -9529,7 +9529,7 @@ const Engrave = window.Engrave = (() => {
   async function skip(job, by) { by = by || employeeName() || await needEmployee("Kept with this decision."); if (!by) return;
     // the card in front goes up into Decided, which says what arrived (Paul, 27 Sep 20:09-20:24); the tab is drawn at once, so
     // the next card is there while the pieces' record is saved (it used to wait for the cloud's answer first)
-    revokeBacks(job); goes(job, { to: EG_TAB(), note: { text: `Order ${job.row.order.receiptId} · No ${facedJob(job) ? faceWord(job) + " " : ""}engraving · kept in the list`, ms: 6000, actions: [{ label: "Show", title: "show this piece in the list", fn: () => showDecided(job.key) }] } });
+    revokeBacks(job, "no engraving: cut plain"); goes(job, { to: EG_TAB(), note: { text: `Order ${job.row.order.receiptId} · No ${facedJob(job) ? faceWord(job) + " " : ""}engraving · kept in the list`, ms: 6000, actions: [{ label: "Show", title: "show this piece in the list", fn: () => showDecided(job.key) }] } });
     if (EG.opened === job.key) EG.opened = null;   // (NODECIDED: the card of a piece just decided moves on to the next piece)
     job.state = "skipped"; job.decidedAt=Date.now(); job.decidedBy=by; CNListActivity.touch(job.row,job.decidedAt); job.approvedBy = null; job.row.engrave = { ...job.row.engrave, needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; CNEngravingSeals.add(job,"engravePlain",by,job.decidedAt); wordsEvent(job, by, job.text, "skipped"); try { humanAct("note", { orderId: String(job.row.order.receiptId), line: String(job.row.line.transactionId || ""), detail: (isFront(job) ? "front " : "") + "engraving skipped (cut plain)" }); } catch (_) {} job.row.flag = `${isFront(job) ? "front " : ""}engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
     const saved = virtualJob(job) ? null : Pool.update(job.copies, isFront(job) ? { engraveFront: false, engraveFrontSkippedBy: by } : { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;   // (a skipped FRONT leaves the piece's back flags alone)
@@ -9545,7 +9545,7 @@ const Engrave = window.Engrave = (() => {
     // (SEALKEEP, Paul 12 Nov 2026: "I want it kept": the seals this face already carries (every earlier approval, each with its name and time) stay in its history when it is taken off; the newest seal is the
     //  "no engraving" one None + Approve presses on top of them. Read BEFORE its approval is cleared: an approval known only from approvedAt becomes a seal here)
     let keptSeals = []; try { keptSeals = CNEngravingSeals.keep(job) || []; } catch (_) { keptSeals = (job.engravingSeals || []).slice(); }
-    if (had) revokeBacks(job);
+    if (had) revokeBacks(job, "engraving removed");
     if (EG.opened === job.key) EG.opened = null;
     const at = Date.now(), why = `no ${facedJob(job) ? faceWord(job) + " " : ""}engraving — removed by ${by}`;
     Object.assign(job, { state: "none", reason: why, fit: null, approvedBy: null, approvedAt: null, decidedAt: null, decidedBy: null, backs: [], stagedBacks: [], engravingSeals: keptSeals.slice(), decision: { by, at, none: true, removed: true } });
@@ -9559,7 +9559,7 @@ const Engrave = window.Engrave = (() => {
     await saved; RunCtl.poke();
     return true;
   }
-  function sendBack(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, neverWhy(job.row)); CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job);
+  function sendBack(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, neverWhy(job.row)); CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job, why || "sent back for a decision on the words");
     if (typeof faceHasEditorArt === "function" && !engravedWords(job).length && faceHasEditorArt(job) && artOnlyPlacement(job)) { render(); Orders.render(); return; }   // (EDITOR WORDS: a face the charm editor drew, with no words, goes back to its Approve, never to a words step it has nothing for)
     job.state = "words"; job.reason = why || `sent back from the placement review — a decision on the ${facedJob(job) ? faceWord(job) + " " : ""}words is needed`; engRec(job.row).state = "words"; engRec(job.row).approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); Orders.render(); }
   /* ── NODECIDED (Paul, 16 Oct 2026: "Get rid of this Decided view. Instead just open the existing detailed Engraving modal without needing to 'Re-Open' the order. The user should be free to update/modify any already Approved
@@ -9579,7 +9579,7 @@ const Engrave = window.Engrave = (() => {
     if (was === "skipped") { reopenJob(job); CNListActivity.touch(job.row); CNListActivity.touch(job); }   // (cut plain: no file to supersede; the job is open for words again, its seals stay)
     else if (job.fit && job.view && job.mask) {
       CNListActivity.touch(job.row); CNListActivity.touch(job);
-      revokeBacks(job); delete job.backPending;
+      revokeBacks(job, why || "changed after its approval"); delete job.backPending;
       job.state = "review"; job.reason = why || null; job.row.engrave = { ...(job.row.engrave || {}), needed: true, state: "review", approved: false, text: job.text };
       Review.remove("eng:" + job.key); Review.add({ kind: "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: "changed after its approval — approve it again" });
     } else { sendBack(job, why || "changed after its approval — a decision on the words is needed"); }   // (no placement to keep: the words step, as a Reopen did)
@@ -14350,18 +14350,18 @@ const Engrave = window.Engrave = (() => {
       // new drawing as if a person had asked for them. The face is placed as the editor drew it and waits for Approve; a person who wants words as well types them (they are fitted as ever).
       const settled = ["skipped", "none"].includes(j.state) || decidedBusy(j);
       if (!settled && faceHasEditorArt(j) && wordsOffered(j)) {
-        if (["approved", "written"].includes(j.state) || j.approvedAt) { revokeBacks(j); Object.assign(j, { approvedBy: null, approvedAt: null }); }
+        if (["approved", "written"].includes(j.state) || j.approvedAt) { revokeBacks(j, said); Object.assign(j, { approvedBy: null, approvedAt: null }); }
         if (j.decision && j.decision.text) j.decision = null;   // (a person's Save of the buyer's whole note, as the mode switch filled it in: an offer they took over, not words they wrote)
         if (artOnlyPlacement(j)) { n++; continue; }
       }
       // (the edit took every added part off a face that had no words: it asks for its words again)
       if (!settled && j.fit && j.fit.artOnly && !faceHasEditorArt(j)) {
-        if (["approved", "written"].includes(j.state) || j.approvedAt) revokeBacks(j);
+        if (["approved", "written"].includes(j.state) || j.approvedAt) revokeBacks(j, said);
         Object.assign(j, { view: null, mask: null, fit: null, verify: null, writtenFit: null, approvedBy: null, approvedAt: null });
         toWords(j, `Say what to engrave on the ${face}`); n++; continue;
       }
       if (["approved", "written"].includes(j.state) || j.approvedAt) {
-        revokeBacks(j); holdDrawing(j); keepPlace(j);   // (REFIT: drawn, dimmed, until the new fit lands, which keeps the words where they were placed)
+        revokeBacks(j, said); holdDrawing(j); keepPlace(j);   // (REFIT: drawn, dimmed, until the new fit lands, which keeps the words where they were placed)
         Object.assign(j, { state: "ready", view: null, mask: null, fit: null, writtenFit: null, verify: null, approvedBy: null, approvedAt: null, reason: said });
         if (j.row && j.row.engrave) Object.assign(j.row.engrave, { state: "ready", approved: false, reason: said });
         n++;
@@ -20425,6 +20425,11 @@ const Review = window.Review = (() => {
     /* (S2, Paul 21 Nov 2026: an order Etsy changed could not be accepted from a staff computer): an Order changed card was made only by this page's own Etsy intake, which never runs on a
        viewer. On a viewer the card is the cloud's: one for each line the cloud says waits on a change (changePending, as the cloud's Review builds it, charm-nest-review-core.js), with the
        cloud's words and time; it goes when the cloud's line stops waiting, and while an Accept sent from here waits for the cloud (changeAsked: 20 minutes at most) it is not drawn again. */
+    /* LINKDONE2 (Paul, 23 Nov 2026, order 4238823369: its piece was made again as LEMON_7271, and the order window still said "Now LEMON_7271 (a saved link). Accept the new order in Review" while Review had no card): this
+       page raised the question from the piece as it first read it; the pieces read since are the charm the link says, so Review (which shows such a card only while the piece is another charm, staleMade) showed none, but the
+       question itself stood: a line already read is not read again for its pieces (noticeSet). It goes here, with the row's mark, as soon as every live piece is that charm. A change Etsy made is never touched. */
+    for (const x of items().slice()) if (String(x.key).startsWith("chg:") && x.row && /\(a saved link\)/.test(String(x.why || ""))) { const r = B.orders.byKey?.get(x.row.key) || x.row; if (linkMade(r)) { r.changePending = false; r.repoolChanged = false; delete r._linkCard; B.review.items = items().filter(y => y !== x); } }
+    for (const r of Orders.rows()) if (r._linkCard && r.changePending && !items().some(x => x.key === "chg:" + r.key) && linkMade(r)) { r.changePending = false; r.repoolChanged = false; delete r._linkCard; }
     if (rvViewer()) {
       const CW = window.CloudWorld, rv = CW && typeof CW.review === "function" ? CW.review() : null, cardOf = new Map(((rv && rv.cards) || []).filter(c => c && /^chg:/.test(String(c.key || ""))).map(c => [String(c.key), c]));
       const waits = r => !!(r && r.order && r.changePending && !["gone", "committed"].includes(r.state));
@@ -20432,6 +20437,8 @@ const Review = window.Review = (() => {
       for (const r of Orders.rows()) {
         if (!waits(r) || changeAsked.has(r.key) || r.parentRow) continue;
         const key = "chg:" + r.key, c = cardOf.get(key), had = items().find(x => x.key === key);
+        if (!c && had && /\(a saved link\)/.test(String(had.why || ""))) { Object.assign(had, { row: r, rows: [r] }); continue; }   // (LINKDONE2: the page's own question keeps its own words; it is not a change Etsy made)
+        if (!c && !had && r._linkCard) continue;
         const why = (c && c.why) || r.changedWhy || `Etsy updated order ${r.order.receiptId} after the pull`;
         if (had) Object.assign(had, { row: r, rows: [r], why }); else items().push({ kind: "orderChanged", key, row: r, rows: [r], old: null, why, t: (c && +c.t) || +r.changedAt || Date.now(), cloud: true });
       }
@@ -21062,6 +21069,13 @@ const Review = window.Review = (() => {
     try { const want = String((row && row.spec && row.spec.designSku) || ""); if (!want || row.spec.noDesign || row.spec.ownDesign || (O.setDesignsOf && O.setDesignsOf(row.spec))) return [];
       const made = (row.poolIds || []).map(id => B.pool.rows.get(id)).filter(Boolean).map(x => String(x.sku || "").toUpperCase()).filter(Boolean);
       return [...new Set(made.filter(m => !O.sameDesign(m, want, k => Master.entryFor(k))))]; } catch (_) { return []; }
+  }
+  /** LINKDONE2: every live piece of the line is the one charm the line reads as now (each piece's record read here; a line of a set of charms is never answered for) */
+  function linkMade(row) {
+    try { const sp = row && row.spec, want = String((sp && sp.designSku) || ""); if (!want || sp.noDesign || sp.ownDesign || (O.setDesignsOf && O.setDesignsOf(sp))) return false;
+      const all = (row.poolIds || []).map(id => B.pool.rows.get(id)); if (!all.length || all.some(x => !x)) return false;
+      const live = all.filter(x => !["abandoned", "superseded"].includes(x.state));
+      return live.length > 0 && live.every(x => x.sku && O.sameDesign(String(x.sku).toUpperCase(), want, k => Master.entryFor(k))); } catch (_) { return false; }
   }
   /** MADENOT: the order's piece is made again as the line reads now, by the cloud (remakeline: in its place on its sheet; a sheet already cut keeps it, said in the answer). No link, no Etsy. → the cloud's answer */
   async function remakeAsRead(row, o) {
