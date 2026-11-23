@@ -89,6 +89,15 @@ async function nestSettled(x, w) {
   const settled = moved && !busyRec(rec, now) && !rec.nestOwed && (!files || !rec.filesOwed);
   return { settled, rec, timedOut: !settled && now - num(w.at) > NEST_MS };
 }
+/* FIRSTNOW (Paul, 22 Nov 2026: "No waiting, this must always take priority"; a Back on its sheet was refused twice in a minute: "GF Draft 21 is having its files written: try again",
+   then "is nesting: try again"): a person's request never gives up because a sheet it must change is busy. A live nest of that sheet is stopped (a person's stop, once a job, as Move all
+   onto does: the nest is made again with the request's change), files being written are waited for, and the request goes on the moment the sheet is still: the driver looks at it again
+   between units, every few seconds. */
+const liveNest = r => !!(r && r.nestJob && ["queued", "running", "starting"].includes(String(r.nestJob.status || "")));
+async function stopFor(x, recs, why) {
+  for (const r of recs || []) { const id = r && r.nestJob && (r.nestJob.id || r.nestJob.jobId); if (id && liveNest(r)) await put(x, { op: "stopJob", id: String(id), for: "person", by: x.cmd.by || "", why: str(why, 120) }, `firstnow|stop|${id}`); }
+}
+const FIRST_MS = 15 * 60000;
 const placedWords = rec => { const all = activeCharms(rec).length, n = (rec.placements || []).length, v = rec.verification; return `${n} of ${all} placed${v ? (v.ok ? ", verified" : ", verification flagged") : ""}`; };
 
 /* ═══ record only ═══ */
@@ -370,16 +379,21 @@ async function inplace(x, label) {
       // (a line is made again whole or not at all: a sheet that keeps what it holds (cut, behind a green line, in a set sent to the station) keeps the whole line as it is)
       const keeps = [...bySheet.keys()].find(s => cutRec(s) || lineDrawn(s) || committedSheet(s, sets));
       if (keeps) { why.push(`${ridOf(k)}: ${nameOf(keeps)} ${cutRec(keeps) ? "was already cut" : lineDrawn(keeps) ? "is behind a green line" : "is in a set sent to the station"}: its pieces stay as they are`); vac[k] = { skip: true }; continue; }
-      if ([...bySheet.keys()].some(s => busyRec(s, now))) { busy++; continue; }
+      if ([...bySheet.keys()].some(s => busyRec(s, now))) { await stopFor(x, [...bySheet.keys()], `${label} (a person's request goes first)`); busy++; continue; }   // (FIRSTNOW)
+      /* ORIGINHOME (Paul, 22 Nov 2026: order 4231992262's discs, made again on a draft, "should have gone back to the original sheet"): pieces that came onto a draft after being made
+         again from a sheet (their records' vacatedFrom, the Nov 18 set's sheet) keep that sheet as their home: taken off the draft, their records still name it, and once made again they
+         go back to it (cmdMovePieces lets a set's sheet take its own order back), not to the draft. */
+      const before = await pools(ctx, l.poolIds || []), vfs = new Set([...before.values()].map(r => String(r.vacatedFrom || "")));
+      const origin0 = vfs.size === 1 && !vfs.has("") ? [...vfs][0] : "", origin = origin0 && [...bySheet.keys()].every(s => s.id !== origin0 && s.draft && !s.setId) ? origin0 : "";
       const left = [], kept = [];
       for (const [s, ids] of bySheet) {
-        const r = await put(x, { op: "cmdVacate", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: s.id, poolIds: ids, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "", why: label }, `vacate|${k}|${s.id}|${num(s.contentRev)}`);
+        const r = await put(x, Object.assign({ op: "cmdVacate", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: s.id, poolIds: ids, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "", why: label }, origin ? { origin } : {}), `vacate|${k}|${s.id}|${num(s.contentRev)}`);
         if (err(r)) { if (r.keep) { kept.push(...ids); why.push(`${ridOf(k)}: ${err(r)}`); } else busy++; continue; }
         left.push(s.id);
       }
       if (busy && !left.length) continue;
       if (kept.length && !left.length) { vac[k] = { skip: true }; continue; }
-      vac[k] = { sheets: left };
+      vac[k] = Object.assign({ sheets: left }, origin ? { origin } : {});
       // (the line goes back to the intake whole: its pieces keep their ids (O.poolId), so a piece a sheet kept after all (cut a moment ago) is still listed there and is not placed twice)
       patch[k] = Object.assign({ state: "pulled", poolIds: [], repoolChanged: true, wait: null, reason: null }, left.length ? { vacated: { sheetIds: left, at: now } } : {});
     }
@@ -427,8 +441,18 @@ async function inplace(x, label) {
       if (!mine.length && s) mine = (await describeLine(ctx, l.poolIds)).filter(c => (!c.metal || c.metal === s.metal));
       if (!s || !mine.length) { why.push(`${ridOf(k)}: placed as a new piece (${!s ? "its sheet is gone" : "its new pieces are not described yet"})`); loose.push(k); continue; }
       const r = await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: home, poolIds: mine.map(c => String(c.poolId)), charms: mine, keepBacks: !!x.keepBacks, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "" }, `back|${k}|${home}|${num(s.contentRev)}`);
+      if (err(r) && r.busy && now - num(w.backAt || now) < FIRST_MS) { await stopFor(x, [s], `${label} (a person's request goes first)`); return wait(`Putting the new pieces back as soon as ${nameOf(s)} is still…`, Object.assign({}, w, { backAt: num(w.backAt) || now, why })); }   // (FIRSTNOW)
       if (err(r)) { why.push(`${ridOf(k)}: ${err(r)}; it is placed as any piece is`); loose.push(k); continue; }
       if (!r.noop) placedOn.set(home, { id: home, layoutRev: num(r.layoutRev), at: now });
+      const origin = (w.vac[k] || {}).origin;   // (ORIGINHOME: then on to the sheet they first came from)
+      if (origin && origin !== home) {
+        const f = await sheetRec(ctx, home), t = await sheetRec(ctx, origin);
+        const m = f && t ? await put(x, { op: "cmdMovePieces", runId: ctx.runId, from: { sheetId: home, layoutBase: num(f.layoutRev), contentBase: num(f.contentRev) }, to: { sheetId: origin, layoutBase: num(t.layoutRev), contentBase: num(t.contentRev) },
+          poolIds: mine.map(c => String(c.poolId)), by: x.cmd.by || "", why: "back on the sheet it was first made on" }, `origin|${k}|${origin}|${num(t.contentRev)}`) : { status: 404, error: "its first sheet is gone" };
+        if (err(m) && /try again once it is done/.test(err(m)) && f && t && now - num(w.backAt || now) < FIRST_MS) { await stopFor(x, [f, t], `${label} (a person's request goes first)`); return wait(`Putting the new pieces back on ${nameOf(t)} as soon as it is still…`, Object.assign({}, w, { backAt: num(w.backAt) || now, why })); }   // (FIRSTNOW)
+        if (err(m)) why.push(`${ridOf(k)}: kept on ${nameOf(f || { id: home })} (${err(m)})`);
+        else { placedOn.delete(home); placedOn.set(origin, { id: origin, layoutRev: num(m.to && m.to.layoutRev), at: now }); }
+      }
     }
     // every place still kept for these lines is let go (a line not put back is placed as any line), then the lines are placed by the cloud's placement as usual
     for (const k of (w.ready || []).concat(w.late || [])) for (const sid of (w.vac[k] || {}).sheets || []) await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, sheetId: sid, release: true }, `release|${k}|${sid}`);
@@ -510,10 +534,15 @@ async function describeLine(ctx, ids) {
    is nested again around what it holds. A sheet that was cut, has a green line, or whose set went to the station keeps what it has (cmdMovePieces refuses it, in words). */
 async function backhome(x) {
   const ctx = x.ctx, key = String((x.a.ids || [])[0] || "");
-  if (x.work.stage === "nest") return settleNests(x, "Nesting the order on its sheet…", async late => {
+  if (x.work.stage === "nest") {
+    // (SEATEDNOW: answered the moment every piece of the order is seated on its sheet, as a Change SKU is (SKUFAST), never after the sheet's last marks settle: the 18:18 request said
+    //  "its nest did not finish" 25 minutes after its pieces were seated)
+    const rec0 = await sheetRec(ctx, (x.work.sheets[0] || {}).id), want = (x.work.ids || []).map(String);
+    if (rec0 && want.length && want.every(id => seated(rec0, id))) return ok(`The order's pieces are back on ${nameOf(rec0)}: ${placedWords(rec0)}`);
+    return settleNests(x, "Nesting the order on its sheet…", async late => {
     const rec = await sheetRec(ctx, (x.work.sheets[0] || {}).id); if (!rec) return no("That sheet is no longer in the cloud.");
     return late ? no(`The order's pieces are back on ${nameOf(rec)}, but its nest did not finish (${rec.status || "waiting"})`) : ok(`The order's pieces are back on ${nameOf(rec)}: ${placedWords(rec)}`);
-  });
+  }); }
   const l = lines(ctx)[key]; if (!l || !OPEN_LINE(l) || !(l.poolIds || []).length) return no("That order line has no pieces in the run");
   const live = [...(await pools(ctx, l.poolIds)).values()].filter(r => r && r.sheetId && !["abandoned", "superseded"].includes(String(r.state || "")));
   if (!live.length) return no("The order's pieces are on no sheet yet: ask again once they are placed");
@@ -523,11 +552,18 @@ async function backhome(x) {
   const home = [...homes][0], from = [...on][0];
   if (from === home) return ok("The order's pieces are on their sheet already");
   const f = await sheetRec(ctx, from), t = await sheetRec(ctx, home); if (!f || !t) return no("That sheet is no longer in the cloud");
+  const first = num(x.work.firstNowAt) || Date.now(), held = (r0, why0) => {   // (FIRSTNOW)
+    if (Date.now() - first > FIRST_MS) return no(`Not moved back: ${nameOf(r0)} ${why0} after 15 minutes; ask again`);
+    return wait(`Moving the order back as soon as ${nameOf(r0)} is still (${why0})…`, Object.assign({}, x.work, { stage: "move", firstNowAt: first }));
+  };
+  { const nowB = Date.now(), who = [f, t].find(r0 => liveNest(r0) || busyRec(r0, nowB));
+    if (who) { await stopFor(x, [f, t], `${ridOf(key)}: back on its own sheet (a person's request goes first)`); return held(who, busyRec(who, nowB) || "nesting"); } }
   const r = await put(x, { op: "cmdMovePieces", runId: ctx.runId, from: { sheetId: from, layoutBase: num(f.layoutRev), contentBase: num(f.contentRev) }, to: { sheetId: home, layoutBase: num(t.layoutRev), contentBase: num(t.contentRev) },
     poolIds: live.map(p => String(p.poolId)), by: x.cmd.by || "", why: "back on the sheet it was made again from" }, `backhome|${key}|${home}|${num(t.contentRev)}`);
+  if (err(r) && /try again once it is done|changed since this move was planned/.test(err(r))) return held(/files/.test(err(r)) ? f : t, err(r).replace(/^.*? (is|was|changed)/, "$1").replace(/: try again.*$/, ""));
   if (err(r)) return no(`Not moved back: ${err(r)}`);
   await startNest(x, home, false, `${ridOf(key)}: back on the sheet it came from`);
-  return wait("Nesting the order on its sheet…", { stage: "nest", sheets: [{ id: home, layoutRev: num(r.to && r.to.layoutRev), at: Date.now() }] });
+  return wait("Nesting the order on its sheet…", { stage: "nest", sheets: [{ id: home, layoutRev: num(r.to && r.to.layoutRev), at: Date.now() }], ids: live.map(p => String(p.poolId)) });
 }
 async function remakeline(x) {
   x.keepBacks = true;

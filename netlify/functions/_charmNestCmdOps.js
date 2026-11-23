@@ -388,7 +388,9 @@ module.exports = function make(d) {
       tx.set(ref, { charms: w.charms, placements: w.placements, poolIds: w.poolIds, rejects: w.rejects, feedWait: w.feedWait, backPool: w.backPool,
         orders: (Array.isArray(r.orders) ? r.orders : []).map(String).filter(o => keptOrders.has(o) || o === rid), inplaceHold: hold,
         layoutRev: num(r.layoutRev) + 1, contentRev: num(r.contentRev) + 1, filesOwed: now, dirty: true, updatedAt: FV.serverTimestamp() }, { merge: true });
-      for (const x of rows) if (x.exists) tx.set(x.ref, { state: "superseded", sheetId: null, sheetName: r.fileBase || x.data().sheetName || null, supersededAt: now, supersededBy: by, vacatedFrom: r.id, updatedAt: FV.serverTimestamp() }, { merge: true });
+      // (ORIGINHOME: pieces taken off a draft they came onto after being made again from another sheet keep that first sheet as their home, when the request names it as theirs)
+      const origin = str(b.origin, 80), keep = x => !!origin && String(x.data().vacatedFrom || "") === origin && !!r.draft && !r.setId;
+      for (const x of rows) if (x.exists) tx.set(x.ref, { state: "superseded", sheetId: null, sheetName: r.fileBase || x.data().sheetName || null, supersededAt: now, supersededBy: by, vacatedFrom: keep(x) ? origin : r.id, updatedAt: FV.serverTimestamp() }, { merge: true });
       return { ok: true, sheetId, name: n, removed: w.going.length, layoutRev: num(r.layoutRev) + 1, contentRev: num(r.contentRev) + 1 };
     });
     if (out && out.ok && !out.noop) { revTouch(b, ["s:" + sheetId]); feedOrders(b, [[rid]]); }
