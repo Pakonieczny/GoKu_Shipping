@@ -7102,6 +7102,7 @@ NO_GEN_BUMP.add("nestStart");
 const PlaceOp = require("./_charmNestPlaceOp")({ db, col, FV, txGetAll, Placement, isPoolId, isId, orderOfKey, SHEETS, SETS, POOL, RUNS, SHEET_DOC_BYTES, BACK, Faces, sheetBack: x => sheetBack(x), recKeyOf: x => recKeyOf(x), fenceTx: tx => fenceTx(tx),
   revTouch: (b, k) => revTouch(b, k), feedOrders: (b, l) => feedOrders(b, l), marked: () => MARKED, fenced: () => !!FENCE, sandbox: () => !!PREFIX });
 OPS.placeOnSheet = b => PlaceOp.placeOnSheet(b); REV_OPS.add("placeOnSheet");
+OPS.relinkBacks = b => PlaceOp.relinkBacks(b); REV_OPS.add("relinkBacks");
 /* (CLOUDDRIVE build step 7a, DORMANT while the drive is off): the one sheet writer's ops, finishSheet (a press), finishGet (a read) and finishClaim (the cloud's own, fenced): _charmNestFinishOps.js */
 require("./_charmNestFinishOps").install({ OPS, NO_GEN_BUMP, SANDBOXED, db, col, FV, fenceTx, revTouch, driveDoc: () => driveDoc(), driveModeOf, marked: () => MARKED, fenced: () => !!FENCE, prefix: () => PREFIX, str, num, isId });
 /* (CLOUDDRIVE build steps 8 and 15, _charmNestStandby.js): the owner's control in Settings, beside the Etsy section. driveStatus: what Settings shows (the mode, who carries the

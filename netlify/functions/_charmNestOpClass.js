@@ -38,7 +38,7 @@ const PRESS = new Set(words(`activityPut aliasPut artDraftDrop artDraftPut artPu
 PRESS.add("nestStart");   // (build step 6: a person's Nest and Nest all press, and the cloud's own ask from its nest step)
 PRESS.add("commitUndoAsk");   // (build step 12: a person's Undo of a set the cloud sent to the Design Station)
 
-const CLOUD_ONLY = new Set(words(`placeOnSheet cloudTakeOff finishClaim engraveIntentStart takeOffJournal`));
+const CLOUD_ONLY = new Set(words(`placeOnSheet relinkBacks cloudTakeOff finishClaim engraveIntentStart takeOffJournal`));
 CLOUD_ONLY.add("commitJournal");   // (build step 12: the commit journal's stages, written by the cloud's commit unit only)
 /* (build steps 8 and 15, _charmNestStandby.js): the owner's control in Settings. driveStatus reads; driveSet is a person's press (admin-locked) */
 READ.add("driveStatus"); PRESS.add("driveSet");
@@ -57,7 +57,7 @@ const CLOUD_READS = words(`runGet runOpen worldGet getSheet getOrderPieces poolG
 const CLOUD_WRITES = words(`runPut runLinesAdd runLinesPatch runArchive runCmdStep runCmdDone runCarrier runOpen runControl poolPut poolUpdate putSheet sheetPdf
   putCalibration setAllocate setUpdate backPut archiveEmptySheet timelineAdd cancelFates sharePut arrivalRecord
   nestStart stopJob roseClaim
-  placeOnSheet
+  placeOnSheet relinkBacks
   cloudTakeOff takeOffJournal takeOffAck`);   // (build step 6: the nest step asks for a sheet's nest, stops the jobs a Stop press stops, and claims a cut-line sheet's physical sheet once, before its slots run;
                                               //  placeOnSheet: build step 5, CLOUD_ONLY, the placement unit's one write of a piece onto a sheet; build step 9: the take-off unit's ops)
 /* (build step 7a, the one sheet writer) finishSheet: a person's "Write files again" and the driver's files lane (a press: a page's is taken in every mode); finishGet: its progress;

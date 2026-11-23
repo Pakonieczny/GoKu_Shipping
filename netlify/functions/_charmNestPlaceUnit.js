@@ -81,6 +81,7 @@ async function readWorld(ctx, o = {}) {
 }
 
 /** The unit. ctx: the driver's (db, run, runId, call, read, budgetEnd). → undefined (done) | { more: true } (its time is spent: it runs again) */
+const RELINKED = new Map();
 async function placeAll(ctx) {
   const { db, runId, call } = ctx, run = Object.assign({}, ctx.run || {}, { runId }), lines = run.lines || {}, now = Date.now(), end = num(ctx.budgetEnd) || now + 45000;
   const say = t => { try { console.log("[place] " + t); } catch (_) { /* a note only */ } };
@@ -115,6 +116,10 @@ async function placeAll(ctx) {
   { const bySheet = new Map(); for (const [id, r] of rows) if (!r.sheetId && listed.has(id) && !Placement.takenOff(r)) { const sid = listed.get(id); if (!bySheet.has(sid)) bySheet.set(sid, []); bySheet.get(sid).push(id); }
     for (const [sid, list] of bySheet) for (let i = 0; i < list.length; i += 400) { const part = list.slice(i, i + 400), res = await call({ op: "poolUpdate", poolIds: part, patch: { sheetId: sid } }, "place-repair|" + runId + "|" + sid + "|" + part.join(",")); if (res && res.status < 400) { out.repaired += part.length; for (const id of part) rows.get(id).sheetId = sid; } } }
 
+  /* RELINK: a released order's piece placed before its saved engraving could follow it (4230787700, 4238855149): its sheet takes it back, once an hour a piece (_charmNestPlaceOp.js relinkBacks; nothing when there is none) */
+  { const byId = new Map(world.records.map(r => [r.id, r])), want = new Map();
+    for (const [key, l] of cand) { if (!(num(l.frontAt) > now - 3 * 86400000)) continue; for (const id0 of l.poolIds) { const pid = String(id0), sid = listed.get(pid), rec = sid && byId.get(sid); if (!rec || (rec.backPool || []).some(x => x && String(x.poolId) === pid) || now - num(RELINKED.get(pid)) < 3600000) continue; RELINKED.set(pid, now); if (!want.has(sid)) want.set(sid, []); want.get(sid).push(pid); } }
+    for (const [sid, list] of want) { try { const r = await call({ op: "relinkBacks", runId, sheetId: sid, poolIds: list.slice(0, 60) }, "relink|" + runId + "|" + sid + "|" + list.join(",").slice(0, 300) + "|" + Math.floor(now / 3600000)); if (r && r.relinked) say(`${runId}: ${r.relinked} saved engraving(s) back on ${sid}`); } catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; } } }
   // (CESEND: the custom piece's rows, one candidate per line key of the send, never a line of the run)
   if (only) { const by = new Map(); for (const id of only) { const r = rows.get(id); if (!r || !r.custom || !r.cloudPlace) continue; const k = String(r.lineKey || id); if (!by.has(k)) by.set(k, { orderId: r.orderId, poolIds: [], state: "pooled", custom: true }); by.get(k).poolIds.push(id); } for (const [k, l] of by) cand.push([k, l]); }
   // ── 4. the pieces no record lists, by line and metal ──

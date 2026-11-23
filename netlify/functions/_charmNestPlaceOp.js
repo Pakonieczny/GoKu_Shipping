@@ -158,5 +158,27 @@ module.exports = function placeOp(d) {
     if (answer && answer.placed && answer.placed.length) { d.revTouch(b, ["s:" + answer.sheetId]); d.feedOrders(b, [answer.placed]); }   // (FEED: the sheet and the orders whose pieces moved, so every page hears it)
     return answer || { error: "nothing was answered", status: 500 };
   }
-  return { placeOnSheet };
+  /* RELINK, the pieces already placed: { runId, sheetId, poolIds } (CLOUD_ONLY, fenced): a piece the sheet lists whose own saved engraving still stands and is on no sheet takes it back (the same rule as a placement's, above);
+     the layout is not touched (contentRev and layoutRev stay), only the sheet's engravings. */
+  async function relinkBacks(b) {
+    if (!d.marked() || !d.fenced()) return { error: "only the cloud puts a saved engraving back on its sheet", status: 403 };
+    const id = str(b.sheetId, 120), ids = [...new Set((Array.isArray(b.poolIds) ? b.poolIds : []).map(String))].filter(isPoolId).slice(0, 60); if (!isId(id) || !ids.length) return { error: "bad sheet or pieces", status: 400 };
+    let n = 0;
+    await db.runTransaction(async tx => {
+      n = 0; await fenceTx(tx);
+      const ref = col(SHEETS).doc(id), snap = await tx.get(ref), s = snap.exists ? snap.data() || {} : null; if (!s || s.archived || num(s.laserDoneAt) > 0) return;
+      const on = new Set((s.poolIds || []).map(String)), mine = ids.filter(x => on.has(x)), rows = new Map(); for (const r of await txGetAll(tx, mine.map(x => col(POOL).doc(x)), ROW_FIELDS)) rows.set(r.id, r.exists ? r.data() || {} : null);
+      const add = []; for (const s0 of mine.length ? await tx.getAll(...mine.flatMap(x => ["back", "front"].map(f => col(d.BACK).doc(d.Faces.recKey(x, f))))) : []) {
+        const bk = s0.exists ? s0.data() || {} : null; if (!bk || bk.invalidated !== false || !(num(bk.approvedAt) > 0) || !bk.approvedBy || bk.sheetId) continue;
+        const pid = String(bk.poolId || String(s0.id).replace(/~front$/, "")), r = rows.get(pid); if (!r || (bk.sku && r.sku && String(bk.sku).trim().toUpperCase() !== String(r.sku).trim().toUpperCase())) continue;
+        add.push({ ref: s0.ref, back: d.sheetBack(Object.assign({}, bk, { poolId: pid, sheetId: id })) });
+      }
+      if (!add.length) return; n = add.length;
+      const keys = new Set(add.map(x => d.recKeyOf(x.back))); tx.set(ref, { backPool: (s.backPool || []).filter(x => !keys.has(d.recKeyOf(x))).concat(add.map(x => x.back)), updatedAt: FV.serverTimestamp() }, { merge: true });
+      for (const x of add) tx.set(x.ref, { sheetId: id, relinkedAt: Date.now(), updatedAt: FV.serverTimestamp() }, { merge: true });
+    });
+    if (n) d.revTouch(b, ["s:" + id]);
+    return { ok: true, sheetId: id, relinked: n };
+  }
+  return { placeOnSheet, relinkBacks };
 };
