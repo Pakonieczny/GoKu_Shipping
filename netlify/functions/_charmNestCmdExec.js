@@ -23,6 +23,11 @@ let SetRepair = null; try { SetRepair = require("../../charm-nest-set-repair.js"
 let SetRules = null; try { SetRules = require("../../charm-nest-set-rules.js"); } catch (_) { SetRules = null; }
 const CutLine = require("../../charm-nest-rose.js");
 const { busyRec, WORK } = require("./_charmNestCmdOps");
+/* NESTOWEDREAD (Paul, 23 Nov 2026: RG Draft 2's Empty onto RG Draft 1 said "Nesting on RG Draft 7…" for its whole 25 minutes although the nest had placed all 21 pieces, verified, two
+   minutes in): a sheet's nestOwed mark is the reason a nest was asked, and no nest clears it (_charmNestNest.owedNest reads it as the reason only, so a mark nobody clears never nests a
+   sheet over and over). A request read the mark as "a nest is still owed": it waited until it ran out of time, and the requests behind it waited too. What owes a nest is the nest's own
+   rule: a piece not placed and not turned away, or a change since the last nest. */
+const owesNest = (rec, now) => !!(rec && require("./_charmNestNest").owedNest(rec, null, now || Date.now()).owed);
 
 const SHEETS = "Charm_Nest_Sheets", SETS = "Charm_Nest_Sets", POOL = "Charm_Pool", WORLD_LINES = "Charm_World_Lines", MASTER = "Charm_Master_Index", STOCK = "Charm_Nest_Rose_Stock", INTAKE = "Charm_Nest_Intake_Lines";
 const SOLID = new Set(["gold10k", "gold14k"]); const FAST = new Set(["gold", "silver"]);   // (COMBINEDRAFTS: Gold Filled / Sterling Silver drafts are combined and emptied too)
@@ -87,7 +92,7 @@ async function nestSettled(x, w) {
   const rec = await sheetRec(x.ctx, w.id), now = Date.now();
   if (!rec || rec.archived) return { settled: true, rec: null, gone: true };
   const files = lane(x.ctx, "files"), moved = num(rec.layoutRev) > num(w.layoutRev);
-  const settled = moved && !busyRec(rec, now) && !rec.nestOwed && (!files || !rec.filesOwed);
+  const settled = moved && !busyRec(rec, now) && !owesNest(rec, now) && (!files || !rec.filesOwed);
   return { settled, rec, timedOut: !settled && now - num(w.at) > NEST_MS };
 }
 /* FIRSTNOW (Paul, 22 Nov 2026: "No waiting, this must always take priority"; a Back on its sheet was refused twice in a minute: "GF Draft 21 is having its files written: try again",
@@ -204,7 +209,7 @@ async function strandedFix(x, o = {}) {
     for (const id of l.poolIds) {
       const s = on.get(String(id));
       if (!s) { any = true; continue; }
-      if (seated(s, id) || busyRec(s, now) || s.nestOwed || s.inplaceHold) continue;
+      if (seated(s, id) || busyRec(s, now) || owesNest(s, now) || s.inplaceHold) continue;
       if (cutRec(s)) continue;   // (a cut sheet keeps what it holds)
       any = true; resit.set(s.id, s);
     }
@@ -466,7 +471,7 @@ async function inplace(x, label) {
         const g2 = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), fr = g2 && g2.run;
         if (fr && fr.lines) await require("./_charmNestPlaceUnit").placeAll(Object.assign({}, ctx, { run: Object.assign({}, fr, { runId: ctx.runId }), only: new Set(loose) }));
         const g3 = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L3 = (g3 && g3.run && g3.run.lines) || {}, on = listedBy(await runSheets(ctx));
-        for (const k of loose) for (const id of (L3[k] || {}).poolIds || []) { const s = on.get(String(id)); if (s && !placedOn.has(s.id) && (s.nestOwed || !seated(s, id))) placedOn.set(s.id, { id: s.id, layoutRev: num(s.layoutRev), at: now }); }
+        for (const k of loose) for (const id of (L3[k] || {}).poolIds || []) { const s = on.get(String(id)); if (s && !placedOn.has(s.id) && (owesNest(s, now) || !seated(s, id))) placedOn.set(s.id, { id: s.id, layoutRev: num(s.layoutRev), at: now }); }
       } catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; why.push(`the new pieces were not placed now: ${str((e && e.message) || e, 160)}`); }
     }
     for (const s of placedOn.values()) await startNest(x, s.id, false, `${label}, asked by ${x.cmd.by || "a person"}`);
