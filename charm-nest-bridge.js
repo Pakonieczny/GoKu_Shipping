@@ -4830,7 +4830,7 @@ const Pool = window.Pool = (() => {
     const keys=new Set();
     for(const j of d.jobs || [])if((j.copies || []).some(id=>poolIds.has(id)) && j.state!=='skipped') {
       const row=d.orders?.rows?.find(r=>r.key===j.key);
-      j.engravingSeals=CNEngravingSeals.merge(j,j.slot ? null : row?.engrave);CNEngravingSeals.keep(j);
+      j.engravingSeals=CNEngravingSeals.merge(j,row?.engrave);CNEngravingSeals.keep(j);
       Object.assign(j,{state:'ready',view:null,mask:null,fit:null,writtenFit:null,verify:null,backs:[],approvedBy:null,approvedAt:null});keys.add(j.key);
       if(row?.engrave)Object.assign(row.engrave,{state:'ready',approved:false,seals:CNEngravingSeals.merge(row.engrave,j)});
     }
@@ -4931,7 +4931,7 @@ const Pool = window.Pool = (() => {
       row.changePending = true; row.repoolChanged = true;
       const was = made.length ? (one ? [...new Set(made)] : made).join(" + ") : "nothing yet", pcs = one ? Math.max(1, Math.round(+sp.pieceCount || expect.length)) : expect.length;
       Review.add({ kind: "orderChanged", key: "chg:" + row.key, row, old: { text: "", spec: { designSku: was, material: sp.material, form: sp.form || "", size: sp.size || "", personalization: sp.personalization } },
-        why: `Now ${one ? want[0] : (want.length === 2 ? "two" : want.length) + " charms, " + want.join(" + ")} (a saved link). Accept the new order to make it up again as ${pcs} piece${pcs === 1 ? "" : "s"}: the old ${was} comes off the open sheet it is on. Nothing cut or released is touched.` });
+        why: `Now ${one ? want[0] : (want.length === 2 ? "two" : want.length) + " charms, " + want.join(" + ")} (a saved link). Accept the new order in Review (or press the pencil, then Make it again) to make it up again as ${pcs} piece${pcs === 1 ? "" : "s"}: it takes the old ${was}'s place on its sheet. A sheet already cut is never touched.` });
     } catch (e) { console.warn("[bridge] saved link not noticed:", e && e.message); }
   }
   /** REVHOLD: the line's pieces are on a sheet and the order is in Review: they stay where they are (never lifted, never nested again). Derived from the review record (CharmNestReviewHold), not remembered. */
@@ -21048,7 +21048,24 @@ const Review = window.Review = (() => {
     const lid = String(row.line.listingId || "").replace(/\D/g, ""); if (!lid) return { ok: false, why: "this piece has no Etsy listing number" };
     const RL = window.CharmNestReviewLink, from = RL && RL.fromOf ? RL.fromOf(row.line, row.spec) : String(row.line.sku || "").trim().toUpperCase();
     const fix = fixOffer(row);
-    return { ok: true, why: "", lid, from: from || "", cur: String(row.spec.designSku || "").toUpperCase(), viaLink: !!fix.ok };
+    const stale = staleMade(row);   // (MADENOT: the pieces made are another charm than the line reads as)
+    return { ok: true, why: "", lid, from: from || "", cur: String(row.spec.designSku || "").toUpperCase(), viaLink: !!fix.ok, stale };
+  }
+  /* MADENOT (Paul, 23 Nov 2026, order 4236768670: "I try to update the SKU for this listing ... but the items on the sheet and the thumbnails did not get updated"): the line reads the saved charm (LEMON_7271) while the piece on
+     its sheet is still the old one (LEMON). The page said "Changed" for itself only: Review, which shows what the cloud knows, had no card, the picker said "this piece's charm already", and nobody could have it made again.
+     → [the SKUs the pieces were made as] when they are another charm, else []. */
+  function staleMade(row) {
+    try { const want = String((row && row.spec && row.spec.designSku) || ""); if (!want || row.spec.noDesign || row.spec.ownDesign || (O.setDesignsOf && O.setDesignsOf(row.spec))) return [];
+      const made = (row.poolIds || []).map(id => B.pool.rows.get(id)).filter(Boolean).map(x => String(x.sku || "").toUpperCase()).filter(Boolean);
+      return [...new Set(made.filter(m => !O.sameDesign(m, want, k => Master.entryFor(k))))]; } catch (_) { return []; }
+  }
+  /** MADENOT: the order's piece is made again as the line reads now, by the cloud (remakeline: in its place on its sheet; a sheet already cut keeps it, said in the answer). No link, no Etsy. → the cloud's answer */
+  async function remakeAsRead(row, o) {
+    if (!row || !row.key) return { ok: false, why: "the piece is not read yet" };
+    if (B.run) { row.repoolChanged = true; await repool(row); return { ok: true }; }
+    const ans = await cloudRemake([row.key], `Made again as ${row.spec.designSku} (was ${staleMade(row).join(" + ") || "another charm"})`, (o && o.lead) || "");
+    if (ans && ans.ok) { try { remove("chg:" + row.key); } catch (_) { /* its card goes with the next read */ } row.changePending = false; row.repoolChanged = false; await freshNow({ keys: [row.key] }).catch(() => null); try { Orders.interpretAll(); syncOrderItems(); Orders.render(); } catch (_) { /* drawn at the next pass */ } }
+    return ans;
   }
   /** The lines one SKU edit covers: the open lines of the same listing with the same Etsy SKU. */
   /* ANYWHERE (Paul, 19 Nov 2026: the Iguana order: "SKU charm was updated ... system refused to place newly updated charm on the original sheet. This must be allowed to happen from any computer"): a line a computer that FOLLOWS the run
@@ -21348,6 +21365,7 @@ const Review = window.Review = (() => {
     /* (S2, Paul 21 Nov 2026): on a viewer (cloud mode "on") the line is made up again by the cloud: "Accept the new order" is a press the cloud acts on (CNViewer.acceptChange:
        takeOffAsk { kind: changed, lineKeys }), nothing is repooled here. Refused (in words, by CNViewer): the card stays and nothing is recorded. Taken: the answer is recorded and the
        card goes to Resolved (Review.remove: kept in the cloud), and it is not drawn again while the cloud makes the line up. */
+    if (rvViewer() && /\(a saved link\)/.test(String(it.why || "")) && staleMade(r).length) { const a = await remakeAsRead(r); if (a && a.ok) answered(it, "decided", "Accept the change", { accepted: true }); return a || { ok: false }; }   // (MADENOT: the piece is swapped in its place)
     if (rvViewer() && typeof CNViewer.acceptChange === "function") {
       const ans = await CNViewer.acceptChange({ rid: String(r.order.receiptId), lineKeys: [r.key], name: employeeName() || "" });
       if (!ans || !ans.ok) return ans || { ok: false };
@@ -22841,7 +22859,7 @@ const Review = window.Review = (() => {
     //  once by the server from the cloud's lines): a card shows here only when the cloud's Review holds it, so every computer counts the same cards; one resolved here a moment ago leaves at once
     let allOut = all.concat(heldCards(covered)), waitOut = clWait;
     try { const CW = window.CloudWorld, rv = CW && CW.wanted && CW.wanted() && CW.review ? CW.review() : null, keys = rv && Array.isArray(rv.openKeys) ? new Set(rv.openKeys) : null;
-      if (keys) { allOut = allOut.filter(it => keys.has(it.key)); waitOut = clWait.filter(it => keys.has(it.key)); } } catch (_) { /* the page's own Open, as before */ }
+      if (keys) { allOut = allOut.filter(it => keys.has(it.key) || (it.kind === "orderChanged" && /\(a saved link\)/.test(String(it.why || "")) && it.row && staleMade(it.row).length > 0)); waitOut = clWait.filter(it => keys.has(it.key)); } } catch (_) { /* the page's own Open, as before */ }
     { const g = orderCards(allOut, waitOut); allOut = g.all; waitOut = g.clWait; }   // (ONECARD: one card per order, every question of it inside)
     return { all: allOut, cl, customWaits, clWait: waitOut };
   }
@@ -23403,7 +23421,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { ensureBought, view: () => RV, settled: () => settled, screen: () => { try { return render({ count: true }) || screenNow; } catch (_) { return screenNow; } }, items, count, openCount, openOrders, mkeyOf, add, remove, render, shown, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawStale, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
+  return { remakeAsRead, staleMade, ensureBought, view: () => RV, settled: () => settled, screen: () => { try { return render({ count: true }) || screenNow; } catch (_) { return screenNow; } }, items, count, openCount, openOrders, mkeyOf, add, remove, render, shown, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawStale, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -25269,8 +25287,8 @@ const OrderWin = window.OrderWin = (() => {
     // the repo's SKUs, read once for this window, each with the words it is found by
     const idx = []; for (const [k, e] of B.master.entries) idx.push({ sku: k, n: skuNorm(k + " " + ((e && (e.title || e.name)) || "")), e });
     const suggested = (W.skuCh && W.skuCh.list) || [];
-    let sel = null, timer = 0;
-    const verdict = k => { const e = tryDo(() => Master.entryFor(k)); if (!e || !B.master.entries.has(k)) return "missing"; if (tryDo(() => O.entryBlock(e))) return "blocked"; if (off.cur && (k === off.cur || tryDo(() => O.sameDesign(k, off.cur, x => Master.entryFor(x))))) return "same"; return "ok"; };
+    let sel = null, timer = 0, armed = "";   // (PICKTAP, Paul 23 Nov 2026: "not the correct item was updated": typing LE on the way to LEMON chose the charm LE. armed: the SKU a person tapped, pasted or pressed Enter on)
+    const verdict = k => { const e = tryDo(() => Master.entryFor(k)); if (!e || !B.master.entries.has(k)) return "missing"; if (tryDo(() => O.entryBlock(e))) return "blocked"; if (off.cur && (k === off.cur || tryDo(() => O.sameDesign(k, off.cur, x => Master.entryFor(x))))) return off.stale && off.stale.length ? "ok" : "same"; return "ok"; };
     const say = (tone, html) => { check.className = "seCheck" + (tone ? " " + tone : ""); check.querySelector(".say").innerHTML = html; };
     const paintTo = (k, s) => { to.dataset.s = s; toName.textContent = k || "—"; toPic.innerHTML = k ? skuPic(k) : SKI.q; if (k) tryDo(() => Master.mountPictures(toPic)); };
     const mark = (k, html) => { const ws = skuNorm(input.value).split(" ").filter(Boolean); let h = esc(k); for (const w of ws.sort((x, y) => y.length - x.length)) h = h.replace(new RegExp(`(${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})(?![^<]*>)`, "i"), "<mark>$1</mark>"); return html ? h : k; };
@@ -25283,7 +25301,7 @@ const OrderWin = window.OrderWin = (() => {
       list.innerHTML = shown.map(x => { const v = verdict(x.sku); return `<button type="button" class="seHit" role="option" data-sku="${esc(x.sku)}" aria-selected="${x.sku === sel}"${v === "blocked" || v === "same" ? " disabled" : ""} title="${esc(v === "blocked" ? `${x.sku}: blocked in the master` : v === "same" ? `${x.sku}: this piece's charm already` : x.sku)}"><span class="skPic">${skuPic(x.sku)}</span><span class="nm">${mark(x.sku, true)}</span></button>`; }).join("")
         + (hits.length > MAX ? `<div class="seMore">${hits.length - MAX} more: type another word to narrow it</div>` : "");
       tryDo(() => Master.mountPictures(list));
-      list.querySelectorAll("[data-sku]").forEach(t => { t.onclick = () => { input.value = t.dataset.sku; show(); tryDo(() => save.focus()); }; t.onkeydown = ev => keys(ev, t); t.onmouseenter = () => { if (!sel) paintTo(t.dataset.sku, "peek"); }; t.onmouseleave = () => { if (!sel) paintTo(null, "empty"); }; });
+      list.querySelectorAll("[data-sku]").forEach(t => { t.onclick = () => { input.value = t.dataset.sku; armed = String(t.dataset.sku).toUpperCase(); show(); tryDo(() => save.focus()); }; t.onkeydown = ev => keys(ev, t); t.onmouseenter = () => { if (!sel) paintTo(t.dataset.sku, "peek"); }; t.onmouseleave = () => { if (!sel) paintTo(null, "empty"); }; });
       return { raw, words, n: hits.length };
     };
     const keys = (ev, t) => {
@@ -25294,11 +25312,15 @@ const OrderWin = window.OrderWin = (() => {
     };
     const show = () => {
       const raw = String(input.value || "").trim().toUpperCase(), v = raw ? verdict(raw) : "";
-      sel = v === "ok" ? raw : null;
-      const got = drawList();
-      field.dataset.s = !raw ? "" : v === "ok" ? "ok" : (v === "blocked" || v === "same" || !got.n) ? "bad" : "";
+      sel = v === "ok" && armed === raw ? raw : null;
+      let got = drawList(); if (!sel && v === "ok" && got.n === 1) { sel = armed = raw; got = drawList(); }   // (the only charm that matches)
+      const again = !!sel && !!(off.stale && off.stale.length) && (sel === off.cur || tryDo(() => O.sameDesign(sel, off.cur, x => Master.entryFor(x))));   // (MADENOT: the same charm, made again)
+      if (d.dataset.busy !== "1") saveLbl.textContent = again ? "Make it again" : one ? "Use for this order" : "Change SKU";
+      field.dataset.s = !raw ? "" : v === "ok" ? (sel ? "ok" : "") : (v === "blocked" || v === "same" || !got.n) ? "bad" : "";
       fmark.innerHTML = field.dataset.s === "ok" ? SKI.check : field.dataset.s === "bad" ? SKI.cross : "";
       if (!raw) say("", suggested.length ? "Suggested charms below. Type any word of a charm's SKU to search the repo, or paste the SKU." : "Type any word of a charm's SKU to search the repo, or paste the SKU.");
+      else if (again) say("ok", `The piece on the sheet is <b>${esc(off.stale.join(" + "))}</b>: press Make it again and it is made as <b>${esc(raw)}</b>`);
+      else if (v === "ok" && !sel) say("", `<b>${esc(raw)}</b> is a charm in the repo: tap it (or press Enter) to choose it`);
       else if (v === "ok") say("ok", `<b>${esc(raw)}</b> · in the charm repo`);
       else if (v === "blocked") say("bad", `<b>${esc(raw)}</b> is blocked in the master, so it cannot be cut`);
       else if (v === "same") say("bad", `This piece is <b>${esc(raw)}</b> already`);
@@ -25307,14 +25329,20 @@ const OrderWin = window.OrderWin = (() => {
       paintTo(sel || (v === "blocked" || v === "same" ? raw : null), sel ? "ok" : v === "blocked" || v === "same" ? "bad" : "empty");
       save.disabled = !sel;
     };
-    input.value = prefill ? String(prefill).toUpperCase() : ""; input.oninput = () => { clearTimeout(timer); timer = setTimeout(show, 70); }; show();
+    input.value = prefill ? String(prefill).toUpperCase() : ""; armed = input.value; input.oninput = ev => { armed = ev && /^insertFrom(Paste|Drop)/.test(String(ev.inputType || "")) ? String(input.value || "").trim().toUpperCase() : ""; clearTimeout(timer); timer = setTimeout(show, 70); }; show();
     input.onkeydown = ev => {
       if (ev.key === "ArrowDown") { const f = list.querySelector("[data-sku]:not(:disabled)"); if (f) { ev.preventDefault(); f.focus(); if (!sel) paintTo(f.dataset.sku, "peek"); } }
-      else if (ev.key === "Enter") { ev.preventDefault(); clearTimeout(timer); show(); if (!save.disabled) save.click(); else { const only = list.querySelectorAll("[data-sku]:not(:disabled)"); if (only.length === 1) only[0].click(); } }
+      else if (ev.key === "Enter") { ev.preventDefault(); clearTimeout(timer); const was = sel, rawE = String(input.value || "").trim().toUpperCase(); if (verdict(rawE) === "ok") armed = rawE; show(); if (!save.disabled && was === sel) save.click(); else if (sel) { /* chosen: Enter once more saves */ } else { const only = list.querySelectorAll("[data-sku]:not(:disabled)"); if (only.length === 1) only[0].click(); } }
     };
     const back = () => { d.dataset.busy = ""; form.hidden = false; prog.hidden = true; prog.innerHTML = ""; input.disabled = false; once.disabled = askEvery; save.hidden = false; cancel.textContent = "Cancel"; paintOnce(); show(); };
     save.onclick = async () => {
       const k = sel; if (save.disabled || !k) return;
+      if (off.stale && off.stale.length && (k === off.cur || tryDo(() => O.sameDesign(k, off.cur, x => Master.entryFor(x)))) && employeeName()) {   // (MADENOT: the line reads this charm already; its piece is made again as it, nothing else is saved)
+        d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Making it again…"; input.disabled = true; once.disabled = true; say("", "The cloud is making the piece again…");
+        let res = null; try { res = await Review.remakeAsRead(rowOf(W.key) || r); } catch (e) { res = { ok: false, text: (e && e.message) || String(e) }; }
+        d.dataset.busy = ""; if (!res || !res.ok) { back(); say("bad", esc(`Not made again: ${String((res && (res.text || res.why)) || "no answer").replace(/\.$/, "")}`)); return; }
+        try { d.close(); } catch (_) { d.removeAttribute("open"); } if (W.dlg && W.dlg.open && rowOf(W.key)) tryDo(paint); return;
+      }
       // (SIGNIN, Paul 27 Oct 2026: nobody signed in, the sign-in is asked under Save and the change goes on once signed in; put away, the window's own line says why: needSignIn, the one helper)
       if (!employeeName()) { needSignIn(one ? "use this charm for this order" : "change this SKU", () => { if (d.open && d.dataset.busy !== "1" && !save.disabled && employeeName()) save.click(); }, { near: save, say: t => say("bad", esc(t)), note: "Not changed: nobody is signed in. Sign in to change this SKU." }); return; }
       if (one) {   // (ONESKU: this order only; the window closes when it is done, nothing else to follow)

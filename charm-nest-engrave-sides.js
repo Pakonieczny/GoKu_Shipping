@@ -318,6 +318,15 @@
     return Object.assign({}, out, { pieces });
   }
   /** The line's row reads and writes its `engrave` through its slots. A write (a whole new record) reaches every slot. */
+  /* PIECESEALS (Paul, 23 Nov 2026, orders 4242795385 and 4236205556: "Some pieces get extra seals"): the line's record is the SUM of its pieces (every piece's seals, the latest piece's approval). Written back (each record the cloud
+     sends does: CharmNestEngraveSync take), it was copied whole into every piece, and the next approval kept the other pieces' seals as that piece's own. What belongs to one piece stays that piece's on a line of several. */
+  const PIECE_FIELDS = ['seals', 'approvedAt', 'approvedBy', 'decidedAt', 'decidedBy', 'pieces', 'n', 'done', 'open'];
+  function pieceRec(v, was, several) {
+    if (!v || typeof v !== 'object') return v;
+    const rec = Object.assign({}, v); if (!several) return rec;
+    for (const f of PIECE_FIELDS) { if (was && typeof was === 'object' && was[f] !== undefined) rec[f] = was[f]; else delete rec[f]; }
+    return rec;
+  }
   function linkParent(ctx, parent, jobs) {
     const had = Object.getOwnPropertyDescriptor(parent, 'engrave');
     if (had && had.get && parent._engraveLinked) { parent._engraveLinked.jobs = jobs; return parent; }
@@ -327,7 +336,7 @@
     Object.defineProperty(parent, 'engrave', {
       enumerable: true, configurable: true,
       get() { return withBlank(ctx, parent, summary(ctx, link.legacy, link.jobs)); },
-      set(v) { link.legacy = v; for (const j of link.jobs) j.engraveRec = v && typeof v === 'object' ? Object.assign({}, v) : v; }
+      set(v) { link.legacy = v; const several = link.jobs.filter(j => j && !j.archived).length > 1; for (const j of link.jobs) j.engraveRec = pieceRec(v, j.engraveRec, several); }
     });
     return parent;
   }
