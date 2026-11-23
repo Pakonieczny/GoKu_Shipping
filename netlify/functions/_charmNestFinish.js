@@ -189,7 +189,7 @@ STEP.S0 = async X => {
     let report = null; try { const rp = rec.outputs && rec.outputs.report && rec.outputs.report.path; if (rp) { const [b] = await X.bucket.file(rp).download(); report = JSON.parse(b.toString("utf8")); } } catch (_) { report = null; }
     const was = new Set(((report && report.placements) || []).filter(p => p && p.id != null).map(key)), now = new Set((rec.placements || []).filter(p => p && p.id != null).map(key));
     const changed = !report || was.size !== now.size || [...now].some(k => !was.has(k));
-    if (lineOff && (!report || now.size >= was.size || [...now].some(k => !was.has(k)))) throw new Stop("skipped", `${rec.fileBase || "This sheet"}'s green-line cut is recorded: its files are written again only without a piece taken off it, every other piece where the files have it`);
+    if (lineOff && (!report || (changed && (now.size >= was.size || [...now].some(k => !was.has(k)))))) throw new Stop("skipped", `${rec.fileBase || "This sheet"}'s green-line cut is recorded: its files are written again only without a piece taken off it, every other piece where the files have it`);
     /* FILESCURRENT (Paul, 21 Nov 2026: "implement all of the updates"): the files already show the sheet's layout exactly, so nothing is owed and its picture stands for the layout
        as it is: the owed mark comes off and the picture's version is the layout's (putSheet stamps previewRev when the save carries the picture). Only those two labels change:
        nothing is written to the files, nothing is nested (the files lane's own check could not see it: this skip comes before the job records the sheet's version) */
