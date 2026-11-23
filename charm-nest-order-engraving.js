@@ -411,7 +411,8 @@
       const jobs = ap.jobs.filter(j => j.state === 'review'); if (!jobs.length) { refresh(false, true); return; }
       // (a card that is out of date approves nothing: only the placements it showed, still waiting for approval, are approved)
       const drawn = (btn.closest('.engCard') || {})._drawn;
-      if (drawn && jobs.some(j => !drawn.has(j) || drawn.get(j)[0] !== j.fit || drawn.get(j)[1] !== j.view)) { refresh(true, true); return; }
+      const moved = (was0, j) => !(S.samePlaced ? S.samePlaced(was0[0], was0[1], j.fit, j.view) : was0[0] === j.fit && was0[1] === j.view);   // (DEADPRESS: the placement itself, never the object)
+      if (drawn && jobs.some(j => !drawn.has(j) || moved(drawn.get(j), j))) { fails.set(k, 'The placement changed while this card was open. Look at it, then press Approve.'); refresh(true, true); return; }
       const was = new Map(jobs.map(j => [j, [j.fit, j.view]]));
       let who = S.who();
       if (typeof who !== 'string') {
@@ -422,7 +423,7 @@
         if (!btn || btn.disabled) return;
       }
       const now = (last.get(k) || {}).approve;
-      if (!now || !now.ok || now.jobs.length !== jobs.length || now.jobs.some(j => !was.has(j) || j.state !== 'review' || j.fit !== was.get(j)[0] || j.view !== was.get(j)[1])) { refresh(true, true); return; }
+      if (!now || !now.ok || now.jobs.length !== jobs.length || now.jobs.some(j => !was.has(j) || j.state !== 'review' || moved(was.get(j), j))) { refresh(true, true); return; }
       busy.add(k); fails.delete(k); showFail(btn.closest('.engCard'), '');
       S.instantLabel(btn);   // (INSTANTAPPROVE)
       const wasToasts = badToasts(); let ok = true, msg = '';

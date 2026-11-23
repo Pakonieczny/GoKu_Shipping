@@ -200,6 +200,9 @@
     try{Z.attach(slot,{id:(zoom&&zoom.id)||'eng',key:((zoom&&zoom.key)||job?.key||'')+(fitted?'|fit':'|png'),label:aboutFace('Back engraving preview',face),maxPx:1800,
       hires:fitted?async({px})=>{const size=Math.max(900,Math.min(1800,Math.ceil(px/300)*300)),cv=madeOf(job,size);if(!cv)return null;cv.setAttribute('role','img');cv.setAttribute('aria-label',aboutFace('The full back engraving',face));return{el:cv,px:size};}:undefined});}catch(_){}
   }
+  /* DEADPRESS (Paul, 23 Nov 2026: "the approved button not working", order 4241214165): a press was thrown away without a word whenever the job's placement was another OBJECT than at the card's drawing: words placed after it (PVPLACE), or placed again at the very same spot by the page's own background work. It is the placement itself that is compared now (words, place, size, turn, as drawn): the same, or one drawn since the card had none, is approved; one that moved is said, and the card drawn again. */
+  const r2=v=>Math.round((+v || 0)*50),fitSig=f=>!f?'':JSON.stringify([f.lines || [],(Array.isArray(f.centre)?f.centre:[]).map(r2),r2(f.size),r2(f.angle),f.weight || '',!!f.artOnly]),viewSig=v=>!v?'':JSON.stringify([r2(v.upAngle),r2(v.cx),r2(v.cy)]);
+  const samePlaced=(f0,v0,f1,v1)=>(!f0 || !f1 || f0===f1 || fitSig(f0)===fitSig(f1)) && (!v0 || !v1 || v0===v1 || viewSig(v0)===viewSig(v1));
   function wirePanel(host,e,{approve,approveBoth,open,imageUrl,zoom,stale,pick}={}){
     // Approve engraving: the host's own approval runs (its name bar, Engrave.approve, the BACK ENGRAVING seal pressed on this very button). The wait
     // before the stamp is said on the button, with a small spinner; a refusal gives the button back as it was.
@@ -208,7 +211,7 @@
     host.querySelector('[data-e=approve]')?.addEventListener('click',ev=>{
       const btn=ev.currentTarget;if(btn.disabled || !approve)return;
       // a card that is out of date approves nothing: only the placement it shows, still waiting for approval (the host draws the card again, and a new press is the person's)
-      if(e.job && (e.job.state!=='review' || e.job.fit!==fit0 || e.job.view!==view0)){try{stale && stale();}catch(_){}return;}
+      if(e.job && (e.job.state!=='review' || !samePlaced(fit0,view0,e.job.fit,e.job.view))){if(e.job.state==='review' && key)fails.set(key,'The placement changed while this card was open. Look at it, then press Approve.');try{stale && stale();}catch(_){}return;}
       const was=btn.innerHTML,wasToasts=badToasts();let run;
       if(key)fails.delete(key);host.querySelector('.egFail')?.remove();
       const tell=err=>{
@@ -222,7 +225,7 @@
       };
       try{run=approve(btn);}catch(err){console.warn('engraving card: approve',err);tell(err);return;}
       if(!run || typeof run.then!=='function')return;
-      if(btn.disabled && btn.isConnected)btn.innerHTML='<span class="spin"></span>Approving…';
+      if(btn.disabled && btn.isConnected && !/Approved/.test(btn.textContent))btn.innerHTML='<span class="spin"></span>Approving…';   // (INSTANTAPPROVE: the host said "Approved ✓" at the press)
       const back=()=>{if(btn.isConnected && !btn.closest('[data-state=approved]')){btn.innerHTML=was;btn.removeAttribute('aria-busy');}};
       run.then(()=>{back();tell();},err=>{console.warn('engraving card: approve',err);back();tell(err);});
     });
@@ -311,5 +314,5 @@
     row.dataset.sealCount=String(row.querySelectorAll('.seal').length);root.Seal.fit?.(row);button.disabled=true;button.textContent='Approved';button.setAttribute('aria-busy','true');
     try{await root.Seal.press(seal);}finally{button.disabled=wasDisabled;if(wasBusy==null)button.removeAttribute('aria-busy');else button.setAttribute('aria-busy',wasBusy);}
   }
-  return {merge,own:ownOnly,list,keep,add,html,press,record,panel,wirePanel,fromEvents,who,busyLabel,instantLabel,taken,stamped,accepted};
+  return {merge,own:ownOnly,list,keep,add,html,press,record,panel,wirePanel,fromEvents,who,busyLabel,instantLabel,taken,stamped,accepted,samePlaced};
 });
