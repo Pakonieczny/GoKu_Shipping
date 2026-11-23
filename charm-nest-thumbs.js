@@ -235,13 +235,23 @@
     return { stop() { st.stopped = true; clearTimeout(st.timer); try { io && io.disconnect(); } catch (_) {} try { sc.removeEventListener('scroll', onScroll); } catch (_) {} waiting.clear(); }, pending: () => waiting.size };
   }
 
-  /** Images that carry data-pic="<address>" (and data-pic-key): shown from the kept copy, else read once and kept. A picture that cannot be read goes to the address itself, as it did before. */
+  /* PICDRAW (Paul, 23 Nov 2026: "for some reason two thumbnails did not load successfully"): a stored picture's download link dies (HTTP 403) when another SKU sharing the same stored file is indexed again; the design's own
+     file still reads. onMissing(fn): fn(sku) → Promise<data URL> draws it from there (charm-nest-bridge.js, Master); it is asked only when the read failed and the image names its SKU (data-pic-sku). It fails too: as before. */
+  let missing = null;
+  const onMissing = fn => { missing = typeof fn === 'function' ? fn : null; };
+  const drawInstead = async (img, err) => {
+    const sku = img.dataset.picSku; if (!missing || !sku) throw err;
+    let url = null; try { url = await missing(sku); } catch (_) { /* the read's own failure is the one told */ }
+    if (!url || typeof url !== 'string') throw err;
+    return url;
+  };
+  /** Images that carry data-pic="<address>" (and data-pic-key): shown from the kept copy, else read once and kept. A picture that cannot be read is drawn from its design (PICDRAW), else goes to the address itself, as it did before. */
   function mountImages(host, o) {
     o = o || {};
     return mount(host, {
       selector: o.selector || 'img[data-pic]', concurrency: o.concurrency || 4,
       keyOf: img => img.dataset.picKey || '',
-      produce: img => fetchDataUrl(img.dataset.pic),
+      produce: img => fetchDataUrl(img.dataset.pic).catch(err => drawInstead(img, err)),
       paint: (img, url) => { img.src = url; img.dataset.picDone = '1'; },
       fail: img => { img.dataset.picTry = String((+img.dataset.picTry || 0) + 1); if (img.dataset.pic) img.src = img.dataset.pic; }   // (a failed read is tried again by rescan() when the picture is on screen again)
     });
@@ -278,5 +288,5 @@
     mem.clear(); const db = await open(); if (!db) return;
     await new Promise(res => { try { const t = tx(db, [STORE, INDEX], 'readwrite'); t.objectStore(STORE).clear(); t.objectStore(INDEX).clear(); t.oncomplete = t.onerror = t.onabort = () => res(); } catch (_) { res(); } });
   }
-  return { designKey, weeklyKey, drawingVersion, lookup, make, picture, peek, fetchDataUrl, mount, mountImages, rescan, trim, stats, clear, LIMITS, _resetVersion: () => { versionCache = null; }, _forget: () => mem.clear() };
+  return { designKey, weeklyKey, drawingVersion, lookup, make, picture, peek, fetchDataUrl, mount, mountImages, onMissing, rescan, trim, stats, clear, LIMITS, _resetVersion: () => { versionCache = null; }, _forget: () => mem.clear() };
 });

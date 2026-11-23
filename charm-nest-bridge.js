@@ -3537,8 +3537,10 @@ const Master = window.Master = (() => {
   const pictureTag = e => {
     const u = e && thumbOf(e); if (!u) return "";
     const T = window.CharmNestThumbs, via = typeof cors === "function" ? cors(u) : u;
-    return T ? `<img alt="" crossorigin="anonymous" data-pic="${esc(via)}" data-pic-key="${esc(T.weeklyKey("s|" + (e.thumbPath || e.sku) + "|" + (e.indexedAt || "")))}">` : `<img alt="" crossorigin="anonymous" src="${esc(via)}">`;
+    return T ? `<img alt="" crossorigin="anonymous" data-pic="${esc(via)}" data-pic-key="${esc(T.weeklyKey("s|" + (e.thumbPath || e.sku) + "|" + (e.indexedAt || "")))}" data-pic-sku="${esc(e.sku || "")}">` : `<img alt="" crossorigin="anonymous" src="${esc(via)}">`;
   };
+  // (PICDRAW, Paul 23 Nov 2026: "two thumbnails did not load successfully": the stored picture's link is dead, so the picture is drawn from the design's own file, as the Charm Repository's tiles are)
+  try { window.CharmNestThumbs?.onMissing?.(sku => { const e = entryFor(sku); return e ? Pool.masterPreview(e, e.sizes && Object.keys(e.sizes)[0] || null, false) : null; }); } catch (_) { /* the pictures load as they did */ }
   const picMounts = new WeakMap();
   const mountPictures = host => { try { picMounts.get(host)?.stop(); if (window.CharmNestThumbs) picMounts.set(host, CharmNestThumbs.mountImages(host)); } catch (_) { /* the pictures stay as they are */ } };
   /* The tiles' pictures (charm-nest-thumbs.js): only what is on screen and a little way ahead is asked for, the nearest first
@@ -25270,7 +25272,12 @@ const OrderWin = window.OrderWin = (() => {
     form.hidden = false; prog.hidden = true; prog.innerHTML = ""; save.hidden = false; saveLbl.textContent = "Change SKU"; cancel.textContent = "Cancel"; input.disabled = false; once.disabled = askEvery;
     // FROM: the listing's photo (as the window shows it) and its Etsy SKU
     const im = tryDo(() => byId("owPhoto").querySelector("img")), src = im && im.getAttribute("src");
-    byId("owSkuFromPic").innerHTML = src ? `<img class="photo" alt="" src="${esc(src)}">` : SKI.tag.replace("<svg ", '<svg class="q" ');
+    const fromPic = byId("owSkuFromPic"); tryDo(() => window.CNZoomPan && CNZoomPan.forget("ow:skufrom"));   // (whole again every time the window opens)
+    fromPic.innerHTML = src ? `<img class="photo" alt="" src="${esc(src)}">` : SKI.tag.replace("<svg ", '<svg class="q" ');
+    /* PHOTOZOOM (Paul, 23 Nov 2026: "allow users to click to zoom on the listing image"; 5 Oct: "it should zoom in within its own space and should be draggable to pan"): the order window's own zoom (wireZoom) on this
+       photo; Esc with it zoomed puts it back whole first. Without the module, or without a photo, it is the plain picture. */
+    if (window.CNZoomPan && !d.dataset.zoomEsc) { d.dataset.zoomEsc = "1"; d.addEventListener("cancel", e => { if (e.target === d && tryDo(() => CNZoomPan.resetWithin(d))) e.preventDefault(); }); d.addEventListener("close", () => tryDo(() => CNZoomPan.forget("ow:skufrom"))); }
+    if (window.CNZoomPan && (src || W.skuZoom)) tryDo(() => { W.skuZoom = CNZoomPan.attach(fromPic, { id: "ow:skufrom", persistent: true, media: "img.photo", label: "Etsy listing photo", hires: sharpPhoto }); W.skuZoom.key(photoKey(r, src)); });
     byId("owSkuFrom").textContent = off.from || "(no SKU)";
     // what it changes, as chips (each says the rest when pointed at)
     const sc = tryDo(() => Review.editSkuScope(r)) || { orders: 0, sheets: [], cut: [] }, chip = (ic, txt, tip, cls) => `<span class="seChip${cls ? " " + cls : ""}" title="${esc(tip)}">${ic}<span>${esc(txt)}</span></span>`;
