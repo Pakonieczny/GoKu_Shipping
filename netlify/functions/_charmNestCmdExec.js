@@ -577,7 +577,29 @@ async function remakeline(x) {
   x.none = "Those lines are not open lines of the run";
   return inplace(x, "Making the order's pieces again");
 }
+/* LINKLATE (Paul, 23 Nov 2026, order 4236768670: "the items on the sheet and the thumbnails did not get updated again ... I need this properly fixed once and for all"): KEEPNOW picks a design's pieces at once, since a save to
+   the repository "changes a drawing, never what an order reads as". A saved LINK does change it: "Wrong charm?", a charm picked in Review or the Charm Editor links a listing to the charm and asks this very request seconds
+   later, before the orders have been read again with the link. The old reading still said LEMON, nothing was found for LEMON_7271, "Nothing to make again" was the answer for good and the sheets kept the old charm. A request
+   for a charm that a listing (or an option of one) was linked to in the last ten minutes waits for a reading of the orders begun after that link, as Change SKU's does. Not known (the links could not be read): it waits. */
+const LINK_MS = 10 * 60000, LINKS = ["Charm_Sku_Aliases", "Charm_Option_Map"];
+function linkedSkus(d) {
+  const out = new Set(), walk = (v, n) => { if (n > 6 || v == null) return; if (typeof v === "string") { const s = v.trim().toUpperCase(); if (s && s.length <= 80) out.add(s); return; } if (Array.isArray(v)) { for (const x of v) walk(x, n + 1); return; }
+    if (typeof v === "object" && typeof v.toMillis !== "function" && !("_seconds" in v)) for (const x of Object.values(v)) walk(x, n + 1); };
+  for (const k of ["sku", "huggie", "bySku", "pairBySku", "map"]) walk(d && d[k], 0);
+  return out;
+}
+async function linkedLately(ctx, skus, since, asked) {
+  const want = new Set((skus || []).map(s => String(s).trim().toUpperCase()).filter(Boolean)); let at = 0; if (!want.size) return 0;
+  try {
+    for (const name of LINKS) for (const s of (await ctx.db.collection(name).where("updatedAt", ">=", new Date(since)).limit(100).get()).docs) { const d = s.data() || {}, got = linkedSkus(d); if ([...want].some(w => got.has(w))) at = Math.max(at, ms(d.updatedAt) || asked); }
+    return at;
+  } catch (_) { return asked; }
+}
 async function keepsync(x) {
+  if (!x.work.stage) {   // (LINKLATE: from the link's own time: the reading its save starts is the one waited for, not the one after it)
+    const asked = num(x.cmd.at) || Date.now(), at = await linkedLately(x.ctx, x.a.ids || [], asked - LINK_MS, asked);
+    if (at) x.work = { stage: "world", asked: at, at: Date.now() };
+  }
   x.noWorld = true;   // (KEEPNOW)
   x.pick = () => staleLines(x.ctx, x.a.ids || []);
   return inplace(x, "Making the other orders again");
