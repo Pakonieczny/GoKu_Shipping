@@ -368,6 +368,40 @@ async function askUnit(ctx) {
   return undefined;
 }
 
-module.exports = { autoUnit, askUnit, cut, include, undoInclude, member, joinCut, greenState, AUTO_BY };
+/* ── RGLINK: the link cut (Paul, 23 Nov 2026: "another multi piece mixed order arrives to the GF draft sheet and forces the Green Cut line to occure so as to not connect 2 GF or SS sheets
+   to a single RG sheet"; "It's much more challenging to cut the green line after parts have been nested") ──
+   A Rose Gold draft the placement marked (roseLinkCut: an order would tie it to a second GF / SS sheet, charm-nest-place.js chooseSheet, _charmNestPlaceUnit.js markLinkCut) has its green
+   line drawn around what it holds and its cut recorded AT ONCE, in no set yet: the order that waits on it then goes on the leftover of the same plate (the next draft), and the cut draft
+   joins the set its own GF / SS sheet forms (the cardinal home; a recorded cut is its yes, goldGap). Rose Gold only: roseRecordCut via "auto" refuses 10K / 14K. A draft being nested or
+   written waits for the next pass (drawLine asks a saved, verified, written layout); a cut refused sets the line this pass drew aside again (NOLINE) and is tried again next pass. ── */
+const LIVE = ["queued", "running", "starting", "claimed"];
+const jobLive = j => !!(j && LIVE.includes(String(j.status || "")));
+async function linkUnit(ctx) {
+  ctx = Assembly.passKeyed(ctx);
+  const run = ctx.run; if (!run || !run.runId) return undefined;
+  const db = ctx.db, q = await db.collection("Charm_Nest_Sheets").where("roseLinkCut.by", "==", "Cloud").limit(20).get();
+  for (const d of q.docs) {
+    if (Date.now() > ctx.budgetEnd) return { more: true };
+    const rec = Object.assign({ id: d.id }, d.data());
+    if (rec.runId !== run.runId || rec.archived) continue;   // (a sheet of another run: its own run's pass)
+    if (rec.metal !== "rose" || rec.roseCutAt || num(rec.laserDoneAt) > 0 || (rec.setId && !rec.draft)) {   // (cut already, in a set (its set's automatic cut decides), or not Rose Gold: nothing owed)
+      await ctx.call({ op: "putSheet", sheet: { id: rec.id, roseLinkCut: null } }, `green-link-done|${rec.id}|${num(rec.roseLinkCut && rec.roseLinkCut.at)}`); continue;
+    }
+    if (rec.saving || rec.dirty || num(rec.filesOwed) > 0 || jobLive(rec.nestJob) || jobLive(rec.filesJob) || (rec.manualEdit && Date.now() - num(rec.manualEdit.at) < 90000)) continue;   // (being nested, written or moved by hand: next pass)
+    const p = { sheetId: rec.id }, dl = await drawLine(ctx, p, rec, "Not cut: ");
+    if (dl.why) { say("warn", `${nameOf(rec)}: its link cut waits (${dl.why})`); continue; }
+    const r2 = dl.rec, at = num(rec.roseLinkCut && rec.roseLinkCut.at);
+    const r = await ctx.call({ op: "roseRecordCut", sheetId: r2.id, metal: r2.metal, stockId: r2.roseStockId, revision: r2.roseRevision, planHash: r2.rosePlanHash, by: AUTO_BY + " (a second GF / SS sheet would tie to it)", device: "cloud", via: "auto" }, `green-link|${r2.id}|${r2.rosePlanHash}`);
+    if (!ok(r) || !r.cut) {
+      if (dl.drew) { const now = await readSheet(db, r2.id); if (now && !now.roseCutAt) await ctx.call({ op: "roseReopen", sheetId: r2.id, replace: true, force: true, by: AUTO_BY }, `green-link-noline|${r2.id}|${r2.rosePlanHash}`); }
+      say("warn", `${nameOf(rec)}: its link cut was not recorded (${words(r)}); tried again on the next pass`); continue;
+    }
+    await ctx.call({ op: "putSheet", sheet: { id: r2.id, roseLinkCut: null, roseLinkCutAt: num(r.cut.at) || Date.now() } }, `green-link-done|${r2.id}|${at}`);
+    say("ok", `${nameOf(rec)}: green line cut (order ${(rec.roseLinkCut && rec.roseLinkCut.orderId) || "?"} would have tied it to a second Gold Filled / Sterling Silver sheet); that order goes on its leftover`);
+  }
+  return undefined;
+}
+
+module.exports = { autoUnit, askUnit, cut, include, undoInclude, member, joinCut, linkUnit, greenState, AUTO_BY };
 /* the steps file's entry (_charmNestSteps.js): the presses, as the pass item "greenAsks" of lane "rosecut"; the automatic cut by name, for the checkpoint and labels steps */
-module.exports.units = { passItems: [{ name: "greenAsks", lane: "rosecut", unit: askUnit }], named: { greenAuto: autoUnit } };
+module.exports.units = { passItems: [{ name: "greenAsks", lane: "rosecut", unit: askUnit }, { name: "greenLinks", lane: "rosecut", order: 65, unit: linkUnit }], named: { greenAuto: autoUnit } };   // (RGLINK: the link cut after the files lane, 60)

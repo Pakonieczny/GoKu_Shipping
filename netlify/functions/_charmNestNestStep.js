@@ -45,8 +45,14 @@ async function claimStock(ctx, rec, S, policy) {
   if (pol.mode === "new" && never && !has) { if (!rose) return null; extra = { fresh: true }; }
   else if (rose || has) extra = fitHint(rec, S);
   else extra = Object.assign({ onlyRemnant: true }, fitHint(rec, S));
-  const res = await ctx.call(Object.assign({ op: "roseClaim", sheetId: rec.id, metal: rec.metal, wPt: st.wPt, hPt: st.hPt, nesting: true }, rec.roseStockId ? { stockId: rec.roseStockId } : {}, extra),
-    "nestclaim|" + rec.id + "|" + num(rec.layoutRev) + "|" + num(rec.contentRev));
+  /* RGLINK (Paul, 23 Nov 2026: the next Rose Gold draft goes on the leftover of the green line just cut, the same plate; at 00:07 a draft opened on a fresh plate): a draft the placement
+     opened on a green line's leftover (greenLeftover, charm-nest-place.js greenPage) claims THAT plate, as the page claims the exact partial sheet (RoseStock.nestClaim). Refused (taken
+     meanwhile, another size, deleted): the automatic choice, as before. Rose Gold only; Options -> Partial Sheet "new" keeps a fresh plate. */
+  const hint = rose && !rec.roseStockId && pol.mode !== "new" && rec.greenLeftover && rec.greenLeftover.stockId ? String(rec.greenLeftover.stockId) : null;
+  const ask = (sid, tag) => ctx.call(Object.assign({ op: "roseClaim", sheetId: rec.id, metal: rec.metal, wPt: st.wPt, hPt: st.hPt, nesting: true }, sid ? { stockId: sid } : {}, extra),
+    "nestclaim|" + rec.id + "|" + num(rec.layoutRev) + "|" + num(rec.contentRev) + tag);
+  let res = await ask(rec.roseStockId || hint, hint ? "|left" : "");
+  if (hint && res && res.status >= 400 && !passing(res)) res = await ask(null, "");
   if (passing(res)) return { again: str((res && res.error) || "no answer", 200) };
   if (res.status >= 400) return { error: str(res.error || "the physical sheet could not be claimed", 300) };
   return null;

@@ -166,6 +166,15 @@ async function placeAll(ctx) {
     return "skip";
   }
 
+  /* RGLINK: a Rose Gold draft an order would tie to a second GF / SS sheet is marked to be cut at once, once (the mark is the green line's link cut's to-do; the draft takes nothing meanwhile) */
+  async function markLinkCut(view, rid) {
+    if (!view || !view.sheetId || view.roseLinkCut || view.metal !== "rose") return;
+    const mark = { at: Date.now(), orderId: String(rid), by: "Cloud" };
+    const res = await call({ op: "putSheet", sheet: { id: view.sheetId, roseLinkCut: mark } }, "rg-link|" + runId + "|" + view.sheetId);
+    if (res && res.status < 400) { view.roseLinkCut = mark; if (view._rec) view._rec.roseLinkCut = mark; say(`${nameOf(view)}: its green line is cut now (order ${rid} would tie it to a second Gold Filled / Sterling Silver sheet); the order goes on its leftover`); }
+    else say(`${nameOf(view)}: its green line cut could not be asked (${(res && res.error) || "no answer"}); asked again on the next pass`);
+  }
+
   /* (the page's LiveNest.add: "A sheet is still being written": no new piece of a metal goes on while a sheet of that metal is nested or written; those lines wait for it, the others go on) */
   const busy = new Map(); for (const v of W.views()) if (v._inplaceHold && !busy.has(v.metal)) busy.set(v.metal, v);
   const deferred = [];
@@ -185,6 +194,9 @@ async function placeAll(ctx) {
         const mates = [...new Set(on.map(id => listed.get(id)))].map(sid => W.views().find(v => v.sheetId === sid)).filter(Boolean);
         const d = R.chooseSheet({ metal, rid, run, list, info, matePages: mates, byMetalSize: byMetal.size });
         for (const ev of d.events) if (ev.kind === "split") say(`Split order ${rid} (a split of necessity: its other ${LABEL[metal]} pieces are on ${ev.apart.map(nameOf).join(", ")}, which can take no more) — both sheets must go in one set`);
+        /* RGLINK (Paul, 23 Nov 2026: "forces the Green Cut line to occure so as to not connect 2 GF or SS sheets to a single RG sheet"): the Rose Gold draft this order would tie to a
+           second GF / SS sheet is marked to be cut at once (roseLinkCut); the green line's link cut (_charmNestGreenLine.js linkUnit) cuts it around what it holds, then this line goes on its leftover */
+        if (d.wait && d.wait.cut === "link") await markLinkCut(d.wait.sheet, rid);
         if (d.wait) { waits.push({ metal, w: d.wait, n: list.length }); waited++; done = true; break; }
         const home = d.back && d.page === d.back ? rid : null, got = await place(d.page, list, home, x.key, metal);
         if (got === "ok") { say(`${rid} · ${list.length} ${LABEL[metal]} piece(s) → ${nameOf(W.views().find(v => v.sheetId && list.every(c => listed.get(String(c.poolId)) === v.sheetId)) || d.page)}`); done = true; }
@@ -195,9 +207,10 @@ async function placeAll(ctx) {
     if (waited && waited === byMetal.size && x.l.custom) { const { metal, w } = waits[0]; out.waitWhy = `it waits for ${nameOf(w.sheet)} (one ${LABEL[metal]} sheet is filled at a time): ask again once that sheet is cut or full`; continue; }   // (CESEND: no run line to mark)
     if (waited && waited === byMetal.size) {
       const { metal, w, n } = waits[0], s = w.sheet, nm = nameOf(s), other = metal === "gold" ? "Sterling Silver" : "Gold Filled";
-      const reason = w.kind === "green" ? `waits for the green line on ${nm}, then continues on its leftover (one ${LABEL[metal]} sheet is filled at a time)`
+      const reason = w.kind === "green" && w.cut === "link" ? `waits while the green line of ${nm} is cut (it would tie ${nm} to a second Gold Filled / Sterling Silver sheet), then goes on its leftover`
+        : w.kind === "green" ? `waits for the green line on ${nm}, then continues on its leftover (one ${LABEL[metal]} sheet is filled at a time)`
         : `waits for ${nm} to fill, then goes on the next ${LABEL[metal]} sheet (${nm} already shares its orders with another ${other} sheet; one ${LABEL[metal]} sheet is filled at a time)`;
-      patchLine(x.key, { state: "waiting", wait: { kind: w.kind, material: metal, sheetId: (s && s.sheetId) || null, page: (s && s.page) || null, at: now }, reason });
+      patchLine(x.key, { state: "waiting", wait: { kind: w.kind, material: metal, sheetId: (s && s.sheetId) || null, page: (s && s.page) || null, at: now, ...(w.cut ? { cut: w.cut } : {}) }, reason });
       out.waited++; say(`${rid}: its ${n} ${LABEL[metal]} piece(s) ${reason}`);
     }
   }
