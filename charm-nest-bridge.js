@@ -20909,7 +20909,7 @@ const Review = window.Review = (() => {
     await Orders.loadMaps(true); toast(`${p.sku || "No SKU"} → ${sku} remembered${lids.length > 1 ? ` on ${lids.length} listings` : ""}`, "ok");
     linkHolds(rows || rowsOf(it), sku); pickedMarks(rows || rowsOf(it), sku, who);
     // (LISTPICK: every open order of the listing made up again with the pick first; a line it held for a person, or made up, is not made up again here)
-    const relinked = (await relinkNow().catch(() => null)) || { keys: new Set() };
+    const relinked = (await relinkNow().catch(() => null)) || { keys: new Set() }; askRelink([sku]);   // (LINKASK)
     for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId)) && !relinked.keys.has(rr.key)) await repool(rr);
   }
   /** "Use both: X 1 + X 2" (SIBLINGS, 12 Oct 2026): the page's saved pair link (aliasPut with pair, kept per listing and per transaction SKU under Charm_Sku_Aliases/{listing}.pairBySku), so this
@@ -21428,6 +21428,13 @@ const Review = window.Review = (() => {
   }
   function relinkLater(ms) { clearTimeout(relinkTimer); relinkTimer = setTimeout(() => { relinkTimer = 0; relinkNow().catch(() => {}); }, ms || 0); }
   /** The sweep now (after any sweep under way). → { keys: the lines it changed or held, swapped, flagged } */
+  /* LINKASK (Paul, 23 Nov 2026): a link saved from a computer that follows the cloud (a charm picked in Review, an option mapped to a charm) re-made nothing anywhere: this page makes no pieces, and the cloud was not asked.
+     It is asked now, in the background: the open orders whose pieces are not what they read as are made again, each in its place (a sheet already cut keeps its piece). */
+  function askRelink(skus) {
+    const ids = [...new Set((skus || []).map(s => String(s || "").trim().toUpperCase()).filter(Boolean))]; if (!ids.length || B.run || !(window.CNViewer && CNViewer.on && CNViewer.on()) || typeof window.CNRelayAsk !== "function") return Promise.resolve(null);
+    return Promise.resolve().then(() => window.CNRelayAsk({ type: "keepsync", ids, label: `Saved link: make the open orders of ${ids.join(", ")} again`.slice(0, 150) }, null, 420000))
+      .then(ans => { if (ans && ans.ok && ans.text && !/^Nothing to make again/.test(ans.text)) toast(`The cloud: ${ans.text}`.slice(0, 300), "ok", 8000); return ans; }).catch(() => null);
+  }
   function relinkNow() { clearTimeout(relinkTimer); relinkTimer = 0; const p = relinkChain.then(relinkSweep, relinkSweep); relinkChain = p.catch(() => {}); return p; }
   // an order whose Review is resolved (or marked) is looked at again: a line kept on its sheet while it was in Review is made up now
   try { document.addEventListener("cn-review-mark", ev => { const rid = String((ev && ev.detail && ev.detail.rid) || ""); if (rid && [...relinkWait.values()].some(e => e.row && e.row.order && String(e.row.order.receiptId) === rid)) relinkLater(300); }); } catch (_) {}
@@ -22504,7 +22511,7 @@ const Review = window.Review = (() => {
         await Orders.loadMaps(true);
         toast(allv ? `every value of “${p.optionName}” → ${sku} · remembered for listing ${p.listingId}` : `“${p.optionValue}” → ${sku} · remembered for listing ${p.listingId}`, "ok");
         linkHolds(rowsOf(it), sku); pickedMarks(rowsOf(it), sku, who);
-        await relinkNow().catch(() => null);   // (LISTPICK: the open orders with this option value made up again with the pick)
+        await relinkNow().catch(() => null); askRelink([sku]);   // (LISTPICK: the open orders with this option value made up again with the pick; LINKASK)
         for (const rr of Orders.rows()) if (String(rr.line.listingId) === String(p.listingId) && rr.problems.length) await repool(rr);
       })();
       c.querySelectorAll("[data-dsku]").forEach(b => { b.onclick = () => pickCharm(b.dataset.dsku); });
