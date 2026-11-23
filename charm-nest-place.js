@@ -17,6 +17,8 @@
  *              are in one set or one unit (greenFits)
  *    Decision 2  a Rose Gold / 10K / 14K sheet mixes orders with one GF and/or one SS sheet of ONE set (greenFits, draftsMeet): RG / 10K / 14K sheets mix only within one set
  *    RGC1 / NOWAIT  a 10K / 14K line the open layout cannot take waits for its green line; a Rose Gold line goes on another layout or a new draft (chooseSheet: the green-line wait)
+ *    RGLINK      a Rose Gold draft takes RG-only orders and those of its ONE GF / ONE SS sheet; an order tying it to a second one waits while its green line is cut at once (cut: "link"),
+ *                then goes on the same plate's leftover (Paul, 23 Nov 2026; replaces NOWAIT's new draft and RGFILL)
  *    NOSPREAD  a multi-piece order goes onto a sheet near completion only if all of it fits; an order bigger than a sheet is cut into units (topupTakes, nospreadChunk)
  *    ONEFILL / PAIRFIX  one Gold Filled / Sterling Silver sheet fills at a time; a line the sheet still filling cannot pair waits for it (the host's addPage / fillingPage)
  *    SETSHUT   a sheet in any set takes no new orders, its own order's later pieces excepted (closed; closedRec on a record; placeOnSheet checks it again in its transaction)
@@ -288,6 +290,14 @@
       if (gf.size && ss.size) { const setOf = p => (p.setId && !p.draft ? p.setId : null), g = [...gf][0], s = [...ss][0], a = setOf(g), b = setOf(s); if (a !== b) return false; if (!a) { const og = new Set(g.charms.map(orderOf).filter(Boolean)); if (!s.charms.some(c => og.has(orderOf(c))) && !draftsMeet(g, s, run)) return false; } }
       return true;
     }
+    /** RGLINK: may this ROSE GOLD sheet take pieces of these orders: at most ONE GF and ONE SS sheet tied to it (Paul, 23 Nov 2026: "so as to not connect 2 GF or SS sheets to a single RG
+        sheet"), and a GF and an SS partner one unit as Decision 2 asks (greenFits). Its first link is no cut; a second GF or SS sheet is (chooseSheet's link wait). */
+    function roseLinkFits(page, orderId, run, o) {
+      const skip = (o && o.skip) || null, add = partnerSheets([].concat(orderId), run, skip); if (!add.gold.size && !add.silver.size) return true;
+      const mine = partnerSheets(page.charms.filter(c => !(skip && skip.has(c))).map(orderOf), run, skip);
+      if (new Set([...mine.gold, ...add.gold]).size > 1 || new Set([...mine.silver, ...add.silver]).size > 1) return false;
+      return greenFits(page, orderId, run, o);
+    }
     /** The open (uncut) automatic layout of a green-line metal: it has pieces, it is of the run, not cut, not recalled, not released full, not marked cut by the laser. */
     const greenOpen = (p, run) => !!p && p.charms.length > 0 && (!run || !p.runId || p.runId === run.runId) && !p.roseCutAt && !p.recalled && !p.releaseFull && !(+p.laserDoneAt > 0);
     /** RGC1: should this line wait for the open layout `was` instead of opening a page? (greenFits refused it there) */
@@ -321,13 +331,29 @@
       }
       // (Decision 2: one GF and/or one SS partner sheet, in one set. NOWAIT, Paul 14 Nov 2026: a Rose Gold line is never left waiting for the open layout's green line; it goes on another open
       //  layout that keeps the rule, else a new draft. 10K / 14K lines wait as before: RGC1, one physical sheet at a time)
-      /* RGFILL (Paul, 23 Nov 2026: "It should never start a brand new draft sheet if there's still room on a previous draft that's why we have the green cut lines for"; order 4244381926
-         opened RG Draft 2 at 00:07 while RG Draft 1 was 20% full, its gold pieces on another GF draft than RG Draft 1's): a ROSE GOLD draft still open (pieces, not cut, not released, not
-         lasered) takes the order whatever GF / SS partners it brings: the green cut line divides the sheet by set (the pieces left of it go with their set; another set's orders move on
-         at the cut, the automatic cut's own rule). 10K and 14K keep Decision 2 as before. */
-      const rgFill = metal === "rose" && greenOpen(page, run) && !shut(page) && inRun(page);
-      if (!ip && lineCuts(metal) && !rgFill && !matePages.includes(page) && !greenFits(page, rid, run)) {
-        const was = page, alt = pagesOf(metal).find(p => p !== was && !shut(p) && inRun(p) && greenFits(p, rid, run));
+      /* RGLINK (Paul, 23 Nov 2026: "The rose gold sheet should keep on nesting orders until Either: 1. The GF sheet that has the linked order is ready to be put into a [set] OR 2. another
+         multi piece mixed order arrives to the GF draft sheet and forces the Green Cut line to occure so as to not connect 2 GF or SS sheets to a single RG sheet"; "a rose gold sheet that
+         doesn't already have any existing links with other colour sheets should first nest the charm that links it to another coloured sheet and then add the green cut line, not before the
+         part is nested"; "It's much more challenging to cut the green line after parts have been nested"). ROSE GOLD ONLY (10K / 14K keep Decision 2 and RGC1 below, unchanged): an open RG
+         draft takes RG-only orders and the orders that tie it to its own one GF sheet and one SS sheet (its first link is nested on it, nothing cut before). An order that would tie it to a
+         SECOND GF or SS sheet goes on another open RG draft that keeps the rule, else it WAITS while that draft's green line is cut at once around what it holds (cut: "link": the cloud's
+         link cut, _charmNestGreenLine.js linkUnit), then goes on the leftover of the same plate. A draft owing its link cut takes nothing, and no RG line opens a new draft meanwhile (it would
+         claim a fresh plate before the leftover exists): it goes on another open draft that keeps the rule, or waits for the cut. Replaces RGFILL (which let the draft take the order and
+         mixed two sets' pieces on one sheet before any line). */
+      if (!ip && metal === "rose" && !matePages.includes(page)) {
+        const open = p => !!p && inRun(p) && !shut(p) && greenOpen(p, run), fits = p => open(p) && !p.roseLinkCut && roseLinkFits(p, rid, run);
+        if (!fits(page)) {
+          const was = open(page) ? page : (pagesOf(metal).find(p => open(p) && p.roseLinkCut) || null);
+          if (was) {
+            const alt = pagesOf(metal).find(p => p !== was && fits(p));
+            if (!alt) return { page: was, back: null, wait: { kind: "green", sheet: was, cut: "link" }, events };
+            page = alt; events.push({ kind: "green", alt: true, page });
+          }
+        }
+      }
+      const keepsHere = p => (metal === "rose" ? roseLinkFits(p, rid, run) : greenFits(p, rid, run));   // (RGLINK: Rose Gold's rule; 10K / 14K: Decision 2, as before)
+      if (!ip && lineCuts(metal) && !matePages.includes(page) && !keepsHere(page)) {
+        const was = page, alt = pagesOf(metal).find(p => p !== was && !shut(p) && inRun(p) && !p.roseLinkCut && keepsHere(p));
         if (metal !== "rose" && !alt && byMetalSize === 1 && greenMustWait(was, rid, run, metal, list)) return { page: was, back: null, wait: { kind: "green", sheet: was }, events };
         page = alt || H.greenPage(metal, run);
         events.push({ kind: "green", alt: !!alt, page });
@@ -368,7 +394,7 @@
       const units = new Map(); const key = typeof o.orderKey === "function" ? o.orderKey : (c => (NestPlan() ? NestPlan().orderKey(c) : String(c.order || c.id)));
       for (const c of moving) { const k = key(c); if (!units.has(k)) units.set(k, []); units.get(k).push(c); }
       const takes = p => { if (typeof o.admitted !== "function") return true; const ok = o.admitted(p, units); return [...units.keys()].every(k => ok.has(k)); };
-      const oids = [...new Set(moving.map(orderOf).filter(Boolean))], keeps = p => (metal === "rose" && greenOpen(p, run)) || lineFits(p, oids, run, { skip: new Set(moving) });   // (RGFILL: an open Rose Gold draft takes what a Rose Gold nest passes on, before a new draft)
+      const oids = [...new Set(moving.map(orderOf).filter(Boolean))], keeps = p => (metal === "rose" ? !p.roseLinkCut && roseLinkFits(p, oids, run, { skip: new Set(moving) }) : lineFits(p, oids, run, { skip: new Set(moving) }));   // (RGLINK: what a Rose Gold nest passes on keeps the one-GF / one-SS rule)
       const inLineNext = () => { const after = line.slice(i + 1).filter(p => !shutOf(p) && takes(p)); return after.find(keeps) || after[0] || null; };
       /* (CUTDRAFTFILL: what a Rose Gold / 10K / 14K nest passes on goes to the oldest open draft of its metal that keeps the rule, before the newest and before a new draft) */
       const cutOpen = () => line.find(p => p !== sh && p.charms.length && (!run || !p.runId || p.runId === run.runId) && !shutOf(p) && !busy(p) && !p.recalled && !(p.rosePlan || p.roseProtected) && keeps(p) && takes(p)) || null;
@@ -377,7 +403,7 @@
       return next;
     }
 
-    return { sheetsHolding, ordersHeld, linesToCome, pairFreeOf, pairFits, lineFits, r16On, reopensHome, orderHome, intakePage, partnerSheets, draftsMeet, greenFits, greenOpen, greenMustWait,
+    return { sheetsHolding, ordersHeld, linesToCome, pairFreeOf, pairFits, lineFits, r16On, reopensHome, orderHome, intakePage, partnerSheets, draftsMeet, greenFits, roseLinkFits, greenOpen, greenMustWait,
       chooseSheet, nextSheet, lineCuts };
   }
 
