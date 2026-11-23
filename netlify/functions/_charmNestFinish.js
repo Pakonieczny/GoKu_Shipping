@@ -328,7 +328,10 @@ STEP.S6 = async X => {
   if (cp && !cp.ok) throw new Stop("failed", cp.why || "a custom piece is not written as designed");
   const items = sh.charms.filter(c => !c.excluded);
   const report = FC.buildReport(sh, W.result, items, { stockFor: (m, s) => X.Host.stockFor(m, s, X.S), labelOf: m => X.Host.labelOf(m), shapeSignature: its => X.Host.shapeSignature(its, X.S), now: () => Date.now() });
-  const png = X.Render.previewPng(sh, X.st);
+  // (RGHISTORY: a sheet on a Rose Gold / 10K / 14K stock is drawn on that stock's history: its record and its last cuts, read as the page's roseGet reads them)
+  let hist = null;
+  if (X.rec && X.rec.roseStockId) { try { const ref = X.db.collection("Charm_Nest_Rose_Stock").doc(String(X.rec.roseStockId)), st0 = await ref.get(); if (st0.exists) { const cq = await ref.collection("cuts").orderBy("revision", "desc").limit(8).get(); hist = { stock: st0.data() || {}, cuts: cq.docs.map(d => d.data() || {}) }; } } catch (e) { hist = null; } }
+  const png = X.Render.previewPng(Object.assign({}, sh, { id: X.rec ? X.rec.id : sh.id, roseCutAt: X.rec ? X.rec.roseCutAt : sh.roseCutAt, laserDoneAt: X.rec ? X.rec.laserDoneAt : sh.laserDoneAt, rosePlanJson: X.rec ? X.rec.rosePlanJson : null }), X.st, hist);
   await X.nonceHeld();
   await putWork(X.bucket, X.dir + "/report.json", JSON.stringify(report, null, 1), "application/json");
   if (png) await putWork(X.bucket, X.dir + "/preview.png", png, "image/png");

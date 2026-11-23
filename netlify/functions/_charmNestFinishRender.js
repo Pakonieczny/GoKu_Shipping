@@ -13,8 +13,8 @@
  *                               and a shading are drawn as their box (more ink, never less: a check that errs flags, it never passes what pdf.js would flag); line caps and
  *                               joins are the PDF defaults. The exact cut-line check (finish-core exactOverlaps) stays the authority on overlap, as on the page.
  *  previewPng(sh, st)           the page's previewPng / paintPreview(clean) (charm-nest-1.html :6941, :7906): the sheet alone, 1026 px wide, every placed charm drawn by
- *                               CharmNestPDF.drawCharm where it lies. (The Rose Gold history and green lines the page's RoseStock.paint adds are not drawn here: that module
- *                               lives in the page.) → a PNG Buffer.                                                                                                      */
+ *                               CharmNestPDF.drawCharm where it lies; a Rose Gold / 10K / 14K sheet on its stock's history (RGHISTORY: the grey cut-away, earlier cuts' grey
+ *                               pieces and green lines, as the page's RoseStock.paint drew them). → a PNG Buffer.                                                                                                      */
 "use strict";
 const { CharmNestPDF: P, withCanvas } = require("./_charmNestPdf");
 const Canvas = require("./_charmNestCanvas");
@@ -147,10 +147,41 @@ function unpackArea(o) {
 }
 
 /** The sheet's preview picture (the page's previewPng with paintPreview(clean)): 1026 px wide, the sheet alone. → PNG Buffer, or null. */
-function previewPng(sh, st) {
+/* RGHISTORY (Paul, 22 Nov 2026: "all RG sheets in Library are not displaying the Greyed out charms prior to the Green cut line"): a Rose Gold / 10K / 14K sheet is drawn on its physical
+   sheet as the page drew it (charm-nest-rose-ui.js RoseStock.paint, 'history' then 'lines'): the stock already cut away in light grey, every earlier cut's pieces in grey, every cut's
+   green line; a sheet whose own line is cut shows grey only what was used BEFORE its cut, its own pieces as they are. hist: { stock: { profileJson }, cuts: [{ sheetId, revision, setAsideAt,
+   planJson }] } (the stock's record and its cuts, newest first), null for a sheet of no such stock. */
+const parseJ = v => { if (!v) return null; if (typeof v === "object") return v; try { return JSON.parse(v); } catch (e) { return null; } };
+function roseCurrent(cuts) { const seen = new Set(); return (cuts || []).filter(c => c && !c.setAsideAt).map(c => Object.assign({}, c, { plan: c.plan || parseJ(c.planJson) })).sort((x, y) => (+y.revision || 0) - (+x.revision || 0)).filter(c => { const k = c.sheetId; if (!k) return true; if (seen.has(k)) return false; seen.add(k); return true; }); }
+function roseStroke(ctx, paths, k, color, width, dashed) { ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dashed ? [4, 3] : []); for (const path of paths || []) { ctx.beginPath(); path.forEach(([x, y], i) => (i ? ctx.lineTo(x * k, y * k) : ctx.moveTo(x * k, y * k))); ctx.stroke(); } ctx.setLineDash([]); }
+function roseCutsOf(sh, hist) {
+  if (!hist) return { cuts: [], own: null, profile: null };
+  let cuts = roseCurrent(hist.cuts);
+  const ownAny = sh.roseCutAt ? cuts.find(c => c.sheetId === (sh.id || sh.sheetId)) : null;
+  if (ownAny) cuts = cuts.filter(c => (+c.revision || 0) <= (+ownAny.revision || 0));
+  const own = sh.roseCutAt && !(+sh.laserDoneAt > 0) ? ownAny : null;
+  const prior = own ? cuts.filter(c => c !== own && (+c.revision || 0) < (+own.revision || 0)).sort((a, b) => (+b.revision || 0) - (+a.revision || 0))[0] : null;
+  const profile = own ? parseJ(prior && prior.plan && prior.plan.profile) : parseJ(hist.stock && hist.stock.profileJson);
+  return { cuts, own, profile };
+}
+function roseHistory(ctx, sh, hist, k) {
+  const { cuts, own, profile } = roseCutsOf(sh, hist);
+  if (profile && Array.isArray(profile.values)) { ctx.fillStyle = "#f0eeeb"; profile.values.forEach((v, i) => { if (profile.axis === "x") ctx.fillRect(0, i * profile.step * k, v * k, profile.step * k); else ctx.fillRect(i * profile.step * k, 0, profile.step * k, v * k); }); }
+  for (const c of cuts) if (c !== own) for (const shape of (c.plan && c.plan.shapes) || []) {
+    ctx.fillStyle = "#d8d5d0"; for (const path of shape.paths || []) { ctx.beginPath(); path.forEach(([x, y], i) => (i ? ctx.lineTo(x * k, y * k) : ctx.moveTo(x * k, y * k))); ctx.closePath(); ctx.fill(); }
+    roseStroke(ctx, shape.paths, k, "#b9b4ad", 1, false);
+  }
+}
+function roseLines(ctx, sh, hist, k) {
+  const { cuts } = roseCutsOf(sh, hist);
+  for (const c of cuts) roseStroke(ctx, c.plan && c.plan.lines, k, "#249c8a", Math.max(2, 0.2 * k), false);
+  if (!sh.roseCutAt && sh.rosePlanJson) { const pl = parseJ(sh.rosePlanJson); if (pl) roseStroke(ctx, pl.lines, k, "#008974", Math.max(2.5, 0.2 * k), true); }
+}
+function previewPng(sh, st, hist) {
   try {
     const Wc = 1026, Hc = Math.max(8, Math.round(1026 * st.hPt / st.wPt)), cv = canvas(Wc, Hc), ctx = cv.getContext("2d"), k = Wc / st.wPt;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#fffefb"; ctx.fillRect(0, 0, Wc, Hc);
+    if (hist) { try { roseHistory(ctx, sh, hist, k); } catch (e) { /* the sheet is drawn without its history */ } }   // (RGHISTORY)
     ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.strokeRect(0.5, 0.5, Wc - 1, Hc - 1);
     const byId = new Map((sh.charms || []).map(c => [c.id, c]));
     for (const p of sh.roseCutAt && +sh.laserDoneAt > 0 ? [] : sh.placements || []) {
@@ -160,8 +191,9 @@ function previewPng(sh, st) {
       P.drawCharm(ctx, c, tx, k);
       ctx.restore();
     }
+    if (hist) { try { ctx.setTransform(1, 0, 0, 1, 0, 0); roseLines(ctx, sh, hist, k); } catch (e) { /* drawn without its lines */ } }   // (RGHISTORY)
     return cv.toBuffer();
   } catch (e) { return null; }
 }
 
-module.exports = { renderCheck, previewPng, layersOf, coveredOf, drawLayer, floodFromBorder, packArea, unpackArea };
+module.exports = { renderCheck, previewPng, roseCutsOf, layersOf, coveredOf, drawLayer, floodFromBorder, packArea, unpackArea };
