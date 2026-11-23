@@ -3156,13 +3156,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (window.PairRemove) { try { for (const id of PairRemove.expand(ids, pairSrc()).added) ids.add(id); } catch (e) { console.warn("sheet window: pair expand", e); } }
     const holder = new Map(); for (const sh of allSheets()) for (const c of sh.charms) if (ids.has(c.poolId)) holder.set(c.poolId, sh);
     const ok = [], stay = [];
+    /* LINEOFF (Paul, 23 Nov 2026, order 4235923653: "that sheet was already cut" on a Rose Gold sheet with its cut line recorded and not cut on the laser; "Not cut: take it off"): the cloud takes the piece off it, only that
+       piece: the line, the leftover and every other piece stay. A sheet cut on the laser, or whose set went to the station, keeps its pieces as before. */
+    const viewing = !!(window.CNViewer && CNViewer.on && CNViewer.on()), lineOnly = s => { if (!viewing || cancelling || !s) return false; const r = s.recalled && typeof s.recalled === "object" ? s.recalled : s; return +(s.roseCutAt || r.roseCutAt || 0) > 0 && !(+s.laserDoneAt > 0) && !(+r.laserDoneAt > 0) && !s.roseProtected && !s.roseProtectedJson && !r.roseProtectedJson; };
     for (const id of ids) {
       const sh = holder.get(id), pr = poolRowOf(id, rid), mine = W.byPool.get(id);
       const sku = mine?.sku || pr?.sku || "";
       if (!sh) {
         if (pr && pr.sheetId && !["abandoned", "superseded"].includes(pr.state)) {
           const card = allSheets().find(p => p.sheetId === pr.sheetId), cutCard = card && (card.roseCutAt || (card.recalled && card.recalled.roseCutAt)), doneCard = card && (+card.laserDoneAt > 0 || (card.recalled && +card.recalled.laserDoneAt > 0));
-          if (cutCard || doneCard) stay.push({ id, sku, where: sheetWord(pr.sheetId, pr.sheetName), kind: "cut", why: cutCard ? "that sheet was already cut" : "that sheet was marked completed" });   // (CUTSHEETPLAN: the same words the live sheet gives)
+          if (cutCard && !doneCard && pr.state !== "committed" && lineOnly(card)) ok.push({ id, sku, sh: null, where: sheetWord(pr.sheetId, pr.sheetName) });   // (LINEOFF)
+          else if (cutCard || doneCard) stay.push({ id, sku, where: sheetWord(pr.sheetId, pr.sheetName), kind: "cut", why: cutCard ? "that sheet was already cut" : "that sheet was marked completed" });   // (CUTSHEETPLAN: the same words the live sheet gives)
           else stay.push({ id, sku, where: sheetWord(pr.sheetId, pr.sheetName), kind: pr.state === "committed" ? "sent" : "unloaded", why: pr.state === "committed" ? "its set was already sent to the station" : "its sheet is not open in this sorter" });
         }
         else if (mine) stay.push({ id, sku, where: sheetWord(W.id, W.rec?.fileBase), kind: "unloaded", why: "this sheet is not open in this sorter" });
@@ -3170,7 +3174,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         continue;
       }
       const where = sheetWord(sh.sheetId, sh.fileBase, sh);
-      if (sh.roseCutAt) stay.push({ id, sku, where, kind: "cut", why: "that sheet was already cut" });
+      if (sh.roseCutAt && lineOnly(sh) && !(pr && pr.state === "committed") && !sentToStation(sh)) ok.push({ id, sku, sh, where });   // (LINEOFF)
+      else if (sh.roseCutAt) stay.push({ id, sku, where, kind: "cut", why: "that sheet was already cut" });
       else if (sh.laserDoneAt) stay.push({ id, sku, where, kind: "cut", why: "that sheet was marked completed" });
       else if (sh.recalled) stay.push({ id, sku, where, kind: "cut", why: "that sheet was recalled" });
       else if (sentToStation(sh)) stay.push({ id, sku, where, kind: "sent", why: "its set was already sent to the station" });
