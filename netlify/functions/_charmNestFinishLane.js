@@ -10,13 +10,16 @@
  *    tickWhy(db, runId)   the cron's reason to start a driver pass: a writer's task that went quiet (its lease stale, or a job left mid-way with no writer).                   */
 "use strict";
 const Lease = require("./_charmNestLease");
-const FINISH = "Charm_Nest_Finish", JOBS = "Charm_Nest_Jobs", MAX_START = 6;
+const FINISH = "Charm_Nest_Finish", JOBS = "Charm_Nest_Jobs", MAX_START = 6, REASK_MS = 30 * 60000;
 const ENDED = new Set(["done", "superseded", "failed", "skipped", "waiting"]);
 const num = v => (Number.isFinite(+v) ? +v : 0);
 const midway = t => !!(t && t.job && t.job.step && !ENDED.has(t.job.step));
 
 /** The id of a nest of this sheet that ended with a result and that its writer has not taken yet; null when none. */
 async function finishedNest(db, s, t) {
+  /* OWEDCUT (Paul, 23 Nov 2026: the Rose Gold Nov 22 sheet stood "files owed" with its three files written): the layout of a sheet whose green-line cut is recorded is never written from a nest (the writer's first step
+     refuses it), so its old nest is never asked for: that very ask marked the sheet owed again a minute after its files were written, was skipped, and left the mark for good. */
+  if (num(s && s.roseCutAt) > 0) return null;
   const nj = s && s.nestJob && typeof s.nestJob === "object" ? s.nestJob : null, id = nj ? String(nj.jobId || nj.id || "") : "";
   if (!/^[\w\-~]{4,120}$/.test(id)) return null;
   if (t && ((t.lastDone && t.lastDone.nestJobId === id) || (t.job && t.job.nestJobId === id))) return null;
@@ -47,8 +50,12 @@ async function driveUnit(ctx) {
       if (ld.outcome === "skipped" && /^No new nest and no piece added, removed or moved/.test(String(ld.why || "")) && (owed || num(s.previewRev) < num(s.layoutRev)) && s.outputs && s.outputs.preview && s.outputs.preview.url) {
         const r = await ctx.call({ op: "putSheet", sheet: { id: s.id, filesOwed: null, outputs: s.outputs }, contentBase: num(s.contentRev), layoutBase: num(s.layoutRev) }, ["filescurrent", runId, s.id, num(s.layoutRev), num(s.contentRev), num(s.filesOwed)].join("|"));
         if (r && r.status < 400 && r.ok) say(`[drive] files: ${s.fileBase || s.id}: its files already show its layout: the owed mark is off and its picture is current`);
+        continue;
       }
-      continue;
+      /* OWEDAGAIN (Paul, 23 Nov 2026): an owed sheet is always asked again. A job that ended for a NEST (forNest; before this, the nest it names) said nothing of the files the sheet owes: asked at once as owed, once.
+         Any other end is asked again after half an hour (a file or a drawing that was missing can be there by then); never in a loop, and never a nest. */
+      const forNest = ld.forNest === undefined ? !!ld.nestJobId : ld.forNest === true;
+      if (!(owed && ((ld.outcome === "skipped" && forNest) || now - num(ld.at) > REASK_MS))) continue;
     }
     const reason = nest ? "nest" : going ? "resume" : "owed";
     // (the unit names what the sheet and its task are now: the same look at the same sheet is written once (the ledger); a sheet that changed, or a task dispatched since, is a new one)
@@ -67,4 +74,4 @@ async function tickWhy(db, runId, now) {
   return q.docs.some(d => { const t = d.data() || {}; return Lease.stale(t, now) || (midway(t) && !Lease.held(t, now)); }) ? "a sheet's files task went quiet" : null;
 }
 
-module.exports = { driveUnit, tickWhy, finishedNest, MAX_START };
+module.exports = { driveUnit, tickWhy, finishedNest, MAX_START, REASK_MS };

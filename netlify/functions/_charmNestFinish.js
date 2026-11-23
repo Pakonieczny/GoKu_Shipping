@@ -147,7 +147,10 @@ async function endJob(X, kind, why) {
   if (job.jobId) await dropWork(X.bucket, workDir(X.sheetId, job.jobId));
   // (the nest it was for is not asked for again, unless the job only waited for it; the base it saw lets the driver's lane leave a sheet alone until it changes)
   const seen = X.seen || {}, wantNest = X.task.want && X.task.want.nestJobId ? String(X.task.want.nestJobId) : null;
-  const lastDone = { jobId: job.jobId || null, nestJobId: kind === "waiting" ? null : job.nestJobId || wantNest, outcome: kind, why: String(why || "").slice(0, 400), at: now,
+  /* NESTKEPT (Paul, 23 Nov 2026): a job for no nest (a take-off, a hand move, "Write files again") keeps the name of the last nest taken. It wrote null over it, so the driver's lane read that old nest as never written
+     and asked for it again after every such job (the Nov 22 Rose Gold sheet: owed, nest, owed, nest, 26 jobs), each ask marking the sheet owed. forNest: what this job was for (a nest, or the sheet's owed files) */
+  const mine = job.nestJobId || wantNest, was = X.task.lastDone && X.task.lastDone.nestJobId ? String(X.task.lastDone.nestJobId) : null;
+  const lastDone = { jobId: job.jobId || null, nestJobId: mine ? (kind === "waiting" ? null : mine) : was, forNest: !!mine, outcome: kind, why: String(why || "").slice(0, 400), at: now,
     base: job.base || (seen.layoutRev != null ? { layoutRev: seen.layoutRev, contentRev: seen.contentRev } : null), owedAt: num(job.owedAt) || num(seen.owedAt), wantAt: num(job.wantAt) || num(X.task.want && X.task.want.at),
     written: job.written || null, key: job.key || null, membership: job.membership || null, notes: (X.notes || []).slice(-12) };
   await X.saveTask({ job: null, lastDone, step: kind, outcome: kind, why: lastDone.why });
@@ -165,10 +168,27 @@ STEP.S0 = async X => {
   // (a Rose Gold, 10K or 14K sheet whose green-line cut is recorded keeps its layout as cut: putSheet refuses a layout over it; the person sets the cut aside first)
   // (LINEOFF, Paul 23 Nov 2026: a piece a person took off such a sheet after its cut was recorded, _charmNestPlacement.js lineOnly: its files are written again without that piece, every other piece exactly where the
   //  record has it; nothing is nested, and its line, its physical sheet and its leftover are not touched. Only when the pieces left are the files' own pieces in the files' own places)
-  const lineOff = !!rec.roseCutAt && require("./_charmNestPlacement").lineOnly(rec) && num(rec.takenOffAt) > num(rec.roseCutAt) && !want.nestJobId;
-  if (rec.roseCutAt && !lineOff) throw new Stop("skipped", `${rec.fileBase || "This sheet"}'s green-line cut is recorded: its layout is not written again until the cut is set aside`);
+  // (OWEDCUT, Paul 23 Nov 2026: a nest asked for such a sheet is never written, whatever it says: what it owes is its files without the piece taken off, so the ask no longer stands in their way)
+  const lineOff = !!rec.roseCutAt && require("./_charmNestPlacement").lineOnly(rec) && num(rec.takenOffAt) > num(rec.roseCutAt);
+  // what the sheet's own files show, against its layout now (NOREWRITE, FILESCURRENT below)
+  const filesNow = async () => {
+    const key = p => `${p.id}@${Math.round(+p.cxPt * 100)},${Math.round(+p.cyPt * 100)},${Math.round((+p.angle || 0) * 100)}`;
+    let report = null; try { const rp = rec.outputs && rec.outputs.report && rec.outputs.report.path; if (rp) { const [b] = await X.bucket.file(rp).download(); report = JSON.parse(b.toString("utf8")); } } catch (_) { report = null; }
+    const was = new Set(((report && report.placements) || []).filter(p => p && p.id != null).map(key)), now = new Set((rec.placements || []).filter(p => p && p.id != null).map(key));
+    return { report, was, now, changed: !report || was.size !== now.size || [...now].some(k => !was.has(k)) };
+  };
+  const filesCurrent = async () => {
+    try { await X.call({ op: "putSheet", sheet: { id: X.sheetId, filesOwed: null, outputs: rec.outputs } }, `files-current|${num(rec.layoutRev)}|${num(rec.contentRev)}|${num(rec.filesOwed)}`); X.notes.push("its files already show its layout: the owed mark is off and its picture is current"); }
+    catch (e) { if (e && e.fenced) throw e; }
+  };
+  if (rec.roseCutAt && !lineOff) {
+    // (OWEDCUT: a mark only the ask for its nest made, on files that show its layout exactly, comes off; a person's, or an artwork edit's, stays)
+    const ld = task.lastDone || {}, owed = num(rec.filesOwed), ownAsk = owed > 0 && ((want.nestJobId && num(want.at) === owed) || (ld.nestJobId && ld.forNest !== false && num(ld.wantAt) === owed));
+    if (ownAsk && rec.outputs && rec.outputs.preview && rec.outputs.preview.url && !(await filesNow()).changed) await filesCurrent();
+    throw new Stop("skipped", `${rec.fileBase || "This sheet"}'s green-line cut is recorded: its layout is not written again until the cut is set aside`);
+  }
   let nest = null;
-  if (want.nestJobId && !(task.lastDone && task.lastDone.nestJobId === String(want.nestJobId))) {
+  if (!rec.roseCutAt && want.nestJobId && !(task.lastDone && task.lastDone.nestJobId === String(want.nestJobId))) {
     const js = await db.collection(JOBS).doc(String(want.nestJobId)).get(), j = js.exists ? js.data() || {} : null;
     const st = j ? String(j.status || j.state || "") : "";
     if (j && st !== "done" && !["error", "stopped", "superseded"].includes(st)) throw new Stop("waiting", `the nest ${want.nestJobId} has not ended: its files wait for it`);
@@ -185,18 +205,12 @@ STEP.S0 = async X => {
   /* (Paul, 21 Nov 2026: "Users can also be allowed to remove not only add pieces"): with no new nest the sheet is written only when its pieces changed since its files were written
      (a person or a cancellation took a piece off, or a person moved one): the files then show exactly that change. A sheet whose pieces are as its files show is never written again. */
   if (!nest) {
-    const key = p => `${p.id}@${Math.round(+p.cxPt * 100)},${Math.round(+p.cyPt * 100)},${Math.round((+p.angle || 0) * 100)}`;
-    let report = null; try { const rp = rec.outputs && rec.outputs.report && rec.outputs.report.path; if (rp) { const [b] = await X.bucket.file(rp).download(); report = JSON.parse(b.toString("utf8")); } } catch (_) { report = null; }
-    const was = new Set(((report && report.placements) || []).filter(p => p && p.id != null).map(key)), now = new Set((rec.placements || []).filter(p => p && p.id != null).map(key));
-    const changed = !report || was.size !== now.size || [...now].some(k => !was.has(k));
+    const { report, was, now, changed } = await filesNow();
     if (lineOff && (!report || (changed && (now.size >= was.size || [...now].some(k => !was.has(k)))))) throw new Stop("skipped", `${rec.fileBase || "This sheet"}'s green-line cut is recorded: its files are written again only without a piece taken off it, every other piece where the files have it`);
     /* FILESCURRENT (Paul, 21 Nov 2026: "implement all of the updates"): the files already show the sheet's layout exactly, so nothing is owed and its picture stands for the layout
        as it is: the owed mark comes off and the picture's version is the layout's (putSheet stamps previewRev when the save carries the picture). Only those two labels change:
        nothing is written to the files, nothing is nested (the files lane's own check could not see it: this skip comes before the job records the sheet's version) */
-    if (report && !changed && rec.outputs && rec.outputs.preview && rec.outputs.preview.url && (num(rec.filesOwed) > 0 || num(rec.previewRev) < num(rec.layoutRev))) {
-      try { await X.call({ op: "putSheet", sheet: { id: X.sheetId, filesOwed: null, outputs: rec.outputs } }, `files-current|${num(rec.layoutRev)}|${num(rec.contentRev)}|${num(rec.filesOwed)}`); X.notes.push("its files already show its layout: the owed mark is off and its picture is current"); }
-      catch (e) { if (e && e.fenced) throw e; }
-    }
+    if (report && !changed && rec.outputs && rec.outputs.preview && rec.outputs.preview.url && (num(rec.filesOwed) > 0 || num(rec.previewRev) < num(rec.layoutRev))) await filesCurrent();
     if (!report || !changed) throw new Stop("skipped", "No new nest and no piece added, removed or moved since its files were written: the sheet and its files stay exactly as they are");
   }
   if (!nest && !(num(rec.filesOwed) > 0)) throw new Stop("skipped", "Nothing is owed: the sheet's files stand as they are");

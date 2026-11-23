@@ -136,6 +136,12 @@ module.exports = function make(d) {
     };
   }
   const bytesOf = o => Buffer.byteLength(JSON.stringify(o));
+  /* CARRYBACKS (Paul, 23 Nov 2026: lost approvals): a piece moved to another sheet takes its approved engraving with it. The moved entry kept the sheet it LEFT (readiness then ignored it: charm-nest-readiness.js), and the
+     file's own record (Charm_Pool_Back) went on naming that sheet. Both name the new sheet now; a withdrawn record is left as it is. */
+  const backKey = x => Faces.recKey(String(x.poolId), Faces.faceOf(x)), setOf = t => (t.setId && !t.draft ? t.setId : null);
+  const backsTo = (backs, t) => backs.map(x => Object.assign({}, x, { sheetId: t.id, setId: setOf(t) }));
+  const standingKeys = async (tx, backs) => (backs.length ? (await txGetAll(tx, backs.map(x => col("Charm_Pool_Back").doc(backKey(x))), ["invalidated"])).filter(s => s.exists && (s.data() || {}).invalidated !== true).map(s => s.id) : []);
+  const carryBacks = (tx, keys, t, now) => { for (const k of keys) tx.set(col("Charm_Pool_Back").doc(k), { sheetId: t.id, setId: setOf(t), carriedAt: now, updatedAt: FV.serverTimestamp() }, { merge: true }); };
 
   /* ── cmdMovePieces ── */
   async function cmdMovePieces(b) {
@@ -183,7 +189,7 @@ module.exports = function make(d) {
       const moving = w.going.map(c => { const x = Object.assign({}, c, { pinned: null, metal: t.metal }); delete x.arrivalPin; return x; });
       const tPlaced = (t.placements || []).length > 0, tName = t.fileBase || null, carry = PoolPieces.carrySources(t, moving, [f]);   // (SRCLIST: the pieces' design files go with them)
       const tNext = { charms: (t.charms || []).concat(moving), poolIds: [...new Set((t.poolIds || []).map(String).concat(moving.map(c => String(c.poolId))))], ...(carry || {}),
-        orders: [...new Set((Array.isArray(t.orders) ? t.orders : []).map(String).concat(orderList(moving)))], backPool: (t.backPool || []).filter(x => !(x && ids.has(String(x.poolId)))).concat(w.backsGoing),
+        orders: [...new Set((Array.isArray(t.orders) ? t.orders : []).map(String).concat(orderList(moving)))], backPool: (t.backPool || []).filter(x => !(x && ids.has(String(x.poolId)))).concat(backsTo(w.backsGoing, t)),
         nestOwed: { at: now, n: moving.length, by: "cloud", why: str(b.why, 80) || "moved" }, appendOnly: tPlaced, intakeAppend: tPlaced, status: "ready", dirty: true,
         layoutRev: num(t.layoutRev) + 1, contentRev: num(t.contentRev) + 1, feedWait: null, rejects: [], updatedAt: FV.serverTimestamp() };
       if (bytesOf(Object.assign({}, t, tNext, { updatedAt: 0 })) > SHEET_DOC_BYTES) return words(413, `${tn} cannot hold that many more pieces in one record: move fewer at a time`);
@@ -192,8 +198,10 @@ module.exports = function make(d) {
         orders: (Array.isArray(f.orders) ? f.orders : []).map(String).filter(o => keptOrders.has(o)), layoutRev: num(f.layoutRev) + 1, contentRev: num(f.contentRev) + 1, dirty: true, updatedAt: FV.serverTimestamp() };
       if (w.poses.length) fNext.filesOwed = now;
       if (!w.charms.length) Object.assign(fNext, { status: "idle", nestOwed: null });
+      const bKeys = await standingKeys(tx, w.backsGoing);
       tx.set(fRef, fNext, { merge: true });
       tx.set(tRef, tNext, { merge: true });
+      carryBacks(tx, bKeys, t, now);   // (CARRYBACKS)
       for (const id of ids) tx.set(col(POOL).doc(id), Object.assign({ sheetId: t.id, movedFrom: f.id, movedTo: t.id, movedBy: by, movedAt: now, updatedAt: FV.serverTimestamp() }, tName ? { sheetName: tName } : {}), { merge: true });
       return { ok: true, moved: moving.length, orders: orderList(moving), from: { sheetId: f.id, name: fn, layoutRev: fNext.layoutRev, contentRev: fNext.contentRev, left: w.charms.length }, to: { sheetId: t.id, name: tn, layoutRev: tNext.layoutRev, contentRev: tNext.contentRev } };
     });
@@ -272,6 +280,7 @@ module.exports = function make(d) {
       const line = r => (redraw.has(r.id) ? { roseRedraw: { at: now, by, line: true, cut: redraw.get(r.id).cut } } : {});
       const moving = [], left = [];
       let tBacks = [];
+      const bKeys = await standingKeys(tx, srcs.flatMap(r => (bySrc.get(r.id) ? without(r, bySrc.get(r.id)).backsGoing : [])));   // (CARRYBACKS: read before anything is written)
       for (const r of srcs) {
         const ids = bySrc.get(r.id); if (!ids) continue;
         const w = without(r, ids), kept = new Set(orderList(w.charms).concat(w.poolIds.map(ridOfPool)));
@@ -298,12 +307,13 @@ module.exports = function make(d) {
       }));
       const carry = PoolPieces.carrySources(t, moving.map(m => m.c), srcs);   // (SRCLIST: the pieces' design files go with them)
       const tNext = { charms: tCharms, placements: tPl, poolIds: [...new Set((t.poolIds || []).map(String).concat(going))], orders: [...new Set((Array.isArray(t.orders) ? t.orders : []).map(String).concat(orderList(moving.map(m => m.c))))], ...(carry || {}),
-        backPool: (t.backPool || []).filter(x => !(x && want.has(String(x.poolId)))).concat(tBacks), charmCount: tCharms.length, placedCount: tPl.length,
+        backPool: (t.backPool || []).filter(x => !(x && want.has(String(x.poolId)))).concat(backsTo(tBacks, t)), charmCount: tCharms.length, placedCount: tPl.length,
         layoutRev: num(t.layoutRev) + 1, contentRev: num(t.contentRev) + 1, filesOwed: now, updatedAt: FV.serverTimestamp(), ...label(t), ...line(t) };
       if (Array.isArray(t.rejects)) tNext.rejects = t.rejects.filter(x => !cids.has(x && typeof x === "object" ? x.id : x));
       if (Array.isArray(t.feedWait)) tNext.feedWait = t.feedWait.filter(x => !cids.has(x));
       if (bytesOf(Object.assign({}, t, tNext, { updatedAt: 0 })) > SHEET_DOC_BYTES) return words(413, `${tn} cannot hold that many more pieces in one record: move fewer at a time`);
       tx.set(tRef, tNext, { merge: true });
+      carryBacks(tx, bKeys, t, now);
       const tName = t.fileBase || null;
       for (const m of moving) tx.set(col(POOL).doc(String(m.c.poolId)), Object.assign({ sheetId: t.id, movedFrom: m.from.id, movedTo: t.id, movedBy: by, movedAt: now, movedHow: fill ? "fill" : free ? "hand-free" : "hand", updatedAt: FV.serverTimestamp() }, tName ? { sheetName: tName } : {}), { merge: true });
       return { ok: true, moved: moving.length, free, orders: orderList(moving.map(m => m.c)), from: left, to: { sheetId: t.id, name: tn, layoutRev: tNext.layoutRev, contentRev: tNext.contentRev } };
@@ -567,7 +577,7 @@ module.exports = function make(d) {
       if (done.length) return words(409, `${done.length === 1 ? "A piece" : done.length + " pieces"} of that nest were already committed: nothing was put back`);
       if (dry) return { ok: true, dry: true, restored: going.length, orders: orderList(going.map(m => m.c)), to: { sheetId: s.id, name: sn } };
       // the writes: each `from` without the pieces (emptied whole when none is left); the sheet with them where the nest left them; no nest owed anywhere
-      const left = [];
+      const left = [], goBacks = srcs.flatMap(r => (bySrc.get(r.id) ? without(r, new Set(going.filter(m => m.from.id === r.id).map(m => String(m.c.poolId)))).backsGoing : [])), bKeys = await standingKeys(tx, goBacks);   // (CARRYBACKS: the engravings go back with them)
       for (const r of srcs) {
         const ids = bySrc.get(r.id); if (!ids) continue;
         const w = without(r, new Set(going.filter(m => m.from.id === r.id).map(m => String(m.c.poolId)))), kept = new Set(orderList(w.charms).concat(w.poolIds.map(ridOfPool)));
@@ -592,12 +602,13 @@ module.exports = function make(d) {
       const sRejects = (Array.isArray(s.rejects) ? s.rejects : []).filter(x => !gIds.has(String(x && typeof x === "object" ? x.id : x)));
       const carry = PoolPieces.carrySources(s, going.map(m => m.c), srcs);   // (SRCLIST: the pieces' design files come back with them)
       const sNext = { charms: sCharms, placements: sPl, poolIds: [...new Set((s.poolIds || []).map(String).concat(gPool))], orders: [...new Set((Array.isArray(s.orders) ? s.orders : []).map(String).concat(gOrders))], ...(carry || {}),
-        charmCount: sCharms.filter(c => c && !c.excluded).length, placedCount: sPl.length, rejects: sRejects, rejectCount: sRejects.length, feedWait: null,
+        ...(goBacks.length ? { backPool: (s.backPool || []).filter(x => !(x && gPool.includes(String(x.poolId)))).concat(backsTo(goBacks, s)) } : {}), charmCount: sCharms.filter(c => c && !c.excluded).length, placedCount: sPl.length, rejects: sRejects, rejectCount: sRejects.length, feedWait: null,
         noRoomRun: Array.isArray(s.noRoomRun) ? s.noRoomRun.map(String).filter(o => !gOrders.includes(o)) : (s.noRoomRun == null ? null : s.noRoomRun), movedOn: null, nestOwed: null, dirty: false,
         layoutRev: num(s.layoutRev) + 1, contentRev: num(s.contentRev) + 1, filesOwed: now, roseRedraw: { at: now, by, line: true, cut: !!(s.roseReopened && s.roseReopened.cut) },
         restored: { jobId, n: going.length, from: left.map(l => l.sheetId), at: now, by }, updatedAt: FV.serverTimestamp() };
       if (bytesOf(Object.assign({}, s, sNext, { updatedAt: 0 })) > SHEET_DOC_BYTES) return words(413, `${sn} cannot hold these pieces in one record`);
       tx.set(sRef, sNext, { merge: true });
+      carryBacks(tx, bKeys, s, now);
       for (const m of going) tx.set(col(POOL).doc(String(m.c.poolId)), Object.assign({ sheetId: s.id, movedFrom: m.from.id, movedTo: s.id, movedBy: by, movedAt: now, movedHow: "restore", updatedAt: FV.serverTimestamp() },
         s.fileBase ? { sheetName: s.fileBase } : {}, inSet ? { setId: s.setId, state: "written" } : {}), { merge: true });
       return { ok: true, restored: going.length, pieces: gPool, orders: gOrders, inSet, from: left, to: { sheetId: s.id, name: sn, layoutRev: sNext.layoutRev, contentRev: sNext.contentRev } };

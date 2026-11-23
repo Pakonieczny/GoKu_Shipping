@@ -72,6 +72,43 @@ const neverWhy = row => (neverOf(row) || {}).why || NEVER_WHY;
 /** A job nobody has touched (the page's untouched): a face the setup no longer asks for goes only when it is this. */
 const untouched = j => ["classify", "reclassify", "words", "ready", "blocked", "fitting", "review"].includes(j.state) && !j.decision && !j.nudged && !j.fontLocked && !j.approvedAt && !j.approvalIntent;
 
+/* STANDING (Paul, 23 Nov 2026: orders 4234003099, 4236658718 and 4223534659 were approved, their engraving files saved on their sheets, and the line's record said "review", approvedAt 0, on every screen; RECBACK could not
+   put them back: it reads the job, and the job itself had been written back to review). One rule: a face whose saved engraving (Charm_Pool_Back) still stands (approved by a named person, not withdrawn, on the sheet its piece
+   is on now, of the piece's own SKU, made after the last change of its artwork) for the very same words, font and place IS approved. Every real change withdraws that file or no longer matches it, so nothing a person
+   changed comes back approved. A job of one face is put back only when EVERY piece of it has such a file. */
+const STAND_OPEN = new Set(["review", "ready", "fitting"]);
+const standNear = (a, b, e) => Number.isFinite(+a) && Number.isFinite(+b) && Math.abs(+a - +b) <= e;
+const standOpen = j => !!j && !j.archived && !j.approving && STAND_OPEN.has(j.state) && !(num(j.approvedAt) > 0) && !!j.place && Array.isArray(j.place.centre) && !(j.decision && (j.decision.none || j.decision.removed));
+/** The approval a job's saved files still hold: { at, by } or null. backs: the order's back records; rows: poolId -> its pool row (sheetId, sku, artEdit). */
+function standingOf(job, lineKey, poolIds, backs, rows) {
+  if (!standOpen(job)) return null;
+  const tr = String(lineKey).split("_")[1] || "", slot = job.slot || null, front = isFront(job), ids = new Set((poolIds || []).map(String)), p = job.place, words = v => String(v == null ? "" : v);
+  const mine = (backs || []).filter(b => b && ids.has(String(b.poolId)) && String(b.transactionId || String(b.poolId).split("_")[1] || "") === tr && (b.slot || null) === slot && isFront(b) === front);
+  if (!mine.length || (!slot && [...ids].some(id => !mine.some(b => String(b.poolId) === id)))) return null;
+  for (const b of mine) {
+    const r = rows.get(String(b.poolId)), art = r && r.artEdit && typeof r.artEdit === "object" ? num(r.artEdit[front ? "front" : "back"]) : 0, c = Array.isArray(b.centre) ? b.centre : [];
+    if (b.invalidated !== false || b.pending || !(num(b.approvedAt) > 0) || !words(b.approvedBy).trim() || !b.sheetId || !r || words(r.sheetId) !== words(b.sheetId) || art > num(b.approvedAt) || num(b.invalidatedAt) > num(b.approvedAt)) return null;
+    if (b.sku && r.sku && words(b.sku).trim().toUpperCase() !== words(r.sku).trim().toUpperCase()) return null;
+    if (words(b.text) !== words(job.text) || (b.fontKey && job.fontKey && b.fontKey !== job.fontKey)) return null;
+    if (!standNear(p.centre[0], c[0], 0.02) || !standNear(p.centre[1], c[1], 0.02) || !standNear(p.size, b.sizePt, 0.01) || !standNear(num(p.angle), num(b.angle), 0.5)) return null;
+  }
+  const last = mine.reduce((a, b) => (num(b.approvedAt) > num(a.approvedAt) ? b : a));
+  return { at: num(last.approvedAt), by: words(last.approvedBy) };
+}
+/** The record with every such job put back as saved (written, its own approval), or null when there is none. */
+function healStanding(rec, lineKey, poolIds, backs, rows) {
+  let n = 0; const jobs = ((rec && rec.jobs) || []).map(j => { const s = standingOf(j, lineKey, poolIds, backs, rows); if (!s) return j; n++; return Object.assign({}, j, { state: "written", approvedAt: s.at, approvedBy: s.by, reason: null }); });
+  return n ? Object.assign({}, rec, { jobs }) : null;
+}
+/** One line's record looked at (reads its order's back records and its pieces' rows, only when a job of it is open). */
+async function standing(ctx, key, rec, poolIds) {
+  if (!rec || !(poolIds || []).length || !(rec.jobs || []).some(standOpen)) return null;
+  const ids = [...new Set(poolIds.map(String))].slice(0, 60);
+  const [bs, ps] = await Promise.all([ctx.db.collection("Charm_Pool_Back").where("order", "==", String(key).split("_")[0]).limit(200).get(), ctx.db.getAll(...ids.map(id => ctx.db.collection("Charm_Pool").doc(id)))]);
+  const backs = []; bs.forEach(d => backs.push(d.data() || {}));
+  return backs.length ? healStanding(rec, key, ids, backs, new Map(ps.filter(s => s.exists).map(s => [s.id, s.data() || {}]))) : null;
+}
+
 /* SETBAR: the reader's one hook (the page installs the same one, charm-nest-bridge.js): a set's piece hangs on the chain CharmNestOrders.setPiecesOf names. */
 if (!Read.slotInfo) Read.slotInfo = (row, slot) => {
   try { const pcs = O.setPiecesOf(lineOf(row)), p = pcs && pcs.find(x => x.slotKey === String(slot).replace(/\.\d+$/, "")), len = p ? parseFloat(p.length) : 0; return len > 0 ? { length: len } : null; } catch (_) { return null; }
@@ -407,12 +444,14 @@ async function classifyUnit(ctx) {
     const r = await ctx.read({ op: "engraveSyncGet", since }), got = (r && r.lines) || [];
     for (const l of got) { newest = Math.max(newest, num(l.at)); if (lines[l.key]) keys.add(l.key); }
     if (ws.size >= 500 || got.length >= 500) more = true;
+    // (STANDING: the lines already written back to review before this rule are looked at once)
+    if (num(cur.stood) < 1) for (const [k, l] of Object.entries(lines)) if (l && READ_STATES.has(l.state) && l.engrave && !l.engrave.approved && STAND_OPEN.has(l.engrave.state)) keys.add(k);
   }
   const all = [...keys], pending = {};
   for (const k of all.slice(300)) pending[k] = true;
   if (all.length > 300) more = true;
   const todo = all.slice(0, 300);
-  if (!todo.length) return Object.assign({ cursor: { runId: ctx.runId, since: newest, pending: Object.keys(pending).slice(0, 1500), waiting: [...waiting].slice(0, 1500), reading: [], readingAt: 0 } }, more ? { more: true } : {});
+  if (!todo.length) return Object.assign({ cursor: { runId: ctx.runId, stood: 1, since: newest, pending: Object.keys(pending).slice(0, 1500), waiting: [...waiting].slice(0, 1500), reading: [], readingAt: 0 } }, more ? { more: true } : {});
   const [world, recs] = await Promise.all([worldLines(ctx, todo), Files.readLines(ctx, todo)]);
   /* ENGNOTE: the other lines of an order whose staff messages carry an "ENG:" note (which line the words are for is the order's question), read with the lines themselves */
   const engOrders = new Set(todo.filter(k => { const w = world.get(k); return w && Classify.engNoteOf(w.spec && w.spec.messages); }).map(k => String(k).split("_")[0]));
@@ -467,11 +506,24 @@ async function classifyUnit(ctx) {
       if (runLine.engrave && !OPEN.includes(runLine.engrave.state) && !front) continue;   // (decided already; a setup that now asks for a front is looked at again: wantsFront)
     }
     await P.load(row);
+    // (STANDING)
+    if (pooled && live.some(standOpen)) {
+      let up = null; try { up = await standing(ctx, key, l.rec, runLine.poolIds); } catch (e) { if (passThrough(e)) throw e; if (ctx.say) ctx.say(`[engrave standing] ${key}: ${String((e && e.message) || e).slice(0, 200)}`); }
+      if (up) {
+        try { up.engrave = Files.lineSummary({ piece: { sidesCtx: () => P.sctx } }, { row }, up) || up.engrave || null; } catch (e) { if (passThrough(e)) throw e; }
+        const wr = await Files.writeLine(ctx, l, up, `engrave-standing|${key}|${l.rev || 0}`);
+        if (wr.stale) { pending[key] = true; continue; }
+        recs.set(key, { key, rec: up, rev: wr.rev }); await Files.patchRunLine(ctx, key, up.engrave, `engrave-line|${key}|${wr.rev}`);
+        if (ctx.say) ctx.say(`${key}: its saved engraving still stands: shown approved again`);
+        continue;   // (its other faces are read at the next pass: the record was just written)
+      }
+    }
     let got;
     try { got = await readLine(ctx, P, key, row, l, { agentCall, free: !pooled, pooled, candidate, orderRows }); }
     catch (e) { if (passThrough(e)) throw e; if (ctx.say) ctx.say(`[engrave classify] ${key}: ${String((e && e.message) || e).slice(0, 300)}`); pending[key] = true; continue; }
     if (stash) throw stash;
     if (got.rec) {
+      { const up = pooled ? await standing(ctx, key, got.rec, runLine.poolIds).catch(e => { if (passThrough(e)) throw e; return null; }) : null; if (up) { got.rec = up; try { up.engrave = Files.lineSummary({ piece: { sidesCtx: () => P.sctx } }, { row }, up) || up.engrave || null; } catch (e) { if (passThrough(e)) throw e; } } }   // (STANDING: a reading never takes a saved approval off the run line)
       const wr = await Files.writeLine(ctx, l || { key }, got.rec, `engrave-classify|${key}|${(l && l.rev) || 0}`);
       if (wr.stale) { pending[key] = true; continue; }   // (a page wrote the line meanwhile: read again next pass)
       recs.set(key, { key, rec: got.rec, rev: wr.rev });   // (the order's other lines read this line as it is now: ENGNOTE)
@@ -490,8 +542,8 @@ async function classifyUnit(ctx) {
   // (a reading under way: its line is looked at again at every pass until it is answered; the driver's tick reads readingAt so a waiting reading starts a pass)
   for (const k of Object.keys(reading)) pending[k] = true;
   const readingAt = Object.keys(reading).length ? (num(cur.readingAt) || Date.now()) : 0;
-  return Object.assign({ cursor: { runId: ctx.runId, since: newest, pending: Object.keys(pending).slice(0, 1500), waiting: [...waiting].slice(0, 1500), reading: Object.keys(reading), readingAt } }, more ? { more: true } : {});
+  return Object.assign({ cursor: { runId: ctx.runId, stood: 1, since: newest, pending: Object.keys(pending).slice(0, 1500), waiting: [...waiting].slice(0, 1500), reading: Object.keys(reading), readingAt } }, more ? { more: true } : {});
 }
 
 const passItems = [{ name: NAME, lane: "engrave", order: 80, unit: classifyUnit }];
-module.exports = { passItems, steps: {}, classifyUnit, readLine, NAME, JOB_FIELDS };
+module.exports = { passItems, steps: {}, classifyUnit, readLine, NAME, JOB_FIELDS, standingOf, healStanding, standing };

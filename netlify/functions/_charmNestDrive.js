@@ -327,8 +327,13 @@ async function pass(env) {
     const orderOf = it => (it && Number.isFinite(+it.order) ? +it.order : 50);
     const items = (env.passItems || []).slice().sort((a, b) => orderOf(a) - orderOf(b));
     /** One pass item, bounded like a unit, with its own saved cursor (state.items). → its answer ({} for none), or false when the pass's time is spent. */
+    let apBusy = false;   // (APPROVENOW: the approvals' files are being written)
     const runItem = async item => {
       if (Date.now() > budgetEnd - PASS_TAIL_MS) { out.again = true; return false; }
+      if (item === filesItem) { if (apBusy) return {}; apBusy = true; try { return await runItem0(item); } finally { apBusy = false; } }   // (APPROVENOW: never two at once)
+      return runItem0(item);
+    };
+    const runItem0 = async item => {
       live();
       const t0 = Date.now(), itemCall = (b, u) => { if (Date.now() - t0 > UNIT_HARD_MS) throw Object.assign(new Error("the unit ran past its time: it goes on in the next pass"), { overBudget: true }); return call(b, u); };
       let r = null;
@@ -346,6 +351,23 @@ async function pass(env) {
        one computer's presses in the order asked, each idempotent by its own keys), and one whose lane the cloud does not hold is answered at once in words (answerCommands), as at the
        pass's start. One read when nothing waits; a fence or a hand-back ends the pass as a unit's does. (driveSoon still starts a pass at once when none runs.) */
     const cmdItem = items.find(it => it && it.name === "commands" && typeof it.unit === "function");
+    /* APPROVENOW (Paul, 23 Nov 2026: Approve in the sheet window said "Approving…" for 22 s, order 4241367962): a person's approval waited for the engraving item's turn, behind the take-offs, the placing, the
+       reading and the fit of every pass. It is written first now, as a request is: at the pass's start, before each item and unit, and beside a long one (the lane below), through the same item (its lease, its fence, its
+       tasks, each idempotent). Only an approval put lately that does not wait on its sheet (waitingSince: the pass's own turn looks at those); one tried is looked at again 12 s on. One small read when nothing waits. */
+    const filesItem = items.find(it => it && it.name === "engrave-files" && typeof it.unit === "function" && laneOn(cloudSteps, String(it.lane || it.name))) || null;
+    const apTried = new Map();
+    const approveNow = async where => {
+      if (!filesItem || apBusy || ["abandoned", "complete"].includes(run.status) || Date.now() > budgetEnd - PASS_TAIL_MS) return 0;
+      let ids = [];
+      try { const q = await db.collection("Charm_Engrave_Files").where("state", "in", ["waiting", "working"]).limit(50).get(), now = Date.now(); ids = q.docs.map(d => Object.assign({ id: d.id }, d.data() || {})).filter(t => t.runId === runId && !t.waitingSince && now - num(t.createdAt) < 30 * 60000 && now - num(apTried.get(t.id)) > 12000).map(t => t.id); } catch (_) { return 0; }
+      if (!ids.length) return 0;
+      live();
+      for (const id of ids) apTried.set(id, Date.now());
+      say(`[drive] APPROVENOW: ${ids.length} approval(s) written now (${where})`);
+      const r = await runItem(filesItem); if (r === false) return 0;
+      out.approveNow = (out.approveNow || []).concat([where]).slice(-20);
+      return ids.length;
+    };
     const cmdTried = new Map();
     const cmdNow = async where => {
       if (["abandoned", "complete"].includes(run.status) || Date.now() > budgetEnd - PASS_TAIL_MS) return 0;
@@ -367,7 +389,7 @@ async function pass(env) {
        Now while any unit or pass item of the run works, a lane of its own beside it looks at the requests every few seconds (cmdNow, as between units: the same commands item, its
        claim, this pass's lease and fence, oldest first, each idempotent by its own keys) and does a person's request at once; the run's own work goes on beside it and comes second.
        One request at a time in the lane; a fence or a hand-back met in the lane ends the pass once the unit in hand returns, as a unit's own does. */
-    const LANE_MS = 3000;
+    const LANE_MS = 2000;
     const beside = async (fn, where) => {
       if (!cmdItem) return fn();
       let stop = false, wake = null, laneErr = null;
@@ -375,7 +397,7 @@ async function pass(env) {
       const loop = (async () => {
         while (!stop) {
           await nap(LANE_MS); if (stop) break;
-          try { await cmdNow("beside " + where); } catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) { laneErr = e; break; } }
+          try { await approveNow("beside " + where); await cmdNow("beside " + where); } catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) { laneErr = e; break; } }
         }
       })();
       try { return await fn(); }
@@ -385,6 +407,7 @@ async function pass(env) {
       if (!item || typeof item.unit !== "function" || !laneOn(cloudSteps, String(item.lane || item.name)) || ["abandoned", "complete"].includes(run.status)) continue;
       if (item.name === "release" && out.releases !== undefined) continue;   // (RELEASEHOLD: this pass ran the release unit already, releasesUnit above)
       if (item.name === "files" && filesLooked) continue;   // (build step 7b: the files lane ran above in this pass already)
+      await approveNow("before " + item.name);
       if ((await (item === cmdItem ? runItem(item) : beside(() => runItem(item), item.name))) === false) break;   // (CMDLANE)
       if (item !== cmdItem && (!cmdItem || orderOf(item) > orderOf(cmdItem))) await cmdNow("after " + item.name);   // (NOWCMD: after the commands item's own turn, each item that follows it)
     }
@@ -455,6 +478,7 @@ async function pass(env) {
       if (yieldAsked) { out.yield = true; out.why = `${yieldAsked.by || "a computer"} asked for the run back: the cloud ended its pass between two steps of work`; break; }
       // a press since the last unit is honoured now (a stop within one unit)
       { const c = await freshControl(db, runId); if (c && num(c.seq) > num(c.ack)) { run.control = c; const r2 = await control(run, { call, stop, saveRun, cursorJobs: cursor.jobIds || [] }); if (r2.stopped || run.status !== "running") break; } }
+      await approveNow("before " + run.step + " unit " + (cursor.step === run.step ? cursor.i : 0));
       await cmdNow("before " + run.step + " unit " + (cursor.step === run.step ? cursor.i : 0));   // (NOWCMD: a person's request put since the last unit is done now, between two units)
       if (run.status !== "running") break;
       const step = run.step;

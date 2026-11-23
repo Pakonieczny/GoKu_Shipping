@@ -3078,14 +3078,19 @@ async function op_backPut(b) {
 }
 /** Invalidate the backs of pieces. `face` absent = the back only (what it always did); "front" = the front record; "all" = both. */
 async function op_backInvalidate(b) {
-  const faces = b.face === "all" ? ["back", "front"] : b.face === "front" ? ["front"] : ["back"];
-  for (const id of (b.poolIds || []).filter(isPoolId).slice(0,400)) await db.runTransaction(async tx => {
+  const faces = b.face === "all" ? ["back", "front"] : b.face === "front" ? ["front"] : ["back"], why = str(b.why, 160).trim(), by = str(b.by, 80).trim(), taken = [];
+  for (const id of (b.poolIds || []).filter(isPoolId).slice(0,400)) { let gone = []; await db.runTransaction(async tx => {
+    gone = [];
     const keys = faces.map(f => Faces.recKey(id, f)), refs = keys.map(k => col(BACK).doc(k)), snaps = await Promise.all(refs.map(r => tx.get(r)));
     const olds = snaps.map(sn => (sn.exists ? sn.data() : {})), sheetIds = [...new Set(olds.map(o => o.sheetId).filter(Boolean))];
     const sheets = new Map(); for (const sid of sheetIds) { const sr = col(SHEETS).doc(sid); sheets.set(sid, { sr, ss: await tx.get(sr) }); }
-    faces.forEach((f, i) => tx.set(refs[i], Object.assign({poolId:id, invalidated:true, invalidatedAt:Date.now(), updatedAt:FV.serverTimestamp()}, f === "front" ? { face: "front" } : {}), {merge:true}));
+    faces.forEach((f, i) => tx.set(refs[i], Object.assign({poolId:id, invalidated:true, invalidatedAt:Date.now(), updatedAt:FV.serverTimestamp()}, why ? { invalidatedWhy: why } : {}, by ? { invalidatedBy: by } : {}, f === "front" ? { face: "front" } : {}), {merge:true}));
+    faces.forEach((f, i) => { const o = olds[i]; if (num(o.approvedAt) > 0 && o.approvedBy && o.invalidated !== true) gone.push({ key: keys[i], face: f, o }); });
     for (const { sr, ss } of sheets.values()) if (ss?.exists) tx.set(sr, {backPool:(ss.data().backPool || []).filter(x => !(x.poolId === id && faces.includes(Faces.faceOf(x)))), updatedAt:FV.serverTimestamp()}, {merge:true});
-  });
+  }); taken.push(...gone.map(g => Object.assign(g, { id }))); }
+  /* WITHDRAWNSAID (Paul, 23 Nov 2026: three approvals were lost and nothing said when, why or by whom): an approval taken back is one line on its order's timeline */
+  if (taken.length) await stamp(() => taken.map(g => ({ orderId: String(g.o.order || orderOfKey(g.id)), type: "note", at: Date.now(), by: by || "System", station: "sorter", lineKey: lineOfCopy(g.id), id: `${g.key}-withdrawn-${num(g.o.approvedAt)}`,
+    text: `${g.face === "front" ? "Front engraving" : "Engraving"} approval (${str(g.o.approvedBy, 60)}) taken back${why ? ": " + why : ""}`.slice(0, 200), data: { poolId: g.id, face: g.face, approvedAt: num(g.o.approvedAt), approvedBy: str(g.o.approvedBy, 80), why: why || null } })), "engraving withdrawn");
   return {ok:true};
 }
 async function op_backList(b) {

@@ -446,11 +446,11 @@ async function revalidate(ctx) {
   }
   // the orders Etsy updated after they were read (the world build's change marks): changePending, and the engraving asked again; pieces move only after a person accepts
   const cs = await db.collection("Charm_World").doc("changed").get(), marks = cs.exists ? (cs.data() || {}).marks || {} : {};
-  let engraveAgain = false;
+  let engraveAgain = false; const takenBack = [];
   for (const [k, l] of live) {
     const m = marks[k]; if (!m || !(num(m.at) > num(l.changedAt))) continue;
     const p = Object.assign(patch[k] || {}, { changePending: true, repoolChanged: !!m.shape, changedAt: num(m.at), changedWhy: str(m.why, 300) });
-    if (l.engrave && typeof l.engrave === "object" && (m.shape || m.words)) { p.engrave = Object.assign({}, l.engrave, { invalidatedBy: "order changed", approved: false, state: "reclassify" }); if (l.engrave.needed) engraveAgain = true; }
+    if (l.engrave && typeof l.engrave === "object" && (m.shape || m.words)) { if (l.engrave.approved && l.engrave.needed) takenBack.push([k, m, l.engrave]); p.engrave = Object.assign({}, l.engrave, { invalidatedBy: "order changed", approved: false, state: "reclassify" }); if (l.engrave.needed) engraveAgain = true; }
     patch[k] = p; out.changed.push(k);
   }
   const keys = Object.keys(patch);
@@ -460,6 +460,9 @@ async function revalidate(ctx) {
     if (!r || r.status >= 400) throw new Error("the run's lines were not written: " + ((r && r.error) || "no answer"));
     for (const k of keys.slice(i, i + 300)) lines[k] = Object.assign({}, lines[k], patch[k]);
   }
+  // (WITHDRAWNSAID, Paul 23 Nov 2026: an approval taken back by an order's change was said nowhere: one line on the order's timeline, best-effort)
+  if (takenBack.length) { try { await ctx.call({ op: "timelineAdd", events: takenBack.slice(0, 100).map(([k, m, e]) => ({ orderId: ridOf(k), type: "note", at: now, by: "System", station: "sorter", lineKey: k, id: `${k}-withdrawn-${Math.round(num(m.at))}`,
+    text: `Engraving approval${e.approvedBy ? ` (${str(e.approvedBy, 60)})` : ""} taken back: ${str(m.why, 120) || "the order changed"}`.slice(0, 200), data: { approvedAt: num(e.approvedAt), approvedBy: str(e.approvedBy, 80) } })) }, `revalidate|withdrawn|${takenBack.map(x => x[0]).join(",").slice(0, 300)}|${Math.max(...takenBack.map(x => Math.round(num(x[1].at))))}`); } catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; } }
   // OURSHIPONLY: the orders Etsy closed that a shipping station marked shipped leave now, as a shipped order always has
   const closed = [...new Set(Object.entries(lines).filter(([, l]) => l && l.etsyClosed && liveLine(l)).map(([k]) => ridOf(k)))].slice(0, 300);
   for (let i = 0; i < closed.length; i += 100) { const g = await read({ op: "shippedByUs", orders: closed.slice(i, i + 100) }); for (const [rid, ev] of Object.entries((g && g.shipped) || {})) { jobs.push([rid, `shipped-${Math.round(num(ev.at))}`, { kind: "shipped", at: now, shippedAt: num(ev.at) || now, by: str(ev.by, 80) || "Shipping" }]); out.shipped.push(rid); } }
