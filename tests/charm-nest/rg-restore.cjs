@@ -117,6 +117,15 @@ async function refused(name, edit, re) {
   ok('B5 · the BULLSEYE waits on RG Draft 1 (listed, its record names Draft 1) and Draft 1\'s nest is asked (append: its 13 placed pieces held)',
     t.poolIds.includes(BULL) && active(t).some(c => c.poolId === BULL) && pool(BULL).sheetId === T && pool(BULL).movedFrom === D && (t.placements || []).length === 13 && FX.sheets[T].placements.every(p => JSON.stringify((t.placements || []).find(q => q.id === p.id)) === JSON.stringify(p))
       && F.list('Charm_Nest_Jobs').some(j => j.sheetId === T && ['queued', 'running', 'starting'].includes(j.status)), { tPool: t.poolIds.includes(BULL), jobs: F.list('Charm_Nest_Jobs').map(j => [j._id, j.sheetId, j.status]) });
+  { // SRCLIST (Paul, 22 Nov 2026: 8 of RG Sheet 1's 29 pieces drawn as boxes in the sheet window): the pieces' design files come back with them (cmdRestoreNest) and go with the BULLSEYE (cmdMovePieces)
+    const lite = l => l.slice(0, 500).filter(x => x && typeof x === 'object').map(x => ({ ...(x.name == null ? {} : { name: String(x.name).slice(0, 300) }), hash: x.hash ? String(x.hash).slice(0, 80) : null }));
+    const lists = (r, c) => (r.sources || []).some(x => x && x.id === c.sourceId), bull = active(t).find(c => c.poolId === BULL), had = FX.sheets[S].sources;
+    const made = (s.sources || []).slice(had.length);
+    ok('B10 · Sheet 1 lists the design of every one of its 29 pieces: its 17 as they were, then the 6 only Draft 2\'s pieces named, each from the piece\'s own entry (its file); its short list as putSheet makes it',
+      active(s).every(c => lists(s, c)) && JSON.stringify((s.sources || []).slice(0, had.length)) === JSON.stringify(had) && made.length === 6 && made.every(x => D_PLACED.some(c => c.sourceId === x.id && c.aiPath === x.path && c.aiUrl === x.url))
+        && JSON.stringify(s.sourcesLite) === JSON.stringify(lite(s.sources)), { n: (s.sources || []).length, unlisted: active(s).filter(c => !lists(s, c)).map(c => c.sourceId) });
+    ok('B10 · RG Draft 1 lists the BULLSEYE\'s design (it went with it), with its short list', !!bull && lists(t, bull) && JSON.stringify(t.sourcesLite) === JSON.stringify(lite(t.sources)), { sources: (t.sources || []).map(x => x.id) });
+  }
   ok('B6 · the 11 pieces\' records name Sheet 1 again as Set 2\'s other pieces (setId, "written", its file name), moved back by the owner\'s request', D_PLACED.every(c => { const x = pool(c.poolId); return x.sheetId === S && x.setId === SET && x.state === 'written' && x.sheetName === s.fileBase && x.movedHow === 'restore' && x.movedFrom === D; }),
     D_PLACED.map(c => { const x = pool(c.poolId); return [c.poolId, x.sheetId, x.setId, x.state, x.movedHow]; }));
   const run = (await P({ op: 'runGet', runId: R })).run, keys = Object.keys(FX.run.lines).filter(k => D_PLACED.some(c => c.poolId.startsWith(k + '_')));   // (the run's lines as runGet reads them: a patch keeps them beside the record)
