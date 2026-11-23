@@ -190,6 +190,7 @@
     "_charmNestArchiveRecord.js",
     "_charmNestAssembly.js",
     "_charmNestAsset.js",
+    "_charmNestAutoFill.js",
     "_charmNestAuth.js",
     "_charmNestCanvas.js",
     "_charmNestCheckpoint.js",
