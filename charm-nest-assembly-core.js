@@ -409,9 +409,19 @@
         formedTotal += formed;
         if (!formed || ![...joinNow].some(p => p.setId && !p.draft) || round > pages.length) break;
       }
-      for (const p of pages) delete p.handSet;
+      for (const p of pages) { delete p.handSet; delete p.rgPress; }
       run.heldSheets = pages.filter(p => p.draft).length;
       return { sets: [...changed], formed: formedTotal, heldSheets: run.heldSheets };
+    }
+    /** RGTWO (RGONE, Paul 9 Nov 2026: "there should never be two partial rose gold sheets in one set"; 23 Nov, Set-1: "block a second partial rose gold sheet from joining a set": YES): why this Rose Gold sheet does not join the
+     *  set by itself: it is not full and the set has another Rose Gold sheet that is not full, or a fuller one that joins it now. "" when it may. A person's own press (Include, Cut Sheet, a drop on the set, the owner's word) wins.
+     *  Its pieces are not moved here: a person puts them on the set's one sheet, or presses. Every way in comes through here: the cardinal pull of a cut sheet, the automatic cut's include, a match made earlier. */
+    function rgSecond(sh, set, pages, choices, release, admits) {
+      if (sh.metal !== "rose" || sheetFull(sh)) return "";
+      if (sh.rgPress || sh.handSet === set.setId || (ownerMoved(sh) && String(sh.ownerSet.setId || "") === String(set.setId)) || (sh.solidPick === true && !sh.autoMatched)) return "";
+      const part = q => q !== sh && q.metal === "rose" && !q.recalled && (q.placements || []).length > 0 && !sheetFull(q);
+      const here = membersOfSet(set).find(part) || pages.find(q => part(q) && !inSetNow(q) && (q.placements || []).length > (sh.placements || []).length && release(q, set.seq).include && admits(q, set) && ownerWants(q, set) && !joinRefusedOf(q, set));
+      return here ? `Waits: ${set.name || "the set"} has ${sheetNameOf(here)} (${(here.placements || []).length} pieces, not full), and a set never takes two partial Rose Gold sheets by itself. Put its pieces on ${sheetNameOf(here)}, or press Include to add it anyway` : "";
     }
     /** One open set kept as the rules say (Gate.tendSet): a sheet a PERSON marked to leave it goes back out (NOSETPULL: the only way out), the set's lists follow its members,
      *  a sheet the set takes now joins with its number and file name. */
@@ -450,6 +460,7 @@
         if (sh.setId && !sh.draft) continue;
         if (!admits(sh, set)) continue;
         if (!ownerWants(sh, set)) continue;   // (OWNEROVERRIDE)
+        { const two = rgSecond(sh, set, pages, choices, release, admits); if (two) { sh.setWait = two; continue; } }   // (RGTWO)
         { const rf = joinRefusedOf(sh, set); if (rf) { sh.setWait = rf; continue; } }
         if (SRt && typeof SRt.isPartial === "function" && SRt.isPartial(sh) && !(sh.handSet === set.setId && !sh.cardinalHome)) continue;   // (NOPARTIALSET)
         const previous = { draft: sh.draft, setId: sh.setId, setDay: sh.setDay, seq: sh.seq, group: sh.group, sheetIndex: sh.sheetIndex, fileBase: sh.fileBase, joinedAt: sh.joinedAt, joinedBy: sh.joinedBy }, nosWas = set.sheetNos;
@@ -531,9 +542,11 @@
     function rgOneGroups(run, W, GH) {
       const uncut = new Map(), cutIn = new Map(), add = (m, k, p) => { if (!m.has(k)) m.set(k, []); m.get(k).push(p); };
       for (const p of allSheets().filter(p => p.runId === run.runId && p.metal === "rose" && !(+p.laserDoneAt > 0) && !p.recalled)) {
-        if (p.roseCutAt) { if (inSetNow(p)) add(cutIn, String(p.setId), p); continue; }
+        const h = W && GH.get(W.idOf.get(p));
+        // (RGTWO: a cut sheet in no set yet counts in the set it will join, its home: at 10:13 on 23 Nov the second sheet of Set-1 was cut while the first, cut at 2:17, waited to join that very set)
+        if (p.roseCutAt) { const sid = inSetNow(p) ? String(p.setId) : h && h.home && !(p.leftSet && String(p.leftSet) === String(h.home)) && !(ownerMoved(p) && String(p.ownerSet.setId || "") !== String(h.home)) ? String(h.home) : null; if (sid) add(cutIn, sid, p); continue; }
         if (!rgPlaced(p)) continue;
-        const h = W && GH.get(W.idOf.get(p)); if (h && h.home) add(uncut, String(h.home), p);
+        if (h && h.home) add(uncut, String(h.home), p);
       }
       for (const l of uncut.values()) l.sort((a, b) => rgPlaced(b) - rgPlaced(a) || (+a.page || 0) - (+b.page || 0));
       return { uncut, cutIn };
@@ -553,7 +566,23 @@
       const orders = [...new Set((p.charms || []).filter(c => !c.excluded && ids.has(c.id)).map(orderOfCharm).filter(Boolean))];
       return orders.filter(o => allSheets().some(q => q !== p && !q.recalled && (q.charms || []).some(c => !c.excluded && orderOfCharm(c) === o) && !!q.setId && !q.draft && String(q.setId) !== home));
     }
+    /** RGSETS (Paul, 23 Nov 2026: one Rose Gold draft may be tied to GF / SS sheets that are in no set yet): the orders on this UNCUT sheet, about to be cut into `home`, whose other pieces are on a GF / SS sheet that is in no
+        set and does not go with `home` (a formed set takes no more sheets by itself; one that shares an order with a GF / SS sheet of it still joins it): they go past the line too (RGCLEAR), with the set their own sheet forms. */
+    function rgLoose(p, home) {
+      const st = setDocOf(home, p.runId), W = st && closedSet(st) ? cardinalView(V.run) : null; if (!W) return [];
+      const groups = formationOf(W, "set").groups, joins = new Map(), goesWith = q => { if (joins.has(q)) return joins.get(q);
+        const id = W.idOf.get(q), g = groups.find(x => x.ids.includes(id) && !(x.anchors || []).includes(id) && !(x.ends || []).includes(id)) || groups.find(x => x.ids.includes(id)), r = !!g && g.ids.some(i => { const m = W.page.get(i); return m && m !== q && !goldFamily(m.metal) && inSetNow(m) && String(m.setId) === String(home); });
+        joins.set(q, r); return r; };
+      const ids = new Set((p.placements || []).map(q => q.id)), orders = [...new Set((p.charms || []).filter(c => !c.excluded && ids.has(c.id)).map(orderOfCharm).filter(Boolean))];
+      return orders.filter(o => allSheets().some(q => q !== p && !q.recalled && !goldFamily(q.metal) && q.runId === p.runId && !inSetNow(q) && (q.charms || []).some(c => !c.excluded && orderOfCharm(c) === o) && !goesWith(q)));
+    }
+    /** RGLOOSE's held orders wait for the cut as RGCLEAR's do: their sheet is still uncut and goes with a formed set, and their own GF / SS sheet is still in no set. */
+    function rgStillLoose(o, p) {
+      const W = cardinalView(V.run), h = W && greenHomesOf(W, V.run).get(W.idOf.get(p)), home = (h && h.home) || (inSetNow(p) ? p.setId : null), st = home && setDocOf(home, p.runId);
+      return !!st && closedSet(st) && allSheets().some(q => q !== p && !q.recalled && !goldFamily(q.metal) && q.runId === p.runId && !inSetNow(q) && (q.charms || []).some(c => !c.excluded && orderOfCharm(c) === o));
+    }
     function rgStillForeign(o, p) {
+      if (!p.roseCutAt && rgStillLoose(o, p)) return true;
       const setsOf = rid => new Set(allSheets().filter(q => q !== p && !q.recalled && !!q.setId && !q.draft && (q.charms || []).some(c => !c.excluded && orderOfCharm(c) === rid)).map(q => String(q.setId)));
       const all = new Set(setsOf(o));
       for (const r of new Set((p.charms || []).filter(c => !c.excluded).map(orderOfCharm).filter(Boolean))) for (const sid of setsOf(r)) all.add(sid);
@@ -622,7 +651,7 @@
           const s = setsNow.find(x => x.setId === h.home); if (!s || approvedSet(s) || (!free && (!SR || !SR.closed(membersOfSet(s))))) continue;
           if (canClear) {   // A10 RGCLEAR (a clear of this sheet still running holds its cut too)
             if (clearBusy(p)) continue;
-            const foreign = rgForeign(p, String(s.setId));
+            const foreign = [...new Set(rgForeign(p, String(s.setId)).concat(rgLoose(p, String(s.setId))))];   // (RGSETS: an order whose own GF / SS sheet forms a later set goes past the line too)
             if (foreign.length) { const c = { sheet: p, setId: String(s.setId), setName: s.name || "its set", foreign, cut: false }; out.clear.push(c); out.steps.push(Object.assign({ kind: "clear" }, c)); continue; }
           }
           const key = cutKey(p, s), last = got(st.tried, p.sheetId);
@@ -698,7 +727,7 @@
     return { assemble, tendSet, cardinalApply, cardinalView, greenHomesOf, formationOf, cardinalSplit, policy, basePolicy, cannotJoin, goldGap, inSetNow, picked, staysInSet, staysCut, staysJoined, staysWaiting,
       openSetsOf, membersOfSet, formedOnce, closedSet, collectingOf, newestOpenOf, waitingOf, selfCheck, invariantInput, autoCutPlan, homeSetOf, rgForeign, rgStillForeign, rgOneGroups, waitsOf,
       rgOneBusy, rgOneOrders, rgOneKey, rgOneDue, rgOnePieces, rgOneGuard, rgOneNoRoom, cutKey, lineOf, trimPlan, unpairPlan, fixedSheetBusy,
-      sheetNameOf, solidMark, modern, ofRun, allSheets, approvedSet, busySheet, sheetFull, ownerMoved, leftSetOf, labelOf };
+      sheetNameOf, solidMark, modern, ofRun, allSheets, approvedSet, busySheet, sheetFull, ownerMoved, leftSetOf, labelOf, rgLoose, rgSecond };
   }
 
   /* ══ 3 · helpers the cloud's units share ══ */
