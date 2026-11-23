@@ -43,6 +43,7 @@ const crypto = require("crypto");
 const SetEdit = require("../../charm-nest-set-edit.js");
 const SheetName = require("../../charm-nest-sheet-name.js");
 const Placement = require("./_charmNestPlacement");
+const PoolPieces = require("../../charm-nest-pool-pieces.js");   // (SRCLIST: carrySources, the design files of pieces that move go with them)
 
 const CMDS = "Charm_Nest_Run_Cmds", WORK = "Charm_Nest_Cmd_Work", SHEETS = "Charm_Nest_Sheets", SETS = "Charm_Nest_Sets", POOL = "Charm_Pool", RUNS = "Charm_Nest_Runs";
 const CLAIM_STALE_MS = 10 * 60000, MANUAL_STALE_MS = 90000, FILES_BUSY_MS = 15 * 60000, KEEP_RELEASE_MS = 600000, SHEET_DOC_BYTES = 900000;
@@ -179,8 +180,8 @@ module.exports = function make(d) {
       if (off.length) return words(409, `${off.length} of these pieces were taken off on purpose (on hold or cancelled): nothing was moved`, { taken: off.slice(0, 20) });
       if (done.length) return words(409, `${done.length} of these pieces were already committed: nothing was moved`);
       const moving = w.going.map(c => { const x = Object.assign({}, c, { pinned: null, metal: t.metal }); delete x.arrivalPin; return x; });
-      const tPlaced = (t.placements || []).length > 0, tName = t.fileBase || null;
-      const tNext = { charms: (t.charms || []).concat(moving), poolIds: [...new Set((t.poolIds || []).map(String).concat(moving.map(c => String(c.poolId))))],
+      const tPlaced = (t.placements || []).length > 0, tName = t.fileBase || null, carry = PoolPieces.carrySources(t, moving, [f]);   // (SRCLIST: the pieces' design files go with them)
+      const tNext = { charms: (t.charms || []).concat(moving), poolIds: [...new Set((t.poolIds || []).map(String).concat(moving.map(c => String(c.poolId))))], ...(carry || {}),
         orders: [...new Set((Array.isArray(t.orders) ? t.orders : []).map(String).concat(orderList(moving)))], backPool: (t.backPool || []).filter(x => !(x && ids.has(String(x.poolId)))).concat(w.backsGoing),
         nestOwed: { at: now, n: moving.length, by: "cloud", why: str(b.why, 80) || "moved" }, appendOnly: tPlaced, intakeAppend: tPlaced, status: "ready", dirty: true,
         layoutRev: num(t.layoutRev) + 1, contentRev: num(t.contentRev) + 1, feedWait: null, rejects: [], updatedAt: FV.serverTimestamp() };
@@ -294,7 +295,8 @@ module.exports = function make(d) {
         const wh = num(p.wPt) > 0 && num(p.hPt) > 0 ? { wPt: +p.wPt, hPt: +p.hPt } : turned && num(was.wPt) > 0 ? { wPt: +was.hPt, hPt: +was.wPt } : {};
         return Object.assign({}, was, { id: m.c.id, cxPt: +p.cxPt, cyPt: +p.cyPt, angle: angleOf(p.angle) }, wh);
       }));
-      const tNext = { charms: tCharms, placements: tPl, poolIds: [...new Set((t.poolIds || []).map(String).concat(going))], orders: [...new Set((Array.isArray(t.orders) ? t.orders : []).map(String).concat(orderList(moving.map(m => m.c))))],
+      const carry = PoolPieces.carrySources(t, moving.map(m => m.c), srcs);   // (SRCLIST: the pieces' design files go with them)
+      const tNext = { charms: tCharms, placements: tPl, poolIds: [...new Set((t.poolIds || []).map(String).concat(going))], orders: [...new Set((Array.isArray(t.orders) ? t.orders : []).map(String).concat(orderList(moving.map(m => m.c))))], ...(carry || {}),
         backPool: (t.backPool || []).filter(x => !(x && want.has(String(x.poolId)))).concat(tBacks), charmCount: tCharms.length, placedCount: tPl.length,
         layoutRev: num(t.layoutRev) + 1, contentRev: num(t.contentRev) + 1, filesOwed: now, updatedAt: FV.serverTimestamp(), ...label(t), ...line(t) };
       if (Array.isArray(t.rejects)) tNext.rejects = t.rejects.filter(x => !cids.has(x && typeof x === "object" ? x.id : x));
@@ -565,7 +567,8 @@ module.exports = function make(d) {
       }
       const gIds = new Set(going.map(m => String(m.c.id))), gPool = going.map(m => String(m.c.poolId)), gOrders = orderList(going.map(m => m.c)), inSet = !!(s.setId && !s.draft);
       const sRejects = (Array.isArray(s.rejects) ? s.rejects : []).filter(x => !gIds.has(String(x && typeof x === "object" ? x.id : x)));
-      const sNext = { charms: sCharms, placements: sPl, poolIds: [...new Set((s.poolIds || []).map(String).concat(gPool))], orders: [...new Set((Array.isArray(s.orders) ? s.orders : []).map(String).concat(gOrders))],
+      const carry = PoolPieces.carrySources(s, going.map(m => m.c), srcs);   // (SRCLIST: the pieces' design files come back with them)
+      const sNext = { charms: sCharms, placements: sPl, poolIds: [...new Set((s.poolIds || []).map(String).concat(gPool))], orders: [...new Set((Array.isArray(s.orders) ? s.orders : []).map(String).concat(gOrders))], ...(carry || {}),
         charmCount: sCharms.filter(c => c && !c.excluded).length, placedCount: sPl.length, rejects: sRejects, rejectCount: sRejects.length, feedWait: null,
         noRoomRun: Array.isArray(s.noRoomRun) ? s.noRoomRun.map(String).filter(o => !gOrders.includes(o)) : (s.noRoomRun == null ? null : s.noRoomRun), movedOn: null, nestOwed: null, dirty: false,
         layoutRev: num(s.layoutRev) + 1, contentRev: num(s.contentRev) + 1, filesOwed: now, roseRedraw: { at: now, by, line: true, cut: !!(s.roseReopened && s.roseReopened.cut) },

@@ -18,6 +18,7 @@
  *    finishOverflow { id, runId, layoutBase, contentBase, pieceIds, to }                            (CLOUD_ONLY, fenced; build step 7b: the writer's overflow, below)            */
 "use strict";
 const FINISH = "Charm_Nest_Finish", SHEETS = "Charm_Nest_Sheets", CARRIER = "Charm_Nest_Run_Carrier", JOBS = "Charm_Nest_Jobs";
+const PoolPieces = require("../../charm-nest-pool-pieces.js");   // (SRCLIST: carrySources, the design files of pieces that move go with them)
 
 function install(L) {
   const { OPS, NO_GEN_BUMP, SANDBOXED, db, col, FV, fenceTx, revTouch, driveDoc, driveModeOf, marked, fenced, prefix, str, num, isId } = L;
@@ -169,8 +170,8 @@ function install(L) {
         feedWait: Array.isArray(f.feedWait) ? f.feedWait.filter(x => !gIds.has(String(x))) : f.feedWait || null, orders: (Array.isArray(f.orders) ? f.orders : []).map(String).filter(o => keptOrders.has(o)),
         charmCount: fCharms.length, rejectCount: (f.rejects || []).filter(r => !gIds.has(String(r && typeof r === "object" ? r.id : r))).length, movedOn: { n: moving.length, names: moving.map(c => c.name || c.id).slice(0, 12), to: tRef.id, toName: t ? label(t) : null, at: now, by: "cloud" },
         layoutRev: num(f.layoutRev) + 1, contentRev: num(f.contentRev) + 1, updatedAt: FV.serverTimestamp() };
-      const tPlaced = !!t && (t.placements || []).length > 0, base = t || {};
-      const tNext = { runId, metal: f.metal, charms: (base.charms || []).concat(moving), poolIds: [...new Set((base.poolIds || []).map(String).concat([...gPool]))], orders: [...new Set((Array.isArray(base.orders) ? base.orders : []).map(String).concat(moving.map(rid).filter(Boolean)))],
+      const tPlaced = !!t && (t.placements || []).length > 0, base = t || {}, carry = PoolPieces.carrySources(base, moving, [f]);   // (SRCLIST: the pieces' design files go with them)
+      const tNext = { runId, metal: f.metal, charms: (base.charms || []).concat(moving), poolIds: [...new Set((base.poolIds || []).map(String).concat([...gPool]))], orders: [...new Set((Array.isArray(base.orders) ? base.orders : []).map(String).concat(moving.map(rid).filter(Boolean)))], ...(carry || {}),
         charmCount: (base.charms || []).length + moving.length, nestOwed: now, dirty: true, appendOnly: tPlaced, intakeAppend: tPlaced, status: "ready", movedIn: { n: moving.length, from: id, fromName: fn, at: now, by: "cloud", why: str(b.why, 120) || "turned away by its nest" },
         layoutRev: num(base.layoutRev) + 1, contentRev: num(base.contentRev) + 1, archived: false, updatedAt: FV.serverTimestamp() };
       if (!t) Object.assign(tNext, { id: tRef.id, page: Math.max(1, Math.floor(num(create.page)) || 1), draft: true, setId: null, setSeq: null, sheetIndex: null, placements: [], rejects: [], placedCount: 0, current: true, cardStartedAt: now,
