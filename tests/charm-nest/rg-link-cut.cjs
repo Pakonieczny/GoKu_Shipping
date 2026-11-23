@@ -76,6 +76,15 @@ async function pass(items) {
   await pass([{ name: 'claimTest', lane: 'rosecut', unit: async ctx => { err = await NestStep.claimStock(ctx, sheet(nd.id), S, { rose: { mode: 'auto' } }); return undefined; } }]);
   const n2 = sheet(nd.id);
   ok('4 · the next Rose Gold draft, opened on that leftover, claims THAT plate (revision 1), not a fresh one nor a newer leftover of another plate', n2.roseStockId === PLATE && +n2.roseRevision === 1 && stock(PLATE).owner === nd.id, { stock: n2.roseStockId, revision: n2.roseRevision, owner: stock(PLATE).owner, err });
+  /* 5 · the order that waited goes on (a resting run comes back to its steps only when a line changes: the cut alone did not bring it back, RG Draft 1 at 02:17) */
+  seed(() => { const run = F.doc('Charm_Nest_Runs/' + R); run.lines = Object.assign({}, run.lines || {}, { '4244381926_5306860871': { orderId: '4244381926', material: 'rose', state: 'waiting', poolIds: ['4244381926_5306860871_1', '4244381926_5306860871_2'], wait: { kind: 'green', cut: 'link', material: 'rose', sheetId: D1, page: 7, at: T0 - 60e3 }, reason: 'waits while the green line of RG Draft 7 is cut' } }); F.seed('Charm_Nest_Runs/' + R, run); });
+  await pass();
+  const lineNow = async () => { const r = await lib.handler({ httpMethod: 'POST', headers: { 'x-edit-passcode': 'test-pass' }, body: JSON.stringify({ op: 'runGet', runId: R }) }); let o = {}; try { o = JSON.parse(r.body || '{}'); } catch (_) {} return (((o.run || {}).lines) || {})['4244381926_5306860871'] || {}; };
+  let ln = await lineNow();
+  ok('5 · the line that waited is not set going before the cut (still waiting)', ln.state === 'waiting' || !!sheet(D1).roseCutAt, { state: ln.state, cut: !!sheet(D1).roseCutAt });
+  F.clock.set(T0 + 600e3); await pass();
+  ln = await lineNow();
+  ok('5 · once RG Draft 1 is cut, the order line that waited on it goes on ("pooled", no wait): the placement puts it on the leftover', !!sheet(D1).roseCutAt && ln.state === 'pooled' && !ln.wait, { state: ln.state, wait: ln.wait, cut: !!sheet(D1).roseCutAt });
   ok('rule · Etsy was never called', !F.etsy || !(F.etsy.calls || []).length);
   log0(failed ? `FAIL rg-link-cut (${failed})` : 'PASS rg-link-cut'); process.exit(failed ? 1 : 0);
 })().catch(e => { log0('FAIL rg-link-cut: ' + (e && e.stack || e)); process.exit(1); });
