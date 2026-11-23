@@ -359,7 +359,7 @@ async function pass(env) {
     const approveNow = async where => {
       if (!filesItem || apBusy || ["abandoned", "complete"].includes(run.status) || Date.now() > budgetEnd - PASS_TAIL_MS) return 0;
       let ids = [];
-      try { const q = await db.collection("Charm_Engrave_Files").where("state", "in", ["waiting", "working"]).limit(50).get(), now = Date.now(); ids = q.docs.map(d => Object.assign({ id: d.id }, d.data() || {})).filter(t => t.runId === runId && !t.waitingSince && now - num(t.createdAt) < 30 * 60000 && now - num(apTried.get(t.id)) > 12000).map(t => t.id); } catch (_) { return 0; }
+      try { const q = await db.collection("Charm_Engrave_Files").where("state", "in", ["waiting", "working"]).limit(50).get(), now = Date.now(); ids = q.docs.map(d => Object.assign({ id: d.id }, d.data() || {})).filter(t => t.runId === runId && !t.waitingSince && !(num(t.kickedAt) > now - 9000) && !(t.state === "working" && t.worker && t.worker !== "pass" && now - num(t.beatAt) < 15000) && now - num(t.createdAt) < 30 * 60000 && now - num(apTried.get(t.id)) > 12000).map(t => t.id); } catch (_) { return 0; }
       if (!ids.length) return 0;
       live();
       for (const id of ids) apTried.set(id, Date.now());

@@ -72,6 +72,7 @@ module.exports = function engraveOps(D) {
     for (const k of FIELD_KEYS) if (Object.prototype.hasOwnProperty.call(f, k)) { const v = plain(f[k]); if (v !== undefined) fields[k] = v; }
     const artAtBy = {}; if (b.artAtBy && typeof b.artAtBy === "object") for (const [id, v] of Object.entries(b.artAtBy).slice(0, 60)) if (isPoolId(id) && fin(+v)) artAtBy[id] = +v;
     const ref = col(ENGR).doc(lineKey), cref = db.collection(CARRIER).doc(runId), taskId = taskIdOf(jobKey, at), tref = db.collection(TASKS).doc(taskId);
+    const key = require("crypto").randomBytes(16).toString("hex");   // (APPROVENOW: the worker of this one approval, _charmEngraveFiles.js nowTask, answers to it alone; it never leaves the cloud)
     const out = await db.runTransaction(async tx => {
       const [cs, es, ts] = await tx.getAll(cref, ref, tref);
       const c = cs.exists ? (cs.data() || {}).carrier : null;
@@ -105,10 +106,11 @@ module.exports = function engraveOps(D) {
       tx.set(ref, { key: lineKey, order: lineKey.split("_")[0], rec: json, at: now, by, dev, sig: null, rev, updatedAt: FV.serverTimestamp() });
       const k = Faces.parseKey(jobKey);
       tx.create(tref, { id: taskId, runId, lineKey, jobKey, face: k.face === "front" ? "front" : "back", slot: k.slot || null, at, by, dev, text, place, fields, artAtBy: Object.keys(artAtBy).length ? artAtBy : null,
-        origin: edit ? "edit" : "press", ...(edit ? { edit: Object.assign({}, edit, { prev }) } : {}), state: "waiting", stage: "check", note: "waiting for the cloud's next pass", copies: edit ? [edit.poolId] : null, done: {}, staged: {}, files: {}, sheets: {}, errors: 0, createdAt: now, updatedAt: now,
+        origin: edit ? "edit" : "press", ...(edit ? { edit: Object.assign({}, edit, { prev }) } : {}), state: "waiting", stage: "check", key, note: "waiting for the cloud's next pass", copies: edit ? [edit.poolId] : null, done: {}, staged: {}, files: {}, sheets: {}, errors: 0, createdAt: now, updatedAt: now,
         expireAt: new Date(now + 30 * 86400000) });
       return { ok: true, taskId, at, rev, superseded: live.map(t => t.id) };
     });
+    if (out && out.ok && !out.replayed && !out.same && !out.already && typeof D.engraveKick === "function" && await D.engraveKick(taskId, key)) await tref.set({ kickedAt: Date.now() }, { merge: true }).catch(() => {});   // (APPROVENOW: its file is written now, in a process of its own)
     if (out && out.ok && !out.replayed && !out.same && !out.already) D.feedOrders(b, [[lineKey]]);   // (FEED: every computer reads the line again: its face waits on the cloud)
     return out;
   }

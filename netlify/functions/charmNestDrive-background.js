@@ -8,6 +8,12 @@ const { parseBody } = require("./_charmNestAuth");
 
 exports.handler = async (event) => {
   const body = parseBody(event), nonce = String(body.nonce || "");
+  /* APPROVENOW: the file of one approval, asked by engraveApprove with the approval's own single-use key: written here, beside the driver's pass and under ITS lease (every write is fenced on it), never waiting on the pass's own work */
+  if (!nonce && body.engrave && body.key) {
+    try { const r = await require("./_charmEngraveFiles").nowTask({ db: require("./firebaseAdmin").firestore(), Lib: require("./charmNestLibrary"), taskId: String(body.engrave).slice(0, 220), key: String(body.key).slice(0, 80), say: t => console.log(t) }); console.log("[engrave now]", String(body.engrave).slice(0, 120), JSON.stringify(r).slice(0, 300)); }
+    catch (e) { console.error("[engrave now] failed:", (e && e.message) || e); }
+    return { statusCode: 200, body: "done" };
+  }
   if (!nonce) return { statusCode: 200, body: "not this pass's turn" };
   const admin = require("./firebaseAdmin"), db = admin.firestore(), Drive = require("./_charmNestDrive"), Lease = require("./_charmNestLease");
   let out = null;

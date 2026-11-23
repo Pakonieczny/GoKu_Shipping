@@ -65,7 +65,7 @@ async function taskPut(ctx, id, fn) {
     const s = await tx.get(ref), cur = s.exists ? Object.assign({ id }, s.data()) : null;
     const patch = fn(cur); if (!patch) return cur;
     const now = Date.now();
-    tx.set(ref, Object.assign({}, patch, { updatedAt: now, beatAt: now, nonce: ctx.fence.nonce }), { merge: true });
+    tx.set(ref, Object.assign({}, patch, { updatedAt: now, beatAt: now, nonce: ctx.fence.nonce, worker: ctx.worker || "pass" }), { merge: true });
     return mergeDeep(Object.assign({}, cur || { id }), patch);
   });
 }
@@ -346,6 +346,26 @@ async function resumeTask(ctx, E, lc, l, job) {
   });
 }
 
+/* APPROVENOW: an approval's file is written by one process at a time: the pass ("pass") or the approval's own worker (nowTask). One that beat in the last 15 s keeps it; past that (it died, its lease went) the other goes on from the task's saved progress. */
+const HELD_MS = 15000;
+const heldElse = (ctx, t) => !!t && t.state === "working" && !!t.worker && t.worker !== (ctx.worker || "pass") && Date.now() - num(t.beatAt) < HELD_MS;
+/** One approval written now, by a process of its own, under the running pass's lease (fenced on it at every write, like the pass's own). → { done } | { skipped } | { again } (the next pass goes on with it). */
+async function nowTask(o) {
+  const { db, Lib, taskId, key, say } = o, ref = db.collection(TASKS).doc(taskId), s0 = await ref.get(), t0 = s0.exists ? Object.assign({ id: taskId }, s0.data() || {}) : null;
+  if (!t0 || !t0.key || t0.key !== key || !ACTIVE.includes(t0.state)) return { skipped: "not this approval's turn" };
+  const until = Date.now() + 9000; let L = null;
+  for (;;) { const l = await db.collection("Charm_Nest_Drive").doc("lease").get(); L = l.exists ? l.data() || {} : {}; if (L.state === "running" && L.nonce) break; if (Date.now() > until) { await ref.set({ kickedAt: 0 }, { merge: true }).catch(() => {}); return { again: "no pass runs" }; } await new Promise(r => setTimeout(r, 300)); }
+  const fence = { path: "Charm_Nest_Drive/lease", nonce: L.nonce, runId: t0.runId }, ctx = { db, fence, worker: "now:" + key.slice(0, 8), runId: t0.runId, say: say || (() => {}), live() {}, budgetEnd: Date.now() + 60000 };
+  ctx.read = b => Lib.call(b, {});
+  ctx.call = async (b, unit) => { const r = await Lib.call(b, { unit: String(unit || ""), fence }); if (r && r.fenced) throw fencedErr(r.error); if (r && r.status === 409 && r.notCarrier) throw fencedErr(r.error); if (r && r.inFlight) throw new Error(String(r.error || "is being written already")); return r; };
+  const at0 = Date.now();
+  try {
+    const got = await ctx.read({ op: "runGet", runId: t0.runId }); ctx.run = got && got.run; if (!ctx.run) return { again: "the run could not be read" };
+    const E = await envOf(ctx), r = await runTask(ctx, E, t0).catch(async e => { if (e && (e.fenced || e.yielded || e.fatal)) throw e; return (await taskError(ctx, E, t0, e)) || { again: String((e && e.message) || e).slice(0, 160) }; });
+    return Object.assign({ ms: Date.now() - at0 }, r || {});
+  } catch (e) { if (!(e && e.fenced)) throw e; await ref.set({ kickedAt: 0, beatAt: 0 }, { merge: true }).catch(() => {}); return { again: String(e.message || e).slice(0, 160) }; }   // (the pass ended meanwhile: the next one goes on at once)
+}
+
 async function backUnit(ctx) {
   const q = await ctx.db.collection(TASKS).where("state", "in", ACTIVE).limit(50).get();
   const tasks = q.docs.map(d => Object.assign({ id: d.id }, d.data())).filter(t => t.runId === ctx.runId).sort((a, b) => num(a.createdAt) - num(b.createdAt));
@@ -353,6 +373,7 @@ async function backUnit(ctx) {
   const E = await envOf(ctx);
   for (const t of tasks) {
     if (Date.now() > ctx.budgetEnd) return { more: true };
+    if (num(t.kickedAt) > Date.now() - 9000 || heldElse(ctx, t)) continue;   // (APPROVENOW: its own worker is on it)
     let r;
     try { r = await runTask(ctx, E, t); }
     catch (e) {
@@ -401,8 +422,9 @@ async function endInvalid(ctx, E, t, why, invalid = true) {
 }
 
 async function runTask(ctx, E, t0) {
-  let t = await taskPut(ctx, t0.id, cur => (cur && ACTIVE.includes(cur.state) ? { state: "working", startedAt: cur.startedAt || Date.now(), stage: cur.stage || "check" } : null));
-  if (!t || !ACTIVE.includes(t.state)) return null;
+  let mine = true;
+  let t = await taskPut(ctx, t0.id, cur => { mine = !heldElse(ctx, cur); return mine && cur && ACTIVE.includes(cur.state) ? { state: "working", startedAt: cur.startedAt || Date.now(), stage: cur.stage || "check" } : null; });
+  if (!t || !mine || !ACTIVE.includes(t.state)) return null;   // (APPROVENOW: another process of the cloud is writing it)
   const face = t.face === "front" ? "front" : "back", slot = t.slot || Faces.parseKey(t.jobKey).slot || null;
   const l = (await readLines(ctx, [t.lineKey])).get(t.lineKey);
   const job = l && l.rec && (l.rec.jobs || []).find(j => j && j.key === t.jobKey);
@@ -484,8 +506,7 @@ async function oneCopy(ctx, E, t, lc, job, f, poolId, slot, shared) {
     // (the tokens are kept BEFORE the bytes go up: a pass that dies after an upload finds its file there, under its token, and never uploads it again)
     let plan = t.files && t.files[poolId];
     if (!plan || !plan.ai || plan.ai.path !== paths.ai || !plan.png || plan.png.path !== paths.png) { plan = { ai: { path: paths.ai, token: uuid() }, png: { path: paths.png, token: uuid() } }; t = await taskPut(ctx, t.id, () => ({ files: { [poolId]: plan }, stage: "files" })); }
-    const ai = await upload(ctx, E, plan.ai.path, built.bytes, "application/illustrator", plan.ai.token);
-    const pu = await upload(ctx, E, plan.png.path, png, "image/png", plan.png.token);
+    const [ai, pu] = await Promise.all([upload(ctx, E, plan.ai.path, built.bytes, "application/illustrator", plan.ai.token), upload(ctx, E, plan.png.path, png, "image/png", plan.png.token)]);   // (APPROVENOW: side by side)
     const jobFields = Object.assign({}, job, { text: t.text, lines: R.fit.lines.slice(), face: face === "front" ? "front" : undefined });
     const fr = face === "front" ? { face: "front" } : {}, seal = sealOf(face, num(t.at), t.by);
     const seals = t.origin === "resume" ? Seals.merge(Object.assign({ engravingSeals: job.engravingSeals || [] }, fr), Object.assign({ seals: [seal] }, fr)) : [seal];   // (SEALAFTERSAVE: the approval's own seal; an approval made before (ENGPRE) keeps the job's seals, CNEngravingSeals.keep)
@@ -628,6 +649,6 @@ const passItems = [
   { name: "engrave-index", lane: "engrave", order: 83, unit: indexUnit }
 ];
 
-module.exports = { passItems, steps: {}, fitUnit, backUnit, indexUnit, fitOne, applyAsks, runTask, oneCopy, finalize, poolFlags, sheetIndex, resumeTask, lineSummary, copiesOf, taskIdOf, fenceTx, pngOf,
+module.exports = { passItems, steps: {}, nowTask, fitUnit, backUnit, indexUnit, fitOne, applyAsks, runTask, oneCopy, finalize, poolFlags, sheetIndex, resumeTask, lineSummary, copiesOf, taskIdOf, fenceTx, pngOf,
   TASKS, ACTIVE, DEFAULTS, needsFit, needsResume,
   readLines, writeLine, patchRunLine, runEngraveOf };   // (the line's record read and written, and the run line's copy of its summary: also the classify unit's, _charmEngraveClassify.js)
