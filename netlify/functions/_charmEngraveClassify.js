@@ -432,7 +432,7 @@ function discSay(job, jobs) {
 async function classifyUnit(ctx) {
   if (["stopped", "abandoned", "complete"].includes(ctx.run.status)) return;   // (as the page: the reading runs beside a run that is not stopped)
   const lines = ctx.run.lines || {}, cur = ctx.cursor || {}, fresh = cur.runId !== ctx.runId;
-  const keys = new Set(), waiting = new Set(fresh ? [] : (cur.waiting || []).filter(k => lines[k]));
+  const keys = new Set(), standOnly = new Set(), waiting = new Set(fresh ? [] : (cur.waiting || []).filter(k => lines[k]));
   let since = fresh ? 0 : num(cur.since), newest = since, more = false;
   if (fresh) { for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.state !== "gone") keys.add(k); newest = Date.now() - 5000; }
   else {
@@ -446,12 +446,20 @@ async function classifyUnit(ctx) {
     if (ws.size >= 500 || got.length >= 500) more = true;
     // (STANDING: the lines already written back to review before this rule are looked at once)
     if (num(cur.stood) < 1) for (const [k, l] of Object.entries(lines)) if (l && READ_STATES.has(l.state) && l.engrave && !l.engrave.approved && STAND_OPEN.has(l.engrave.state)) keys.add(k);
+    /* STANDING 2 (Paul, 23 Nov 2026, item 10: 12 more lines, 4237468667, 4239976781, 4236980485, 4236215767, 4242448021, 4235376193's front, 4243340489, 4243389696, 4243222905, 4243254939, 4244016754, 4243151567): approved, the file
+       saved, and the line's record written back to review by the approving computer four minutes later (before KEEPREV), while the run line still said approved: the look above, which asks the run line, never saw them. Every line the
+       run says is approved is looked at once by its own record: one with an open job is healed by the same rule, and only healed (never read again here). */
+    if (num(cur.stood2) < 1) {
+      const look = Object.entries(lines).filter(([k, l]) => l && READ_STATES.has(l.state) && l.engrave && l.engrave.approved && l.engrave.state !== "none" && !keys.has(k)).map(([k]) => k);
+      const got = look.length ? await Files.readLines(ctx, look) : new Map();
+      for (const [k, l] of got) if (l && l.rec && (l.rec.jobs || []).some(standOpen)) standOnly.add(k);
+    }
   }
-  const all = [...keys], pending = {};
+  const all = [...standOnly, ...keys], pending = {};
   for (const k of all.slice(300)) pending[k] = true;
   if (all.length > 300) more = true;
   const todo = all.slice(0, 300);
-  if (!todo.length) return Object.assign({ cursor: { runId: ctx.runId, stood: 1, since: newest, pending: Object.keys(pending).slice(0, 1500), waiting: [...waiting].slice(0, 1500), reading: [], readingAt: 0 } }, more ? { more: true } : {});
+  if (!todo.length) return Object.assign({ cursor: { runId: ctx.runId, stood: 1, stood2: 1, since: newest, pending: Object.keys(pending).slice(0, 1500), waiting: [...waiting].slice(0, 1500), reading: [], readingAt: 0 } }, more ? { more: true } : {});
   const [world, recs] = await Promise.all([worldLines(ctx, todo), Files.readLines(ctx, todo)]);
   /* ENGNOTE: the other lines of an order whose staff messages carry an "ENG:" note (which line the words are for is the order's question), read with the lines themselves */
   const engOrders = new Set(todo.filter(k => { const w = world.get(k); return w && Classify.engNoteOf(w.spec && w.spec.messages); }).map(k => String(k).split("_")[0]));
@@ -493,6 +501,7 @@ async function classifyUnit(ctx) {
     const pooled = READ_STATES.has(runLine.state), row = rowOf(key, w, runLine, l && l.rec);
     const live = (l && l.rec && Array.isArray(l.rec.jobs) ? l.rec.jobs : []).filter(j => j && j.key && !j.archived);
     const candidate = !!row.spec.engraveCandidate || raiser().raiseCandidate(row);
+    if (standOnly.has(key) && !(pooled && live.some(standOpen))) continue;   // (STANDING 2)
     if (!pooled) {
       waiting.add(key);   // (its pieces are not made yet: looked at again once they are)
       // ENGPRE (the page's early): the words of a line not pooled yet, on the pool ids its pieces will get, with no paid reading
@@ -518,6 +527,7 @@ async function classifyUnit(ctx) {
         continue;   // (its other faces are read at the next pass: the record was just written)
       }
     }
+    if (standOnly.has(key)) continue;   // (STANDING 2: looked at for its saved file alone)
     let got;
     try { got = await readLine(ctx, P, key, row, l, { agentCall, free: !pooled, pooled, candidate, orderRows }); }
     catch (e) { if (passThrough(e)) throw e; if (ctx.say) ctx.say(`[engrave classify] ${key}: ${String((e && e.message) || e).slice(0, 300)}`); pending[key] = true; continue; }
@@ -542,7 +552,7 @@ async function classifyUnit(ctx) {
   // (a reading under way: its line is looked at again at every pass until it is answered; the driver's tick reads readingAt so a waiting reading starts a pass)
   for (const k of Object.keys(reading)) pending[k] = true;
   const readingAt = Object.keys(reading).length ? (num(cur.readingAt) || Date.now()) : 0;
-  return Object.assign({ cursor: { runId: ctx.runId, stood: 1, since: newest, pending: Object.keys(pending).slice(0, 1500), waiting: [...waiting].slice(0, 1500), reading: Object.keys(reading), readingAt } }, more ? { more: true } : {});
+  return Object.assign({ cursor: { runId: ctx.runId, stood: 1, stood2: 1, since: newest, pending: Object.keys(pending).slice(0, 1500), waiting: [...waiting].slice(0, 1500), reading: Object.keys(reading), readingAt } }, more ? { more: true } : {});
 }
 
 const passItems = [{ name: NAME, lane: "engrave", order: 80, unit: classifyUnit }];
