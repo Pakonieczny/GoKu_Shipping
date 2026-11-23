@@ -145,7 +145,8 @@ function read(b, deps) {
   if (!(w > 0 && w < 20000 && h > 0 && h < 20000)) return { answer: bad("entry.size", "width and height") };
   if (!(area >= 0 && members >= 1 && members <= 5000 && holes >= 0 && holes <= 5000)) return { answer: bad("entry.shape", "area, members and holes") };
   v.masterHash = masterHash;
-  v.entry = { charmHash, widthPt: w, heightPt: h, areaPt2: area, members, holes, engravable: e.engravable !== false, upAngle: e.upAngle == null || e.upAngle === "" ? null : num(e.upAngle), upSource: str(e.upSource || "drawn", 20) };
+  const drawn = Array.isArray(e.drawnPt) && e.drawnPt.length === 2 && e.drawnPt.every(x => typeof x === "number" && isFinite(x) && x > 0 && x < 5000) ? [+e.drawnPt[0].toFixed(3), +e.drawnPt[1].toFixed(3)] : null;   // (TRUESIZE)
+  v.entry = { charmHash, widthPt: w, heightPt: h, ...(drawn ? { drawnPt: drawn } : {}), areaPt2: area, members, holes, engravable: e.engravable !== false, upAngle: e.upAngle == null || e.upAngle === "" ? null : num(e.upAngle), upSource: str(e.upSource || "drawn", 20) };
   return { ok: true, v };
 }
 
@@ -360,7 +361,7 @@ async function commit(deps, b) {
     if (creating) {
       ({ aiPath, thumbPath } = pathsOf(v.fileKey || v.sku));
       const e = v.entry;
-      entry = { sku: v.sku, masterHash, masterPath: aiPath, masterName: v.design.name, charmHash: e.charmHash, widthPt: e.widthPt, heightPt: e.heightPt, areaPt2: e.areaPt2, members: e.members, holes: e.holes,
+      entry = { sku: v.sku, masterHash, masterPath: aiPath, masterName: v.design.name, charmHash: e.charmHash, widthPt: e.widthPt, heightPt: e.heightPt, ...(e.drawnPt ? { drawnPt: e.drawnPt } : {}), areaPt2: e.areaPt2, members: e.members, holes: e.holes,
         engravable: e.engravable, engravableBy: "index", upAngle: e.upAngle, upSource: e.upSource, aiPath, thumbPath, aiUrl: str(made.aiUrl, 900), thumbUrl: str(made.thumbUrl, 900),
         open: false, labelSource: "text", confidence: null, indexedAt: FV.serverTimestamp(), indexedAtMs: now, firstIndexedAt: FV.serverTimestamp(), hashSource: "custom-save" };
       if (overriding) entry.override = Object.assign({}, stamp, { from: fromOf() });
