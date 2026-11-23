@@ -21063,7 +21063,7 @@ const Review = window.Review = (() => {
   async function remakeAsRead(row, o) {
     if (!row || !row.key) return { ok: false, why: "the piece is not read yet" };
     if (B.run) { row.repoolChanged = true; await repool(row); return { ok: true }; }
-    const ans = await cloudRemake([row.key], `Made again as ${row.spec.designSku} (was ${staleMade(row).join(" + ") || "another charm"})`, (o && o.lead) || "");
+    const ans = await cloudRemake([row.key], `Made again as ${row.spec.designSku} (was ${staleMade(row).join(" + ") || "another charm"})`, (o && o.lead) || "", o && o.onStep);
     if (ans && ans.ok) { try { remove("chg:" + row.key); } catch (_) { /* its card goes with the next read */ } row.changePending = false; row.repoolChanged = false; await freshNow({ keys: [row.key] }).catch(() => null); try { Orders.interpretAll(); syncOrderItems(); Orders.render(); } catch (_) { /* drawn at the next pass */ } }
     return ans;
   }
@@ -22654,14 +22654,14 @@ const Review = window.Review = (() => {
     return { ok: true, rows: took };
   }
   /** The cloud makes these lines again (remakeline), its answer said in a toast. lead: what was saved, said first. */
-  async function cloudRemake(keys, label, lead) {
+  async function cloudRemake(keys, label, lead, onStep) {
     keys = [...new Set((keys || []).map(String))].slice(0, 80);
     if (!keys.length) { toast(`${lead ? lead + " " : ""}Nothing to make again: the piece is on hold or no longer open in the run`, lead ? "ok" : "bad", 7000); return { ok: !!lead, none: true }; }
     if (!(window.CNViewer && CNViewer.lane && CNViewer.lane("cmd:remakeline")) || typeof window.CNRelayAsk !== "function") {
       toast(`${lead ? lead + " " : ""}Making the pieces again is not the cloud's yet in this build: the pieces already made stay as they are`, "bad", 10000); return { ok: false };
     }
     toast(`${lead ? lead + " " : ""}The cloud makes ${keys.length === 1 ? "the piece" : keys.length + " pieces"} again…`, "ok", 6000);
-    const ans = await window.CNRelayAsk({ type: "remakeline", ids: keys, label: String(label || "Made again from Review").slice(0, 150) }, null, 600000, { always: true });
+    const ans = await window.CNRelayAsk({ type: "remakeline", ids: keys, label: String(label || "Made again from Review").slice(0, 150) }, typeof onStep === "function" ? t => { try { onStep(String(t || "")); } catch (_) { /* a word only */ } } : null, 600000, { always: true });
     if (ans && ans.ok) toast(`The cloud: ${ans.text || "made again"}`.slice(0, 300), "ok", 8000);
     else if (ans && ans.cloud && (ans.late || ans.failed || ans.id)) { /* NOWCMD: CNRelayAsk said it already, in red, with Try again */ }
     else if (ans && ans.queued) toast(`Asked of the cloud: ${ans.text}`.slice(0, 300), "ok", 9000);
@@ -25297,7 +25297,7 @@ const OrderWin = window.OrderWin = (() => {
       let hits;
       if (!words.length) hits = suggested.map(c => idx.find(x => x.sku === c.sku)).filter(Boolean);   // (nothing typed: the suggested charms)
       else hits = idx.filter(x => words.every(w => x.n.includes(w))).sort((a, b) => (a.sku === raw ? 0 : 1) - (b.sku === raw ? 0 : 1) || (a.n.startsWith(words[0]) ? 0 : 1) - (b.n.startsWith(words[0]) ? 0 : 1) || a.sku.length - b.sku.length || (a.sku < b.sku ? -1 : 1));
-      const MAX = 60, shown = hits.slice(0, MAX);
+      const MAX = 240, shown = hits.slice(0, MAX);
       list.innerHTML = shown.map(x => { const v = verdict(x.sku); return `<button type="button" class="seHit" role="option" data-sku="${esc(x.sku)}" aria-selected="${x.sku === sel}"${v === "blocked" || v === "same" ? " disabled" : ""} title="${esc(v === "blocked" ? `${x.sku}: blocked in the master` : v === "same" ? `${x.sku}: this piece's charm already` : x.sku)}"><span class="skPic">${skuPic(x.sku)}</span><span class="nm">${mark(x.sku, true)}</span></button>`; }).join("")
         + (hits.length > MAX ? `<div class="seMore">${hits.length - MAX} more: type another word to narrow it</div>` : "");
       tryDo(() => Master.mountPictures(list));
@@ -25338,9 +25338,10 @@ const OrderWin = window.OrderWin = (() => {
     save.onclick = async () => {
       const k = sel; if (save.disabled || !k) return;
       if (off.stale && off.stale.length && (k === off.cur || tryDo(() => O.sameDesign(k, off.cur, x => Master.entryFor(x)))) && employeeName()) {   // (MADENOT: the line reads this charm already; its piece is made again as it, nothing else is saved)
-        d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Making it again…"; input.disabled = true; once.disabled = true; say("", "The cloud is making the piece again…");
-        let res = null; try { res = await Review.remakeAsRead(rowOf(W.key) || r); } catch (e) { res = { ok: false, text: (e && e.message) || String(e) }; }
-        d.dataset.busy = ""; if (!res || !res.ok) { back(); say("bad", esc(`Not made again: ${String((res && (res.text || res.why)) || "no answer").replace(/\.$/, "")}`)); return; }
+        d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Making it again…"; input.disabled = true; once.disabled = true; const t0 = Date.now(); let word = "Asking the cloud to make the piece again…"; cancel.textContent = "Close";   // (MADESTEP, Paul 23 Nov 2026: "it's stuck. It's not doing anything": a minute and a half behind one sentence that never changed)
+        const tell = () => { if (d.dataset.busy === "1") say("", `<span class="spin"></span>${esc(word)} <b>${Math.round((Date.now() - t0) / 1000)} s</b> · it takes about a minute and a half, and goes on if you close this`); }; tell(); const tick = setInterval(tell, 1000);
+        let res = null; try { res = await Review.remakeAsRead(rowOf(W.key) || r, { onStep: t => { if (t) { word = t; tell(); } } }); } catch (e) { res = { ok: false, text: (e && e.message) || String(e) }; } finally { clearInterval(tick); }
+        d.dataset.busy = ""; cancel.textContent = "Cancel"; if (!res || !res.ok) { back(); say("bad", esc(`Not made again: ${String((res && (res.text || res.why)) || "no answer").replace(/\.$/, "")}`)); return; }
         try { d.close(); } catch (_) { d.removeAttribute("open"); } if (W.dlg && W.dlg.open && rowOf(W.key)) tryDo(paint); return;
       }
       // (SIGNIN, Paul 27 Oct 2026: nobody signed in, the sign-in is asked under Save and the change goes on once signed in; put away, the window's own line says why: needSignIn, the one helper)
