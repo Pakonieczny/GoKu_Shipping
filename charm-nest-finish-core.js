@@ -363,7 +363,10 @@
     const untried = untriedIds(result), byId = new Map((items || []).map(c => [String(c.id), c])), area = areaOf(o), room = (+result.usablePt2 || 0) * (+o.maxFill || FULL_CEILING);
     // (an order counts only when the whole order would fit an empty sheet: one bigger than a sheet says nothing about this sheet's room)
     const fits = k => !(room > 0) || (items || []).filter(c => String(key(c)) === k).reduce((n, c) => n + area(c), 0) <= room;
-    const missed = (sh.rejects || []).map(idOfReject).filter(id => !untried.has(id)).map(id => (byId.get(id) ? String(key(byId.get(id))) : id)).filter(fits);
+    /* ONCEWHOLE (Paul, 22 Nov 2026: "One charm does not equal 11%... this is not the right answer"; RG Sheet 1 released with "12 different orders in a row had no room on it", 9 of them
+       seated on it): a piece taken off to keep its order whole and oldest first (keepOrdersWhole: result.lifted, result.ordersWhole) FITTED; only what the search turned away counts */
+    const fitted = new Set([...(Array.isArray(result.lifted) ? result.lifted : []), ...["lifted", "mates", "wholeMates", "behind"].flatMap(k => (result.ordersWhole && Array.isArray(result.ordersWhole[k]) ? result.ordersWhole[k] : []))].map(String));
+    const missed = (sh.rejects || []).map(idOfReject).filter(id => !untried.has(id) && !fitted.has(id)).map(id => (byId.get(id) ? String(key(byId.get(id))) : id)).filter(fits);
     const run = placedNew ? [] : (Array.isArray(prevRun) ? prevRun.map(String) : []);
     for (const k of missed) if (!run.includes(k)) run.push(k);
     return run.slice(-20);
