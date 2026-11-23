@@ -2138,7 +2138,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (job && approvedBack && ["review", "words", "blocked", "classify", "ready", "fitting"].includes(job.state) && (+back.approvedAt || 0) >= (+(job.decidedAt || job.approvedAt) || 0))
       return { kind: "approved", label: "approved", job, back, by: back.approvedBy, at: back.approvedAt, text: back.text || job.text };
     if (job) {
-      const s = job.state;
+      const s = job.keptState || job.state;   // (KEPTSTATE)
+      // (INSTANTAPPROVE: an approval the cloud holds is an approval: its dot, its count and its card say so now, its file is written behind it)
+      if (s === "review" && job.approving && job.approving.cloud === true) return { kind: "approved", label: "approved", job, back, by: job.approving.by, at: job.approving.at, text: job.text };
       // Engrave keeps a job for every line, "none" for one with nothing to engrave: that is no back engraving (it read as
       // "being prepared", so a whole sheet showed a back on every charm with a spinner that never ended)
       if (s === "none") return { kind: "none", label: "none", job, back, saved };
@@ -2777,16 +2779,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (no name yet: the name bar asks; once given, the same button is pressed again through the card's own handler, so the spinner, the plain failure line and
     //  the out-of-date guard are the card's, as for a press with the name known; a card drawn again meanwhile is not pressed for the person)
     const who = needName(() => { if (b.isConnected && !b.disabled) b.click(); }); if (!who) return;
-    CNEngravingSeals.busyLabel(b);   // (a small spinner and "Approving…" until the stamp: Engrave.approve puts "Approved" on the button as it starts, so the wait is said again after it)
+    CNEngravingSeals.instantLabel(b);   // (INSTANTAPPROVE: "Approved ✓" at the press; taken back below when it did not go through)
     try {
-      const run = (Engrave.approveSettled || Engrave.approve)(job, who, b); CNEngravingSeals.busyLabel(b);   // (SETTLE: until the cloud has saved it)
+      const run = (Engrave.approveTaken || Engrave.approve)(job, who, b); CNEngravingSeals.instantLabel(b);
       await run;
-      if (W.sel !== x) return;
-      if (!["approved", "written"].includes(job.state) && !CNEngravingSeals.accepted(job)) { b.disabled = false; return; }
+      if (!["approved", "written"].includes(job.state) && !CNEngravingSeals.taken(job)) { if (W.sel === x) { if (b.isConnected) { b.disabled = false; b.textContent = "Approve engraving"; } renderEng(x); } return; }
+      if (W.sel !== x) { x.eng = engOf(x); renderStrip(); renderOrders(); paintFx(); return; }
       renderEng(x, true); renderStrip(); renderOrders(); paintFx();
       if (window.RunCtl) RunCtl.poke();
     } catch (e) { toast("Not approved: " + e.message, "bad", 6000); b.disabled = false; }
-    finally { b.removeAttribute('aria-busy'); if (b.isConnected && (["approved", "written"].includes(job.state) || CNEngravingSeals.accepted(job))) b.textContent = 'Approved'; }   // (a press that did not go through is given back by the card as it was: it never says Approved)
+    finally { b.removeAttribute('aria-busy'); if (b.isConnected && (["approved", "written"].includes(job.state) || CNEngravingSeals.taken(job))) { b.disabled = true; b.textContent = 'Approved ✓'; } }   // (a press that did not go through is given back by the card as it was: it never says Approved)
   }
 
   /* ── the order's pieces, here and elsewhere ── */

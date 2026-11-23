@@ -56,7 +56,9 @@
 .egBar>.egSearchGroup{flex:0 1 220px}
 /* the Engrave bar wraps like the Orders bar instead of scrolling sideways: at 900 px beside the rail its sort button ran off the edge ("Ne…"); the date and
    sort tools take a second line when the first has no room (they fit on one line from about 1000 px) */
-#engraveView .ordBar.egBar.cnToolsIn{flex-wrap:wrap;overflow-x:visible;row-gap:6px}
+#engraveView .ordBar.egBar.cnToolsIn,#reviewView>.ordBar.egBar.cnToolsIn{flex-wrap:wrap;overflow-x:visible;row-gap:6px}   /* (Review's too, 23 Nov 2026: the Charm Editor button stood over its sort button) */
+#reviewView>.ordBar.egBar>.spacer{flex:1 1 0;min-width:0}
+#reviewView>.ordBar.egBar>.cnOrderFind{flex:0 1 150px;min-width:104px}#reviewView>.ordBar.egBar>.cnOrderFind input{width:100%;min-width:0}
 .egBar>.egSearchGroup>.egFind{position:relative;display:flex;flex:1 1 auto;align-items:center;min-width:0}
 .egBar>.egSearchGroup .ordSearch{width:100%;max-width:none;box-sizing:border-box}
 /* the Engrave box's × (Paul, 18 Oct 2026: "Add a 'X' inside the search bar"): the Orders bar's .ordFindX (below), inside the round box at its right, only while it holds text */
@@ -497,6 +499,9 @@
    header, the order window, the Sheet window, the Release Hold seal (72 px) and the Complete Order / QR label seals (28 px) keep their own sizes. */
 :root{--list-seal:57px}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals{gap:8px}
+/* (23 Nov 2026, orders 4230787700 and 4234003099: a strip of four seals or more was one line, wider than its cell: it ran off the list, and over the order's time in Orders) the strip wraps two to a line; five seals or more are 28 px, as an ear's */
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals>.sealRow,.ordList .doneRow.orderListRow>.egPlacementSeals .sealRow{flex-wrap:wrap;justify-content:flex-end;max-width:calc(var(--list-seal) * 2 + 12px)!important}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals>.sealRow:has(>.seal:nth-child(5)),.ordList .doneRow.orderListRow>.egPlacementSeals .sealRow:has(>.seal:nth-child(5)){--seal-fit:28px!important}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals .egEarSeals{gap:10px}
 /* (no min-height on the row: the seals are in its flow and make it as tall as they need; a min-height drops the grid row's content-based minimum, see THE CAUSE above) */
 
@@ -628,7 +633,7 @@
 .btn.cnCeBtn.cnCeTabBtn{flex:none;margin-left:auto}
 /* the Library's and the Review's rows never wrap (they scroll sideways): the Library's search and its chips' swatches give the button its room, and on a window too narrow the button stays in view
    at the right end of either, the row scrolling under it */
-#libView .libBar>.cnCeTabBtn,#reviewView>.ordBar>.cnCeTabBtn{position:sticky;right:0;z-index:1}
+#libView .libBar>.cnCeTabBtn{position:sticky;right:0;z-index:1}
 @media(max-width:760px),(pointer:coarse){.btn.cnCeBtn.cnCeTabBtn{min-height:40px}}   /* (a finger's 40 px, as every target of the Orders head has it: the same on all five tabs) */
 @container workspace (max-width:1370px){#libView .libBar input[type=search]{min-width:96px;flex-basis:110px}#libView .libBar .fchip .sw{display:none}}
 /* (the Engraving card's: at the top left of its work area, level with the Approve block at the top right, where the work area is empty; never over the drawing) */
@@ -709,5 +714,12 @@
 .oneOrder>*+*{border-top:1px solid var(--line)!important;border-radius:0 0 9px 9px!important}
 .oneOrder>*:not(:last-child){border-bottom-left-radius:0!important;border-bottom-right-radius:0!important}
 .oneOrder>*:hover{background:rgba(0,0,0,.018)!important}
-.oneOrder>*:not(:first-child) :is(.engravingOrder>b.mono,.engravingOrder>.onum,.egPlacementSeals>.relSeal,.relSealSlot,.mailSlot){display:none!important}
+.oneOrder>*:not(:first-child) :is(.engravingOrder>b.mono,.engravingOrder>.onum,.relSealSlot,.mailSlot,.teamSlot){display:none!important}
+/* (its place is kept, so the seals of every section stand in one column) */
+.oneOrder>*:not(:first-child) .egPlacementSeals>.relSeal{visibility:hidden;height:0!important;min-height:0!important;padding-block:0!important;border-block-width:0!important;margin-block:0 -8px!important;overflow:hidden}
+@container (max-width:600px){.oneOrder>*:not(:first-child) .egPlacementSeals>.relSeal{display:none!important}}
+.oneOrder>*:focus-visible{box-shadow:inset 0 0 0 2px var(--gold2)!important}
 .oneOrder:focus-within{border-color:var(--ink45)}
+.oneOrder:has(>.placementRow){border-left-color:var(--sage)}
+.oneOrder:has(>.reviewListRow){border-left-color:var(--gold)}
+.oneOrder:has(>.rvSettled){border-left-color:var(--sage)}

@@ -186,7 +186,7 @@
     if (facesOf(d.choice).some(f => posOk(d.faces[f] && d.faces[f].pos))) return true;
     // (coordinator, 30 Oct 2026: a piece with an approved face whose other engraved face is not approved (it went back to review: its words changed, it was moved) is staged, never calm: Approve stays lit for it)
     const jobsOfFace = f => (vm.rows.find(r => r.face === f) || { jobs: [] }).jobs || [];
-    const ok = j => j.state === 'approved' || j.state === 'written';
+    const ok = j => { const s = j.keptState || j.state; return s === 'approved' || s === 'written'; };   // (KEPTSTATE)
     return FACES.some(f => jobsOfFace(f).some(ok)) && facesOf(d.choice).some(f => jobsOfFace(f).some(j => !ok(j) && j.state !== 'none' && j.state !== 'skipped'));
   }
   /** Is the draft exactly the stage of a press (`st`: its choice, and the words, font and place of every face it engraves)? */
@@ -196,7 +196,7 @@
   }
   /** Is what is kept approved? Every face it engraves has its piece's job approved or saved to its sheet (None: a regular order, nothing to approve). */
   function keptApproved(vm) {
-    return facesOf(vm.mode).every(f => { const r = vm.rows.find(x => x.face === f); return !!r && r.jobs.length > 0 && r.jobs.every(j => j.state === 'approved' || j.state === 'written'); });
+    return facesOf(vm.mode).every(f => { const r = vm.rows.find(x => x.face === f); return !!r && r.jobs.length > 0 && r.jobs.every(j => { const s = j.keptState || j.state; return s === 'approved' || s === 'written'; }); });
   }
   /** APPROVECLOUD: '' when the cloud's engraving record of the line (Charm_Nest_Engrave, as this page last read or wrote it: CharmNestEngraveSync.cloudJobs) agrees that what is kept here is approved,
    *  or this page has not read it; else why not, in words. An approval made here less than a minute ago is not held against it (every change is sent within seconds). */
@@ -711,7 +711,7 @@
     const gate = () => { const m = dead ? null : tryDo(() => model(), null); if (m) drawGate(m.vm, m.d); };
     /* GATEFRESH (Paul, 23 Nov 2026, order 4242795385: "the little orange dot did not turn green"): Approve was drawn while a record from the cloud was being put on the piece (its state "ready" for a moment) and not again when
        the piece was saved: an approved piece went on showing a lit Approve. Once a second the gate is asked again, and Approve is drawn only when the answer is another one. */
-    let gone = 0; const fresh = setInterval(() => { if (dead) { clearInterval(fresh); return; } if (!el.isConnected) { if (++gone > 60) clearInterval(fresh); return; } gone = 0; const b = button(); if (!b || RUNNING.has(key)) return; const m = tryDo(() => model(), null), g = m && tryDo(() => gateOf(m.vm, m.d, key), null); if (g && b.dataset.gate !== g.st) drawGate(m.vm, m.d); }, 1000);
+    let gone = 0; const fresh = setInterval(() => { if (dead) { clearInterval(fresh); return; } if (!el.isConnected) { if (++gone > 60) clearInterval(fresh); return; } gone = 0; const b = button(); if (!b) return; const m = tryDo(() => model(), null), g = m && tryDo(() => gateOf(m.vm, m.d, key), null); if (g && b.dataset.gate !== g.st && (!RUNNING.has(key) || (b.dataset.gate === 'approve' && (g.st === 'ok' || g.st === 'approved')))) drawGate(m.vm, m.d); }, 1000);   // (a press still being kept never leaves a lit Approve standing either)
     if (fresh && typeof fresh.unref === 'function') fresh.unref();
     /** A press of Approve (the button, the card's other approval buttons, the A key). */
     const press = () => {

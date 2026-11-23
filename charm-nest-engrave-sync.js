@@ -165,7 +165,7 @@
     return n;
   }
   /** One line the cloud holds put on this page, when it is another's newer work. -> true when it was taken. */
-  const REPAIR = new Set();
+  const REPAIR = new Set(), TAKENREV = new Map();   // (TAKENREV: the revision of a line this page put on last: SAMEREV)
   /** KEEPAPPROVED: this computer's own record of a line, sent again over a degraded one (its approval and its placement). */
   async function repairSend(key) {
     try { const line = linesNow().get(key), rec = line && lineRec(line); if (!rec) return; LOCAL_AT.set(key, Date.now()); await send([{ key, rec, sig: sigOf(line) }]); } catch (_) { /* the next read of the line tries again */ }
@@ -184,6 +184,9 @@
     /* (ENGSAME, Paul 20 Nov 2026: three pieces were "Saved to sheet" in the cloud and on Michelle's computer and "blocked" on Paul's, which never took the cloud's record: the record still carried the signature Paul's computer
        had sent, so it was read as this computer's own write. The signature is trusted only when every piece's state is the cloud's too: a piece in another state than the record's takes the record.) */
     const items0 = safe(() => E().items(), null), statesDiffer = (l.rec.jobs || []).some(rj => { const j = items0 && rj && items0.get(rj.key); return !!j && !j.archived && String(j.state || "") !== String(rj.state || ""); });
+    /* SAMEREV (Paul, 23 Nov 2026, order 4240278059: for a minute after it was approved its card said Approve again and its words were placed again every few seconds): every change of an order (its file, its timeline, its piece)
+       reads its lines again, and a record the cloud wrote (no signature) was put on the page each time, its words placed again with it. One revision is put on the page once, until something here differs from it. */
+    if (l.rev != null && TAKENREV.get(l.key) === l.rev && !statesDiffer && SIGS.get(l.key) === sigOf(line)) { jobsOfLine(line).forEach(recBack); return said(l.key, "same rev"); }
     const sigNow = sigOf(line); if (l.sig && sigNow === l.sig && !statesDiffer) { SIGS.set(l.key, sigNow); jobsOfLine(line).forEach(recBack); return said(l.key, "same sig"); }
     if (mine && !statesDiffer && why !== "start" && why !== "stale") return said(l.key, "mine");   // (this computer's own write coming back: already here)
     said(l.key, "taken (" + why + ")");
@@ -205,7 +208,7 @@
         for (const f of JOB_FIELDS) { if (rj[f] === undefined) delete j[f]; else j[f] = plain(rj[f]); }
         if (rj.place && FIT_STATES.has(rj.state) && (j.lineInput || j.lines || []).length) {
           // the same words, in the same font, at the same place: fitJob keeps a placement made for them (keepPlace), then the state it had there goes back on
-          const keepState = rj.state, keepApproved = { approvedAt: rj.approvedAt, approvedBy: rj.approvedBy };
+          const keepState = rj.state, keepApproved = { approvedAt: rj.approvedAt, approvedBy: rj.approvedBy }; if (keepState === "approved" || keepState === "written") j.keptState = keepState;   // (KEPTSTATE: what it is, while its words are placed again: Approve and the dots read it)
           j.keepPlace = plain(rj.place); if (j.keepPlace) j.keepPlace.fontKey = j.fontKey || j.keepPlace.fontKey;
           // (LIGHTLOAD, Paul 13 Nov 2026: "THE GRID": the page froze for over 45 s at every load while every piece was refitted and every outline read at once): at the start of the page a piece is not refitted here (its fields are in place); it is outlined and fitted when it is opened (watchOpen)
           if (why === "start" && !onScreenKey(l.key)) { if (!sameFit(j)) { j.fit = null; j.view = null; j.mask = null; } continue; }   // (NOFALLBACK, Paul 13 Nov 2026: "Look at the thumbnails" / "remove these fallbacks, make it work"): a fit this page holds that is the cloud's placement is kept; any other is fitted again in the background (fitMissing)
@@ -219,14 +222,14 @@
           
             try { await E().fitJob(j); } catch (e) { console.warn("[engrave-sync] fit", l.key, e); }
           } catch (e) { console.warn("[engrave-sync] outline", l.key, e); }
-          finally { j.state = keepState; if (keepApproved.approvedAt !== undefined) Object.assign(j, keepApproved); if (!j.fit && had) Object.assign(j, had); }   // (FITKEEP: not placed again here: the same placement stays)
+          finally { j.state = keepState; delete j.keptState; if (keepApproved.approvedAt !== undefined) Object.assign(j, keepApproved); if (!j.fit && had) Object.assign(j, had); }   // (FITKEEP: not placed again here: the same placement stays)
         } else if (!FIT_STATES.has(rj.state)) { j.fit = null; }
       }
       jobsOfLine(line).forEach(recBack);   // (RECBACK)
       if (REPAIR.has(l.key)) { REPAIR.delete(l.key); setTimeout(() => repairSend(l.key), 400); }
       safe(() => root.CharmNestMadeThumb && root.CharmNestMadeThumb.changed("engrave-sync", (line.poolIds || []).slice()));
       safe(() => S().schedule());
-      SIGS.set(l.key, sigOf(line));
+      SIGS.set(l.key, sigOf(line)); if (l.rev != null) TAKENREV.set(l.key, l.rev);
       st.taken++;
       return true;
     } catch (e) { console.warn("[engrave-sync] take", l.key, e); return false; }
@@ -315,7 +318,7 @@
     if (!j || j.fit || FITTING.has(j.key) || !["review", "approved", "ready", "written"].includes(j.state) || !(j.lineInput || j.lines || []).length) return !!(j && j.fit);
     const line = j.row && (j.row.parentRow || j.row); if (!line) return false;
     FITTING.add(j.key); TAKING.add(line.key);
-    const keep = { state: j.state, approvedAt: j.approvedAt, approvedBy: j.approvedBy };
+    const keep = { state: j.state, approvedAt: j.approvedAt, approvedBy: j.approvedBy }; if (keep.state === "approved" || keep.state === "written") j.keptState = keep.state;   // (KEPTSTATE)
     try {
       await outline(j);
       { const pid = (j.copies || [])[0]; if (pid && !safe(() => root.Pool.charmOf(pid) || root.Pool.previewCharmOf(pid), null)) return false; }   // (HELDENGRAVE: no charm to fit the words on (an order on hold, its piece taken off): the job is not made "ready" and fitted for nothing, and the card is not drawn again for it)
@@ -323,7 +326,7 @@
       if (rj && rj.place && !j.keepPlace) { j.keepPlace = plain(rj.place); if (j.keepPlace) j.keepPlace.fontKey = j.fontKey || j.keepPlace.fontKey; }
       FITERR.delete(j.key); j.state = "ready"; try { await E().fitJob(j); } catch (e) { FITERR.set(j.key, String((e && e.message) || e).slice(0, 160)); console.warn("[engrave-sync] place", j.key, e); }   // (ENGREC: an error is said (placeNow), never swallowed)
     } finally {
-      j.state = keep.state; if (keep.approvedAt !== undefined) { j.approvedAt = keep.approvedAt; j.approvedBy = keep.approvedBy; }
+      j.state = keep.state; delete j.keptState; if (keep.approvedAt !== undefined) { j.approvedAt = keep.approvedAt; j.approvedBy = keep.approvedBy; }
       recBack(j);   // (RECBACK)
       FITTING.delete(j.key); setTimeout(() => { TAKING.delete(line.key); SIGS.set(line.key, sigOf(line)); }, 50);
     }

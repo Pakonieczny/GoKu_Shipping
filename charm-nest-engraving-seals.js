@@ -78,6 +78,10 @@
   }
   /** The wait of an approval, said on its button: it cannot be pressed again, and a small spinner says what is being done. */
   function busyLabel(btn){if(!btn || !btn.isConnected)return;btn.disabled=true;btn.setAttribute('aria-busy','true');btn.innerHTML='<span class="spin"></span>Approving…';}
+  /* INSTANTAPPROVE (Paul, 22 Nov 2026: "the approval process needs to be instantaneous"), on every screen and not only on the Engrave card: the press says "Approved ✓" at once; taken(job): the cloud holds the approval (its file is
+     written behind it). One the cloud does not keep is let go by charm-nest-engrave-cloud.js, with its reason, and the piece asks again. */
+  function instantLabel(btn){if(!btn || !btn.isConnected)return;btn.disabled=true;btn.removeAttribute('aria-busy');btn.textContent='Approved ✓';}
+  const taken=job=>!!job && job.state==='review' && !!job.approving && job.approving.cloud===true;
   /** Resolves when the approval stands (the stamp is down and the job is approved), or when `run` (the approval itself, which goes on to save the back file) ends. */
   /* ACCEPTED (Paul, 23 Nov 2026: Approve took 17 to 112 s to say Approved): the cloud holds this approval (its own record and task, a name and a time): it reads Approved at once, everywhere; the seal and the order's event still come only with the saved file (SEALAFTERSAVE, 17 Nov). One the cloud cannot save goes back to To approve with the reason. */
   const accepted=job=>!!(job && !job.editingBack && job.state==='review' && job.approving && job.approving.cloud);   // (an EDIT of an approved engraving waits for its file, ITEM 9)
@@ -161,7 +165,7 @@
     const reasonId='egWhy'+(++askN);
     let approve='';
     if(kind==='approved')approve=`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton" disabled aria-label="${say('Back engraving approved')}">Approved</button>${sealsHtml}</span>`;
-    else if(ap.saving)approve=`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton egAsk" data-saving="1" disabled aria-busy="true"><span class="spin"></span>Saving…</button></span>`;
+    else if(ap.saving)approve=`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton egAsk" data-saving="1" disabled>Approved ✓</button></span>`;
     else if(ap.ok)approve=`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton egAsk" data-e="approve">Approve engraving</button></span>`;
     else if(ap.why)approve=`<span class="egApproveWrap"><button type="button" class="btn sm egApproveButton egAsk egOff" disabled aria-describedby="${reasonId}">Approve engraving</button></span><span class="egOffWhy" id="${reasonId}">${esc(say(ap.why))}</span>`;
     // one press for both faces of the piece shown ("Approve both faces"): offered by the host (e.both = { ok, why }) only when this piece has a Front and a Back still to approve; off, with the reason as its tip, until both placements have been looked at
@@ -307,5 +311,5 @@
     row.dataset.sealCount=String(row.querySelectorAll('.seal').length);root.Seal.fit?.(row);button.disabled=true;button.textContent='Approved';button.setAttribute('aria-busy','true');
     try{await root.Seal.press(seal);}finally{button.disabled=wasDisabled;if(wasBusy==null)button.removeAttribute('aria-busy');else button.setAttribute('aria-busy',wasBusy);}
   }
-  return {merge,own:ownOnly,list,keep,add,html,press,record,panel,wirePanel,fromEvents,who,busyLabel,stamped,accepted};
+  return {merge,own:ownOnly,list,keep,add,html,press,record,panel,wirePanel,fromEvents,who,busyLabel,instantLabel,taken,stamped,accepted};
 });

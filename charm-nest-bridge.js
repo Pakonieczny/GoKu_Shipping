@@ -10093,6 +10093,13 @@ const Engrave = window.Engrave = (() => {
     if(!["approved","written"].includes(now().state) && now().approving && now().approving.cloud && button && button.isConnected){try{button.disabled=true;window.CNEngravingSeals?.busyLabel?.(button);}catch(_){}}   // (SAVING: the button pressed says it is still being saved, never a plain Approve again)
     return ["approved","written"].includes(now().state) || accepted(now());   // (ACCEPTED: the press is over once the cloud holds it; the seal comes down with the saved file)
   }
+  /** INSTANTAPPROVE: an approval followed until the cloud HOLDS it (its task is made: name, time, words and place kept; its file is written behind it), or until it stands or was refused. -> true when it is held or stands */
+  async function approveTaken(job, by, button, o) {
+    await approve(job,by,button,o);
+    const n=items().get(job.key) || job,ok=["approved","written"].includes(n.state) || !!(n.approving && n.approving.cloud);
+    if(ok && button && button.isConnected){try{window.CNEngravingSeals?.instantLabel?.(button);}catch(_){}}
+    return ok;
+  }
   async function approve(job, by, button, o) {
     if(job._approvalTask){approveSay(job,"Still approving this placement…",null,true);return;}   // (APPROVEFIX: every wait of the task has a time limit, so this ends)
     const task=approveOnce(job,by,button,o).catch(e=>approveThrew(job,e));job._approvalTask=task;   // (HELDREL: an approval that threw says so, never a silent press)
@@ -14379,7 +14386,7 @@ const Engrave = window.Engrave = (() => {
     return n;
   }
   artChanged._again = new Map();
-  return { approveSettled, viewFaceOf, setViewFace, showFace, showStage: svShowStage, stageNow: svStageNow, stageSeq: k => { const r = SV_STAGES.get(String(k == null ? "" : k)); return r ? r.seq : 0; }, stagePlaceOf: svPlaceOf, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, heldNoPiece, unplacedPre, settleStuckBacks, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, discardStaged, stageFace, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, pendingOrderIds, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, placeOf, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, cloudEditSaved, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { approveSettled, approveTaken, viewFaceOf, setViewFace, showFace, showStage: svShowStage, stageNow: svStageNow, stageSeq: k => { const r = SV_STAGES.get(String(k == null ? "" : k)); return r ? r.seq : 0; }, stagePlaceOf: svPlaceOf, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, heldNoPiece, unplacedPre, settleStuckBacks, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, discardStaged, stageFace, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, pendingOrderIds, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, placeOf, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, cloudEditSaved, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PLACEORDERS (Paul, 23 Nov 2026: RG Draft 1 on its plate's leftover read "3/3 · 4% · 0 orders" for three pieces of one order): a sheet's orders are the ones its record names and those of
 every piece it lists (a piece's id starts with its order number), each once: a record the cloud placed pieces on before it named their orders still counts them */
@@ -20432,7 +20439,7 @@ const Review = window.Review = (() => {
     for (const x of items().slice()) if (String(x.key).startsWith("chg:") && x.row && /\(a saved link\)/.test(String(x.why || ""))) { const r = B.orders.byKey?.get(x.row.key) || x.row; if (linkMade(r)) { r.changePending = false; r.repoolChanged = false; delete r._linkCard; B.review.items = items().filter(y => y !== x); } }
     for (const r of Orders.rows()) if (r._linkCard && r.changePending && !items().some(x => x.key === "chg:" + r.key) && linkMade(r)) { r.changePending = false; r.repoolChanged = false; delete r._linkCard; }
     if (rvViewer()) {
-      const CW = window.CloudWorld, rv = CW && typeof CW.review === "function" ? CW.review() : null, cardOf = new Map(((rv && rv.cards) || []).filter(c => c && /^chg:/.test(String(c.key || ""))).map(c => [String(c.key), c]));
+      const CW = window.CloudWorld, rv = CW && typeof CW.review === "function" ? CW.review() : null, cardOf = new Map(((rv && rv.cards) || []).flatMap(c => (c ? [c].concat(Array.isArray(c.members) ? c.members : []) : [])).filter(c => c && /^chg:/.test(String(c.key || ""))).map(c => [String(c.key), c]));   // (ACCEPTONE: a question inside an order's one card keeps its own words and time)
       const waits = r => !!(r && r.order && r.changePending && !["gone", "committed"].includes(r.state));
       for (const [k, at] of changeAsked) { const r = B.orders.byKey?.get(k); if (!waits(r) || Date.now() - at > 20 * 60000) changeAsked.delete(k); }
       for (const r of Orders.rows()) {
@@ -20920,7 +20927,8 @@ const Review = window.Review = (() => {
     await Orders.loadMaps(true); toast(`${p.sku || "No SKU"} → ${sku} remembered${lids.length > 1 ? ` on ${lids.length} listings` : ""}`, "ok");
     linkHolds(rows || rowsOf(it), sku); pickedMarks(rows || rowsOf(it), sku, who);
     // (LISTPICK: every open order of the listing made up again with the pick first; a line it held for a person, or made up, is not made up again here)
-    const relinked = (await relinkNow().catch(() => null)) || { keys: new Set() }; relinkKeys([...answerKeysOf(it, rows).values()], sku, rows || rowsOf(it)).then(ks => ks.length ? askRemake(ks, `Use this charm: ${p.sku || "no SKU"} → ${sku}`) : askRelink([sku]));   // (LINKASK; RELINKNOW: the lines named when they are known)
+    const relinked = (await relinkNow().catch(() => null)) || { keys: new Set() }; relinkKeys([...answerKeysOf(it, rows).values()], sku, rows || rowsOf(it)).then(ks => ks.length ? askRemake(ks, `Use this charm: ${p.sku || "no SKU"} → ${sku}`) : askRelink([sku])).then(answeredSaid(it));   // (LINKASK; RELINKNOW: the lines named when they are known)
+    answeredTake(it, rows || rowsOf(it));   // (ANSWERED)
     for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId)) && !relinked.keys.has(rr.key)) await repool(rr);
   }
   /** "Use both: X 1 + X 2" (SIBLINGS, 12 Oct 2026): the page's saved pair link (aliasPut with pair, kept per listing and per transaction SKU under Charm_Sku_Aliases/{listing}.pairBySku), so this
@@ -20934,7 +20942,8 @@ const Review = window.Review = (() => {
     await Orders.loadMaps(true); toast(`${p.sku || "This SKU"} → ${L} + ${R} remembered for ${lids.length > 1 ? lids.length + " listings" : "this listing"}`, "ok");
     pickedMarks(sib.rows, L, who);
     for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId)) && (it.kind !== "reviewMark" || rr.state === "unmatched")) await repool(rr);   // (REVSUGGEST: an order sent to Review keeps its pieces on its sheet)
-    askRemake(unmadeOf(lids, pairs.map(q => String(q.from || "").trim().toUpperCase())), `Use both: ${L} + ${R}`);   // (LINKASK)
+    askRemake(unmadeOf(lids, pairs.map(q => String(q.from || "").trim().toUpperCase())), `Use both: ${L} + ${R}`).then(answeredSaid(it));   // (LINKASK)
+    if (it.kind !== "reviewMark") answeredTake(it, sib.rows);   // (ANSWERED)
     if (it.kind === "reviewMark") { Orders.interpretAll(); syncOrderItems(); Orders.render(); }
   }
   /** The choices of an offer: ONE "Use both" button with the two designs' thumbnails (the master's own picture tag, the SKU picker's `dsPick` button), then each numbered design as a single choice. */
@@ -21460,6 +21469,25 @@ const Review = window.Review = (() => {
     return Promise.resolve().then(() => window.CNRelayAsk({ type: "remakeline", ids, label: String(label || "Saved link").slice(0, 150) }, null, 300000))
       .then(ans => { if (ans && ans.text) toast(`The cloud: ${ans.text}`.slice(0, 300), ans.ok ? "ok" : "bad", 8000); return ans; }).catch(() => null);
   }
+  /* ANSWERED (Paul, 23 Nov 2026, Review's picks: "functionality not working"): on a computer that follows the cloud a question's lines are the cloud's, so after "Use this charm", "Use both" or an option answer the card stood there,
+     its buttons lit, until the cloud read all the orders again, a minute or two, as if nothing had happened. The card goes at the answer now; the cloud's new reading of the line (made at once by the request) is asked for within
+     seconds; and the card comes back if the request says it failed, or after four minutes if the cloud still asks. A line of another order that joins the question is shown as ever. */
+  const ANSWERED_MS = 4 * 60000, answeredHere = new Map();   // question key -> { at, keys: the lines answered }
+  function answeredRest(it) {
+    const a = answeredHere.get(String(it && it.key)); if (!a) return it;
+    if (Date.now() - a.at > ANSWERED_MS) { answeredHere.delete(String(it.key)); return it; }
+    const rows = rowsOf(it), left = rows.filter(r => !a.keys.has(r.key)); return left.length === rows.length ? it : left.length ? Object.assign({}, it, { rows: left, row: left[0] }) : null;
+  }
+  const answeredShow = () => { try { Orders.interpretAll(); syncOrderItems(); Orders.render(); render({ still: true }); } catch (e) { console.warn("[review] not drawn after an answer:", e && e.message); } };
+  function answeredTake(it, rows) {
+    if (!it || !viewerAnswers()) return; const k = String(it.key), had = answeredHere.get(k);
+    answeredHere.set(k, { at: Date.now(), keys: new Set([...(had ? had.keys : []), ...(rows || rowsOf(it)).filter(r => r && r.key).map(r => r.key)]) });
+    answeredShow(); const CW = window.CloudWorld; if (CW && typeof CW.refresh === "function") for (const ms of [3000, 7000, 14000, 30000]) setTimeout(() => { Promise.resolve(CW.refresh("answered")).catch(() => {}); }, ms);
+  }
+  /** The request's answer: a refusal brings the card back, with the cloud's words (said by the request itself); done: the cloud's reading is taken at once. */
+  const answeredSaid = it => ans => { if (!it || !ans || ans.none) return ans; if (ans.ok === false && !ans.late && answeredHere.delete(String(it.key))) answeredShow(); else { const CW = window.CloudWorld; if (CW && typeof CW.refresh === "function") Promise.resolve(CW.refresh("answered")).catch(() => {}); } return ans; };
+  /** The card's lines that only this question kept from being made: asked of the cloud by name. */
+  const onlyAsk = rows => (rows || []).filter(r => r && r.key && r.line && !r.parentRow && !r.hold && !(r.poolIds || []).length && (r.problems || []).length <= 1 && !["gone", "committed", "skipped", "noDesign"].includes(r.state)).map(r => r.key);
   const unmadeOf = (lids, froms) => Orders.rows().filter(r => r && r.key && r.line && lids.includes(String(r.line.listingId)) && (!froms || froms.includes(String(r.line.sku || "").trim().toUpperCase())) && !r.hold && !(r.poolIds || []).length && !["gone", "committed", "skipped", "noDesign"].includes(r.state)).map(r => r.key);
   /* RELINKNOW (Paul, 23 Nov 2026: "You have a budget of 30 sec to make the update ... This should be a simple process"): a charm linked to a listing ("Wrong charm?", a Review pick, an option answer) asked the cloud for
      keepsync, which waits for the next reading of ALL open orders, a minute or two. The lines the link changes are known here: they are asked for by name (remakeline reads only those, at once). → their keys (80 at most): the open
@@ -22509,6 +22537,7 @@ const Review = window.Review = (() => {
         answered(it, "decided", n === 1 ? `“${p.optionValue}” is not a number of pieces (1 piece)` : `“${p.optionValue}” makes ${n} pieces`, { option: p.optionName, value: p.optionValue, field: "count", to: String(n), listing: wide ? "all" : String(p.listingId) }, who);
         await Orders.loadMaps(true);
         toast(`“${p.optionValue}” → ${n} piece${n === 1 ? "" : "s"} · remembered for ${wide ? "every listing" : "this listing"}`, "ok");
+        { const mine2 = wide || lids.length === 1 ? rowsOf(it) : rowsOf(it).filter(x => x.line && String(x.line.listingId) === String(p.listingId)); askRemake(onlyAsk(mine2), `Option “${p.optionName}”: ${n} pieces`).then(answeredSaid(it)); answeredTake(it, mine2); }   // (ANSWERED)
         for (const rr of Orders.rows()) if (rr.problems.some(x => x.kind === "needsMapping")) await repool(rr);
       })();
       c.querySelectorAll("[data-n]").forEach(b => { b.onclick = () => say(b.dataset.n); });
@@ -22541,6 +22570,7 @@ const Review = window.Review = (() => {
           answered(it, "decided", `“${p.optionValue}” is the ${field} ${value}`, { option: p.optionName, value: p.optionValue, field, to: String(value), listing: wide ? "all" : String(p.listingId) }, who);
           await Orders.loadMaps(true);
           toast(`“${p.optionValue}” → ${value} · remembered for ${wide ? "every listing" : "this listing"}`, "ok");
+          { const mine2 = wide || lids.length === 1 ? rowsOf(it) : rowsOf(it).filter(x => x.line && String(x.line.listingId) === String(p.listingId)); askRemake(onlyAsk(mine2), `Option “${p.optionName}”: ${value}`).then(answeredSaid(it)); answeredTake(it, mine2); }   // (ANSWERED)
           for (const rr of Orders.rows()) if (rr.problems.some(x => x.kind === "needsMapping")) await repool(rr);
         } catch (e) { toast("Could not save that: " + e.message, "bad", 7000); [...c.querySelectorAll("button")].forEach(b => { b.disabled = false; }); }
       };
@@ -22560,7 +22590,8 @@ const Review = window.Review = (() => {
         toast(allv ? `every value of “${p.optionName}” → ${sku} · remembered for listing ${p.listingId}` : `“${p.optionValue}” → ${sku} · remembered for listing ${p.listingId}`, "ok");
         linkHolds(rowsOf(it), sku); pickedMarks(rowsOf(it), sku, who);
         const nm = t => O.norm(t), optRows = Orders.rows().filter(x => x && x.line && String(x.line.listingId) === String(p.listingId) && ((x.spec && x.spec.options) || []).some(q => q && nm(q.name) === nm(p.optionName) && (allv || nm(q.value) === nm(p.optionValue))));
-        await relinkNow().catch(() => null); relinkKeys([{ lid: p.listingId }], sku, rowsOf(it).concat(optRows)).then(ks => ks.length ? askRemake(ks, `Option “${p.optionName}”: ${sku}`) : askRelink([sku]));   // (LISTPICK: the open orders with this option value made up again with the pick; LINKASK; RELINKNOW)
+        await relinkNow().catch(() => null); relinkKeys([{ lid: p.listingId }], sku, rowsOf(it).concat(optRows)).then(ks => ks.length ? askRemake(ks, `Option “${p.optionName}”: ${sku}`) : askRelink([sku])).then(answeredSaid(it));   // (LISTPICK: the open orders with this option value made up again with the pick; LINKASK; RELINKNOW)
+        answeredTake(it, rowsOf(it).filter(x => x.line && String(x.line.listingId) === String(p.listingId)));   // (ANSWERED)
         for (const rr of Orders.rows()) if (String(rr.line.listingId) === String(p.listingId) && rr.problems.length) await repool(rr);
       })();
       c.querySelectorAll("[data-dsku]").forEach(b => { b.onclick = () => pickCharm(b.dataset.dsku); });
@@ -22579,10 +22610,11 @@ const Review = window.Review = (() => {
         await Orders.loadMaps(true);
         const held = O.heldOnOption(Orders.rows(), ids, p.optionName);
         toast(`“${O.shownText(p.optionName)}” never changes the charm · remembered for ${ids.length === 1 ? "listing " + ids[0] : ids.length + " listings"}${held.length ? ` · ${held.length} held order line${held.length === 1 ? "" : "s"} back in line` : ""}`, "ok");
+        { const mine2 = rowsOf(it).filter(x => x.line && ids.includes(String(x.line.listingId))); askRemake([...new Set(onlyAsk(mine2).concat(onlyAsk(held)))], `Option “${p.optionName}” ignored`).then(answeredSaid(it)); answeredTake(it, mine2); }   // (ANSWERED)
         await repoolAll(it);
         for (const rr of held) if (!rowsOf(it).includes(rr)) await repool(rr);
       });
-      c.querySelector("[data-a=ignore]").onclick = saving(c, async () => { const who = by(); if (!who) return; for (const lid of (oneOnly() ? [String(p.listingId)] : lids)) await api("charmNestLibrary", { op: "optionMapPut", listingId: lid, optionName: p.optionName, optionValue: p.optionValue, map: { field: "ignore" }, by: who }); answered(it, "decided", `“${p.optionValue}” changes nothing (ignored)`, { option: p.optionName, value: p.optionValue, field: "ignore" }, who); await Orders.loadMaps(true); await repoolAll(it); });
+      c.querySelector("[data-a=ignore]").onclick = saving(c, async () => { const who = by(); if (!who) return; for (const lid of (oneOnly() ? [String(p.listingId)] : lids)) await api("charmNestLibrary", { op: "optionMapPut", listingId: lid, optionName: p.optionName, optionValue: p.optionValue, map: { field: "ignore" }, by: who }); answered(it, "decided", `“${p.optionValue}” changes nothing (ignored)`, { option: p.optionName, value: p.optionValue, field: "ignore" }, who); await Orders.loadMaps(true); { const mine2 = oneOnly() ? rowsOf(it).filter(x => x.line && String(x.line.listingId) === String(p.listingId)) : rowsOf(it); askRemake(onlyAsk(mine2), `Option “${p.optionName}” ignored`).then(answeredSaid(it)); answeredTake(it, mine2); } /* (ANSWERED) */ await repoolAll(it); });
     } else if (it.kind === "unmatchedSku" || it.kind === "blockedSku") {
       const skus = [...B.master.entries.keys()].sort();
       /* SIBLINGS (Paul, 12 Oct 2026, order 4198409468, SKU "SCHRODINGER CAT" on a necklace of two cats): when the SKU names no design but the library holds its numbered designs and the line is a necklace
@@ -22598,7 +22630,7 @@ const Review = window.Review = (() => {
       c.querySelector("[data-a=alias]").onclick = saving(c, () => saveCharm(it, p, c.querySelector("[data-f=sku]").value));
       wireSib(c, it, p, sib, fn => saving(c, fn));
       // "Nothing to cut" with no SKU is a title rule; a no-SKU huggie set's matches only "<title> (HUGGIE)", never its necklace
-      c.querySelector("[data-a=nodesign]").onclick = saving(c, async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: p.huggie ? "^" + String(r.line.title).slice(0, 40).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ".*\\(HUGGIE\\)$" : "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: p.huggie ? "by title · Huggie CHARM SET" : "by title" }); answered(it, "decided", "Nothing to cut", { noDesign: true, sku: sku || null }, who); await Orders.loadMaps(true); await repoolAll(it); });
+      c.querySelector("[data-a=nodesign]").onclick = saving(c, async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: p.huggie ? "^" + String(r.line.title).slice(0, 40).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ".*\\(HUGGIE\\)$" : "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: p.huggie ? "by title · Huggie CHARM SET" : "by title" }); answered(it, "decided", "Nothing to cut", { noDesign: true, sku: sku || null }, who); await Orders.loadMaps(true); answeredTake(it); /* (ANSWERED) */ await repoolAll(it); });
       // a SKU blocked in the master (a flip check at indexing, an open outline) held every order of it with no way out but the Master tab: "Unblock this SKU" is that tab's own unblock (the same repo-password guard), then every line of the card goes back in line
       const ub = c.querySelector("[data-a=unblock]");
       if (ub) ub.onclick = saving(c, () => unblockSku(it));   // (RELTOQ: the same routine as the Review row's button)
@@ -22913,11 +22945,12 @@ const Review = window.Review = (() => {
     const covered = new Set(); for (const it of all.concat(clWait)) { if (it.rid != null) covered.add(String(it.rid)); for (const r of rowsOf(it)) if (r && r.order) covered.add(String(r.order.receiptId)); }
     // (CLOUDWORLD, Paul 20 Nov 2026: "Two computers looking at the same screen at the same moment show the same numbers and the same items, always"): Open is the cloud's Open (charm-nest-review-core.js, built
     //  once by the server from the cloud's lines): a card shows here only when the cloud's Review holds it, so every computer counts the same cards; one resolved here a moment ago leaves at once
-    let allOut = all.concat(heldCards(covered)), waitOut = clWait;
+    let allOut = all.concat(heldCards(covered)), waitOut = clWait, answeredOut = [];
     try { const CW = window.CloudWorld, rv = CW && CW.wanted && CW.wanted() && CW.review ? CW.review() : null, keys = rv && Array.isArray(rv.openKeys) ? new Set(rv.openKeys) : null;
       if (keys) { allOut = allOut.filter(it => keys.has(it.key) || (it.kind === "orderChanged" && /\(a saved link\)/.test(String(it.why || "")) && it.row && staleMade(it.row).length > 0)); waitOut = clWait.filter(it => keys.has(it.key)); } } catch (_) { /* the page's own Open, as before */ }
+    if (answeredHere.size) { const was = allOut; allOut = was.map(answeredRest).filter(Boolean); const left = new Set(allOut.concat(waitOut).flatMap(it => rowsOf(it).map(ridOfRow))); answeredOut = [...new Map(was.flatMap(it => rowsOf(it).map(r => [ridOfRow(r), it])).filter(([id]) => id && !left.has(id))).values()]; }   // (ANSWERED: one entry for each order whose card went)
     { const g = orderCards(allOut, waitOut); allOut = g.all; waitOut = g.clWait; }   // (ONECARD: one card per order, every question of it inside)
-    return { all: allOut, cl, customWaits, clWait: waitOut };
+    return { all: allOut, cl, customWaits, clWait: waitOut, answeredOut };
   }
   /* ONECARD (Paul, 23 Nov 2026, order 4244573392 shown twice, "Options" and "Unknown SKU": "The system is not allowed under any circumstances to create multiple cards for a given order:
      all information and all discrepancies about a given order must be listed under that one order"). Open's questions stay what they are (B.review.items, their keys, their answers,
@@ -23165,9 +23198,12 @@ const Review = window.Review = (() => {
     const sibIt=it.members?(it.members.find(m=>m.kind==='unmatchedSku'||m.kind==='blockedSku')||it):it,sibQ=sibIt.src||sibIt,sibRow=sibIt.row||row;
     const pk=sibIt.problem||{},sib=!cu&&!it.done&&!it.decided&&sibRow&&(sibIt.kind==='unmatchedSku'||sibIt.kind==='blockedSku')?similarOffer(sibRow,pk,rowsOf(sibIt).length?rowsOf(sibIt):group,sibQ):null;
     const issues=issueSections(it,cu,row),issuesHtml=`<div class="rvIssues" title="${esc(it.why || '')}">${issues.map(x=>`<div class="rvIssue">${issues.length>1?`<span class="rvIssueK">${esc(x.label)}</span>`:''}<ul>${x.pts.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></div>`).join('')}</div>`;
+    /* ACCEPTONE (Paul, 23 Nov 2026, "functionality not working"): with every question of an order on its one card (ONECARD), "Accept the new order" was drawn only when the change was the most pressing of them, and a press on a joined
+       card took no question down. It is on the card whenever the order changed, and answers each changed line's own question. */
+    const chgs=it.members?it.members.filter(m=>m.kind==='orderChanged').map(m=>m.src||m):it.kind==='orderChanged'?[it]:[];
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
-    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(issues.length>1?issues.length+' issues':cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind)+(it.job&&faceWordOf(it.job)?' · '+faceWordOf(it.job):''))}${aiChip}</span>${issuesHtml}${sib?`<div class="sibOffer" data-sib="${esc(JSON.stringify(siblingStamp(sibQ)))}"><div class="sibAsk">${esc(sib.ask)}</div><div class="sibPicks">${sibButtons(sib)}</div></div>`:''}${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${it.kind==='orderChanged'&&row&&!it.decided?'<button type="button" class="btn gold sm" data-rv-accept title="make this order up again as it reads now: the old pieces come off the sheet they are on (a sheet already released or cut is never touched)">Accept the new order</button>':''}</div>${cs?CustomSheet.stripHtml(cx):''}`;
+    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(issues.length>1?issues.length+' issues':cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind)+(it.job&&faceWordOf(it.job)?' · '+faceWordOf(it.job):''))}${aiChip}</span>${issuesHtml}${sib?`<div class="sibOffer" data-sib="${esc(JSON.stringify(siblingStamp(sibQ)))}"><div class="sibAsk">${esc(sib.ask)}</div><div class="sibPicks">${sibButtons(sib)}</div></div>`:''}${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${chgs.length&&row&&!it.decided?'<button type="button" class="btn gold sm" data-rv-accept title="make this order up again as it reads now: the old pieces come off the sheet they are on (a sheet already released or cut is never touched)">Accept the new order</button>':''}</div>${cs?CustomSheet.stripHtml(cx):''}`;
     // (a row drawn again for another reason keeps the offer's loaded thumbnails, as it keeps its .comparePair: they are not asked for twice)
     // (SEALTRAVEL: the order's seals under its identity, never in the buttons' column, where a seal row rests over the button before it)
     if(trav.html)node.querySelector('.engravingIdentity')?.insertAdjacentHTML('beforeend',trav.html);
@@ -23181,7 +23217,7 @@ const Review = window.Review = (() => {
     // (its custom buttons as a custom card's, and a click on the card opens its order; one whose line has left the pull
     // opens the order by its number)
     if(cx||row)wireAct(node,cx||{key:'rv:'+it.key,rows:[]},cx?cs:null,row);
-    { const ab=node.querySelector('[data-rv-accept]'); if(ab)ab.onclick=async e=>{e.stopPropagation();ab.disabled=true;try{await acceptChange(it);}finally{ab.disabled=false;}}; }   // (Order changed: the card's own answer, on the item's row)
+    { const ab=node.querySelector('[data-rv-accept]'); if(ab)ab.onclick=async e=>{e.stopPropagation();ab.disabled=true;try{for(const q of chgs)await acceptChange(q);}finally{ab.disabled=false;}}; }   // (Order changed: the card's own answer, on the item's row)
     const rid=String(rec?.receiptId || it.rid || '').replace(/\D/g,'');
     if(!row&&rid&&window.OrderWin){node.tabIndex=0;node.title='Open the order — everything about it, its conversations and its notes';
       const openIt=()=>OrderWin.openOrder(rid,{from:node});
@@ -23211,9 +23247,23 @@ const Review = window.Review = (() => {
   const tryRel = d => { try { const live = (d.rows || []).map(r => (r && B.orders.byKey && B.orders.byKey.get(r.key)) || r).filter(Boolean); return live.length ? Orders.releaseStampOf(live) : null; } catch (_) { return null; } };
   /** A decision answered, under Completed: who answered it and when (kept with the workspace, the newest 200; the segment reads Resolved now, and an order released to the nesting queue is drawn here too: releasedCards). */
   const settledRows = new WeakMap();
+  /** (RVSENT) The cloud's Resolved "sent to sheet" cards no card of this page stands for: one quiet item each, the same object while the cloud's card is the same. */
+  const standIns = new Map();
+  function sentStandIns(cards, finished) {
+    const have = new Set((finished || []).map(it => String(it.key))), out = [], live = new Set();
+    for (const c of cards || []) {
+      if (!c || c.state !== "Resolved" || !/^csent:/.test(String(c.key)) || have.has(String(c.key))) continue;
+      const id = c.key + "|" + (+c.t || 0); live.add(id);
+      let d = standIns.get(id); if (!d) { d = { key: String(c.key), kind: c.kind || "customOrder", orders: (c.orders || []).map(String), why: c.why || "Sent to Sheet", t: +c.t || +c.at || 0, by: "", row: null, quiet: true }; standIns.set(id, d); }
+      const row = (c.lineKeys || []).map(k => B.orders.byKey && B.orders.byKey.get(k)).find(Boolean) || null; if (row && d.row !== row) d.row = row;
+      out.push({ key: String(c.key), kind: d.kind, settled: d });
+    }
+    for (const id of [...standIns.keys()]) if (!live.has(id)) standIns.delete(id);
+    return out;
+  }
   function settledRow(d) {
     // its line still in the pull: the custom card's buttons for it while it is open, and a click opens its order
-    const live=d.row&&B.orders.byKey?.get(d.row.key),row=live&&live.state!=='gone'?live:null,ax=row?actOf({row,kind:d.kind},d.kind):null;
+    const live=d.row&&B.orders.byKey?.get(d.row.key),row=live&&live.state!=='gone'?live:null,ax=row&&!d.quiet?actOf({row,kind:d.kind},d.kind):null;   // (RVSENT: a stand-in has no button)
     // (SEALSHEET audit, Paul 20 Oct 2026: an order released with Release Hold leaves Open for Resolved with its button's seal stamped on it, and its card there had none: it rests there now, the RELEASE HOLD
     //  seal with who and when (Orders.releaseStampOf: the lines' releaseHold, the order's Review document; none for an order released another way, or held again, RELNOSEAL))
     const relSt=d.kind==='released'&&window.Orders&&Orders.releaseStampOf?tryRel(d):null;
@@ -23276,7 +23326,7 @@ const Review = window.Review = (() => {
     let oldScroll=v.querySelector(".egPane.scroll")?.scrollTop || 0;
     if(reviewFilter!==view){RV.limit=Math.max(40,RV.keep||0);reviewFilter=view;oldScroll=0;}
     RV.keep=0;
-    const { all, cl, customWaits, clWait } = openParts();   // (RVCOUNT: the very lists the tab's count is made of)
+    const { all, cl, customWaits, clWait, answeredOut } = openParts();   // (RVCOUNT: the very lists the tab's count is made of)
     // (no Changed and no Marked chip, RVRESOLVED, Paul 18 Oct 2026: their cards are in Open with the rest, NO_CHIP; a released order's card has none either)
     const ORDER = ["customOrder", "needResolution", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "heldOrder"];
     // a card that moves to a kind with no chip goes to its switch, and is said to be under it
@@ -23303,6 +23353,9 @@ const Review = window.Review = (() => {
     // (CLOUDWORLD: Resolved is the cloud's Resolved: a card shows here only when the cloud's Review holds it)
     // (S2: on a viewer, an answer given since the cloud last built its Review is listed at once: the cloud's next build lists it too)
     if (cloudRv && Array.isArray(cloudRv.resolvedKeys)) { const rk = new Set(cloudRv.resolvedKeys), fresh = rvViewer() ? +cloudRv.at || 0 : Infinity; finished = finished.filter(it => rk.has(it.key) || (!!it.settled && it.kind !== "released" && +it.settled.t > fresh)); }
+    /* RVSENT (23 Nov 2026: Resolved said 73 and listed 52): a custom order sent to the sheets on another computer is kept on its card's record, which a page holds only once it opened that order here: the cloud counted it and
+       the list left it out. The cloud's own card stands in for it (its order, its pictures, "Sent to Sheet", when), with no button of its own; the page's own card takes its place when it has one. */
+    if (cloudRv && Array.isArray(cloudRv.cards)) { const stood = sentStandIns(cloudRv.cards, finished); if (stood.length) finished = finished.concat(stood).sort((a, b) => doneAt(b) - doneAt(a)); }
     /* (CLOUDWORLD, Paul 20 Nov 2026: "The sorting of these orders doesn't match under the review tab"): every card is timed by the cloud's own card (charm-nest-review-core.js `at`: its latest activity, from the shared data), so Newest first,
        Oldest first and the date chips list the same cards in the same order on every computer; a computer's own touches no longer move a card. Without the cloud's Review each card is timed here, as before. */
     { const atMap = cloudRv && Array.isArray(cloudRv.cards) ? (cloudRv._atMap || (cloudRv._atMap = new Map(cloudRv.cards.filter(c => c && c.key).map(c => [String(c.key), +c.at || 0])))) : null;
@@ -23321,7 +23374,8 @@ const Review = window.Review = (() => {
        PAINTS (Open, Resolved and every chip of both) are the cloud's own counts (charm-nest-review-core.js, Charm_World/review), the same at every redraw and on every computer. They were counted again at each press from
        the cards this page held at that moment, filtered by the cloud: a computer still filling its cards in painted other numbers from one press to the next. The cards listed under a chip are still this page's. */
     const cc = cloudRv && cloudRv.counts && cloudRv.counts.openCount != null ? cloudRv.counts : null;
-    const shownOpenKind = cc ? new Map(ORDER.map(k => [k, k === "customOrder" ? +cc.customOrders || 0 : +cc[k] || 0]).filter(([, n]) => n > 0)) : byKind;
+    const wentOf = k => (cc ? (answeredOut || []).filter(it => chipIt(it) === k).length : 0);   // (ANSWERED: the cloud's numbers less the cards answered here a moment ago, until its own count follows)
+    const shownOpenKind = cc ? new Map(ORDER.map(k => [k, (k === "customOrder" ? +cc.customOrders || 0 : +cc[k] || 0) - wentOf(k)]).filter(([, n]) => n > 0)) : byKind;
     const shownDoneKind = cc ? new Map(ORDER.map(k => [k, +((cc.resolvedChips || {})[k]) || 0]).filter(([, n]) => n > 0)) : doneKind;
     const kinds = doneMode ? shownDoneKind : shownOpenKind;
     // a filter emptied under Open goes back to Everything; under Resolved it is only not shown, so Open keeps it
@@ -23358,7 +23412,7 @@ const Review = window.Review = (() => {
     const chip = (id, label, n, cls, title) => `<button class="egTab${(f || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
     // Open or Resolved first, then the filters: the switch holds for every chip, and pressing it shows all it holds
     // (one Resolved count: the cards listed under it, an order in both kinds counted once; "Resolved", RVRESOLVED: Paul, 18 Oct 2026)
-    const openN = cc ? +cc.openCount || 0 : all.length + clWait.length, resolvedN = cc ? +cc.resolved || 0 : cardsN(finished), customShown = cc ? shownOpenKind.get("customOrder") || 0 : customN;
+    const openN = cc ? Math.max(0, (+cc.openCount || 0) - (answeredOut || []).length) : all.length + clWait.length, resolvedN = cc ? +cc.resolved || 0 : cardsN(finished), customShown = cc ? shownOpenKind.get("customOrder") || 0 : customN;
     screenNow = { at: Date.now(), open: openN, resolved: resolvedN, openChips: Object.fromEntries(ORDER.filter(k => shownOpenKind.has(k)).map(k => [k, k === "customOrder" ? customShown : shownOpenKind.get(k)])), doneChips: Object.fromEntries(ORDER.filter(k => shownDoneKind.has(k)).map(k => [k, shownDoneKind.get(k)])) };
     if (opts.count) return screenNow;
     const seg = `<span class="rvSeg${f ? "" : " all"}" role="group" aria-label="Open or resolved"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="everything that still waits on a person">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything resolved: orders released to the nesting queue (Release Hold), orders whose QR label was printed or that were completed by hand (print again or reopen), custom orders sent to the sheets or on their way to the laser, and every decision answered">Resolved<b>${resolvedN}</b></button></span>`;
@@ -27243,7 +27297,7 @@ const OrderWin = window.OrderWin = (() => {
     // (the face picked on the switch for this charm: a charm's Front and Back are two jobs that share its pool piece, so the sheet's own reading, which names one of them, is not what was picked)
     if(cyc0&&cyc0.faces&&job&&SV.face){const pf=cyc0.pieces.find(p=>p.key===SV.face);if(pf&&pf.job!==job&&(pf.job.copies||[]).some(id=>(job.copies||[]).includes(id))){job=pf.job;xeng=null;}}
     const cyc=cyc0&&job?tryDo(()=>OEc.cycleOf(lr,job.key)):cyc0;
-    const eng=job ? {job,back:xeng?.back,saved:cyc?undefined:re,kind:["approved","written"].includes(job.state)?"approved":job.state==="review"?"approve":job.state==="skipped"?"skipped":["words","blocked"].includes(job.state)?"words":job.state==="none"?"none":"preparing",text:job.text,by:job.approvedBy,at:job.approvedAt,note:xeng?.note}
+    const eng=job ? {job,back:xeng?.back,saved:cyc?undefined:re,kind:["approved","written"].includes(job.keptState || job.state) || CNEngravingSeals.taken?.(job)?"approved":job.state==="review"?"approve":job.state==="skipped"?"skipped":["words","blocked"].includes(job.state)?"words":job.state==="none"?"none":"preparing",text:job.text,by:job.approvedBy || (CNEngravingSeals.taken?.(job) ? job.approving.by : undefined),at:job.approvedAt || (CNEngravingSeals.taken?.(job) ? job.approving.at : undefined),note:xeng?.note}   // (KEPTSTATE, INSTANTAPPROVE)
       : xeng?.kind && xeng.kind!=="none" ? {...xeng,saved:re || xeng.saved}
       : re ? {kind:re.needed?(re.approved?"approved":"words"):re.state==="skipped"?"skipped":"none",text:re.text,by:re.approvedBy,at:re.approvedAt,saved:re}
       : {kind:"none"};
@@ -27317,17 +27371,16 @@ const OrderWin = window.OrderWin = (() => {
         // (the name kept on this computer, else the small name bar in this window: never a browser pop-up on the order window)
         if(eng.job?.state!=="review"){if(SV.info)paintPanel(SV.info);return;}   // (a card that is out of date approves nothing: only a placement waiting for approval is approved)
         let who=CNEngravingSeals.who();if(typeof who!=="string"){who=await who;if(!who)return;if(!ap.isConnected)ap=panel.querySelector('[data-e=approve]');if(!ap || ap.disabled || eng.job.state!=="review")return;}
-        CNEngravingSeals.busyLabel(ap);
+        const standsNow=()=>["approved","written"].includes(eng.job.state) || CNEngravingSeals.taken(eng.job);
+        CNEngravingSeals.instantLabel(ap);   // (INSTANTAPPROVE: "Approved ✓" at the press, taken back below when it did not go through; its file is written behind it)
         try{
-          const run=(Engrave.approveSettled || Engrave.approve)(eng.job,who,ap);CNEngravingSeals.busyLabel(ap);   // (it puts "Approved" on the button as it starts: the wait is said again until the stamp)
-          // (the card turns Approved as soon as the stamp is down, the saving of the back file said under it; not when that saving is over)
-          await CNEngravingSeals.stamped(eng.job,run);
-          if(!["approved","written"].includes(eng.job.state) && !CNEngravingSeals.accepted(eng.job)){await run;ap.disabled=false;return;}
-          if(x0 && (!cyc || x0.eng?.job===eng.job))x0.eng={...eng,kind:"approved",by:eng.job.approvedBy || eng.job.approving?.by,at:eng.job.approvedAt || eng.job.approving?.at};
-          if(SV.info)paintPanel(SV.info);if(window.RunCtl)RunCtl.poke();
+          const run=(Engrave.approveTaken || Engrave.approve)(eng.job,who,ap);CNEngravingSeals.instantLabel(ap);
           await run;
-        }catch(e){if(!["approved","written"].includes(eng.job.state)){toast("Not approved: "+e.message,"bad",6000);ap.disabled=false;}}
-        finally{ap.removeAttribute("aria-busy");ap.textContent="Approved";}
+          if(!standsNow()){if(SV.info)paintPanel(SV.info);return;}
+          if(x0 && (!cyc || x0.eng?.job===eng.job))x0.eng={...eng,kind:"approved",by:eng.job.approvedBy || who,at:eng.job.approvedAt || (eng.job.approving && eng.job.approving.at) || Date.now()};
+          if(SV.info)paintPanel(SV.info);if(window.RunCtl)RunCtl.poke();
+        }catch(e){if(!standsNow())toast("Not approved: "+e.message,"bad",6000);}
+        finally{ap.removeAttribute("aria-busy");const on=standsNow();ap.disabled=on;ap.textContent=on?"Approved ✓":"Approve engraving";}   // (a press that did not go through is given back as it was: it never says Approved)
       },
       open:async()=>{
         // (this piece's own engraving, details open, the order's number in the search: EngraveLink, which also closes this window)

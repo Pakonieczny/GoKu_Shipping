@@ -240,6 +240,8 @@
   }
   /** Always an answer: the tidy reading, or the option as it is (decoded) when there is nothing to tidy. */
   function optionView(name, value, ctx) {
+    // (BUYERFILE, 23 Nov 2026, order 4238855149: a picture the buyer sent is kept as a link; it was printed whole in the order's options. It reads "Buyer's picture"; the link is the hover, and raw)
+    if (BUYER_FILE.test(String(value == null ? "" : value))) { const n = shownText(name), v = "Buyer's picture", was = (n ? n + ": " : "") + String(value).trim(); return { label: n, text: v, line: (n ? n + ": " : "") + v, parts: [{ label: n, text: v }], names: n, paired: false, changed: true, was, raw: { name: name == null ? "" : String(name), value: String(value) } }; }
     const t = tidyOption(name, value, ctx); if (t) return t;
     const n = shownText(name), v = shownText(value), was = (n ? n + (v ? ": " : "") : "") + v;
     return { label: n, text: v, line: was, parts: [{ label: n, text: v }], names: n, paired: false, changed: false, was, raw: { name: name == null ? "" : String(name), value: value == null ? "" : String(value) } };

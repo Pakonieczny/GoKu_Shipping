@@ -65,8 +65,8 @@
   /** The state of one face from its job: words (to confirm) | busy (being read or fitted) | approve | approved | plain. A face with no job yet but asked for is busy. */
   function stateOf(job, o) {
     if (!job) return 'busy';
-    const s = job.state, working = !!(o && o.isWorking && tryDo(() => o.isWorking(job), false));
-    if (s === 'approved' || s === 'written') return 'approved';
+    const s = job.keptState || job.state, working = !!(o && o.isWorking && tryDo(() => o.isWorking(job), false));   // (KEPTSTATE)
+    if (s === 'approved' || s === 'written' || (s === 'review' && job.approving && job.approving.cloud === true)) return 'approved';   // (INSTANTAPPROVE: an approval the cloud holds)
     if (s === 'skipped' || s === 'none') return 'plain';
     if (s === 'review') return 'approve';
     if (s === 'ready' || s === 'fitting') return 'busy';
@@ -186,7 +186,7 @@
         // SETBAR: a piece of a SET of different designs is its own design ("SKINNY 0191 · 16″"), never the line's joined name with "Disc 2" (charm-nest-engrave-sides.js setPieceOf; every other piece: as before)
         const S2 = Sides(), sps = S2 && S2.setPieceOf ? tryDo(() => S2.setPieceOf(line, slot), null) : null, lenWord = sps ? S2.lengthText(sps) : '', pname = sps ? sps.name : name;
         const slotWord = sps ? (shp && shp.multi && slotInfo(slot) ? 'set ' + slotInfo(slot).unit : '') : (S2 && S2.nounWord ? S2.nounWord(slotTitle(slot, copyTotal, shp), line) : slotTitle(slot, copyTotal, shp)), title = [pname, many && metal ? metal.code : '', lenWord, slotWord].filter(Boolean).join(' · ') || slotWord || 'Piece';
-        const review = present.filter(f => f.job && f.job.state === 'review');
+        const review = present.filter(f => f.job && (f.job.keptState || f.job.state) === 'review' && !(f.job.approving && f.job.approving.cloud === true));
         let approve = null;
         if (review.length) {
           const js = review.map(f => f.job), gone = js.some(j => j.row && j.row.state === 'gone');

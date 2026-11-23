@@ -447,6 +447,7 @@
         t, at: state === "Resolved" ? (doneAt || at) : at,
         orders, lineKeys: rows.map(l => l.key), sku: str((p && p.sku) || (l0 && l0.spec && l0.spec.designSku) || (l0 && l0.line.sku) || (it.record && it.record.sku) || ""),
         listingId: str((p && p.listingId) || (l0 && l0.line.listingId) || ""), title: str((l0 && l0.line.title) || (it.record && it.record.title) || ""),
+        ...(it.members ? { members: it.members.filter(m => m.kind === "orderChanged").map(m => ({ key: m.key, kind: m.kind, why: m.why, t: num(m.t) })) } : {}),   // (ACCEPTONE: the changed lines' own words, for the page's Accept)
         why: s ? s.why : customWhyOf(l0, it), problems: uniq((it.problems && it.problems.length ? it.problems : p ? [p] : []).map(q => str(q.kind)).filter(Boolean)),
         flags: { info: !!it.info, done: !!it.done, decided: !!it.decided, waits: it.kind === "customOrder" && it.info && !it.done && !it.decided ? customWaits(it) : false, folded: !!it.foldedInto }
       };

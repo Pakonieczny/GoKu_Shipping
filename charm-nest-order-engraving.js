@@ -204,7 +204,7 @@
     for (const j of jobs || []) {
       const held = x => !!(root.CNEngravingSeals && root.CNEngravingSeals.accepted && root.CNEngravingSeals.accepted(x));   // (ACCEPTED)
       if (j.state !== 'review' || held(j)) continue;
-      await (root.Engrave.approveSettled || root.Engrave.approve)(j, who, j === shownJob ? shownBtn || undefined : undefined);   // (SETTLE: followed until the cloud has saved it; judged before that, an approval being saved was called "not approved")
+      await (root.Engrave.approveTaken || root.Engrave.approveSettled || root.Engrave.approve)(j, who, j === shownJob ? shownBtn || undefined : undefined);   // (SETTLE: followed until the cloud has saved it; judged before that, an approval being saved was called "not approved")
       const now = (root.Engrave.items && tryDo(() => root.Engrave.items().get(j.key), null)) || j;
       if (!DONE.includes(now.state) && !held(now)) return { ok: false, failed: j };
     }
@@ -218,8 +218,9 @@
   }
   /** One job read the way the Sheet tab and the sheet window read it (the same kinds, the same words). */
   function fromJob(job, saved, poolId) {
-    const E = root.Engrave, s = job.state;
+    const E = root.Engrave, s = job.keptState || job.state;   // (KEPTSTATE)
     const base = { job, saved: saved || undefined };
+    if (s === 'review' && job.approving && job.approving.cloud === true) return Object.assign(base, { kind: 'approved', by: job.approving.by, at: job.approving.at, text: job.text });   // (INSTANTAPPROVE)
     if (s === 'none') return Object.assign(base, { kind: 'none' });
     if (DONE.includes(s)) return Object.assign(base, { kind: 'approved', back: backOf(job, poolId) || undefined, by: job.approvedBy, at: job.approvedAt, text: job.text });
     if (s === 'skipped') return Object.assign(base, { kind: 'skipped', by: job.approvedBy, text: job.text });
@@ -423,11 +424,11 @@
       const now = (last.get(k) || {}).approve;
       if (!now || !now.ok || now.jobs.length !== jobs.length || now.jobs.some(j => !was.has(j) || j.state !== 'review' || j.fit !== was.get(j)[0] || j.view !== was.get(j)[1])) { refresh(true, true); return; }
       busy.add(k); fails.delete(k); showFail(btn.closest('.engCard'), '');
-      S.busyLabel(btn);
+      S.instantLabel(btn);   // (INSTANTAPPROVE)
       const wasToasts = badToasts(); let ok = true, msg = '';
       try {
         const run = approveFaces(jobs, who, jobs[0], btn);   // (the first approval starts at once and puts "Approved" on the button: the wait is said again, with its spinner, until the stamp)
-        S.busyLabel(btn);
+        S.instantLabel(btn);
         const done = await run;
         if (!done.ok) { ok = false; msg = `The ${faceOf(done.failed)} was not approved`; }
         else if (jobs.some(j => { const n = (root.Engrave.items && tryDo(() => root.Engrave.items().get(j.key), null)) || j; return !DONE.includes(n.state) && !(S.accepted && S.accepted(n)); })) ok = false;   // (ACCEPTED)

@@ -653,7 +653,7 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 dialog.skuDlg{width:min(1720px,96vw);height:94vh;max-height:94vh}
 dialog.skuDlg[open] form.dlg{height:100%;max-height:none;display:flex;flex-direction:column}
 .skuDlg .dlgBody{flex:1 1 auto;min-height:0;overflow:hidden;display:grid;grid-template-columns:minmax(270px,340px) minmax(0,1fr);gap:22px}
-.skuDlg .seLeft{min-height:0;overflow:auto;padding:2px}
+.skuDlg .seLeft{min-height:0;overflow:auto;padding:5px;margin:-3px}   /* (room for the photo's ring, 4 px outside it: it was cut off) */
 .skuDlg #owSkuForm:not([hidden]),.skuDlg .seProg:not([hidden]){grid-column:2;min-height:0;display:flex;flex-direction:column}
 .skuDlg .seProg:not([hidden]){overflow:auto}
 .skuDlg:has(#owSkuForm[hidden]) .seLeft :is(.seScope,.seOnce){display:none}
@@ -3777,7 +3777,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .owPcRow .pcAct .owCuMore:hover,.owPcRow .pcAct .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
 </style>
 <link rel="prefetch" href="charm-nest-stamp-walnut.png?v=20261025-sw1" as="image">   <!-- (prefetch, 25 Oct 2026: the seal wood is used only once a Library seal shows; a preload warned "not used within a few seconds" on every Nest session) -->
-<link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small-en3-pe1-re1-wd1-dc1-dm1-eu1-pc1-egr1-mseal1-fb1-ms2-wal1-sx1-cs1-ol1-ra1-ru1-mh1-egw1-nv6-ah1-ce1-fb1-tb2-bx1-rs1-rs2-odb1-cmp1-tw1-ceb1-sal1-sal2-ceb2-lbf1-pch1-pch2-pch4-nsv1-ns2-one1-an1">
+<link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small-en3-pe1-re1-wd1-dc1-dm1-eu1-pc1-egr1-mseal1-fb1-ms2-wal1-sx1-cs1-ol1-ra1-ru1-mh1-egw1-nv6-ah1-ce1-fb1-tb2-bx1-rs1-rs2-odb1-cmp1-tw1-ceb1-sal1-sal2-ceb2-lbf1-pch1-pch2-pch4-nsv1-ns2-one1-an1-ah1">
 </head>
 <body>
 <div class="app" id="app">
@@ -4041,9 +4041,9 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-activity.js?v=1120-world9"></script>
 <script src="charm-nest-zoompan.js?v=20261005-zp1"></script>
 <script src="charm-nest-engrave-setup.js?v=20261011-su1-bf1-nb1-ud1-pv1-el1-au1-au2-au3-wy1-od1-sb2-pc1-nd1-br1-edw1-np1-np2-pn1-es1-eng2"></script>
-<script src="charm-nest-engrave-panel.js?v=20261012-ep1-ep2-hl1-hl2-sm1-r2wk1-wy1-r2th1-fr1-rb1-ag1-nd1-edw1-apx1-af1-fv1-cl1-cl2-np1-np2-np3-pn1-fs1-oa1-es1-mo1-nn1-ng1-ng2-b2-apc1-eng2-ia1-sv1"></script>
+<script src="charm-nest-engrave-panel.js?v=20261012-ep1-ep2-hl1-hl2-sm1-r2wk1-wy1-r2th1-fr1-rb1-ag1-nd1-edw1-apx1-af1-fv1-cl1-cl2-np1-np2-np3-pn1-fs1-oa1-es1-mo1-nn1-ng1-ng2-b2-apc1-eng2-ia1-sv1-ia1"></script>
 <script src="charm-nest-engrave-why.js?v=20261012-wy1-pc1"></script>
-<script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1-dm1-vf1-fb1-ui2-sd1-el1-wy1-pl1-wal1-br1-hsi1-tab1-ed1-pb1-np2-ia1-fa1-sv1-ps1-ps2-ps3-an1-ac1"></script>
+<script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1-dm1-vf1-fb1-ui2-sd1-el1-wy1-pl1-wal1-br1-hsi1-tab1-ed1-pb1-np2-ia1-fa1-sv1-ps1-ps2-ps3-an1-ac1-ia1"></script>
 <script src="charm-nest-monogram-seals.js?v=20261017-mseal1-tab1"></script>
 <script src="charm-nest-order-seals.js?v=20261019-cs1"></script>
 <!-- (SEALTRAVEL, Paul 20 Oct 2026: every seal an order has collected, drawn by kind, wherever the order ends up) -->
@@ -4073,7 +4073,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-ce-ai-panels.js?v=pfall-1116r"></script><!-- charm-nest-ce-ai-panels.js: the Charm Editor's right dock made as Adobe Illustrator's panel dock: Layers (eye, lock, layer colours as our roles, target, selection square), Properties, Transform, Align, Pathfinder, Stroke, Swatches, Character, Image Trace; tabs, icons, fly-outs (AIDOCK, Paul 28 Oct 2026) -->
 <script src="charm-nest-ce-ai-dialogs.js?v=20261028-aid1-ces1"></script><!-- charm-nest-ce-ai-dialogs.js: every dialog and modal of the Charm Editor drawn as Adobe Illustrator's (Mac, Medium Dark): the title bar, labels and fields with units, Preview at the bottom left, Cancel / OK with OK the default; nothing they do changes (AIDIALOGS, Paul 28 Oct 2026) -->
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
-<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1-sl1-pm1-zs1-dm1-nb1-ch1-ns1-lk1-nr1-au1-rlk2-rs1-en1-kp1-wo1-sb1-od1-nk2-rvd1-add1-szf1-szr1-mono1-monoui1-mono7-pin1-meg1-setfix1-hp1-rv1-br1-hsym1-bh1-num1-bl1-so1-fh1-co1-fd1-once1-skp1-oos1-bf1-tab1-bfw1-ltr1-fh3-fh4-fh5-fh2-bfh1-od1-fhd1-on1-l16-oc1-um1-rvl1"></script>
+<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1-sl1-pm1-zs1-dm1-nb1-ch1-ns1-lk1-nr1-au1-rlk2-rs1-en1-kp1-wo1-sb1-od1-nk2-rvd1-add1-szf1-szr1-mono1-monoui1-mono7-pin1-meg1-setfix1-hp1-rv1-br1-hsym1-bh1-num1-bl1-so1-fh1-co1-fd1-once1-skp1-oos1-bf1-tab1-bfw1-ltr1-fh3-fh4-fh5-fh2-bfh1-od1-fhd1-on1-l16-oc1-um1-rvl1-ah1"></script>
 <script src="charm-nest-engrave-said.js?v=merge-1115q"></script>
 <script src="charm-nest-engrave-read.js?v=20261013-sbc1-fh5-sk2"></script>
 <script src="charm-nest-engrave-classify.js?v=1120-classify1-eng1-eng2"></script>
@@ -4089,7 +4089,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-cloud-activity.js?v=20261113-ca1"></script>   <!-- CLOUDALL S4 (Paul 13 Nov 2026): every computer's activity log lines shared through the cloud -->   <!-- CLOUDALL (Paul 13 Nov 2026): every sheet is one cloud document, changed from any computer, followed by every computer -->   <!-- RUNFOLLOW (Paul 13 Nov 2026): a computer without the run follows the cloud run's lines (held, pooled, taken out) -->
 <script src="charm-nest-cloud-tray.js?v=20261114-ct1-cs1"></script>   <!-- (CLOUDTRAY, Paul 14 Nov 2026: "You must put all this in the cloud" -> "Yes, build it"): the Nest rail's dropped files shared by every computer through the cloud -->
 <script src="charm-nest-cloud-share.js?v=20261114-cs1-cs2"></script>   <!-- (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): what every computer keeps the same (Settings, the stock preset, set-aside notices, unsent drafts, the learned lists, Manual Control drafts), shared through the cloud and the changes feed -->
-<script src="charm-nest-engrave-sync.js?v=1120-world9-apc1-kr1-pf1-er1-ns2"></script>   <!-- ENGRSYNC (Paul 13 Nov 2026): every line's engraving work and every Charm Editor Save shared by every computer, live -->
+<script src="charm-nest-engrave-sync.js?v=1120-world9-apc1-kr1-pf1-er1-ns2-ia1"></script>   <!-- ENGRSYNC (Paul 13 Nov 2026): every line's engraving work and every Charm Editor Save shared by every computer, live -->
 <script src="charm-nest-engrave-cloud.js?v=1121-cloud11-va1-it9-an1-an2"></script>   <!-- the engrave lane (cloud plan v2 step 11, DORMANT while the drive is off): when the cloud carries the run, Approve is sent to it and this page writes no back file -->
 <script src="charm-nest-made-thumb.js?v=20261028-ts1-fb1-tb2-mv1-bx1-pb1-np1-gn1-bb1-fa1-fj1-fs1-fa2"></script><!-- charm-nest-made-thumb.js: every list box shows its pieces as they will be made (cut, art, Charm Editor changes, fitted words; front and back), live here and kept on the pool row for the other computers (THUMBSYNC, Paul 28 Oct 2026) -->
 <script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1-dm1-ko1-pv1"></script>
@@ -4098,8 +4098,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-order-rows.js?v=20261012-or1-rh1-br1-ms1-hb1-nv2"></script>
 <script src="charm-nest-order-group.js?v=20261013-on1"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2-cg1-cost18"></script>
-<script src="charm-nest-engrave-card.js?v=20261012-ec1-sm1-r2th1-bt1-bg1-pn1-pk1-sb1-hdr1-pc1-pv1-br1-ms1-tab1-fv1-pb1-ef1-cl1-np2-es1-ps3"></script>
-<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1-dm1-su1-ui2-egm1-el1-ec1-mg1-crash1-sel1-op1-pn1-tx1-pk1-ap2-sb1-ow1-pv1-pcm1-nd1-ms1-ws1-ma1-tab1-oa1-er1-ac1"></script>
+<script src="charm-nest-engrave-card.js?v=20261012-ec1-sm1-r2th1-bt1-bg1-pn1-pk1-sb1-hdr1-pc1-pv1-br1-ms1-tab1-fv1-pb1-ef1-cl1-np2-es1-ps3-ia1"></script>
+<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1-dm1-su1-ui2-egm1-el1-ec1-mg1-crash1-sel1-op1-pn1-tx1-pk1-ap2-sb1-ow1-pv1-pcm1-nd1-ms1-ws1-ma1-tab1-oa1-er1-ac1-ia1"></script>
 <script src="charm-nest-engrave-guide.js?v=20261013-ap2-meg1-pcm1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2-sn1-setfix1-sets9-gl1-gss1-nv2"></script>
 <script src="charm-nest-nospread.js?v=20261017-ns1"></script><!-- charm-nest-nospread.js: keep the pieces of a multi-piece or earring order on one sheet of its colour; a sheet near completion takes such an order only if all of it fits (NOSPREAD, Paul 17 Oct 2026) -->
@@ -9148,7 +9148,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26-now"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=1120-pair2-pmake1-apc1-place1-v14-dr1-dr2-sd1-sl1-or1-fa1-br1-sbc1-photo1-rm1-va1-it9-k14-it8-vi7-i16-cs1-g6-g9-s1-g4-s4-s3-s2-cd-now-nm1-lb1-lb2-se1-ia1-ts1-an1-rl1-ld1-ck1-src1-oa1-swh1-po1-lr1-rvl1-pf1-er1-sv1-ps1-ps2-mn1-ws1-la1-bp1-ub1-wc1-one1-an1-ac1"></script>
+<script src="charm-nest-bridge.js?v=1120-pair2-pmake1-apc1-place1-v14-dr1-dr2-sd1-sl1-or1-fa1-br1-sbc1-photo1-rm1-va1-it9-k14-it8-vi7-i16-cs1-g6-g9-s1-g4-s4-s3-s2-cd-now-nm1-lb1-lb2-se1-ia1-ts1-an1-rl1-ld1-ck1-src1-oa1-swh1-po1-lr1-rvl1-pf1-er1-sv1-ps1-ps2-mn1-ws1-la1-bp1-ub1-wc1-one1-an1-ac1-ah1-ia1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1-sy1-sy2"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1-ob1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
@@ -9228,7 +9228,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=1117-c7a0840c-v14-all1-rm1-fl1-it1-qr6-i5-it4-g1-s5-now-bb1-src1-rgw1-er1-lo1-cb1-an1-ac1"></script>
+<script src="charm-nest-sheetwin.js?v=1117-c7a0840c-v14-all1-rm1-fl1-it1-qr6-i5-it4-g1-s5-now-bb1-src1-rgw1-er1-lo1-cb1-an1-ac1-ia1"></script>
 <!-- 10K / 14K: a charm dragged onto the next or previous sheet of its metal, in the sheet window's Manual Control (SheetHop; Paul, 18 Oct 2026) -->
 <script src="charm-nest-sheet-hop.js?v=20261018-hop1-hp2-mv1-mc9-mi9b-gk1-fr1-ged1-hm1-b3-i13-g2-now"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
