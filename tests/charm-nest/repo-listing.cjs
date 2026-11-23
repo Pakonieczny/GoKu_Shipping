@@ -25,7 +25,7 @@ function page(o) {
     line('4250000001', '5310000001', '999999999', 'INITIAL_8391', 'INITIAL_8391', 'INITIAL_8391')];
   const pool = new Map(); for (const r of rows) for (const id of r.poolIds) pool.set(id, { sku: r._pieceSku });
   const w = { console, Promise, Date, JSON, Map, Set, String, Object, Array, setTimeout };
-  w.window = w; w.B = { run: null, pool: { rows: pool } };
+  w.window = w; w.O = { reviewListing: () => false }; w.B = { run: null, pool: { rows: pool } };   // (REVIEWLIST: the page's O = CharmNestOrders)
   w.employeeName = () => 'Paul_K';
   w.Master = { entryFor: s => (/^(9MM_DISC_8391|INITIAL_8391)$/.test(s) ? { sku: s } : null) };
   w.Orders = { rows: () => rows, loadMaps: async () => {}, interpretAll: () => {}, render: () => {} };

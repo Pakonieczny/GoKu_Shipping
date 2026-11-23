@@ -61,13 +61,13 @@ const read = (over, aliases) => { const line = lineOf(over); return { line, spec
     eq([row.changePending, row.repoolChanged, row.poolIds], [true, true, [id]], 'the line is flagged to be made up again');
     eq(w.reviews.length, 1, 'one card'); const it = w.reviews[0];
     eq([it.kind, it.key, it.row === row, it.old.spec.designSku], ['orderChanged', 'chg:' + row.key, true, OLD], 'the Order changed card, for this line, "Was" the old comet');
-    ok(/^Now CELESTIAL 3 - COMET \(a saved link\)\. Accept the new order to make it up again as 1 piece: the old CELESTIAL3-COMET comes off the open sheet it is on\. Nothing cut or released is touched\.$/.test(it.why), 'in plain words: ' + it.why);
+    ok(/^Now CELESTIAL 3 - COMET \(a saved link\)\. Accept the new order in Review \(or press the pencil, then Make it again\) to make it up again as 1 piece: it takes the old CELESTIAL3-COMET's place on its sheet\. /.test(it.why) && /cut/.test(it.why), 'in plain words (MADENOT): ' + it.why);
     w.Pool.pinPooled(row); eq(w.reviews.length, 1, 'asked again it adds nothing');
     eq(writes(w), 0, 'nothing is written by the offer (no pool, sheet, alias, master or engraving call)');
     eq(w.timeline.length, 0, 'an open sheet needs no timeline note: the card is the answer'); }
   // quantity 2: the card says 2 pieces
   { const w = worldOf(), row = rowOf({ quantity: 2 }, undefined, 2); pooledBefore(w, row); w.c.B.pool.rows.set('4197740562_5246703786_2', { poolId: '4197740562_5246703786_2', state: 'ready', sku: OLD, copy: 2, quantity: 2, charmHash: 'x' }); row.poolIds.push('4197740562_5246703786_2');
-    w.Pool.pinPooled(row); eq(w.reviews.length, 1, 'quantity 2: one card'); ok(/as 2 pieces: the old CELESTIAL3-COMET comes off/.test(w.reviews[0].why), 'it says 2 pieces and names the old design once: ' + w.reviews[0].why); }
+    w.Pool.pinPooled(row); eq(w.reviews.length, 1, 'quantity 2: one card'); ok(/as 2 pieces: it takes the old CELESTIAL3-COMET's place/.test(w.reviews[0].why), 'it says 2 pieces and names the old design once: ' + w.reviews[0].why); }
   // never on a sheet the laser has cut, or one recalled from the library: left as it was, said once in the log and once on the timeline
   // (INPLACE, Paul 20 Oct 2026: "Unless a sheet has been marked as fully completed and laser cut then that charm needs to come off that particular sheet": a full sheet changes, below)
   // (IPL2, Paul 9 Nov 2026: "Nothing can block this unless the sheet has already been laser cut": a recorded green-line cut alone is no lock any more; its line is set aside for the exchange)
