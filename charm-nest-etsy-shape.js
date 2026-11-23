@@ -61,6 +61,19 @@
     return "";
   }
 
+  /* LISTMETAL (Paul, 23 Nov 2026, order 4235923653: "When buyer chooses this Gold Filled option ... our system interprets it as Rose Gold ... for that specific choice from the drop-down menu to be recognized as
+     Gold Filled"; and "Fix and move both" for 4230787700 and 4238855149): listings 581466464 and 522898333 name their metal in a drop-down called "Personalization" ("GOLD·Engraved", "GOLD·Front", "SILVER·Front"),
+     which the reading below leaves out as the buyer's own words, and their other choice is a length: the metal was the title's last resort ("Sterling Silver, Gold or Rose Gold" → Rose). A seller's drop-down
+     (never the buyer's typed personalization, property 54) whose choice is a metal and an engraving word is read before the title. No other choice, and no option that names a metal itself, is changed. */
+  const CHOICE_METAL = /^(rose\s*gold|gold|(?:sterling\s*)?silver)(?:\s*filled)?\s*[·•∙⋅|\/:,\-–—]\s*(?:engraved|engraving|blank|front|back|both)\b/i;
+  function choiceMetal(vars) {
+    for (const v of vars) {
+      if (!v || !/^personali[sz]ation$/i.test(String(v.formatted_name || "").trim()) || String(v.property_id == null ? "" : v.property_id) === "54") continue;
+      const m = CHOICE_METAL.exec(String(v.formatted_value || "").trim()); if (m) return metalKeyFromText(m[1]);
+    }
+    return "";
+  }
+
   /**
    * Metal for one transaction: 1 · the Metal / Color / Colour variation; 2 · any other variation value, each on its own
    * (14k, then 10k, then the first); 3 · wide only: title and personalisation, each on its own, never concatenated.
@@ -87,6 +100,8 @@
     if (seen.includes("14k")) return "14k";
     if (seen.includes("10k")) return "10k";
     if (seen.length) return seen[0];
+
+    { const k = choiceMetal(vars); if (k) return k; }   // (LISTMETAL: before the title)
 
     if (wide) {
       const sources = [
