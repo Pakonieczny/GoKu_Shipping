@@ -88,6 +88,15 @@ async function partE() {   // the banner (nowOf): a question the order no longer
   ok((run({ asks: () => true }) || {}).type === 'needsDecision', 'E2 a question still asked stays on the banner'); ok((run(null) || {}).type === 'needsDecision' && (run({ asks: () => null }) || {}).type === 'needsDecision', 'E3 and one this page cannot judge');
   ok((run({ asks: () => false }, evs.concat([{ type: 'interpreted', at: 1795449999999, lineKey: 'L', text: 'Read again' }])) || {}).text === 'Read again', 'E4 a later reading is told as before');
 }
+async function partF() {   // what the buttons say
+  const S = require(path.join(root, 'charm-nest-engraving-seals.js')), html = job => { try { return S.panel({ kind: 'approve', job }); } catch (_) { return ''; } };
+  const sealsSrc = fs.readFileSync(path.join(root, 'charm-nest-engraving-seals.js'), 'utf8'), can = new Function(sealsSrc.slice(sealsSrc.indexOf('  function canApprove(e){'), sealsSrc.indexOf('\n  }\n', sealsSrc.indexOf('  function canApprove(e){')) + 4) + '\nreturn canApprove;')();
+  ok(can({ kind: 'approve', job: { state: 'review', row: {} } }).ok === true, 'F1 a piece to approve offers Approve'); ok(can({ kind: 'approve', job: { state: 'review', approving: { at: 1 }, row: {} } }).saving === true, 'F2 one the cloud is saving says Saving, never a lit Approve'); void html;
+  { const helpers = cutText('  /** PLACEFIRST: the words of a job with no placement', '  async function approve(job, by, button, o) {'); const j = { key: 'k', state: 'review' }, said = [], b = { isConnected: true, disabled: false };
+    const env = { window: { CNEngravingSeals: { busyLabel: x => said.push(x === b) } }, canFit: () => true, fitJob: async () => {}, items: () => new Map([['k', j]]), approve: async x => { x.approving = { cloud: true }; setTimeout(() => { delete x.approving; x.state = 'written'; }, 350); }, APPROVE_MS: { fit: 5000 } }, k = Object.keys(env);
+    const h = new Function(...k, helpers + '\nreturn approveSettled;')(...k.map(x => env[x])); const r = await h(j, 'T', b); ok(r && said[0] === true && b.disabled === true, 'F3 the button pressed keeps saying it is being saved until it is'); }
+  const ps = fs.readFileSync(path.join(root, 'charm-nest-engrave-panel.js'), 'utf8'); ok(/b\.dataset\.gate !== g\.st\) drawGate/.test(ps) && /clearInterval\(fresh\); untrack/.test(ps), 'F4 the Design & Engrave Approve is drawn again when its answer changed (and stops with the panel)');
+}
 /* ── C · the sync ── */
 async function sync(o) {
   const KEY = '4242795385_5305127482', P = { centre: [16.97, 17.12], angle: 0, size: 6.565, lines: ['A+E+T'], weight: 'Semibold', lineGap: 0.216, fittedMax: 8.33, upAngle: 90, cx: 1, cy: 2, fontKey: 'source-sans-3' };
@@ -117,4 +126,4 @@ async function partC() {
   { const s = await pn({ unplaced: true, boom: true }); ok(!s.r.ok && /boom/.test(s.r.why), 'C12 an error while placing is said: ' + s.r.why); }
   { const s = await sync({ place: { centre: [3, 3] } }); await s.ES._take(s.l, 'feed'); ok(s.job.fit && s.job.fit.centre[0] === 3, 'C9 a record that is placed moves the words there, as before'); }
 }
-(async () => { await partA(); await partB(); await partC(); await partD(); await partE(); console.log(`engrave-place-first: ${n - bad} of ${n} checks passed`); process.exit(bad ? 1 : 0); })().catch(e => { console.log('HARNESS ERROR', e.stack); process.exit(2); });
+(async () => { await partA(); await partB(); await partC(); await partD(); await partE(); await partF(); console.log(`engrave-place-first: ${n - bad} of ${n} checks passed`); process.exit(bad ? 1 : 0); })().catch(e => { console.log('HARNESS ERROR', e.stack); process.exit(2); });
