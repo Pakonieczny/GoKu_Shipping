@@ -841,6 +841,21 @@
     return o;
   }
   /** Clipboard items as new items (new ids, source 'added'), moved by dx, dy pt. */
+  /* KEEPCOPY (Paul, 22 Nov 2026: "I need the ability to copy a given feature of a charm inside the charm editor, then to close the charm editor open the charm editor on a different piece
+     and then be able to paste that back in what I copied in the previous session"): the editor's copy outlives the workspace it was made in, as Illustrator's clipboard outlives a document:
+     kept on the page (every workspace opened after it reads it) and in this browser's storage (a reload, another tab of the app), with the frame of the charm it was copied from, so
+     pasted on another charm it lands in the same place on THAT charm. A copy too big for the storage still lives on the page. → clipKeep(clip) · clipLatest() → { items, at, ws, frame, mark } | null */
+  const CLIP_KEY = 'ce.clip.v1', CLIP_MAX = 4000000;
+  let sharedClip = null;
+  function clipKeep(c) {
+    sharedClip = c;
+    try { const ls = root && root.localStorage; if (!ls) return; const str = JSON.stringify(c); if (str.length <= CLIP_MAX) ls.setItem(CLIP_KEY, str); else ls.removeItem(CLIP_KEY); } catch (e) { /* the page keeps it */ }
+  }
+  function clipLatest() {
+    let best = sharedClip;
+    try { const o = JSON.parse((root && root.localStorage && root.localStorage.getItem(CLIP_KEY)) || 'null'); if (o && Array.isArray(o.items) && o.items.length && (!best || +o.at > +best.at)) best = o; } catch (e) { /* the page's own */ }
+    return best && Array.isArray(best.items) && best.items.length ? best : null;
+  }
   const pasteItems = (clip, dx, dy, geo, idf) => (clip || []).map(it => pushDown(reid(it, idf), (dx || dy) ? tr(dx, dy) : null, geo, I, true));
   /** The ids as one new group, in their stacking order, where the topmost of them was. */
   function groupItems(items, ids, geo, gid) {
@@ -1869,7 +1884,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
     const lockRoles = Array.isArray(opts.lockRoles) ? opts.lockRoles : ['cut'];
     const S = {
       faces: {}, face: null, sel: [], tool: 'select', shape: 'rect', k: 1, ox: 0, oy: 0, fitted: false,
-      hist: new History(120), clip: null, pasteN: 0, grid: true, snapGrid: false, smart: true, link: true,
+      hist: new History(120), clip: null, clipAt: 0, clipFrom: null, clipFrame: null, ws: newId(), pasteN: 0, grid: true, snapGrid: false, smart: true, link: true,
       textFont: fonts[0].key, textSize: 8, textWeight: 0, textRole: 'hatch', shapeRole: 'line', lw: LW_LASER_PT, run: null, textStyle: {},   // (CETEXT: the bold / italic / case / alignment of the next words)
       editing: null, g: null, space: false, hover: null, open: new Set(), dock: true, nudgeAt: 0, ask: null
     };
@@ -3150,12 +3165,27 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
       setSel(items().filter(it => !it.hidden && !it.locked).map(it => it.id));
       if (S.tool !== 'select') setTool('select');
     }
-    function copySel() { if (!S.sel.length) return false; S.clip = copyItems(items(), S.sel, geo); S.pasteN = 0; return true; }
+    function copySel() {
+      if (!S.sel.length) return false; S.clip = copyItems(items(), S.sel, geo); S.pasteN = 0;
+      S.clipAt = Date.now(); S.clipFrom = S.ws; S.clipFrame = Object.assign({}, frame());   // (KEEPCOPY)
+      clipKeep({ items: S.clip, at: S.clipAt, ws: S.ws, frame: S.clipFrame, mark: S.clipMark || '' });
+      return true;
+    }
+    /** KEEPCOPY: the newest copy of any workspace (this one's, one closed before it, another tab's) is the one ⌘V pastes. A copy made on ANOTHER charm is taken onto this one
+     *  as it comes: moved by its frame's middle to this frame's middle, so it lands in the same place on this charm; from then on it pastes as a copy made here (the first ⌘V
+     *  where it was, the next ones stepping on; ⇧⌘V and ⌘B in place). */
+    function clipSync() {
+      const c = clipLatest(); if (!c || !(+c.at > +S.clipAt)) return;
+      const a = c.frame, b = frame(), other = c.ws !== S.ws && a && b, dx = other ? (b.x0 + b.wPt / 2) - (a.x0 + a.wPt / 2) : 0, dy = other ? (b.y0 + b.hPt / 2) - (a.y0 + a.hPt / 2) : 0;
+      S.clip = dx || dy ? pasteItems(c.items, dx, dy, geo) : c.items; S.clipAt = +c.at; S.clipFrom = S.ws; S.clipFrame = Object.assign({}, b || {}); S.clipMark = c.mark || S.clipMark;
+      S.pasteN = c.ws !== S.ws ? -1 : 0;   // (from another charm: the first ⌘V puts it in the same place)
+    }
     function cutSel() { if (copySel()) deleteSel(); }
     function paste(inPlace) {
+      clipSync();   // (KEEPCOPY)
       if (!S.clip || !S.clip.length) return;
       if (!inPlace) S.pasteN++;
-      const d = inPlace ? 0 : PASTE_MM * PT * S.pasteN;
+      const d = inPlace ? 0 : PASTE_MM * PT * Math.max(0, S.pasteN);
       const add = pasteItems(S.clip, d, d, geo);
       commit(items().concat(add), add.map(a => a.id));
     }
@@ -3782,7 +3812,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
       const name = n === 1 ? rowName(es[0].it) : n > 1 ? `${n} things` : 'Nothing selected';
       ctx.innerHTML = `<div class="ce-menu__head">${esc(name)}</div>`
         + (anyText ? it('edit', 'Edit the words…', 'double-click', true) : '')
-        + it('cut', 'Cut', '⌘X', n > 0) + it('copy', 'Copy', '⌘C', n > 0) + it('paste', 'Paste', '⌘V', !!(S.clip && S.clip.length)) + it('pasteInPlace', 'Paste in place', '⇧⌘V', !!(S.clip && S.clip.length))
+        + it('cut', 'Cut', '⌘X', n > 0) + it('copy', 'Copy', '⌘C', n > 0) + it('paste', 'Paste', '⌘V', !!((S.clip && S.clip.length) || clipLatest())) + it('pasteInPlace', 'Paste in place', '⇧⌘V', !!((S.clip && S.clip.length) || clipLatest()))
         + it('dup', 'Duplicate', '⌘D', n > 0) + it('del', 'Delete', '⌫', n > 0, 'ce-item--danger')
         + '<div class="ce-menu__head">Order</div>'
         + it('front', 'Bring to front', '⇧⌘]', n > 0) + it('forward', 'Bring forward', '⌘]', n > 0) + it('backward', 'Send backward', '⌘[', n > 0) + it('back', 'Send to back', '⇧⌘[', n > 0)
@@ -4354,7 +4384,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
     }
     function xPick() { const inp = $('.ce-file'); if (!inp || !X.importers.length) return; inp.accept = xAccept.join(','); inp.value = ''; inp.click(); }
     let xPasteT = 0, xPasteAt = 0, xCopyArm = false;
-    function xCopied() { if (!X.importers.length) return; S.clipMark = 'charm-editor:' + Date.now().toString(36) + ':' + (++idSeq).toString(36); xCopyArm = true; }
+    function xCopied() { if (!X.importers.length) return; S.clipMark = 'charm-editor:' + Date.now().toString(36) + ':' + (++idSeq).toString(36); xCopyArm = true; if (S.clip && S.clip.length && S.clipFrom === S.ws) clipKeep({ items: S.clip, at: S.clipAt, ws: S.ws, frame: S.clipFrame, mark: S.clipMark }); }   // (KEEPCOPY)
     /** ⌘V with importers: the paste event says what the system clipboard holds; the editor's own copy wins when it is the newest (the copy event wrote its mark there),
      *  a file or image is imported, and with no paste event at all (a browser that sends none) the editor's own copy is pasted a moment later. */
     function xPasteSoon(shift) { clearTimeout(xPasteT); xPasteT = setTimeout(() => { xPasteT = 0; xPasteAt = Date.now(); paste(shift); }, 150); S.pasteShift = shift; }
@@ -4371,6 +4401,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
       const cd = e.clipboardData, txt = cd ? cd.getData('text/plain') : '', files = [];
       if (cd) { for (const f of Array.from(cd.files || [])) files.push(f); if (!files.length && cd.items) for (const it of Array.from(cd.items)) if (it.kind === 'file') { const f = it.getAsFile(); if (f) files.push(f); } }
       e.preventDefault();
+      clipSync();   // (KEEPCOPY: a copy made in a workspace closed before this one is the editor's own copy too)
       const mine = !!(S.clip && S.clip.length) && (txt === S.clipMark || !files.some(f => xImporterFor(f)));
       if (mine) { paste(!!S.pasteShift); return; }
       if (files.length) xImport(files, { via: 'paste' });
@@ -4409,7 +4440,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
     function saveView() { try { if (root.localStorage) root.localStorage.setItem('ce.view', JSON.stringify({ rulers: S.rulers, ref: S.ref })); } catch (e) { /* fine */ } }
     const refit = () => requestAnimationFrame(() => { if (!rootEl.isConnected) return; if (S.fitted) fit(); else { clampPan(); applyView(); } });
     /** Paste in Back (⌘B): the clipboard where it was copied, under everything. Paste in Front (⌘F) is the editor's paste in place, on top. */
-    function pasteBack() { if (!S.clip || !S.clip.length) return; const add = pasteItems(S.clip, 0, 0, geo); commit(add.concat(items()), add.map(a => a.id)); }
+    function pasteBack() { clipSync(); if (!S.clip || !S.clip.length) return; const add = pasteItems(S.clip, 0, 0, geo); commit(add.concat(items()), add.map(a => a.id)); }   // (KEEPCOPY)
     /** View ▸ Rulers (⌘R): the rulers shown or hidden; the charm stays where it is on screen. */
     function setRulers(on) { S.rulers = !!on; $('.ce-wrap').classList.toggle('is-norulers', !S.rulers); saveView(); queueRulers(); requestAnimationFrame(() => { if (rootEl.isConnected) applyView(); }); }
     /** The Toolbar in one column or two (the » at its top; Edit ▸ Preferences ▸ User Interface). */
@@ -4474,7 +4505,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
       const tsrc = texts.length ? texts[0] : null;
       return {
         n: es.length, anyText: texts.length > 0, anyGroup: es.some(e => e.it.kind === 'group'), anyUngroup: es.some(e => ungroupable(e.it)), anyPath: leaves.some(l => l.kind === 'path'),
-        canUndo: S.hist.canUndo, canRedo: S.hist.canRedo, clip: !!(S.clip && S.clip.length), face: S.face, faces: ['front', 'back'].filter(f => S.faces[f]), tool: S.tool,
+        canUndo: S.hist.canUndo, canRedo: S.hist.canRedo, clip: !!((S.clip && S.clip.length) || clipLatest()), face: S.face, faces: ['front', 'back'].filter(f => S.faces[f]), tool: S.tool,
         opts: { grid: !!S.grid, snapGrid: !!S.snapGrid, smart: !!S.smart, showGuides: !!S.showGuides, snapGuides: !!S.snapGuides }, outline: rootEl.classList.contains('cx-outline'),
         rulers: S.rulers, dock: S.dock, xpanel: xPanelOn, panels: X.panels.map(p => ({ id: String(p.id), title: String(p.title || p.id) })), importers: X.importers.length,
         back: back ? back.label : '', screen: S.screen, hidden: { tools: !!S.hide.tools, control: !!S.hide.control }, fonts: fonts.slice(), textTool: S.tool === 'text', editing: !!S.editing,
