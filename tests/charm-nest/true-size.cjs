@@ -3,6 +3,8 @@
 //   1  a 9 mm disc with a 1.3 mm hole, drawn in a PDF with a 0.159 pt line: drawnPt reads 9.00 × 9.00 mm (its frame, widthPt, 9.88 mm, is unchanged)
 //   2  every save of a repository entry sends drawnPt (the indexer, the Charm Editor's update, the custom design's save), and the server keeps it and gives it back (slimEntry)
 //   3  the Charm Editor's repository card and the Library card show the size as drawn
+//   4  TRUESIZE 3: the same, read as the shop computers read it, in the REAL background worker (charm-nest-compute-worker.js, through charm-nest-background.js's copy of a charm): a
+//      9.0 mm circle drawn by the Charm Editor comes back 9.00 mm, never 9.2 (the frame without its 1 pt: the shape plus its line)
 //   NODE_PATH=<deps> node tests/charm-nest/true-size.cjs
 'use strict';
 const fs = require('fs'), path = require('path'), root = path.join(__dirname, '../..');
@@ -43,5 +45,25 @@ function discPdf(d, h, lw, turn) {
   ok('2 · slimEntry gives drawnPt back', slim && Array.isArray(slim.drawnPt) && slim.drawnPt[0] === 25.512, slim && slim.drawnPt);
   ok('3 · the repository card shows both drawings as drawn (drawnOf), never the frame', /In the repository\$\{sizeWords\(geom\)\}/.test(repo) && /Your drawing\$\{st\.made \? sizeWords\(st\.made\)/.test(repo) && /drawnPt: c\.drawnPt \|\| null/.test(repo));
   ok('3 · the Library card shows the size as drawn', /function drawnSize\(e\)/.test(bridge) && /\(drawnSize\(e\)\[0\] \* MM\)\.toFixed\(1\)/.test(bridge));
+  { // 4 · the real worker, as the page runs it: parse, group, silhouettes all in charm-nest-compute-worker.js, the charm crossing as charm-nest-background.js copies it
+    const vm = require('vm');   // (the canvas: the one _charmNestPdf.withCanvas() put in place above, the cloud's own, as the worker's OffscreenCanvas)
+    const box = vm.createContext({ console: { log() {}, warn() {}, error() {}, info() {} }, Intl, navigator: { userAgent: 'node-worker' }, TextEncoder, TextDecoder, setTimeout, clearTimeout, queueMicrotask, Uint8Array, Uint16Array, Uint32Array, Int32Array, Float32Array, Float64Array, ArrayBuffer, Map, Set, OffscreenCanvas: globalThis.OffscreenCanvas, FileReader: globalThis.FileReader, FileReaderSync: globalThis.FileReaderSync, Blob: globalThis.Blob, btoa: globalThis.btoa, atob: globalThis.atob });
+    const waiting = new Map(); let nextId = 0;
+    box.self = box; box.postMessage = m => { const w = waiting.get(m.id); if (!w || m.progress) return; waiting.delete(m.id); m.error ? w.reject(new Error(m.error)) : w.resolve(m.result); };
+    box.importScripts = (...files) => files.forEach(f => vm.runInContext(fs.readFileSync(path.join(root, f.split('?')[0]), 'utf8'), box, { filename: f }));
+    box.importScripts('charm-nest-compute-worker.js');
+    const run = (type, input) => new Promise((resolve, reject) => { const id = ++nextId; waiting.set(id, { resolve, reject }); box.onmessage({ data: structuredClone({ id, type, input }) }); }).then(r => structuredClone(r));
+    const bg = fs.readFileSync(path.join(root, 'charm-nest-background.js'), 'utf8'), keys = JSON.parse(bg.match(/const charm=c=>Object\.fromEntries\((\[[^\]]+\])/)[1].replace(/'/g, '"'));
+    const copy = c => Object.fromEntries(keys.filter(k => c[k] !== undefined).map(k => [k, c[k]]));
+    const bytes = discPdf(9 / MM, 1.3 / MM, 0.2, true), pw = await run('parse', { bytes, name: 'editor disc.pdf', key: 'k1' }), gw = await run('group', { parsed: pw, opts: { minPt: 6 } });
+    const charms = gw.charms.filter(c => !c.open), back = await run('silhouettes', { charms: charms.map(copy), scale: 6 });
+    back.forEach((f, i) => Object.assign(charms[i], f));   // (exactly as charm-nest-background.js's buildSilhouettes takes the worker's answer)
+    const cw = charms[0], dw4 = cw && cw.drawnPt ? cw.drawnPt.map(v => +(v * MM).toFixed(2)) : null;
+    const drawnOf = g => { const d = Array.isArray(g.drawnPt) && g.drawnPt.length === 2 ? g.drawnPt : null; if (d) return d; const w = +g.widthPt || 0, h = +g.heightPt || 0; return [w > 2 ? w - 2 : w, h > 2 ? h - 2 : h]; };   // (charm-nest-ce-repo.js's)
+    const card = cw ? (drawnOf(cw)[0] * MM).toFixed(1) : null;
+    ok('4 · TRUESIZE 3: in the real background worker a 9.0 mm circle drawn by the Charm Editor comes back with its size as drawn: ' + JSON.stringify(dw4) + ' mm', charms.length === 1 && !!dw4 && Math.abs(dw4[0] - 9) < 0.02 && Math.abs(dw4[1] - 9) < 0.02, { drawn: dw4, frame: cw && cw.widthPt });
+    ok('4 · and the repository card reads it as ' + card + ' mm (never 9.2)', card === '9.0', card);
+    ok('4 · the page loads the new worker (its version tags moved)', /charm-nest-background\.js\?v=1117-17148c77-ts3"/.test(fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8')) && /-nat1-ts3'\)/.test(bg));
+  }
   console.log(failed ? `FAIL true-size (${failed})` : 'PASS true-size'); process.exit(failed ? 1 : 0);
 })().catch(e => { console.log('FAIL true-size: ' + (e && e.stack || e)); process.exit(1); });
