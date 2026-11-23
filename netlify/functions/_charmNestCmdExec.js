@@ -346,6 +346,9 @@ async function settleNests(x, text, fin) {
 async function inplace(x, label) {
   const ctx = x.ctx, w = x.work, now = Date.now();
   if (!lane(ctx, "nest") || !lane(ctx, "pool")) return no(`${label} is not the cloud's yet (in this build pieces are made and placed by a computer): with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again`);
+  // (KEEPNOW, Paul 22 Nov 2026: "This is taking too long ... This type of update must happen in real-time": a save to the charm repository changes a drawing, never what an order reads as,
+  //  so its pieces are picked at once, not after the next reading of the orders, a minute or two)
+  if (!w.stage && x.noWorld) Object.assign(w, { stage: "pick", asked: num(x.cmd.at) || now, at: now });
   if (!w.stage) return wait("Waiting for the next reading of the orders…", { stage: "world", asked: num(x.cmd.at) || now, at: now });
   if (w.stage === "world") {
     const at = await worldAt(ctx);
@@ -413,7 +416,10 @@ async function inplace(x, label) {
     const run = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (run && run.run && run.run.lines) || lines(ctx), placedOn = new Map(), why = (w.why || []).slice(), unvac = {}, loose = [];
     for (const k of w.ready || []) {
       const l = L[k], home = ((w.vac[k] || {}).sheets || [])[0]; unvac[k] = { vacated: null };
-      if (!l || !home) continue;
+      if (!l) continue;
+      // (NEWLINE, Paul 22 Nov 2026: Michelle's Change SKU SHEEP3-CO → SHEEP 3 made the 2 pieces and answered "made again: 0 piece(s)", failed: the order was new, on no sheet, so it had no
+      //  place to go back to and was skipped here, never placed. Such a line is placed now as any new piece is)
+      if (!home) { loose.push(k); continue; }
       const jr = await ctx.db.collection(INTAKE).doc(k).get(), charms = jr.exists ? (jr.data() || {}).charms : null, s = await sheetRec(ctx, home);
       let mine = Array.isArray(charms) ? charms.filter(c => c && (l.poolIds || []).map(String).includes(String(c.poolId)) && (!s || !c.metal || c.metal === s.metal)) : [];
       // (FIXBACK, Paul 22 Nov 2026: order 4231992262's new discs went to a new draft, not back to the Nov 18 set sheet they came from: the intake's ledger never holds a line's pieces
@@ -478,11 +484,18 @@ async function staleLines(ctx, skus) {
     const skusHere = new Set([design].concat([...rows.values()].map(r => String(r.sku || "").toUpperCase())).filter(Boolean));
     if (![...skusHere].some(s => want.has(s))) continue;
     const e = design ? await entryOf(design) : null;
-    const stale = [...rows.values()].some(r => !r.custom && ((design && String(r.sku || "").toUpperCase() !== design) || (e && e.masterHash && r.masterHash && r.masterHash !== e.masterHash)));
+    const stale = [...rows.values()].some(r => !r.custom && ((design && String(r.sku || "").toUpperCase() !== design) || (e && e.masterHash && r.masterHash && r.masterHash !== e.masterHash) || redrawn(e, r)));
     if (stale) out.push(k);
     if (out.length >= 40) break;
   }
   return out;
+}
+/* REDRAWN (Paul, 22 Nov 2026: 9MM_DISC_8391 updated to 9.0 mm in the Charm Editor with "Make the open pieces again", and the cloud answered "Nothing to make again" while its 4 discs
+   stood on a sheet at the old size): a Charm Editor update replaces the design's drawing (charmHash, its edited.from → edited.to) and keeps the master file's hash (masterHash), the only
+   hash this looked at. A piece made from the drawing the update replaced (its charmHash, a fitted size's "~10MM" aside, is edited.from) holds an older drawing. */
+function redrawn(e, r) {
+  const ed = e && e.edited, from = ed && ed.from != null ? String(ed.from) : "", now = String((ed && ed.to) || (e && e.charmHash) || "");
+  return !!(from && from !== now && r && r.charmHash && String(r.charmHash).split("~")[0] === from);
 }
 /** FIXBACK: a line's live pieces as a sheet lists them, from their own records and the library's index (the placement's own description: charm-nest-place.js charmOfRow). */
 async function describeLine(ctx, ids) {
@@ -523,6 +536,7 @@ async function remakeline(x) {
   return inplace(x, "Making the order's pieces again");
 }
 async function keepsync(x) {
+  x.noWorld = true;   // (KEEPNOW)
   x.pick = () => staleLines(x.ctx, x.a.ids || []);
   return inplace(x, "Making the other orders again");
 }
