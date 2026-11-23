@@ -321,7 +321,12 @@
       }
       // (Decision 2: one GF and/or one SS partner sheet, in one set. NOWAIT, Paul 14 Nov 2026: a Rose Gold line is never left waiting for the open layout's green line; it goes on another open
       //  layout that keeps the rule, else a new draft. 10K / 14K lines wait as before: RGC1, one physical sheet at a time)
-      if (!ip && lineCuts(metal) && !matePages.includes(page) && !greenFits(page, rid, run)) {
+      /* RGFILL (Paul, 23 Nov 2026: "It should never start a brand new draft sheet if there's still room on a previous draft that's why we have the green cut lines for"; order 4244381926
+         opened RG Draft 2 at 00:07 while RG Draft 1 was 20% full, its gold pieces on another GF draft than RG Draft 1's): a ROSE GOLD draft still open (pieces, not cut, not released, not
+         lasered) takes the order whatever GF / SS partners it brings: the green cut line divides the sheet by set (the pieces left of it go with their set; another set's orders move on
+         at the cut, the automatic cut's own rule). 10K and 14K keep Decision 2 as before. */
+      const rgFill = metal === "rose" && greenOpen(page, run) && !shut(page) && inRun(page);
+      if (!ip && lineCuts(metal) && !rgFill && !matePages.includes(page) && !greenFits(page, rid, run)) {
         const was = page, alt = pagesOf(metal).find(p => p !== was && !shut(p) && inRun(p) && greenFits(p, rid, run));
         if (metal !== "rose" && !alt && byMetalSize === 1 && greenMustWait(was, rid, run, metal, list)) return { page: was, back: null, wait: { kind: "green", sheet: was }, events };
         page = alt || H.greenPage(metal, run);
@@ -363,7 +368,7 @@
       const units = new Map(); const key = typeof o.orderKey === "function" ? o.orderKey : (c => (NestPlan() ? NestPlan().orderKey(c) : String(c.order || c.id)));
       for (const c of moving) { const k = key(c); if (!units.has(k)) units.set(k, []); units.get(k).push(c); }
       const takes = p => { if (typeof o.admitted !== "function") return true; const ok = o.admitted(p, units); return [...units.keys()].every(k => ok.has(k)); };
-      const oids = [...new Set(moving.map(orderOf).filter(Boolean))], keeps = p => lineFits(p, oids, run, { skip: new Set(moving) });
+      const oids = [...new Set(moving.map(orderOf).filter(Boolean))], keeps = p => (metal === "rose" && greenOpen(p, run)) || lineFits(p, oids, run, { skip: new Set(moving) });   // (RGFILL: an open Rose Gold draft takes what a Rose Gold nest passes on, before a new draft)
       const inLineNext = () => { const after = line.slice(i + 1).filter(p => !shutOf(p) && takes(p)); return after.find(keeps) || after[0] || null; };
       /* (CUTDRAFTFILL: what a Rose Gold / 10K / 14K nest passes on goes to the oldest open draft of its metal that keeps the rule, before the newest and before a new draft) */
       const cutOpen = () => line.find(p => p !== sh && p.charms.length && (!run || !p.runId || p.runId === run.runId) && !shutOf(p) && !busy(p) && !p.recalled && !(p.rosePlan || p.roseProtected) && keeps(p) && takes(p)) || null;
