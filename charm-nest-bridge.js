@@ -20925,6 +20925,7 @@ const Review = window.Review = (() => {
     await Orders.loadMaps(true); toast(`${p.sku || "This SKU"} → ${L} + ${R} remembered for ${lids.length > 1 ? lids.length + " listings" : "this listing"}`, "ok");
     pickedMarks(sib.rows, L, who);
     for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId)) && (it.kind !== "reviewMark" || rr.state === "unmatched")) await repool(rr);   // (REVSUGGEST: an order sent to Review keeps its pieces on its sheet)
+    askRemake(unmadeOf(lids, pairs.map(q => String(q.from || "").trim().toUpperCase())), `Use both: ${L} + ${R}`);   // (LINKASK)
     if (it.kind === "reviewMark") { Orders.interpretAll(); syncOrderItems(); Orders.render(); }
   }
   /** The choices of an offer: ONE "Use both" button with the two designs' thumbnails (the master's own picture tag, the SKU picker's `dsPick` button), then each numbered design as a single choice. */
@@ -21437,6 +21438,13 @@ const Review = window.Review = (() => {
     return Promise.resolve().then(() => window.CNRelayAsk({ type: "keepsync", ids, label: `Saved link: make the open orders of ${ids.join(", ")} again`.slice(0, 150) }, null, 420000))
       .then(ans => { if (ans && ans.ok && ans.text && !/^Nothing to make again/.test(ans.text)) toast(`The cloud: ${ans.text}`.slice(0, 300), "ok", 8000); return ans; }).catch(() => null);
   }
+  /** (LINKASK) The lines named that have no piece yet are made now by the cloud (remakeline, SWAPNOW: only those lines are read again, at once); on a computer that follows the cloud only, in the background. */
+  function askRemake(keys, label) {
+    const ids = [...new Set(keys || [])].slice(0, 80); if (!ids.length || B.run || !(window.CNViewer && CNViewer.on && CNViewer.on()) || typeof window.CNRelayAsk !== "function") return Promise.resolve(null);
+    return Promise.resolve().then(() => window.CNRelayAsk({ type: "remakeline", ids, label: String(label || "Saved link").slice(0, 150) }, null, 300000))
+      .then(ans => { if (ans && ans.text) toast(`The cloud: ${ans.text}`.slice(0, 300), ans.ok ? "ok" : "bad", 8000); return ans; }).catch(() => null);
+  }
+  const unmadeOf = (lids, froms) => Orders.rows().filter(r => r && r.key && r.line && lids.includes(String(r.line.listingId)) && (!froms || froms.includes(String(r.line.sku || "").trim().toUpperCase())) && !r.hold && !(r.poolIds || []).length && !["gone", "committed", "skipped", "noDesign"].includes(r.state)).map(r => r.key);
   function relinkNow() { clearTimeout(relinkTimer); relinkTimer = 0; const p = relinkChain.then(relinkSweep, relinkSweep); relinkChain = p.catch(() => {}); return p; }
   // an order whose Review is resolved (or marked) is looked at again: a line kept on its sheet while it was in Review is made up now
   try { document.addEventListener("cn-review-mark", ev => { const rid = String((ev && ev.detail && ev.detail.rid) || ""); if (rid && [...relinkWait.values()].some(e => e.row && e.row.order && String(e.row.order.receiptId) === rid)) relinkLater(300); }); } catch (_) {}
