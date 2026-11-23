@@ -1166,6 +1166,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       //  it just read (Gate.followRecords: a sheet the record holds in an open set of the run while this page holds it in none takes that place back, nothing written), and the window is drawn again)
       if (!r.held) followRec(r.sheet, id);   // (LOCAL: a record held here is followed once the cloud has said it is current: recheck)
       W.rec = rec; W.st = stockOf(rec); W.live = liveOf(id);
+      tryDo(() => roseLoad(rec));   // (RGWINDOW: the physical sheet's earlier cuts, read behind the drawing when this page does not hold them)
       if (r.rev) { FOLLOW.id = id; FOLLOW.revs = { ["s:" + id]: r.rev }; }   // (LOCAL: the follow asks after the record at the revision drawn: one small read from its first beat)
       if (backFace()) W.backs = backsOf(rec, W.live, W.backsList);
       const same = !!(early && W.geom && early.sig === layoutSig(rec));
@@ -1533,6 +1534,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 
   /* ── geometry: the live page's charms, or the master designs placed as recorded ── */
   const fileGeoms = new Map();
+  /** SRCLIST (Paul, 22 Nov 2026, RG Sheet 1): the design files of a record's pieces: its `sources`, with one made from a piece's own entry (its aiPath / aiUrl, under its sourceId) for each
+      design the list does not name (charm-nest-pool-pieces.js sourcesOf). The cloud puts pieces on a record without listing their designs there, and such a piece was drawn as a box. */
+  const recSources = rec => { const PP = window.CharmNestPoolPieces; return PP && typeof PP.sourcesOf === "function" ? PP.sourcesOf(rec) : (rec && rec.sources) || []; };
   async function loadGeometry(tok) {
     const rec = W.rec, live = W.live;
     if (live) {
@@ -1541,7 +1545,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (W.pieces.some(x => !x.c)) { W.live = null; for (const x of W.pieces) x.c = null; }
       else return geometryReady(tok);
     }
-    const srcs = rec.sources || [], byId = new Map(srcs.map(s => [s.id, s])), got = new Map();
+    const srcs = recSources(rec), byId = new Map(srcs.map(s => [s.id, s])), got = new Map();
     const needed0 = [...new Set(W.pieces.map(x => x.sourceId).filter(Boolean))].map(id => byId.get(id)).filter(Boolean);
     // LOCAL (Paul, 28 Oct 2026): the master designs this page or this computer keeps (Pool.keptMaster: charm-nest-store.js) are taken first, all at once and with no veil, no
     // download and no parse; only what must still be read says so
@@ -1744,6 +1748,39 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!h || !(a > 0)) return;
     ctx.save(); ctx.setTransform(1, 0, 0, 1, X, Y); ctx.globalAlpha = Math.min(1, a); if (s !== 1) ctx.scale(s, s); ctx.drawImage(h.cv, -h.half, -h.half); ctx.restore();
   }
+  /* RGWINDOW (Paul, 22 Nov 2026: RG Sheet 1's window showed the left of its plate empty white, where its picture shows the earlier cuts' pieces in grey). A Rose Gold / 10K / 14K sheet
+     lies on a physical sheet earlier sheets were cut from; the plate never drew that history (only the Nest card's paintPreview and the cloud's picture did), so once its own drawing came
+     in over the picture the plate was white there. It is drawn under the pieces as the card draws it (RoseStock.paint "history": the metal already cut away light grey, the earlier
+     cuts' pieces grey, never this sheet's own), from the sheet this page holds when its history is read here, else from the record's stock and cuts (RoseStock.restore: one roseGet,
+     kept per sheet and cut state for ten minutes). A sheet whose physical sheet was never cut (no cut, revision 0) has none and asks nothing. */
+  const ROSEV = new Map();   // sheet id -> { key, view, at, asking }
+  const roseKeyOf = rec => [rec.id, rec.roseStockId || "", rec.roseCutAt || 0, rec.roseCutRevision == null ? "" : rec.roseCutRevision, +rec.roseRevision || 0, +rec.laserDoneAt || 0, rec.roseReopened ? 1 : 0].join("|");
+  const roseHas = rec => !!(rec && rec.roseStockId && window.RoseStock && typeof RoseStock.paint === "function" && window.CharmNestRose && CharmNestRose.cuts(rec.metal) && (rec.roseCutAt || +rec.roseRevision > 0));
+  const roseLive = rec => { const l = W.live; return l && l.sheetId === rec.id && l._roseLoaded && Array.isArray(l.roseHistory) && l.roseStock && l.roseStock.id === rec.roseStockId ? l : null; };
+  function roseView() {
+    const rec = W.rec; if (!rec || rec.id !== W.id || !roseHas(rec)) return null;
+    const v = ROSEV.get(rec.id); return roseLive(rec) || (v && v.key === roseKeyOf(rec) ? v.view : null);
+  }
+  function roseLoad(rec) {
+    if (!roseHas(rec) || roseLive(rec) || typeof RoseStock.restore !== "function") return;
+    const key = roseKeyOf(rec), had = ROSEV.get(rec.id);
+    if (had && had.key === key && (had.asking || (had.view && Date.now() - had.at < 600000))) return;
+    const view = { sheetId: rec.id, metal: rec.metal, laserDoneAt: +rec.laserDoneAt || null }, entry = { key, view: null, at: Date.now(), asking: true };
+    ROSEV.delete(rec.id); ROSEV.set(rec.id, entry); if (ROSEV.size > 12) ROSEV.delete(ROSEV.keys().next().value);
+    const drawn = () => { if (W.id === rec.id && W.dlg && W.dlg.open && W.st && (W.geom || (W.pre && W.pre.pieces))) paintBase(); };
+    within(RoseStock.restore(view, rec), 20000, "the cloud did not answer in 20 seconds").then(() => {
+      entry.view = view; entry.at = Date.now(); drawn();
+      const older = n => { if (view._roseOlder && n < 20) return setTimeout(() => older(n + 1), 500); if (n) drawn(); };   // (a stock with more cuts: the older ones are read a page at a time, then drawn)
+      older(0);
+    }, e => { if (ROSEV.get(rec.id) === entry) ROSEV.delete(rec.id); console.warn("sheet window: the physical sheet's history", e && e.message); }).finally(() => { entry.asking = false; });
+  }
+  /** The physical sheet's history, under the pieces (turned over with the plate on its Back). */
+  function roseUnder(ctx) {
+    const v = roseView(); if (!v || !W.st) return;
+    ctx.save(); ctx.translate(W.R, W.R); if (backFace()) { ctx.translate(W.st.wPt * W.k, 0); ctx.scale(-1, 1); }
+    try { RoseStock.paint(ctx, v, W.k, "history"); } catch (e) { console.warn("sheet window: the physical sheet's history", e); }
+    ctx.restore();
+  }
   function paintBase() {
     const cv = W.el.base, ctx = cv.getContext("2d"), st = W.st, R = W.R, k = W.k; if (!st) return;
     const Wp = cv.width - R, Hp = cv.height - R;
@@ -1751,6 +1788,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // as the page holds it
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
     ctx.fillStyle = "#fffefb"; ctx.fillRect(R, R, Wp, Hp);
+    roseUnder(ctx);   // (RGWINDOW: the cuts made before this sheet's, under it)
     sheetEdge(ctx, cv);
     for (const x of W.geom || !(W.pre && W.pre.pieces) ? W.pieces : W.pre.pieces) {
       if (x.gone || x === MC.lift) continue;   // (the charm Manual Control holds is drawn on the marks layer, where it moves)
@@ -6198,7 +6236,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!shown.length) { STAND.why = "No charm is placed on this sheet yet."; return null; }
     const miss = shown.filter(x => !x.c || !x.c.bits || !x.c.w);
     if (miss.length) { STAND.why = `${miss.length === 1 ? "One charm's drawing" : miss.length + " charms' drawings"} could not be read in this page, so ${miss.length === 1 ? "it" : "they"} cannot be checked. Close the sheet and open it again.`; return null; }
-    const recP = new Map((rec.placements || []).map(p => [p.id, p])), recC = new Map((rec.charms || []).map(c => [c.id, c])), srcs = new Map((rec.sources || []).map(s0 => [s0.id, s0]));
+    const recP = new Map((rec.placements || []).map(p => [p.id, p])), recC = new Map((rec.charms || []).map(c => [c.id, c])), srcs = new Map(recSources(rec).map(s0 => [s0.id, s0]));
     const charms = [], placements = [], srcOf = new Map();
     for (const x of shown) {
       const p = recP.get(x.id), rc = recC.get(x.id) || {}, c = x.c; if (!p) continue;
@@ -7631,7 +7669,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       for (const x of pieces) { x.eng = engOf(x, rec); dropGeo(x); }
       readOpts.onInfo(info); redraw();
     }, e => { if (active()) console.warn("order view: sheet metadata", e.message); });
-    const need = pieces.filter(x => !x.c), srcs = new Map((rec.sources || []).map(s => [s.id, s]));
+    const need = pieces.filter(x => !x.c), srcs = new Map(recSources(rec).map(s => [s.id, s]));   // (SRCLIST: a design the record does not list is the piece's own file)
     const ids = [...new Set(need.map(x => x.sourceId).filter(id2 => srcs.has(id2)))];
     ids.sort((a, b) => (G.mine.some(x => x.sourceId === b) ? 1 : 0) - (G.mine.some(x => x.sourceId === a) ? 1 : 0));
     let done = 0; const failed = [];
@@ -7702,7 +7740,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         B.rec = rec; B.backs = backsOf(rec, null); B.pieces = pieces; step();
         const early = Promise.all(otherFonts(B.backs, pieces)).then(step);   // (backs the record carries, saved in another font)
         const list = backsFor(id).then(l => { B.backs = backsOf(rec, null, l); step(); return Promise.all(otherFonts(B.backs, pieces)).then(step); }, () => {});
-        const srcs = new Map((rec.sources || []).map(s => [s.id, s])), queue = [...new Set(pieces.map(x => x.sourceId).filter(s => srcs.has(s)))];
+        const srcs = new Map(recSources(rec).map(s => [s.id, s])), queue = [...new Set(pieces.map(x => x.sourceId).filter(s => srcs.has(s)))];   // (SRCLIST: as the plate)
         await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
           while (queue.length) {
             const sid = queue.shift();

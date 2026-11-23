@@ -188,5 +188,41 @@
     return out;
   }
 
-  return { FIELDS, MAX_PIECES, parsePoolId, groupKeyOf, cleanFields, cleanGroupFields, cleanBody, fieldsOf, sheetCharmFields, metaOf, groupsOf, legacyGlued, placedCharms, uniqueIds };
+  /* SRCLIST (Paul, 22 Nov 2026, RG Sheet 1: 8 of its 29 pieces drawn as plain boxes in the sheet window, all 29 right in the cloud's picture of it). A sheet record names the design
+     of each piece twice: in its `sources` (one entry per design file: id, name, hash, path, url, pool, custom, sku) and on the piece's own charm entry (sourceId, sourceName, aiPath,
+     aiUrl, sku, hash). The cloud puts pieces on a record (placed, moved, put back) without listing their design in `sources`, and a reader that looked only there found no design.
+     sourceOfCharm: the source a charm entry names itself, under its sourceId (null when it names no file); sourceOf: the record's own source of a charm (as the readers matched
+     it), else that one; sourcesOf: the record's sources with one for each piece whose design it does not list; carrySources: a target's `sources` and its short list (sourcesLite,
+     as putSheet derives it) once `moving` charm entries lie on it, each design it does not list taken from a sheet in `froms` that lists it, else from the piece's own entry
+     (null: nothing to add). */
+  function sourceOfCharm(c) {
+    const id = c && c.sourceId != null ? String(c.sourceId) : "";
+    if (!id || !(c.aiPath || c.aiUrl)) return null;
+    return { id, name: String(c.sourceName || c.sku || id), hash: c.hash != null ? String(c.hash) : null, path: c.aiPath ? String(c.aiPath) : null, url: c.aiUrl ? String(c.aiUrl) : null,
+      pool: /^pool:/.test(id), custom: c.custom === true, sku: c.sku != null ? String(c.sku) : null };
+  }
+  function sourceOf(rec, c) {
+    const list = rec && Array.isArray(rec.sources) ? rec.sources : [];
+    return (c && list.find(s => s && (s.id === c.sourceId || s.name === c.sourceName))) || sourceOfCharm(c);
+  }
+  function sourcesOf(rec) {
+    const list = rec && Array.isArray(rec.sources) ? rec.sources.filter(s => s && typeof s === "object") : [], have = new Set(list.map(s => String(s.id)));
+    for (const c of rec && Array.isArray(rec.charms) ? rec.charms : []) { const s = c && c.sourceId != null && !have.has(String(c.sourceId)) ? sourceOfCharm(c) : null; if (s) { have.add(s.id); list.push(s); } }
+    return list;
+  }
+  const sourcesLiteOf = list => list.slice(0, 500).filter(x => x && typeof x === "object").map(x => Object.assign(x.name == null ? {} : { name: String(x.name).slice(0, 300) }, { hash: x.hash ? String(x.hash).slice(0, 80) : null }));
+  function carrySources(target, moving, froms) {
+    const was = target && Array.isArray(target.sources) ? target.sources : [], have = new Set(was.filter(s => s && typeof s === "object").map(s => String(s.id))), add = [];
+    for (const c of moving || []) {
+      const id = c && c.sourceId != null ? String(c.sourceId) : ""; if (!id || have.has(id)) continue;
+      let s = null; for (const r of froms || []) { s = (r && Array.isArray(r.sources) && r.sources.find(x => x && typeof x === "object" && String(x.id) === id)) || null; if (s) break; }
+      s = s || sourceOfCharm(c); if (!s) continue;
+      have.add(id); add.push(s);
+    }
+    if (!add.length) return null;
+    const sources = was.concat(add);
+    return { sources, sourcesLite: sourcesLiteOf(sources) };
+  }
+
+  return { FIELDS, MAX_PIECES, parsePoolId, groupKeyOf, cleanFields, cleanGroupFields, cleanBody, fieldsOf, sheetCharmFields, metaOf, groupsOf, legacyGlued, placedCharms, uniqueIds, sourceOfCharm, sourceOf, sourcesOf, carrySources };
 });

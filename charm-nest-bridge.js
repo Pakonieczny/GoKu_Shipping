@@ -8351,7 +8351,7 @@ const Engrave = window.Engrave = (() => {
       let charm=Pool.charmOf(poolId);
       const savedCharm=(d.charms || []).find(c=>c.poolId===poolId);
       if (!charm) {
-        const source=(d.sources || []).find(s=>s.id===savedCharm?.sourceId || s.name===savedCharm?.sourceName);
+        const source=CharmNestPoolPieces.sourceOf(d,savedCharm);   // (SRCLIST: a piece whose design the record does not list is read from its own entry's file)
         if (!source?.pool) throw new Error("Restore this sheet to the Nest workspace before editing backs from a combined source file.");
         if (!source?.url) throw new Error("The original front design is unavailable. Restore this sheet's source file before editing its back.");
         const src=await Pool.masterCharm({sku:saved.sku,aiPath:source.path || source.url,aiUrl:source.url,upAngle:saved.upAngle},null);
@@ -16782,7 +16782,7 @@ const RunCtl = window.RunCtl = (() => {
         if (!Orders.rows().some(row => row.poolIds.includes(rc.poolId))) continue;
         const pool = B.pool.rows.get(rc.poolId) || (await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
         // (TAKEOVERSAFE2, Paul 14 Nov 2026: "Yes, fix resume first"): a custom design is in no master file: it is rebuilt from its own file, the one its sheet was cut from (the sheet record's sources, as the back editor reads it); it was left out, and its sheet nested again from scratch
-        const own = pool.custom || rc.custom ? (d.sources || []).find(s => s && (s.id === rc.sourceId || s.name === rc.sourceName)) : null;
+        const own = pool.custom || rc.custom ? CharmNestPoolPieces.sourceOf(d, rc) : null;   // (SRCLIST: a design the record does not list is the piece's own entry's file)
         const entry = own ? null : Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry && !(own && (own.url || own.path))) continue;
         const src = entry ? await Pool.masterCharm(entry, pool.size) : await Pool.masterCharm({ sku: rc.sku || pool.sku, aiPath: own.path || own.url, aiUrl: own.url }, null);
         // a piece of a mismatched pair is cut from its own body, never from both (the pool row says which; the sheet's record says so too)
@@ -28436,7 +28436,7 @@ const Recall = window.Recall = (() => {
         if (d.dirty === true && Array.isArray(d.poolIds) && !d.poolIds.map(String).includes(String(rc.poolId))) continue;
         const pool = B.pool.rows.get(rc.poolId) || ((await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools || {})[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
         // (TAKEOVERSAFE2, Paul 14 Nov 2026: "Yes, fix resume first"): a custom design is in no master file: it is rebuilt from its own file, the one its sheet was cut from (the sheet record's sources, as the back editor reads it); it was left out, and its sheet nested again from scratch
-        const own = pool.custom || rc.custom ? (d.sources || []).find(s => s && (s.id === rc.sourceId || s.name === rc.sourceName)) : null;
+        const own = pool.custom || rc.custom ? CharmNestPoolPieces.sourceOf(d, rc) : null;   // (SRCLIST: a design the record does not list is the piece's own entry's file)
         const entry = own ? null : Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry && !(own && (own.url || own.path))) continue;
         const src = entry ? await Pool.masterCharm(entry, pool.size) : await Pool.masterCharm({ sku: rc.sku || pool.sku, aiPath: own.path || own.url, aiUrl: own.url }, null);
         // a piece of a mismatched pair is cut from its own body, never from both (the pool row says which; the sheet's record says so too)
@@ -28458,7 +28458,7 @@ const Recall = window.Recall = (() => {
         try {
           await breath();
           const pool = B.pool.rows.get(rc.poolId) || ((await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools || {})[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
-          const own = (d.sources || []).find(s => s && (s.id === rc.sourceId || s.name === rc.sourceName)); if (!own || !(own.path || own.url)) continue;
+          const own = CharmNestPoolPieces.sourceOf(d, rc); if (!own || !(own.path || own.url)) continue;   // (SRCLIST: listed, else the piece's own entry's file)
           const src = await Pool.masterCharm({ sku: rc.sku || pool.sku, aiPath: own.path || own.url, aiUrl: own.url }, null), base = await Pool.ensureBase(src, null, rc.hash ? rc : pool).catch(() => null); if (!base) continue;
           const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`);
           Object.assign(charm, { name: rc.name, order: pool.orderId, orderDate: pool.orderDate || 0, arrivedAt: pool.arrivedAt || 0, poolId: rc.poolId, metal: d.metal, lineKey: pool.lineKey, custom: true, hand: true, excluded: true, pinned: null,
