@@ -15714,7 +15714,14 @@ const Sets = window.Sets = (() => {
       }
     } catch (_) { /* the plain line stands */ }
     const groups = new Map(sets.filter(s=>s.status !== "superseded").map(s=>["set:"+s.setId, Object.assign({},s,{sheets:[]})]));
+    /* RGPLATE (Paul, 23 Nov 2026, RG Draft 1 cut by its second GF link and shown beside the draft on its leftover: "It should not be two draft sheets. It should be just a continuation of the
+       same draft sheet with the greyed out charms to green line and then the new pieces … I don't know why [Sheet 7] is here, it shouldn't be here"): a Rose Gold sheet whose green line was cut
+       while it is in no set is shown by the draft that continues its plate (that draft's picture greys what the cut took); it has no card of its own until it joins its set. A cut whose
+       plate no uncut draft of its run continues keeps its card. */
+    const continued = new Set(sheets.filter(s => s && s.metal === "rose" && !s.roseCutAt && !s.archived && s.roseStockId).map(s => (s.runId || "") + "|" + s.roseStockId));
+    const shownByPlate = s => !!s && s.metal === "rose" && !!s.roseCutAt && !(s.setId && !s.draft) && !!s.roseStockId && continued.has((s.runId || "") + "|" + s.roseStockId);
     for (const sheet of sheets) {
+      if (shownByPlate(sheet)) continue;
       const meta=O.libraryGroup(sheet, {combineSolids:true}), key=meta.key;
       if (!groups.has(key)) groups.set(key, {...meta, runId:sheet.runId, day:sheet.day, status:meta.standalone ? "not included in a set" : meta.working ? "held for a later set" : "saved", sheets:[], materials:[], orders:{}});
       const group=groups.get(key); group.sheets.push(sheet); if(group.working && !group.setId && String(sheet.day || "")>String(group.day || ""))group.day=sheet.day;   // (ONECARD: a card of sheets from several days goes by its newest)
@@ -20261,6 +20268,43 @@ const Review = window.Review = (() => {
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
+  /* RVPOINTS (Paul, 23 Nov 2026: "the issues are too verbose. The system needs to identify the actual issue, condensed and presented to the user in form of point form that's easily
+     understandable"): each issue of a card as two or three short points, what is wrong and then what to do; the whole sentence stays the card's tooltip. A line whose "two designs"
+     question and "unknown SKU" are the same thing (its SKU names the two designs) is ONE issue. */
+  const clipW = (s, n) => { s = String(s == null ? "" : s).replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1).trimEnd() + "\u2026" : s; };
+  const capW = s => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+  const namesIn = t => { const m = /names?\s+((?:[\u201c"][^\u201d"]{1,40}[\u201d"](?:\s*(?:,|and)\s*)?)+)/i.exec(String(t || "")); return m ? [...m[1].matchAll(/[\u201c"]([^\u201d"]{1,40})[\u201d"]/g)].map(x => x[1]) : []; };
+  const skuOfIt = (p, it) => String((p && p.sku) || (it && it.row && ((it.row.spec && it.row.spec.designSku) || (it.row.line && it.row.line.sku))) || "");
+  function pointsOf(p, it, text) {
+    const sku = skuOfIt(p, it);
+    if (it && it.kind === "heldOrder") { const w = String(it.why || "").split(/\s+\u2014\s+/).slice(1).join(" \u2014 ") || "on hold"; return [`On hold: ${clipW(w, 70)}`, "Release Hold when it is ready, or Cancel Order"]; }
+    if (p) switch (p.kind) {
+      case "unmatchedSku": return [sku ? `SKU ${sku} is not in the master files` : "This line has no SKU", "Pick its design, or drop its .ai / .dxf here"];
+      case "blockedSku": return [`SKU ${sku || "?"} is blocked`, "Unblock it, or pick another design"];
+      case "needsMaterial": return [`Metal not chosen${p.metalLabel ? ` (order says ${p.metalLabel})` : ""}`, "Choose the metal"];
+      case "missingSize": return ["No size chosen", "Choose the size"];
+      case "needsMapping":
+        if (p.pairSecond) { const n = namesIn(p.pairSecond.why); return [n.length > 1 ? `Two designs: ${n.slice(0, 2).join(" + ")}` : "Two different designs on one line", /no single master design|not in any master/i.test(p.pairSecond.why || "") ? "Neither is in the master files" : "Only one of them is named", "Name both designs, or use one design on both ears"]; }
+        if (p.letter) return [`Option \u201c${clipW(p.optionName, 24)}: ${clipW(p.optionValue, 24)}\u201d`, capW(clipW(String(p.letter.why || "").split(/:\s+/)[0], 70)), "Choose what it means"];
+        if (p.font) return [capW(clipW(String(p.font.why || "").split(/:\s+/)[0], 80)), "Choose the font"];
+        break;
+    }
+    // (any other: the sentence cut at its colon into what is wrong and what to do, the asides in brackets left out)
+    const t = String(text || (p ? problemText(p) : "") || (it && it.why) || "Needs a decision").replace(/\s*\([^)]{12,}\)/g, ""), parts = t.split(/:\s+/);
+    return parts.length > 1 ? [capW(clipW(parts[0], 90)), capW(clipW(parts.slice(1).join(": "), 90))] : [capW(clipW(t, 110))];
+  }
+  /** The issues of a card, each { label, pts }: one per question of the order (ONECARD members), a line's "two designs" and its unknown SKU as one. */
+  function issueSections(it, cu, row) {
+    const ms = it.members && it.members.length ? it.members : [it], out = [];
+    const pairOn = new Set(ms.filter(m => m.problem && m.problem.pairSecond).flatMap(m => rowsOf(m).map(r => r.key)));
+    for (const m of ms) {
+      const p = m.problem || null, mc = m.kind === "customOrder", mr = m.row || row;
+      if (m.kind === "unmatchedSku" && rowsOf(m).length && rowsOf(m).every(r => pairOn.has(r.key))) { const pair = out.find(x => x.pair); if (pair) pair.pts.splice(1, 1, `SKU ${skuOfIt(p, m) || "?"} names both; neither is in the master files`); continue; }
+      const text = mc ? ((!m.info && mr && !mr.spec?.special?.decided && mr.spec?.special?.read?.summary) || m.why) : null;
+      out.push({ label: mc ? ((mr && mr.spec && mr.spec.special && mr.spec.special.label) || "Custom order") : (KIND_WORDS[m.kind] || m.kind) + (m.job && faceWordOf(m.job) ? " \u00b7 " + faceWordOf(m.job) : ""), pts: pointsOf(mc ? null : p, m, text), pair: !!(p && p.pairSecond) });
+    }
+    return out.length ? out : [{ label: KIND_WORDS[it.kind] || it.kind, pts: pointsOf(it.problem || null, it) }];
+  }
   function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.letter ? `option "${p.optionName}: ${p.optionValue}" \u2014 ${p.letter.why}` : p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.setLayout ? `${p.setLayout.why}` : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? (p.formHold ? p.reason : `SKU ${p.sku || "?"}: ${p.reason}`) : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? (p.why ? `size ${p.size}: ${p.why}` : `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})`) : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
@@ -20334,7 +20378,7 @@ const Review = window.Review = (() => {
     CustomRead.later();                                                  // lines with no design of their own are read by Claude
   }
   /** A card's motion name: a custom order keeps one name open or completed (so it is seen moving between the two). */
-  const mkeyOf = it => it.kind === "customOrder" ? "cu:" + String(it.key).replace(/^[a-z]+:/, "") : String(it.key);
+  const mkeyOf = it => it.members ? String(it.key) : it.kind === "customOrder" ? "cu:" + String(it.key).replace(/^[a-z]+:/, "") : String(it.key);   // (ONECARD: an order's card keeps its own name)
   /** Every line the item speaks for — the group when it has one, the single row otherwise. */
   const rowsOf = it => (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).filter(r => r.state !== "gone");
   /** Apply one decision to every line it covers, then re-pool them together. */
@@ -20344,7 +20388,7 @@ const Review = window.Review = (() => {
     for (const r of rows) await repool(r);
   }
   function focus(rowKey) {
-    const it=items().find(it=>rowsOf(it).some(r=>r.key===rowKey));
+    const it=(()=>{try{const o=openParts();return o.all.concat(o.clWait).find(c=>rowsOf(c).some(r=>r.key===rowKey));}catch(_){return null;}})() || items().find(it=>rowsOf(it).some(r=>r.key===rowKey));   // (ONECARD: the order's card)
     RV.filter=null;RV.cseg="open";RV.limit=RV.keep=items().length;reviewFilter=null;RV.open=it?.key || null;render();
     const c=it && reviewRows.get(it.key)?.node;
     // (the card is marked, and its order opens, as a click on the card opens it)
@@ -22649,7 +22693,7 @@ const Review = window.Review = (() => {
   }
   function stampOf(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
-    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,!!it.decided,it.record&&[it.record.lastPrintedAt,it.record.prints,it.record.stamps,it.record.completedAt,it.record.decidedAt,it.record.by],it.done&&group.length>1&&group.map(r=>{const d=r.spec?.customDone;return d&&[d.stamps,d.completedAt,d.lastPrintedAt,d.prints];}),it.alsoSent&&[it.alsoSent.at,it.alsoSent.by,it.alsoSent.stamps],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):actStamp(actOf(it)),CustomRead.stamp(row),siblingStamp(it),cancelRidOf(it)]);   // (CANCELREVIEW: a card whose order goes on or off hold is drawn again, with or without its Cancel Order)
+    return JSON.stringify([it.members&&it.members.map(m=>[m.key,m.kind,m.why,m.problem]),it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,!!it.decided,it.record&&[it.record.lastPrintedAt,it.record.prints,it.record.stamps,it.record.completedAt,it.record.decidedAt,it.record.by],it.done&&group.length>1&&group.map(r=>{const d=r.spec?.customDone;return d&&[d.stamps,d.completedAt,d.lastPrintedAt,d.prints];}),it.alsoSent&&[it.alsoSent.at,it.alsoSent.by,it.alsoSent.stamps],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):actStamp(actOf(it)),CustomRead.stamp(row),siblingStamp(it),cancelRidOf(it)]);   // (CANCELREVIEW: a card whose order goes on or off hold is drawn again, with or without its Cancel Order)
   }
   /* ── Custom Orders that ask nothing, and those completed ── */
   const infoItems = new Map();
@@ -22720,7 +22764,42 @@ const Review = window.Review = (() => {
     let allOut = all.concat(heldCards(covered)), waitOut = clWait;
     try { const CW = window.CloudWorld, rv = CW && CW.wanted && CW.wanted() && CW.review ? CW.review() : null, keys = rv && Array.isArray(rv.openKeys) ? new Set(rv.openKeys) : null;
       if (keys) { allOut = allOut.filter(it => keys.has(it.key)); waitOut = clWait.filter(it => keys.has(it.key)); } } catch (_) { /* the page's own Open, as before */ }
+    { const g = orderCards(allOut, waitOut); allOut = g.all; waitOut = g.clWait; }   // (ONECARD: one card per order, every question of it inside)
     return { all: allOut, cl, customWaits, clWait: waitOut };
+  }
+  /* ONECARD (Paul, 23 Nov 2026, order 4244573392 shown twice, "Options" and "Unknown SKU": "The system is not allowed under any circumstances to create multiple cards for a given order:
+     all information and all discrepancies about a given order must be listed under that one order"). Open's questions stay what they are (B.review.items, their keys, their answers,
+     which apply to every order a question covers); only Open SHOWS them by order: every question of an order is a section of that order's one card. A question several orders share
+     is cut down to each order's own lines (src: the question itself, for its answers); a card of one order and one question is that question as it was. The card's kind, chip and
+     buttons are its most pressing question's (CARD_RANK). The same grouping makes the cloud's counts (charm-nest-review-core.js orderCards), so every computer counts alike. */
+  const CARD_RANK = ["customOrder", "needsMapping", "needsMaterial", "unmatchedSku", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "reviewMark", "heldOrder"];
+  const rankOfCard = it => { const i = CARD_RANK.indexOf(it.kind); return i < 0 ? CARD_RANK.length - 1 : i; };
+  const ridOfRow = r => String((r && r.order && r.order.receiptId) || "");
+  function orderCards(all, waits) {
+    const wait = new Set(waits), by = new Map(), order = [];
+    for (const it of all.concat(waits)) {
+      const rows = rowsOf(it), ids = [...new Set(rows.map(ridOfRow).concat(it.rid != null ? [String(it.rid)] : []).filter(Boolean))];
+      if (!ids.length) { order.push({ only: it }); continue; }
+      for (const id of ids) {
+        const mine = ids.length > 1 ? rows.filter(r => ridOfRow(r) === id) : rows;
+        const m = ids.length > 1 ? Object.assign({}, it, { rows: mine, row: mine[0] || it.row, rid: id, src: it, split: true }) : it;
+        if (!by.has(id)) { by.set(id, { id, ms: [], waits: true }); order.push({ id }); }
+        const g = by.get(id); g.ms.push(m); if (!wait.has(it)) g.waits = false;
+      }
+    }
+    const outAll = [], outWait = [];
+    for (const x of order) {
+      if (x.only) { (wait.has(x.only) ? outWait : outAll).push(x.only); continue; }
+      const g = by.get(x.id), ms = g.ms.slice().sort((a, b) => rankOfCard(a) - rankOfCard(b));
+      let card;
+      if (ms.length === 1 && !ms[0].split) card = ms[0];
+      else {
+        const top = ms[0], rows = []; for (const m of ms) for (const r of rowsOf(m)) if (!rows.includes(r)) rows.push(r);
+        card = Object.assign({}, top, { key: "rvo:" + g.id, rid: g.id, members: ms, rows, row: top.row || rows[0], why: ms.map(m => m.why).filter(Boolean).join(" · "), t: Math.max(...ms.map(m => +m.t || 0)) });
+      }
+      (g.waits ? outWait : outAll).push(card);
+    }
+    return { all: outAll, clWait: outWait };
   }
   /** (REVIEWHELD, Paul 20 Oct 2026) The "Held order" cards of Open: one for each order with a line on hold now (Orders.heldNow, the HELD of its Orders card) that no other open card covers (`covered`: that card carries
    *  the buttons), not cancelled. Drawn from the lines every time, so a release or a cancel takes the card out of Open at the next draw; the run's own "held:" notice, when there is one, only lends its words.
@@ -22930,15 +23009,18 @@ const Review = window.Review = (() => {
       +(cu&&printable(it)&&!cs?.busy?CustomPrint.buttonHtml(it,'print',printed?'sealedPrint':'ghost',printed?'Print again':'Print QR label',`print this order's 1 × 1 in QR sticker for the sorting station${printed?' again':''}`,'sm','data-seal-btn'):'')+seals
       +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:''))+placedActs;
     // SIBLINGS (Paul, 12 Oct 2026): an unknown SKU whose numbered designs sit in the library, on a necklace (or two charms): ONE quiet tap, "Use both", with the two thumbnails, and each design as a single choice, in the row itself
-    const pk=it.problem||{},sib=!cu&&!it.done&&!it.decided&&row&&(it.kind==='unmatchedSku'||it.kind==='blockedSku')?similarOffer(row,pk,group,it):null;
+    // (ONECARD: on an order's card of several questions the similar-charm offer is its SKU question's, answered for every order that question covers: src)
+    const sibIt=it.members?(it.members.find(m=>m.kind==='unmatchedSku'||m.kind==='blockedSku')||it):it,sibQ=sibIt.src||sibIt,sibRow=sibIt.row||row;
+    const pk=sibIt.problem||{},sib=!cu&&!it.done&&!it.decided&&sibRow&&(sibIt.kind==='unmatchedSku'||sibIt.kind==='blockedSku')?similarOffer(sibRow,pk,rowsOf(sibIt).length?rowsOf(sibIt):group,sibQ):null;
+    const issues=issueSections(it,cu,row),issuesHtml=`<div class="rvIssues" title="${esc(it.why || '')}">${issues.map(x=>`<div class="rvIssue"><span class="rvIssueK">${esc(x.label)}</span><ul>${x.pts.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></div>`).join('')}</div>`;
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
-    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind)+(it.job&&faceWordOf(it.job)?' · '+faceWordOf(it.job):''))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${sib?`<div class="sibOffer" data-sib="${esc(JSON.stringify(siblingStamp(it)))}"><div class="sibAsk">${esc(sib.ask)}</div><div class="sibPicks">${sibButtons(sib)}</div></div>`:''}${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${it.kind==='orderChanged'&&row&&!it.decided?'<button type="button" class="btn gold sm" data-rv-accept title="make this order up again as it reads now: the old pieces come off the sheet they are on (a sheet already released or cut is never touched)">Accept the new order</button>':''}</div>${cs?CustomSheet.stripHtml(cx):''}`;
+    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(issues.length>1?issues.length+' issues':cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind)+(it.job&&faceWordOf(it.job)?' · '+faceWordOf(it.job):''))}${aiChip}</span>${issuesHtml}${sib?`<div class="sibOffer" data-sib="${esc(JSON.stringify(siblingStamp(sibQ)))}"><div class="sibAsk">${esc(sib.ask)}</div><div class="sibPicks">${sibButtons(sib)}</div></div>`:''}${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${it.kind==='orderChanged'&&row&&!it.decided?'<button type="button" class="btn gold sm" data-rv-accept title="make this order up again as it reads now: the old pieces come off the sheet they are on (a sheet already released or cut is never touched)">Accept the new order</button>':''}</div>${cs?CustomSheet.stripHtml(cx):''}`;
     // (a row drawn again for another reason keeps the offer's loaded thumbnails, as it keeps its .comparePair: they are not asked for twice)
     // (SEALTRAVEL: the order's seals under its identity, never in the buttons' column, where a seal row rests over the button before it)
     if(trav.html)node.querySelector('.engravingIdentity')?.insertAdjacentHTML('beforeend',trav.html);
     if(sib&&cached?.node){const was=cached.node.querySelector('.sibOffer'),now=node.querySelector('.sibOffer');if(was&&now&&was.dataset.sib===now.dataset.sib)now.replaceWith(was);}
-    if(sib){Master.mountPictures(node);wireSib(node,it,pk,sib,fn=>saving(node,fn,'.sibOffer button'));}   // (the saved pair link or alias, for good; the buttons hold while it saves)
+    if(sib){Master.mountPictures(node);wireSib(node,sibQ,pk,sib,fn=>saving(node,fn,'.sibOffer button'));}   // (the saved pair link or alias, for good; the buttons hold while it saves)
     if(it.kind==='reviewMark'&&window.CharmNestReviewMark)CharmNestReviewMark.decorateRow(node,it);   // (a slot for each line's suggested charms, and Mark OK)
     if(it.kind==='reviewMark')fillMarkSlots(node,it);   // (REVSUGGEST: the similar charms of each line go in its slot, the charm it is matched to now marked; a line with nothing similar leaves its slot empty)
     if (typeof decorateRelease === "function") decorateRelease(node,it);   // (RELHOLD: Release Hold in the card's column where Complete Order stood, greyed with its one plain reason where the line cannot nest yet; "Unblock this SKU" after it on a blocked SKU; nothing under the reason any more)
@@ -26946,6 +27028,15 @@ const OrderWin = window.OrderWin = (() => {
     // two tabs never read alike: where two sheets of one order have the same name (a sheet of Set 1 and one of Set 2, or drafts of two runs), only those names are told apart (charm-nest-sheet-name.js uniqueNames)
     const tabNames = (() => { const N = window.CharmNestSheetName, recOf = x => (x.page && x.page.metal ? x.page : x.rec); if (!N || !N.uniqueNames || !list.length || !list.every(x => recOf(x))) return []; const m = N.uniqueNames(list.map((x, k) => Object.assign({}, recOf(x), { id: "t" + k }))); return list.map((_, k) => m.get("t" + k)); })();
     const facts = rec ? [sheetName(list[SV.at] || { metal: rec.metal, n: inf.sheet.n }), inf.stock ? `${Math.round(inf.stock.wPt * 25.4 / 72)} × ${Math.round(inf.stock.hPt * 25.4 / 72)} mm` : "", rec.setSeq ? "Set-" + rec.setSeq : "", cut ? "cut " + new Date(+cut).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : rec.status || ""].filter(Boolean).join(" · ") : "";
+    /* SHEETWHERE (Paul, 23 Nov 2026: "need to also incorporate the exact date of the set that a sheet belongs to or the draft number … condense that into a small card in the UI that has
+       all the information needed to know what sheet the user is looking at and where that sheet is in the process in terms of the library"): one small card under the sheet tabs: the
+       sheet's name, its size and fill, where the Library holds it (the set's day › Set-N › Sheet k of n, or Drafts › Draft N) and the one step it is at (charm-nest-sheet-name.js whereOf) */
+    const whereHtml = (() => { if (!rec || !window.CharmNestSheetName || !CharmNestSheetName.whereOf) return "";
+      const setRec = rec.setId && window.Sets && Sets.ofRun ? tryDo(() => (Sets.ofRun(rec.runId) || []).find(x => x && x.setId === rec.setId)) : null;
+      const W = tryDo(() => CharmNestSheetName.whereOf(rec, setRec || null)); if (!W) return "";
+      const extra = [inf.stock ? `${Math.round(inf.stock.wPt * 25.4 / 72)} × ${Math.round(inf.stock.hPt * 25.4 / 72)} mm` : "", rec.density ? `${Math.round(rec.density * 100)}% full` : ""].filter(Boolean).join(" · ");
+      return `<div class="owWhere" data-state="${esc(W.state)}" role="group" aria-label="Where this sheet is in the Library"><div class="owWhereHd"><i style="--c:${esc(colorOf(rec.metal))}"></i><b>${esc(W.name)}</b>${extra ? `<span>${esc(extra)}</span>` : ""}</div>` +
+        `<div class="owWherePath"><span class="lib">Library</span>${W.crumbs.map(c => `<span class="sep" aria-hidden="true">›</span><span>${esc(c)}</span>`).join("")}</div><div class="owWhereStage"><i aria-hidden="true"></i>${esc(W.stage)}</div></div>`; })();
     // (the charm shown when none was picked on the sheet: the piece this window is on (the Overview's switcher), so the Overview's back
     // engraving card and this tab's are always about the same piece; only then the first charm of the order on the sheet)
     const mine = inf ? inf.mine : [], x0 = mine.find(x => x.poolId === SV.focus) || mine.find(x => x.poolId && (r.poolIds || []).includes(x.poolId)) || mine[0] || null;
@@ -26993,7 +27084,7 @@ const OrderWin = window.OrderWin = (() => {
     const tabOf = it => it.sheetId ? list.find(s => s.id === it.sheetId) : null;
     const where = it => it.here ? `<em style="--c:var(--gold2)">this sheet</em>` : it.nested ? `<em style="--c:${esc(colorOf((tabOf(it) || it).metal))}">${esc(tabOf(it) ? sheetName(tabOf(it)) : it.label || "on a sheet")}</em>` : it.hand ? `<em><span title="a person completed it by hand: it needs no sheet">completed by hand</span>${handSealOf(it.hand, it.lineKey)}</em>` : it.loading || !SV.list ? `<em></em>` : `<em>not on a sheet yet</em>`;
     panel.innerHTML =
-      (vis.length ? `<section><div class="owSheetFindRow"><span class="fLabel">Sheet</span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="owSheetOrderFind" type="search" inputmode="numeric" placeholder="Order # on sheet" aria-label="Search order numbers on this sheet" aria-controls="owSheetMatches" autocomplete="off" spellcheck="false"></label></div><div class="owShTabs">${vis.map(i => `<button type="button" data-at="${i}" class="${i === SV.at ? "on" : ""}" style="--c:${esc(colorOf(list[i].metal))}"><i></i>${esc(tabNames[i] || sheetName(list[i]))}</button>`).join("")}</div>${facts ? `<div class="sub" style="margin-top:8px">${esc(facts)}</div>` : ""}</section>` : "") +
+      (vis.length ? `<section><div class="owSheetFindRow"><span class="fLabel">Sheet</span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="owSheetOrderFind" type="search" inputmode="numeric" placeholder="Order # on sheet" aria-label="Search order numbers on this sheet" aria-controls="owSheetMatches" autocomplete="off" spellcheck="false"></label></div><div class="owShTabs">${vis.map(i => `<button type="button" data-at="${i}" class="${i === SV.at ? "on" : ""}" style="--c:${esc(colorOf(list[i].metal))}"><i></i>${esc(tabNames[i] || sheetName(list[i]))}</button>`).join("")}</div>${whereHtml || (facts ? `<div class="sub" style="margin-top:8px">${esc(facts)}</div>` : "")}</section>` : "") +
       `<div class="owSheetMatches" id="owSheetMatches" role="list" aria-live="polite" hidden></div>` +
       `<section><div class="owOrdHd"><span class="fLabel">Order</span>${bk ? `<button type="button" class="btn ghost xs" data-ow-back title="Back to order ${esc(bk.rid)}, as it was"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>Back to order ${esc(bk.rid)}</button>` : ""}</div><div class="big">${esc(rid)}</div><div class="sub">${esc([o.buyer && o.buyer.name, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · "))}</div></section>` +
       `<section class="owCharm"><div class="pic" data-pic data-zp></div><div><b>${esc(sku || "—")}</b>${x0 && x0.c ? `<span>${esc((x0.c.widthPt * 25.4 / 72).toFixed(1))} × ${esc((x0.c.heightPt * 25.4 / 72).toFixed(1))} mm</span>` : ""}<span>${esc(lr.material ? labelOf(lr.material) : rec ? labelOf(rec.metal) : "")}${sp.size ? " · size " + esc(sp.size) : ""}${sp.sizeFit && sp.sizeFit.action === "scale" ? ` · scaled from ${esc(sp.sizeFit.haveMm)} mm` : ""}</span></div></section>` +

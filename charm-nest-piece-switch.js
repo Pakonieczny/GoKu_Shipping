@@ -127,7 +127,8 @@
   function flatHtml(pieces, key, o) {
     o = o || {}; const ps = pieces || [], kind = kindOf(ps);
     const aria = kind === 'ears' ? 'The left and the right ear of this piece' : kind === 'discs' ? (ps.length && ps.every(p => p.kind === 'copy') ? 'The pieces of this order, one by one' : 'The discs of this order, one by one') : 'The pieces of this order, one by one';
-    return `<span class="egEarSwitch${kind === 'ears' ? '' : ' egMany'}" role="group" aria-label="${aria}">${ps.map(p => {
+    const done = ps.filter(p => ['approved', 'written'].includes(p.state)).length, noun = ps.length && ps.every(p => p.kind === 'disc') ? 'discs' : 'pieces';
+    return `<span class="egEarSwitch${kind === 'ears' ? '' : ' egMany egChips'}" role="group" aria-label="${aria}">${kind === 'ears' || o.compact ? '' : `<span class="egChipSum">${ps.length} ${noun} · ${done} ✓</span>`}${ps.map((p, i) => {
       const on = p.key === key, ft = o.fonts ? fontText(p.font) : '', fn = o.fonts ? fontNote(p.font) : '';
       const what = kind === 'ears' ? 'the ' + p.name.toLowerCase() : p.name.toLowerCase();
       // COMPACT (the order window's "Its pieces" row, ONEROW 12 Oct 2026): the very same switch for a list row that has no room for words and stages: one small tag per piece
@@ -135,6 +136,14 @@
       if (o.compact) {
         const t = o.titleOf ? o.titleOf(p, on) : (on ? 'Showing only ' : 'Show only ') + what;
         return `<button type="button" class="egEarTab egCompact" data-a="ear" data-ear="${esc(p.key)}" aria-pressed="${on}" title="${esc(t)}"><span class="egPiece" data-slot="${esc(p.slot)}">${esc(p.label || p.tag)}</span></button>`;
+      }
+      /* PIECECHIPS (Paul, 23 Nov 2026: "You should just have little small buttons for each piece … a lot of them in a single row without expanding vertically … how many pieces a given
+         order has and which ones have already been approved or not … visually easy to understand and interpret at a glance"): every piece of a line of several (discs, bars, copies; not the
+         Left | Right of a pair) is one small chip: its number, its words, and a dot for where it stands (green ✓ approved, amber to check, red words to confirm, grey nothing to engrave or
+         being prepared). The tag, font and stage stay in the chip for readers and its title, only hidden from view. */
+      if (kind !== 'ears') {
+        const st = ['approved', 'written'].includes(p.state) ? 'ok' : p.state === 'review' ? 'todo' : ['words', 'blocked'].includes(p.state) ? 'bad' : p.state === 'skipped' || p.state === 'none' ? 'none' : 'wait';
+        return `<button type="button" class="egEarTab egChip" data-a="ear" data-ear="${esc(p.key)}" data-st="${st}" aria-pressed="${on}" title="${esc(p.tag || p.name)} · ${esc(p.words || 'words not settled')}${fn ? ' · ' + esc(fn) : ''} · ${esc(p.stage || '')}${on ? ' (shown now)' : ''}">${chipHtml(p)}<span class="egChipN" aria-hidden="true">${esc(String(p.n || (i + 1)))}</span><span class="egEarWords">${esc(p.words || '…')}</span>${ft ? `<span class="egEarFont">${esc(ft)}</span>` : ''}<span class="egEarStage">${esc(p.stage)}</span><i class="egChipS" aria-hidden="true"></i></button>`;
       }
       return `<button type="button" class="egEarTab" data-a="ear" data-ear="${esc(p.key)}" aria-pressed="${on}" title="${on ? 'Shown now' : 'Show'}: ${esc(what)} · ${esc(p.words || 'words not settled')}${fn ? ' · ' + esc(fn) : ''} · ${esc(p.stage)}">${chipHtml(p)}<span class="egEarWords">${esc(p.words || '…')}</span>${ft ? `<span class="egEarFont">${esc(ft)}</span>` : ''}<span class="egEarStage">${esc(p.stage)}</span></button>`;
     }).join('')}</span>`;

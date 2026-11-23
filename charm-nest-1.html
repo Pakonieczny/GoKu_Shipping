@@ -1270,6 +1270,23 @@ dialog.phv.layer.phvIn{background:transparent}
 .owShTabs button i{width:8px;height:8px;border-radius:50%;background:var(--c,var(--ink25))}
 .owShTabs button.on{background:var(--velvet);border-color:var(--velvet);color:#fff}
 .owCharm{display:grid;grid-template-columns:92px minmax(0,1fr);gap:12px;align-items:center}
+/* RVPOINTS / ONECARD: a Review card's issues, each as a few short points */
+.rvIssues{display:grid;gap:6px;margin-top:6px;min-width:0}
+.rvIssue{display:grid;gap:2px;min-width:0}
+.rvIssueK{font:600 9.5px var(--mono,ui-monospace,monospace);letter-spacing:.1em;text-transform:uppercase;color:#9a6a1f}
+.rvIssue ul{margin:0;padding:0 0 0 15px;font:13px/1.35 var(--sans);color:var(--ink)}
+.rvIssue li{margin:1px 0}.rvIssue li::marker{color:var(--ink25)}
+/* SHEETWHERE: the order window's sheet card: what sheet this is and where the Library holds it */
+.owWhere{margin-top:10px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--card);display:grid;gap:5px}
+.owWhereHd{display:flex;align-items:center;gap:8px;font:600 13.5px var(--sans);color:var(--ink);min-width:0}
+.owWhereHd i{width:9px;height:9px;border-radius:50%;background:var(--c,var(--ink25));flex:none}
+.owWhereHd span{margin-left:auto;font:400 11.5px var(--sans);color:var(--ink45);white-space:nowrap}
+.owWherePath{display:flex;flex-wrap:wrap;align-items:center;gap:5px;font:12.5px var(--sans);color:var(--ink)}
+.owWherePath .lib{color:var(--ink45)}.owWherePath .sep{color:var(--ink25)}
+.owWhereStage{display:flex;align-items:center;gap:7px;font:12px var(--sans);color:var(--ink70)}
+.owWhereStage i{width:7px;height:7px;border-radius:50%;background:var(--ink25);flex:none}
+.owWhere[data-state="filling"] .owWhereStage i{background:#4f8a5b}.owWhere[data-state="full"] .owWhereStage i,.owWhere[data-state="review"] .owWhereStage i{background:#c8902e}
+.owWhere[data-state="approved"] .owWhereStage i,.owWhere[data-state="set"] .owWhereStage i{background:#3f6fb5}.owWhere[data-state="cut"] .owWhereStage i{background:var(--ink45)}
 .owCharm .pic{position:relative;width:92px;height:92px;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;display:grid;place-items:center;background:var(--card2);overflow:hidden;font:11px var(--sans);color:var(--ink45);text-align:center;padding:4px}
 .owCharm .pic img,.owCharm .pic canvas{display:block;width:100%;height:100%;min-width:0;min-height:0;object-fit:contain}
 .owCharm b{font:600 13px var(--mono);display:block;overflow-wrap:anywhere}
@@ -3745,7 +3762,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .owPcRow .pcAct .owCuMore:hover,.owPcRow .pcAct .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
 </style>
 <link rel="prefetch" href="charm-nest-stamp-walnut.png?v=20261025-sw1" as="image">   <!-- (prefetch, 25 Oct 2026: the seal wood is used only once a Library seal shows; a preload warned "not used within a few seconds" on every Nest session) -->
-<link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small-en3-pe1-re1-wd1-dc1-dm1-eu1-pc1-egr1-mseal1-fb1-ms2-wal1-sx1-cs1-ol1-ra1-ru1-mh1-egw1-nv6-ah1-ce1-fb1-tb2-bx1-rs1-rs2-odb1-cmp1-tw1-ceb1-sal1-sal2-ceb2-lbf1">
+<link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small-en3-pe1-re1-wd1-dc1-dm1-eu1-pc1-egr1-mseal1-fb1-ms2-wal1-sx1-cs1-ol1-ra1-ru1-mh1-egw1-nv6-ah1-ce1-fb1-tb2-bx1-rs1-rs2-odb1-cmp1-tw1-ceb1-sal1-sal2-ceb2-lbf1-pch1">
 </head>
 <body>
 <div class="app" id="app">
@@ -4002,7 +4019,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-engrave-sides.js?v=20261009-pe1-nk1-dr1-ko1-fb1-fb2-el1-sb1-pc1-br1-ms1-bh1"></script>
 <script src="charm-nest-engrave-rows.js?v=20261010-re1-dc1-fb1-pv1"></script>
 <script src="charm-nest-engrave-order.js?v=20261013-pc1-sb1-meg1-pv1-pcm1-br1"></script>
-<script src="charm-nest-piece-switch.js?v=20261010-dc1-fb1-or1-sb1-pv1-br1"></script>
+<script src="charm-nest-piece-switch.js?v=20261010-dc1-fb1-or1-sb1-pv1-br1-pch1"></script>
 <script src="charm-nest-backs.js?v=20261005-engtog1-pe1-fb1-eu3-pv1-bb1"></script>
 <script src="charm-nest-engraving-toggle.js?v=20261005-engtog1-eu3"></script>
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
@@ -4011,12 +4028,12 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-engrave-setup.js?v=20261011-su1-bf1-nb1-ud1-pv1-el1-au1-au2-au3-wy1-od1-sb2-pc1-nd1-br1-edw1-np1-np2-pn1-es1-eng2"></script>
 <script src="charm-nest-engrave-panel.js?v=20261012-ep1-ep2-hl1-hl2-sm1-r2wk1-wy1-r2th1-fr1-rb1-ag1-nd1-edw1-apx1-af1-fv1-cl1-cl2-np1-np2-np3-pn1-fs1-oa1-es1-mo1-nn1-ng1-ng2-b2-apc1-eng2-ia1"></script>
 <script src="charm-nest-engrave-why.js?v=20261012-wy1-pc1"></script>
-<script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1-dm1-vf1-fb1-ui2-sd1-el1-wy1-pl1-wal1-br1-hsi1-tab1-ed1-pb1-np2-ia1"></script>
+<script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1-dm1-vf1-fb1-ui2-sd1-el1-wy1-pl1-wal1-br1-hsi1-tab1-ed1-pb1-np2-ia1-fa1"></script>
 <script src="charm-nest-monogram-seals.js?v=20261017-mseal1-tab1"></script>
 <script src="charm-nest-order-seals.js?v=20261019-cs1"></script>
 <!-- (SEALTRAVEL, Paul 20 Oct 2026: every seal an order has collected, drawn by kind, wherever the order ends up) -->
 <script src="charm-nest-seal-travel.js?v=20261020-st1-rel1-sg1"></script>
-<script src="charm-nest-sheet-name.js?v=20261010-sn1-nm2"></script>
+<script src="charm-nest-sheet-name.js?v=20261010-sn1-nm2-swh1"></script>
 <script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2-sn1-fb1-eu3-hg1-rh1-rh3-rh4-sp1-cost18-gl1-lg1-gs1-ln1"></script>
 <script src="charm-nest-dxf-skeleton.js?v=20261114-ai1"></script>
 <script src="charm-nest-export.js?v=1117-10e03059"></script>
@@ -9116,7 +9133,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26-now"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=1120-pair2-pmake1-apc1-place1-v14-dr1-dr2-sd1-sl1-or1-fa1-br1-sbc1-photo1-rm1-va1-it9-k14-it8-vi7-i16-cs1-g6-g9-s1-g4-s4-s3-s2-cd-now-nm1-lb1-lb2-se1-ia1-ts1-an1-rl1-ld1-ck1-src1-oa1"></script>
+<script src="charm-nest-bridge.js?v=1120-pair2-pmake1-apc1-place1-v14-dr1-dr2-sd1-sl1-or1-fa1-br1-sbc1-photo1-rm1-va1-it9-k14-it8-vi7-i16-cs1-g6-g9-s1-g4-s4-s3-s2-cd-now-nm1-lb1-lb2-se1-ia1-ts1-an1-rl1-ld1-ck1-src1-oa1-swh1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1-sy1-sy2"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1-ob1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>

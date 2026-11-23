@@ -383,6 +383,18 @@
 /* a switch of discs (three or more pieces): its buttons keep their words and wrap on a narrow window instead of being clipped */
 .egEarSwitch.egMany{flex-wrap:wrap;border-radius:14px}
 .egEarSwitch.egMany .egEarTab{flex:0 0 auto;max-width:100%}
+/* PIECECHIPS (Paul, 23 Nov 2026): the pieces of a line of several, one small chip each, in a row that wraps; number, words, and a dot for where it stands */
+.egEarSwitch.egChips,.egCycle .egEarSwitch.egChips{display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;gap:4px;padding:3px;border-radius:12px;width:auto}
+.egChips .egChipSum{font:600 9.5px var(--mono,ui-monospace,monospace);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);padding:0 5px 0 4px;white-space:nowrap}
+.egChips .egEarTab.egChip,.egCycle .egChips .egEarTab.egChip{flex:0 0 auto;flex-wrap:nowrap;gap:5px;padding:2px 9px 2px 2px;border:1px solid var(--line);background:var(--card);border-radius:999px;max-width:16ch;text-align:left}
+.egChip .egPiece,.egChip .egEarStage,.egChip .egEarFont{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.egChip .egChipN{display:inline-grid;place-items:center;min-width:19px;height:19px;border-radius:50%;background:var(--paper2);font:600 10.5px var(--mono,ui-monospace,monospace);color:var(--ink70)}
+.egChip .egEarWords{font:600 12px var(--serif);max-width:8ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.egChip .egChipS{width:8px;height:8px;border-radius:50%;background:var(--ink25);flex:none}
+.egChip[data-st=ok] .egChipS{width:auto;height:auto;background:none;color:#3f7a4c;font:700 11px var(--sans);font-style:normal}.egChip[data-st=ok] .egChipS::before{content:"✓"}
+.egChip[data-st=ok] .egChipN{background:#e3efe4;color:#2f6a3c}
+.egChip[data-st=todo] .egChipS{background:#d49a2a}.egChip[data-st=bad] .egChipS{background:#c2452f}.egChip[data-st=wait] .egChipS{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink25)}
+.egChip[aria-pressed=true]{border-color:#b8934a;box-shadow:0 0 0 2px rgba(184,147,74,.28)}
 .doneDetail.egPairDetail{grid-template-columns:1fr;gap:14px}
 .egEarDetail{display:grid;grid-template-columns:minmax(200px,1.1fr) minmax(140px,.7fr) minmax(220px,1.2fr);gap:14px 18px;align-items:start}
 .egEarDetail .egEarHead{grid-column:1/-1}

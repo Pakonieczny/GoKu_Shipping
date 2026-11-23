@@ -254,6 +254,15 @@
     if(pids.length){slot.dataset.madePids=pids.join(' ');if(B_ && MT && MT.isBusy && MT.isBusy(pids))B_.on(slot,'piece');else if(B_)B_.off(slot,'piece');}
     if(pids.length && MT && MT.onSweep){const stop=MT.onSweep(moved=>{if(!slot.isConnected){stop();return;}if((moved || []).some(id=>pids.includes(String(id))))draw();});}
     if(draw())return;
+    /* FRONTART (Paul, 23 Nov 2026, a bar whose front is a vectorized image made in the Charm Editor: "This order is not displaying it's engraving and the thumbnail on the right hand side"): a FRONT
+       that cannot be drawn as made here (no fit of it on this page: a sheet read from the Library) showed its approval picture, which never carries Charm Editor parts, so the bar looked blank.
+       The piece's own picture as it is made (CharmNestMadeThumb: the one the sheet and the Overview show, its Charm Editor parts in it) stands in; the approval picture only when it has none. */
+    if(faceOf(job)==='front' && pids.length && MT && typeof MT.paintInto==='function'){
+      const cv=root.document.createElement('canvas');cv.width=600;cv.height=380;cv.setAttribute('role','img');cv.setAttribute('aria-label',aboutFace('The front as it is made',faceOf(job)));
+      const keep=slot.firstChild;slot.classList.remove('egPvWait','egPvNone');slot.replaceChildren(cv);
+      MT.paintInto(cv,pids[0]).then(ok=>{if(ok || !slot.isConnected)return;if(img){const im=root.document.createElement('img');im.alt=aboutFace('The full approved back engraving',faceOf(job));im.crossOrigin='anonymous';im.src=imageUrl?imageUrl(img):img;slot.replaceChildren(im);}else if(keep)slot.replaceChildren(keep);}).catch(()=>{});
+      zoomPreview(slot,zoom,job,false);return;
+    }
     const wait=waiting();
     if(img){const im=root.document.createElement('img');im.alt=aboutFace('The full approved back engraving',faceOf(job));im.crossOrigin='anonymous';if(B_){B_.on(slot,'img');im.onload=im.onerror=()=>B_.off(slot,'img');}im.src=imageUrl?imageUrl(img):img;slot.replaceChildren(im);zoomPreview(slot,zoom,job,false);if(B_)B_.sync(slot);}
     else if(wait){slot.classList.add('egPvWait');slot.innerHTML=`<span class="by">${aboutFace('Drawing the engraving…',faceOf(job))}</span>`;}

@@ -166,7 +166,7 @@
   const isCustomRow = l => !!(l.spec && l.spec.special);
   const customKey = l => `ord:custom:${rid(l)}:${(l.spec && l.spec.designSku) || l.line.sku || l.line.listingId || l.key}`;
   const sentToSheet = d => !!d && (d.how === "sheet" || d.why === HOW_SHEET);
-  const mkeyOf = it => it.kind === "customOrder" ? "cu:" + str(it.key).replace(/^[a-z]+:/, "") : str(it.key);
+  const mkeyOf = it => it.members ? str(it.key) : it.kind === "customOrder" ? "cu:" + str(it.key).replace(/^[a-z]+:/, "") : str(it.key);   // (ONECARD: an order's card keeps its own name)
   const kindOfWords = w => { for (const [k, v] of Object.entries(KIND_WORDS)) if (v === w && k !== "customOrder") return k === "needsMaterial" ? "needsMapping" : k; return null; };
   const doneTime = rec => (rec && Math.max(num(rec.lastPrintedAt), num(rec.completedAt), num(rec.printedAt))) || 0;
 
@@ -356,6 +356,39 @@
     return n;
   }
 
+  /* ONECARD (Paul, 23 Nov 2026: "The system is not allowed under any circumstances to create multiple cards for a given order"): Open SHOWN by order, the page's orderCards
+     (charm-nest-bridge.js) line for line: every question of an order is a section of its one card; a question several orders share is cut down to each order's lines; the card's kind
+     is its most pressing question's (CARD_RANK). Counts, chips and the cards are of these; openKeys stay the QUESTIONS' keys (the page filters its own questions by them, then groups). */
+  const CARD_RANK = ["customOrder", "needsMapping", "needsMaterial", "unmatchedSku", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "reviewMark", "heldOrder"];
+  const rankOfCard = it => { const i = CARD_RANK.indexOf(it.kind); return i < 0 ? CARD_RANK.length - 1 : i; };
+  function orderCards(all, waits) {
+    const wait = new Set(waits), by = new Map(), order = [];
+    for (const it of all.concat(waits)) {
+      const rows = rowsOf(it), ids = uniq(rows.map(l => str(rid(l))).concat(it.rid != null ? [str(it.rid)] : []).filter(Boolean));
+      if (!ids.length) { order.push({ only: it }); continue; }
+      for (const id of ids) {
+        const mine = ids.length > 1 ? rows.filter(l => str(rid(l)) === id) : rows;
+        const m = ids.length > 1 ? Object.assign({}, it, { rows: mine, row: mine[0] || it.row, rid: id, src: it, split: true }) : it;
+        if (!by.has(id)) { by.set(id, { id, ms: [], waits: true }); order.push({ id }); }
+        const g = by.get(id); g.ms.push(m); if (!wait.has(it)) g.waits = false;
+      }
+    }
+    const outAll = [], outWait = [];
+    for (const x of order) {
+      if (x.only) { (wait.has(x.only) ? outWait : outAll).push(x.only); continue; }
+      const g = by.get(x.id), ms = g.ms.slice().sort((a, b) => rankOfCard(a) - rankOfCard(b));
+      let card;
+      if (ms.length === 1 && !ms[0].split) card = ms[0];
+      else {
+        const top = ms[0], rows = []; for (const m of ms) for (const l of rowsOf(m)) if (!rows.includes(l)) rows.push(l);
+        card = Object.assign({}, top, { key: "rvo:" + g.id, rid: g.id, members: ms, rows, row: top.row || rows[0], why: ms.map(m => m.why).filter(Boolean).join(" \u00b7 "), t: Math.max(...ms.map(m => num(m.t))),
+          problems: ms.flatMap(m => (m.problems && m.problems.length ? m.problems : m.problem ? [m.problem] : [])) });
+      }
+      (g.waits ? outWait : outAll).push(card);
+    }
+    return { all: outAll, clWait: outWait };
+  }
+
   /* ═══ 10 · build ═══ */
   function build(snapshot) {
     const W = world(snapshot);
@@ -368,9 +401,11 @@
     const decided = new Set(); for (const it of all) if (it.kind === "customOrder") for (const l of rowsOf(it)) decided.add(l.key);
     const cl = customLists(W, decided);
     const customWaits = it => rowsOf(it).some(l => W.sending(l) || !l.poolIds.length);
-    const clWait = cl.open.filter(customWaits);
+    let clWait = cl.open.filter(customWaits);
     const covered = new Set(); for (const it of all.concat(clWait)) { if (it.rid != null) covered.add(str(it.rid)); for (const l of rowsOf(it)) covered.add(rid(l)); }
     all = all.concat(heldCards(W, covered));
+    const questionKeys = all.concat(clWait).map(it => it.key);   // (ONECARD: the questions the page filters by)
+    { const g = orderCards(all, clWait); all = g.all; clWait = g.clWait; }
     const openList = all.concat(clWait);
     // openOrders: by order number, its first open card
     const openOrders = new Map();
@@ -425,7 +460,7 @@
     return {
       at: W.now, cards: openCards.concat(doneCards), counts,
       openOrders: [...openOrders.keys()].sort(byStr),
-      openKeys: openList.map(it => it.key).sort(byStr),
+      openKeys: questionKeys.slice().sort(byStr), openCardKeys: openList.map(it => it.key).sort(byStr),
       resolvedKeys: finished.map(it => it.key).sort(byStr),
       itemKeys: items.map(it => it.key).sort(byStr)
     };

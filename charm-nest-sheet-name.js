@@ -128,5 +128,34 @@
     return nextNumber(others, rec.metal, sheetNos);
   }
 
-  return { CODE, METAL_OF, codeOf, inSet, isCut, numbered, numberOf, draftNo, setDraftSource, setNoOf, fileTag, short, name, was, qualified, uniqueNames, raise, mergeNos, nextNumber, claim };
+  /* SHEETWHERE (Paul, 23 Nov 2026: "When looking at a sheet from the detailed order modal need to also incorporate the exact date of the set that a sheet belongs to or the draft number
+     the user just needs to easily see exactly where the set is in terms of the Library … condense that into a small card … what sheet the user is looking at and where that sheet is in
+     the process in terms of the library"). whereOf(rec, set?) → { name, crumbs: ["Fri, Nov 20, 2026", "Set-1", "Sheet 2 of 2"] | ["Drafts", "GF Draft 21"], stage, state }:
+     the Library's own grouping (a set under the day it was made, its sheets numbered in it; a sheet outside every set among the drafts) and the one step it is at. set: the set record
+     when the page holds it (its day, status, sheets); without it the record's own setId / day / setSeq say it. state: "cut" | "approved" | "review" | "set" | "full" | "filling". */
+  const longDay = d => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(str(d)); return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 12)).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : ''; };
+  const when = t => { const n = +t; return n > 0 ? new Date(n).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; };
+  function whereOf(r, set) {
+    if (!r) return null;
+    const s = set && typeof set === 'object' ? set : null, nm = name(r), metal = codeOf(r);
+    const day = str(s && s.day) || (/^set-(\d{4}-\d{2}-\d{2})-\d+$/.exec(str(r.setId)) || [])[1] || (numbered(r) ? str(r.setDay || r.day) : '');
+    let crumbs, stage, state;
+    if (numbered(r) && (r.setId || setNoOf(r))) {
+      const setNo = setNoOf(r) || num(s && s.seq), k = numberOf(r), total = s && Array.isArray(s.sheetIds) ? s.sheetIds.length : 0;
+      crumbs = [longDay(day) || 'Sets', setNo ? `Set-${setNo}` : 'its set', `${metal} Sheet ${k || 1}${total > 1 ? ` of ${total}` : ''}`];
+      if (+r.laserDoneAt > 0 || (s && +s.laserDoneAt > 0)) { state = 'cut'; stage = `Laser cut${when(r.laserDoneAt || (s && s.laserDoneAt)) ? ' · ' + when(r.laserDoneAt || s.laserDoneAt) : ''}`; }
+      else if (s && (s.completedAt || s.committedAt || s.processReady)) { state = 'approved'; stage = s.completedAt ? 'Set completed' : 'Approved for laser cutting'; }
+      else if (s && /review/i.test(str(s.status))) { state = 'review'; stage = 'In Review · waiting for approval'; }
+      else { state = 'set'; stage = s && s.status ? `In its set · ${str(s.status)}` : 'In its set'; }
+      if (r.metal === 'rose' && +r.roseCutAt > 0 && state !== 'cut') stage += ' · green line cut';
+    } else {
+      crumbs = numbered(r) ? ['Not in a set yet', nm] : ['Drafts', `${metal} Draft ${draftNo(r)}`];   // (a cut sheet outside every set has its number already: it waits for its set)
+      if (+r.roseCutAt > 0) { state = 'full'; stage = `Green line cut${when(r.roseCutAt) ? ' · ' + when(r.roseCutAt) : ''} · joins its set when it forms`; }
+      else if (r.roseLinkCut) { state = 'full'; stage = 'Green line being cut'; }
+      else if (r.releaseFull) { state = 'full'; stage = 'Full · waits for its set'; }
+      else { state = 'filling'; stage = 'Filling · takes new orders'; }
+    }
+    return { name: nm, crumbs, stage, state };
+  }
+  return { CODE, METAL_OF, codeOf, inSet, isCut, numbered, numberOf, draftNo, setDraftSource, setNoOf, fileTag, short, name, was, qualified, whereOf, uniqueNames, raise, mergeNos, nextNumber, claim };
 });
