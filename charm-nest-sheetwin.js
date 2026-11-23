@@ -7292,9 +7292,21 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     for (const x of pieces || []) for (const u of unitsOf(x)) { if (u.back) see(u.back); const j = u.job; if (j && j.fontKey && j.fontKey !== "source-sans-3") ids.add(j.fontKey); }
     return [...ids].filter(id => !tryDo(() => E.fontSetFor(id))).map(id => Promise.resolve(tryDo(() => E.loadFontSet(id))).catch(() => {}));
   }
+  /* BROKENBACK (Paul, 22 Nov 2026, order 4238583182 "Book Lover" x4 on SS Sheet 1: "some order show a broken version of the back engraving. This has resolved it's self previously"): a job taken
+     from the cloud has NO fit of this computer's own until it is fitted again here (CharmNestEngraveSync take: fit and view set to null, the cloud's place kept as keepPlace; fitMissing / the
+     open card fit it later, and a computer that cannot read the piece's charm never does). The plate read only the fit, so such a piece got the "not drawable yet" label (an ~80 px italic box
+     centred on the charm, wider than it: two neighbours' boxes drawn over one another) until that fit landed, and again after the next take. The cloud's place IS the fit's numbers, in the same
+     back frame (jobRec / placeOf: centre, angle, size, lines, weight, lineGap, upAngle): the words are drawn from it, for the very words and font it was made for, while no fit is here. */
+  const placeWords = l => (Array.isArray(l) ? l : []).join(" ").replace(/\s+/g, " ").trim();
   /** An engraving approved in Engrave but not written yet, as a back record: its fitted words, in the same back frame. A front job's record says `face: "front"` (its words are laid as the charm is, not turned over). */
   function backOfJob(x, face) {
-    const u = x.eng && (x.eng.faces ? x.eng.faces[face === "front" ? "front" : "back"] : face === "front" ? null : x.eng), j = u && u.job; if (!j || !j.fit || !j.view || !j.fit.centre) return null;
+    const u = x.eng && (x.eng.faces ? x.eng.faces[face === "front" ? "front" : "back"] : face === "front" ? null : x.eng), j = u && u.job; if (!j) return null;
+    if (!j.fit || !j.view || !j.fit.centre) {
+      const k = j.keepPlace;
+      if (!k || !Array.isArray(k.centre) || k.centre.length !== 2 || !(+k.size > 0) || !placeWords(k.lines) || placeWords(k.lines) !== placeWords(j.lineInput || j.lines) || (k.fontKey && j.fontKey && k.fontKey !== j.fontKey)) return null;
+      return { poolId: x.poolId, ...(face === "front" ? { face: "front" } : {}), text: j.text, lines: k.lines, sizePt: +k.size, weight: k.weight, centre: k.centre, angle: +k.angle || 0, lineGap: k.lineGap,
+        upAngle: k.upAngle, approvedAt: +j.approvedAt || 0, font: j.fontName || "Source Sans 3", fontKey: j.fontKey || k.fontKey || "source-sans-3" };
+    }
     return { poolId: x.poolId, ...(face === "front" ? { face: "front" } : {}), text: j.text, lines: j.lines, sizePt: j.fit.size, capMm: j.fit.capMm, weight: j.fit.weight,
       centre: j.fit.centre, angle: j.fit.angle || 0, lineGap: j.fit.layout && j.fit.layout.lineGap, upAngle: j.view.upAngle, approvedAt: +j.approvedAt || 0,
       font: j.fontName || "Source Sans 3", fontKey: j.fontKey || "source-sans-3" };
@@ -7336,7 +7348,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const front = face === "front", u = x.eng && (x.eng.faces ? x.eng.faces[front ? "front" : "back"] : front ? null : x.eng);
     const rec = (x.poolId && backs && backs.get(front ? recKeyOf(x.poolId, "front") : x.poolId)) || (u && u.back) || backOfJob(x, front ? "front" : "back");
     if (!rec) return null;
-    const key = [x.poolId || x.id, +rec.approvedAt || 0, rec.sizePt, rec.angle, backFontId(rec), !!backFont(rec.weight, rec)].concat(front ? ["front"] : []).join("|");
+    const key = [x.poolId || x.id, +rec.approvedAt || 0, rec.sizePt, rec.angle, String(rec.centre || ""), backFontId(rec), !!backFont(rec.weight, rec)].concat(front ? ["front"] : []).join("|");   // (BROKENBACK: the centre too, so a fit that lands a little off the cloud's place is drawn where it is)
     const own = front ? "_engGeoF" : "_engGeo", ownKey = front ? "_engGeoFKey" : "_engGeoKey";
     if (x[own] && x[ownKey] === key) return x[own];
     x[ownKey] = key; x[own] = tryDo(() => CharmNestBacks.engraveOn(front && !isFrontRec(rec) ? Object.assign({}, rec, { face: "front" }) : rec, x.c, { font: backFont(rec.weight, rec) })) || null;
