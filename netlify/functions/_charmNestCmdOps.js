@@ -32,6 +32,9 @@
  *    cmdPutBack   { runId, lineKey, rid, sheetId, poolIds, charms, layoutBase, contentBase, keepBacks?, by } (CLOUD_ONLY) INPLACE, second half: the line's new pieces go back on
  *                                                         the sheet that kept their place (only that line: SETSHUT's own-order rule, the sheet held its place for it), owing a
  *                                                         nest that seats them in its free room. release: true only lets the place go (the line is then placed as any line).
+ *    cmdRestoreNest { runId, sheetId, jobId, from, by, dry? } (CLOUD_ONLY) RGRESTORE: the pieces a finished, verified nest of a sheet placed, that a later write moved off onto
+ *                                                         a draft, go back onto the sheet exactly where that nest left them (nothing nested; files and green line owed again);
+ *                                                         a draft left empty is emptied whole (its problem and run stop words go). Refusals in words (below).
  *
  *  Never calls Etsy, never builds the world, never starts an agent. Every write of the cloud's own call is fenced (fenceTx), and a page's call of the PRODUCTION op is refused in
  *  mode "on" by the handler (the cloud does it).                                                                                                                              */
@@ -433,10 +436,154 @@ module.exports = function make(d) {
     return out;
   }
 
-  return { runCmdClaim, cmdWorkPut, cmdMovePieces, cmdHopPieces, cmdLeaveSet, cmdVacate, cmdPutBack };
+  /* ── cmdRestoreNest (RGRESTORE, Paul 22 Nov 2026: RG Sheet 1 held 29 pieces after nest-8462e548578a82c3789dfc62; the writer's ONCEWHOLE bug lifted 11 of them, they went with the
+     remade BULLSEYE onto RG Draft 2, which took the leftover of Sheet 1's automatic cut and stopped the run. "Put them back where they were") ──
+     { runId, sheetId, jobId, from: [sheetId] (1-4), by, dry? } → { ok, restored, orders, to: { sheetId, name, layoutRev, contentRev }, from: [{ sheetId, name, left, emptied }] } | { ok, noop }
+     The pieces a finished nest of `sheetId` placed (Charm_Nest_Jobs/<jobId>: its own result, verified, no overlap) that a later write took off and that now wait on one of `from` go back
+     onto the sheet EXACTLY where that nest left them. Every piece the sheet still holds must stand where that nest left it, so the sheet is that nest's verified layout again, never a new
+     one. Nothing is nested: the sheet owes its files and, once they are written, its green line (roseRedraw; its cut is recorded again by its own cut, automatic or a person's press).
+     A `from` sheet left with no piece is emptied whole: its turned-away and waiting lists, the problem and the run stop it asked (problem, problemStop) go and it owes nothing.
+     The pieces' records name the sheet again (in a set: that set, "written", as the set's other pieces). Refused in words, nothing written: the laser cut the sheet or its set, its set
+     was sent to the station, a green line or a recorded cut still stands on it (set aside first: roseReopen), its physical sheet is not its own or another sheet holds or cut it since,
+     a piece of the sheet is not where the nest left it or the sheet holds a piece the nest did not place (the pieces could overlap), a piece is no longer on `from`, was taken off or
+     committed, a pair would be split, a sheet is busy, open in Manual Control by someone else, in a set (a `from`), of another run or metal.
+     dry: the same checks, but the sheet's own recorded cut (not lasered) and a `from` sheet holding the sheet's physical sheet are allowed: the request sets them aside first (roseRelease,
+     roseReopen). Nothing written. Asked again once done: { ok, noop } (the pieces are back already), nothing written. */
+  async function cmdRestoreNest(b) {
+    const runId = str(b.runId, 80), sheetId = str(b.sheetId, 80), jobId = str(b.jobId, 80), by = str(b.person || b.by, 80) || "a person", dry = b.dry === true;
+    const froms = [...new Set((Array.isArray(b.from) ? b.from : [b.from]).map(x => str(x && typeof x === "object" ? x.sheetId : x, 80)).filter(isId))].slice(0, 4);
+    if (!isId(runId) || !isId(sheetId) || !isId(jobId) || !froms.length || froms.includes(sheetId)) return words(400, "Name the sheet, the nest whose layout goes back and the sheet its pieces are on now");
+    const sRef = col(SHEETS).doc(sheetId), jRef = col("Charm_Nest_Jobs").doc(jobId), now = Date.now();
+    const near = (a, b2, t) => Math.abs(num(a) - num(b2)) <= t, turn = a => ((Math.round(+a * 1000) / 1000) % 360 + 360) % 360;
+    const samePose = (p, q) => near(p.cxPt, q.cxPt, 0.001) && near(p.cyPt, q.cyPt, 0.001) && Math.abs(turn(p.angle || 0) - turn(q.angle || 0)) <= 0.001 && near(+p.scale > 0 ? +p.scale : 1, +q.scale > 0 ? +q.scale : 1, 0.00001);
+    const out = await db.runTransaction(async tx => {
+      await fenceTx(tx);
+      const [ss, js, ...fs] = await txGetAll(tx, [sRef, jRef, ...froms.map(id => col(SHEETS).doc(id))]);
+      if (!ss.exists || fs.some(x => !x.exists)) return words(404, "That sheet is not in the cloud");
+      const s = Object.assign({ id: ss.id }, ss.data()), srcs = fs.map(x => Object.assign({ id: x.id }, x.data())), sn = nameOf(s);
+      if (s.archived) return words(409, `${sn} was repacked into other sheets`);
+      if (s.runId !== runId) return words(409, `${sn} is not a sheet of the run the cloud carries`);
+      const j = js.exists ? js.data() || {} : null, res = j && j.result, ver = res && res.verification;
+      if (!j || j.sheetId !== s.id || j.status !== "done" || !res || !Array.isArray(res.placements) || !res.placements.length) return words(409, `That nest has no finished layout of ${sn}: nothing was put back`, { refused: "nest" });
+      if (!ver || ver.ok !== true || num(ver.overlapPairs) > 0 || num(ver.overlapPx) > 0) return words(409, `That nest's layout of ${sn} was not verified free of overlaps: nothing was put back`, { refused: "overlap" });
+      const pose = new Map(res.placements.filter(p => p && p.id != null).map(p => [String(p.id), p])), live = (s.charms || []).filter(c => c && !c.excluded), liveIds = new Set(live.map(c => String(c.id)));
+      const back = [...pose.keys()].filter(id => !liveIds.has(id));
+      if (!back.length) return { ok: true, noop: true, dry, restored: 0, to: { sheetId: s.id, name: sn, layoutRev: num(s.layoutRev), contentRev: num(s.contentRev) } };   // (asked again once done: every piece of that nest is on the sheet already)
+      // the laser and the station: never changed
+      if (num(s.laserDoneAt) > 0) return words(409, `${sn} has been cut on the laser: its charms can no longer change`, { refused: "cut" });
+      const sets = (await listingSets(tx, s.id)).map(d => Object.assign({ setId: d.id }, d.data()));
+      if (s.setId && !s.draft && !sets.some(x => x.setId === s.setId)) { const one = await tx.get(col(SETS).doc(String(s.setId))); if (one.exists) sets.push(Object.assign({ setId: one.id }, one.data())); }
+      { const st = sets.find(x => num(x.laserDoneAt) > 0); if (st) return words(409, `${sn}'s set was cut on the laser: its charms can no longer change`, { refused: "cut" }); }
+      { const st = sets.find(x => SetEdit.committedSet(x)); if (st) return words(409, `${sn}'s set (${SetEdit.setWord ? SetEdit.setWord(st) : st.name || st.setId}) was sent to the station: its charms stay as they are`, { refused: "committed" }); }
+      if (!dry && (s.roseCutAt || lineDrawn(s) || s.rosePlanHash)) return words(409, `${sn}'s green line or its recorded cut still stands: it is set aside before its pieces come back. Try again`, { refused: "line" });
+      // the sheets: still, of this run and metal; the pieces come off drafts only
+      for (const r of [s, ...srcs]) {
+        const n = nameOf(r);
+        if (r.archived) return words(409, `${n} was repacked into other sheets`, { gone: true });
+        if (r.runId !== runId || r.metal !== s.metal) return words(409, `${n} is not a ${s.metal} sheet of the run the cloud carries`);
+        const busy = busyRec(r, now); if (busy) return words(409, `${n} ${busy}: try again once it is done`, { busy: true });
+        if (manualLive(r, now) && str(r.manualEdit.by, 80) !== by) return words(409, `${n} is open in Manual Control by ${str(r.manualEdit.by, 80) || "someone"} on another screen`, { refused: "held" });
+      }
+      for (const r of srcs) {
+        if (cutRec(r)) return words(409, `${nameOf(r)} was already cut: its pieces stay as they are`, { refused: "cut" });
+        if (lineDrawn(r)) return words(409, `${nameOf(r)} has a green line drawn: its pieces stay as they are`, { refused: "line" });
+        if ((r.setId && !r.draft) || (await listingSets(tx, r.id)).length) return words(409, `${nameOf(r)} is in a set: take it out of its set first`, { refused: "set" });
+      }
+      // the physical sheet: the sheet's own again (or, dry, about to be: held by a `from`, or free), its leftover never taken by a third sheet
+      const stockId = str(s.roseStockId, 120);
+      if (!stockId) return words(409, `${sn} holds no physical sheet: nothing was put back`, { refused: "stock" });
+      const stRef = col("Charm_Nest_Rose_Stock").doc(stockId), sd = await tx.get(stRef), stock = sd.exists ? sd.data() || {} : null;
+      if (!stock || stock.deleted) return words(409, `${sn}'s physical sheet is not in the cloud`, { refused: "stock" });
+      const mine = new Set([s.id, ...froms]), third = (await tx.get(col(SHEETS).where("roseStockId", "==", stockId))).docs.map(d => Object.assign({ id: d.id }, d.data()))
+        .filter(r => !r.archived && !mine.has(r.id) && !(r.roseCutAt && r.roseCutRevision != null && num(r.roseCutRevision) < num(s.roseCutRevision || stock.revision)));   // (a sheet that cut this stock BEFORE is its history, not a holder)
+      if (third.length) return words(409, `${sn}'s physical sheet is used by a third sheet (${nameOf(third[0])}): nothing was put back`, { refused: "stock" });
+      if (stock.owner && !(dry ? mine.has(stock.owner) : stock.owner === s.id)) return words(409, `${sn}'s physical sheet is held by another sheet: nothing was put back`, { refused: "stock" });
+      if (s.roseCutAt) {   // (dry: what roseReopen will ask of the cut it sets aside, said here before anything is written)
+        const rev = s.roseCutRevision != null ? num(s.roseCutRevision) : num(stock.revision);
+        if (num(stock.revision) !== rev) return words(409, `The leftover ${sn}'s cut made has been cut from since by another sheet: its metal is that sheet's now, so nothing was put back`, { refused: "stock" });
+        if (rev >= 1) {
+          const rs = await tx.get(col("Charm_Nest_Remnants").doc(`${stockId}-${rev}`)), rem = rs.exists ? rs.data() || {} : null;
+          if (rem && rem.status === "inUse" && rem.inUseBySheetId && !mine.has(rem.inUseBySheetId)) return words(409, `The leftover ${sn}'s cut made is in use by ${rem.inUseBySheetName || "a third sheet"}: nothing was put back`, { refused: "stock" });
+          if (rem && rem.status === "used" && rem.usedBySheetId && rem.usedBySheetId !== s.id) return words(409, `The leftover ${sn}'s cut made was used by ${rem.usedBySheetName || "a third sheet"}: nothing was put back`, { refused: "stock" });
+          const aside = new Set((Array.isArray(s.roseReseated) ? s.roseReseated : []).filter(x => x && x.reopen && x.cut && x.cut.revision != null).map(x => num(x.cut.revision)));
+          for (let r = rev - 1; r >= 1; r--) {
+            const q = await tx.get(stRef.collection("cuts").where("revision", "==", r).limit(1)), c = q.docs[0] ? q.docs[0].data() : null;
+            if (aside.has(r) && (!c || c.sheetId === s.id)) continue;
+            let p = null; try { p = c ? JSON.parse(c.planJson || "null") : null; } catch (_) { p = null; }
+            if (!p || !p.profile) return words(409, `The outline ${sn}'s physical sheet had before its cut cannot be read: nothing was put back`, { refused: "stock" });
+            break;
+          }
+        }
+      } else if (!dry && num(s.roseRevision) !== num(stock.revision)) return words(409, `${sn}'s physical sheet changed since it was set aside: nothing was put back`, { refused: "stock" });
+      // the positions: the sheet as it stands is that nest's layout (each piece where the nest left it), so the pieces coming back overlap none of them
+      const moved = (s.placements || []).filter(p => p && liveIds.has(String(p.id)) && !(pose.has(String(p.id)) && samePose(p, pose.get(String(p.id)))));
+      if (moved.length) return words(409, `${sn}: ${moved.length === 1 ? "a piece is" : moved.length + " pieces are"} no longer where that nest left ${moved.length === 1 ? "it" : "them"} (${moved.slice(0, 3).map(p => String(p.id).split(":").pop()).join(", ")}): the pieces put back could overlap, so nothing was put back`, { refused: "overlap" });
+      const extra = live.filter(c => !pose.has(String(c.id)));
+      if (extra.length) return words(409, `${sn} holds ${extra.length === 1 ? "a piece" : extra.length + " pieces"} that nest did not place (${extra.slice(0, 3).map(c => c.name || c.id).join(", ")}): the pieces put back could overlap, so nothing was put back`, { refused: "overlap" });
+      // the pieces to bring back: placed by the nest, not on the sheet now, each waiting on one of `from` (listed there, its charm there)
+      const bySrc = new Map();
+      for (const id of back) {
+        const r = srcs.find(x => (x.charms || []).some(c => c && !c.excluded && String(c.id) === id && c.poolId && (x.poolIds || []).map(String).includes(String(c.poolId))));
+        if (!r) return words(409, `A piece that nest placed (${id.split(":").pop()}) is no longer on ${and(srcs.map(nameOf))}: it was moved or taken off meanwhile. Nothing was put back`, { gone: true });
+        if (!bySrc.has(r.id)) bySrc.set(r.id, new Set()); bySrc.get(r.id).add(id);
+      }
+      const lineOf = id => String(id).replace(/_\d+$/, "");
+      const going = [];
+      for (const r of srcs) {
+        const ids = bySrc.get(r.id); if (!ids) continue;
+        const g = (r.charms || []).filter(c => c && !c.excluded && ids.has(String(c.id))), lines = new Set(g.map(c => lineOf(c.poolId)));
+        const half = (r.charms || []).filter(c => c && !c.excluded && c.poolId && lines.has(lineOf(c.poolId)) && !ids.has(String(c.id)));
+        if (half.length) return words(409, `Order ${ridOfPool(half[0].poolId)} stays where it is: a piece of its line on ${nameOf(r)} is not part of that nest, and a pair is never moved in halves`, { refused: "pair" });
+        for (const c of g) going.push({ c, from: r });
+      }
+      const rows = await txGetAll(tx, going.map(m => col(POOL).doc(String(m.c.poolId))));
+      const off = rows.filter(x => x.exists && Placement.takenOff(x.data())).map(x => x.id), done = rows.filter(x => x.exists && x.data().state === "committed").map(x => x.id);
+      if (off.length) return words(409, `Order ${ridOfPool(off[0])} was put on hold or taken off meanwhile: nothing was put back`, { taken: off.slice(0, 20) });
+      if (done.length) return words(409, `${done.length === 1 ? "A piece" : done.length + " pieces"} of that nest were already committed: nothing was put back`);
+      if (dry) return { ok: true, dry: true, restored: going.length, orders: orderList(going.map(m => m.c)), to: { sheetId: s.id, name: sn } };
+      // the writes: each `from` without the pieces (emptied whole when none is left); the sheet with them where the nest left them; no nest owed anywhere
+      const left = [];
+      for (const r of srcs) {
+        const ids = bySrc.get(r.id); if (!ids) continue;
+        const w = without(r, new Set(going.filter(m => m.from.id === r.id).map(m => String(m.c.poolId)))), kept = new Set(orderList(w.charms).concat(w.poolIds.map(ridOfPool)));
+        const emptied = !w.charms.filter(c => c && !c.excluded).length;
+        const next = { charms: w.charms, placements: w.placements, poolIds: w.poolIds, rejects: w.rejects, feedWait: w.feedWait, backPool: w.backPool, orders: (Array.isArray(r.orders) ? r.orders : []).map(String).filter(o => kept.has(o)),
+          charmCount: w.charms.length, placedCount: w.placements.length, rejectCount: Array.isArray(w.rejects) ? w.rejects.length : 0, layoutRev: num(r.layoutRev) + 1, contentRev: num(r.contentRev) + 1, updatedAt: FV.serverTimestamp() };
+        if (next.feedWait === undefined) delete next.feedWait; if (next.rejects === undefined) delete next.rejects;
+        if (emptied) Object.assign(next, { charms: [], placements: [], poolIds: [], rejects: [], feedWait: null, backPool: [], orders: [], charmCount: 0, placedCount: 0, rejectCount: 0, status: "idle", dirty: false, nestOwed: null,
+          problem: null, problemStop: null, noRoomRun: null, releaseFull: false, releaseWhy: null, filesOwed: null, restoredOff: { to: s.id, toName: sn, jobId, n: ids.size, at: now, by } });
+        else Object.assign(next, { dirty: true, filesOwed: now });
+        tx.set(col(SHEETS).doc(r.id), next, { merge: true });
+        left.push({ sheetId: r.id, name: nameOf(r), left: emptied ? 0 : w.charms.length, emptied });
+      }
+      const sCharms = (s.charms || []).slice(), sPl = (s.placements || []).filter(p => p && liveIds.has(String(p.id)));
+      for (const m of going) {
+        const x = Object.assign({}, m.c, { metal: s.metal, pinned: null }); delete x.arrivalPin; sCharms.push(x);
+        const p = pose.get(String(m.c.id));
+        sPl.push(Object.assign({ n: sPl.length + 1, id: m.c.id, layer: p.layerName || m.c.layer || "", name: m.c.name || "", hash: m.c.hash || null, source: m.c.sourceName || "", index: num(m.c.index) },
+          { angle: turn(p.angle || 0), scale: +p.scale > 0 ? +p.scale : 1, cxPt: +p.cxPt, cyPt: +p.cyPt }, num(p.wPt) > 0 && num(p.hPt) > 0 ? { wPt: +p.wPt, hPt: +p.hPt } : {}, num(m.c.areaPt2) > 0 ? { areaPt2: +m.c.areaPt2 } : {}));
+      }
+      const gIds = new Set(going.map(m => String(m.c.id))), gPool = going.map(m => String(m.c.poolId)), gOrders = orderList(going.map(m => m.c)), inSet = !!(s.setId && !s.draft);
+      const sRejects = (Array.isArray(s.rejects) ? s.rejects : []).filter(x => !gIds.has(String(x && typeof x === "object" ? x.id : x)));
+      const sNext = { charms: sCharms, placements: sPl, poolIds: [...new Set((s.poolIds || []).map(String).concat(gPool))], orders: [...new Set((Array.isArray(s.orders) ? s.orders : []).map(String).concat(gOrders))],
+        charmCount: sCharms.filter(c => c && !c.excluded).length, placedCount: sPl.length, rejects: sRejects, rejectCount: sRejects.length, feedWait: null,
+        noRoomRun: Array.isArray(s.noRoomRun) ? s.noRoomRun.map(String).filter(o => !gOrders.includes(o)) : (s.noRoomRun == null ? null : s.noRoomRun), movedOn: null, nestOwed: null, dirty: false,
+        layoutRev: num(s.layoutRev) + 1, contentRev: num(s.contentRev) + 1, filesOwed: now, roseRedraw: { at: now, by, line: true, cut: !!(s.roseReopened && s.roseReopened.cut) },
+        restored: { jobId, n: going.length, from: left.map(l => l.sheetId), at: now, by }, updatedAt: FV.serverTimestamp() };
+      if (bytesOf(Object.assign({}, s, sNext, { updatedAt: 0 })) > SHEET_DOC_BYTES) return words(413, `${sn} cannot hold these pieces in one record`);
+      tx.set(sRef, sNext, { merge: true });
+      for (const m of going) tx.set(col(POOL).doc(String(m.c.poolId)), Object.assign({ sheetId: s.id, movedFrom: m.from.id, movedTo: s.id, movedBy: by, movedAt: now, movedHow: "restore", updatedAt: FV.serverTimestamp() },
+        s.fileBase ? { sheetName: s.fileBase } : {}, inSet ? { setId: s.setId, state: "written" } : {}), { merge: true });
+      return { ok: true, restored: going.length, pieces: gPool, orders: gOrders, inSet, from: left, to: { sheetId: s.id, name: sn, layoutRev: sNext.layoutRev, contentRev: sNext.contentRev } };
+    });
+    if (out && out.ok && !out.dry && !out.noop) { revTouch(b, ["s:" + sheetId].concat(froms.map(id => "s:" + id))); feedOrders(b, [out.orders]); }
+    return out;
+  }
+
+  return { runCmdClaim, cmdWorkPut, cmdMovePieces, cmdHopPieces, cmdLeaveSet, cmdVacate, cmdPutBack, cmdRestoreNest };
 };
 module.exports.claimHeld = claimHeld;
 module.exports.busyRec = busyRec;
 module.exports.WORK = WORK;
 module.exports.CLAIM_STALE_MS = CLAIM_STALE_MS;
-module.exports.OPS = ["runCmdClaim", "cmdWorkPut", "cmdMovePieces", "cmdHopPieces", "cmdLeaveSet", "cmdVacate", "cmdPutBack"];
+module.exports.OPS = ["runCmdClaim", "cmdWorkPut", "cmdMovePieces", "cmdHopPieces", "cmdLeaveSet", "cmdVacate", "cmdPutBack", "cmdRestoreNest"];

@@ -78,6 +78,9 @@ CLOUD_READS.push("engraveSyncGet"); CLOUD_WRITES.push("engraveSyncPut");
 CLOUD_WRITES.push("engraveIntentStart"); CLOUD_READS.push("getAgent");
 CLOUD_READS.push("commitGet", "setCommitCheck"); CLOUD_WRITES.push("commitJournal");   // (build step 12: sending finished sets to the Design Station)
 CLOUD_WRITES.push(...words(`runCmdClaim cmdWorkPut cmdMovePieces cmdHopPieces cmdLeaveSet cmdVacate cmdPutBack`));   // (build step 13)
+/* RGRESTORE (Paul, 22 Nov 2026): a nest's verified layout put back on its sheet, the pieces a later write moved onto a draft brought back where that nest left them (_charmNestCmdOps.js
+   cmdRestoreNest; the request "restorenest", _charmNestCmdExec.js). The cloud's own write only, never a page's; no Etsy call follows from it. */
+CLOUD_ONLY.add("cmdRestoreNest"); CLOUD_WRITES.push("cmdRestoreNest");
 CLOUD_ONLY.add("finishOverflow"); CLOUD_WRITES.push("finishOverflow");   // (build step 7b: the sheet writer's overflow, what a nest turned away moved on to the next sheet: _charmNestFinishOps.js)
 const CLOUD_OPS = new Set([...CLOUD_READS, ...CLOUD_WRITES]);
 /* RELEASEHOLD (Paul, 20 Nov 2026; build step 13, live): a person's Release Hold press, done in the cloud at once (_charmNestHoldRelease.js): releaseAsk is a PRESS from a page and the cloud's own

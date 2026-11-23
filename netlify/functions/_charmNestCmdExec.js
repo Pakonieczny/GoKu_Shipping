@@ -10,6 +10,7 @@
  *    pieces        placewaiting · pairnow · sendhome · remakeline · keepsync · remake · skuonce · release
  *    nest          renest · consolidate · empty · seat   (consolidate / empty: 10K / 14K sheets, and Gold Filled / Sterling Silver drafts of the run: COMBINEDRAFTS)
  *    pieces        customsend (CUSTOMSEND, 21 Nov 2026: a card's sent designs made into pieces by the cloud's intake and placed by its placement)
+ *    nest          restorenest (RGRESTORE, 22 Nov 2026: a nest's verified layout put back on its sheet; its cut set aside first, the draft its pieces went to emptied and removed)
  *
  *  What it needs of the other steps, by op name (an op that is not the cloud's in this build makes the request answer in words, never wait): nestStart (build step 6),
  *  placeOnSheet (step 5), releaseAsk (Release Hold in the cloud), roseClaim (step 6), roseRelease, runLinesRetire (step 10a). The lanes a request needs must be in
@@ -913,5 +914,115 @@ async function customsend(x) {
   return no("The request lost its place: send it again");
 }
 
-const EXEC = { reorder, delete: del, leaveset, setrebuild, unkeep, repicture, placewaiting, pairnow, sendhome, remakeline, keepsync, remake, skuonce, release, renest, consolidate, empty, seat, customsend, hop, backhome };
+/* ═══ RGRESTORE (Paul, 22 Nov 2026) ═══ restorenest { sheetId, sourceId: the nest (Charm_Nest_Jobs id) whose layout goes back, fromId: the draft its pieces wait on now, targetId?: the sheet
+   that takes the draft's other pieces (the ones that nest did not place) }. RG Sheet 1 held 29 pieces after nest-8462e548578a82c3789dfc62; the writer's ONCEWHOLE bug lifted 11 of them onto a
+   new draft (RG Draft 2) with the remade BULLSEYE (which truly has no room there); the draft took the leftover of Sheet 1's automatic cut, and its "oldest order cannot fit" stopped the run.
+   ONE request, each step looking at the records first (a pass cut off midway, or the request asked twice, does each thing once), said in the answer:
+     check  cmdRestoreNest dry: every refusal in words BEFORE anything is written (laser cut, the set sent to the station, the sheet's pieces not where that nest left them (they could overlap),
+            the physical sheet held or cut by a third sheet, a piece taken off or committed, a pair split, Manual Control). A sheet's live nest is stopped and a busy sheet waited for (FIRSTNOW)
+     rest   the draft's pieces that nest did not place go to targetId (cmdMovePieces) and are nested there round what it holds (nestStart, append)
+     stock  the draft gives the physical sheet back (roseRelease)
+     aside  the sheet's recorded cut is set aside (roseReopen, replace): the stock is the sheet's again at the outline it had before that cut, the cut's leftover is discarded
+     back   cmdRestoreNest: the pieces back exactly where the nest left them; the sheet owes its files, then its green line (roseRedraw, the rosecut lane), then its cut (its own automatic
+            cut, or a person's Cut Sheet); the draft emptied whole (its problem and the run stop it asked go)
+     gone   the empty draft archived (archiveEmptySheet), the later drafts of its metal numbered again; the lines brought back are "written" when the sheet is in a set (as its set's others)
+   Then it waits for the target's nest and answers. Never Etsy; the run's stop is left as it is (its Resume is the owner's press). */
+const RESTORE_MS = 15 * 60000;
+async function restorenest(x) {
+  const ctx = x.ctx, a = x.a, by = x.cmd.by || "", now = Date.now(), w = Object.assign({}, x.work, { did: (x.work.did || []).slice(), why: (x.work.why || []).slice() });
+  const NEED = ["cmdRestoreNest", "cmdMovePieces", "roseRelease", "roseReopen", "archiveEmptySheet", "nestStart", "runLinesPatch"];
+  if (!lane(ctx, "nest") || !NEED.every(has)) return no("Putting a nest's layout back is not the cloud's yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
+  if (w.stage === "nest") return restoreSettled(x, w);
+  const sid = str(a.sheetId, 80), fid = str(a.fromId, 80), tid = str(a.targetId, 80), job = str(a.sourceId, 80), tries = `t${num(w.tries)}`;
+  let S = await sheetRec(ctx, sid), D = fid ? await sheetRec(ctx, fid) : null, T = tid ? await sheetRec(ctx, tid) : null;
+  if (!S || S.archived || S.runId !== ctx.runId) return no("That sheet is not on the run the cloud carries.");
+  if (!D || D.runId !== ctx.runId) return no("The draft its pieces wait on is not on the run the cloud carries.");
+  const js = job ? await ctx.db.collection("Charm_Nest_Jobs").doc(job).get() : null, J = js && js.exists ? js.data() || {} : null, P = J && J.result && Array.isArray(J.result.placements) ? J.result.placements : [];
+  if (!J || J.sheetId !== S.id || J.status !== "done" || !P.length) return no(`That nest has no finished layout of ${nameOf(S)}: nothing was put back`);
+  const placedIds = new Set(P.map(p => String(p && p.id))), onS = new Set(activeCharms(S).map(c => String(c.id)));
+  const pending = [...placedIds].filter(id => !onS.has(id)), rest = D.archived ? [] : activeCharms(D).filter(c => c.poolId && !placedIds.has(String(c.id)));
+  const said = () => (w.did.length ? ` (done so far: ${w.did.join("; ")})` : "");
+  const again = (why, rec) => {   // (FIRSTNOW: a busy sheet is waited for, 15 minutes at most; nothing that cannot wait is left half done)
+    const first = num(w.firstNowAt) || now;
+    if (now - first > RESTORE_MS) return no(`Not put back: ${nameOf(rec)} ${why} after 15 minutes; ask again${said()}`);
+    return wait(`Putting ${nameOf(S)}'s pieces back as soon as ${nameOf(rec)} is still (${why})…`, Object.assign({}, w, { firstNowAt: first, tries: num(w.tries) + 1 }));
+  };
+  if (pending.length || rest.length) {
+    const live = [S, D, T].filter(r => r && !r.archived), busy = live.find(r => liveNest(r) || busyRec(r, now));
+    if (busy) { await stopFor(x, live, `${nameOf(S)}: its layout put back (a person's request goes first)`); return again(busyRec(busy, now) || "is nesting", busy); }
+  }
+  if (rest.length && (!T || T.archived || T.id === D.id || T.id === S.id)) return no(`${nameOf(D)} also holds ${plural(rest.length, "piece")} that nest did not place (${rest.slice(0, 3).map(c => c.name || c.poolId).join(", ")}): name the sheet that takes ${rest.length === 1 ? "it" : "them"}. Nothing was changed`);
+  // check: every refusal before anything is written
+  if (pending.length) {
+    const dry = await put(x, { op: "cmdRestoreNest", runId: ctx.runId, sheetId: S.id, jobId: job, from: [D.id], by, person: by, dry: true }, `restore-dry|${S.id}|${num(S.layoutRev)}.${num(S.contentRev)}|${D.id}|${num(D.layoutRev)}.${num(D.contentRev)}|${S.roseCutAt ? 1 : 0}|${tries}`);
+    if (err(dry)) return dry.busy ? again(err(dry).replace(/^.*? (is|has) /, "$1 ").replace(/: try again.*$/, ""), S) : no(`Not put back: ${err(dry)}${said()}`);
+  }
+  // rest: the draft's other pieces to the target, nested there
+  if (rest.length) {
+    const m = await put(x, { op: "cmdMovePieces", runId: ctx.runId, from: { sheetId: D.id, layoutBase: num(D.layoutRev), contentBase: num(D.contentRev) }, to: { sheetId: T.id, layoutBase: num(T.layoutRev), contentBase: num(T.contentRev) },
+      poolIds: rest.map(c => String(c.poolId)), by, why: `not part of ${nameOf(S)}'s nest` }, `restore-rest|${D.id}|${num(D.contentRev)}|${T.id}|${num(T.contentRev)}`);
+    if (err(m)) return /try again once it is done|changed since this move was planned/.test(err(m)) ? again("is busy", T) : no(`Not put back: ${err(m)}${said()}`);
+    w.rest = { n: num(m.moved), to: T.id, toName: nameOf(T), layoutRev: num(m.to && m.to.layoutRev), ids: rest.map(c => String(c.poolId)), names: rest.map(c => String(c.name || c.poolId).replace(/^\d+ · /, "")) };
+    w.did.push(`${and(w.rest.names)} moved to ${w.rest.toName}`);
+    D = await sheetRec(ctx, D.id);
+  }
+  if (pending.length) {
+    // stock: the draft gives the physical sheet back
+    const stockId = str(S.roseStockId, 120), ss = stockId ? await ctx.db.collection(STOCK).doc(stockId).get() : null, stock = ss && ss.exists ? ss.data() || {} : null;
+    if (stock && stock.owner === D.id) {
+      const r = await put(x, { op: "roseRelease", stockId, sheetId: D.id, metal: D.metal }, `restore-release|${D.id}|${stockId}|${num(stock.revision)}`);
+      if (err(r)) return no(`Not put back: ${nameOf(D)} could not give ${nameOf(S)}'s physical sheet back (${err(r)})${said()}`);
+      w.did.push(`${nameOf(D)} gave ${nameOf(S)}'s physical sheet back`);
+    }
+    // aside: the sheet's recorded cut (and any line) set aside
+    if (S.roseCutAt || lineDrawn(S) || S.rosePlanHash) {
+      const r = await put(x, { op: "roseReopen", sheetId: S.id, replace: true, by: by || undefined }, `restore-aside|${S.id}|${num(S.roseCutAt)}|${S.rosePlanHash || ""}`);
+      if (err(r)) return no(`Not put back: ${nameOf(S)}'s cut could not be set aside (${err(r)})${said()}`);
+      w.aside = { cut: !!(r && r.cut), revision: r && r.cut ? r.cut.revision : null, leftover: r && r.cut ? r.cut.leftover : null };
+      w.did.push(`${nameOf(S)}'s ${w.aside.cut ? "automatic cut" : "green line"} set aside`);
+    }
+    // back: the pieces where the nest left them
+    S = await sheetRec(ctx, S.id); D = await sheetRec(ctx, D.id);
+    const r = await put(x, { op: "cmdRestoreNest", runId: ctx.runId, sheetId: S.id, jobId: job, from: [D.id], by, person: by }, `restore-back|${S.id}|${num(S.layoutRev)}.${num(S.contentRev)}|${D.id}|${num(D.layoutRev)}.${num(D.contentRev)}|${tries}`);
+    if (err(r)) return r.busy ? again(err(r).replace(/^.*? (is|has) /, "$1 ").replace(/: try again.*$/, ""), S) : no(`Not put back: ${err(r)}${said()}`);
+    w.back = { n: num(r.restored), orders: r.orders || [], pieces: r.pieces || [], inSet: !!r.inSet };
+    if (w.back.n) w.did.push(`${plural(w.back.n, "piece")} back on ${nameOf(S)}`);
+  }
+  // gone: the empty draft archived, the later drafts numbered again
+  D = await sheetRec(ctx, D.id);
+  if (D && !D.archived && !activeCharms(D).length && !(D.poolIds || []).length) {
+    const r = await put(x, { op: "archiveEmptySheet", id: D.id, runId: ctx.runId }, `restore-archive|${D.id}`);
+    if (err(r)) w.why.push(`${nameOf(D)} is empty but stays (${err(r)})`);
+    else { w.gone = nameOf(D); let re = []; try { re = await require("./_charmNestCombine").renumberAfter(ctx, D, k => `${ctx.runId}|cmd|${x.cmd.id}|${k}`); } catch (_) { re = []; } if (re.length) w.why.push(re.join(", ")); }
+  }
+  // the lines brought back: "written" when the sheet is in a set (every piece of the line on it), as the set's other pieces
+  if (w.back && w.back.inSet && w.back.pieces.length && !w.linesDone) {
+    const got = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (got && got.run && got.run.lines) || lines(ctx), S2 = await sheetRec(ctx, S.id), on = new Set(((S2 && S2.poolIds) || []).map(String)), mine = new Set(w.back.pieces.map(String));
+    const patch = {}; for (const [k, l] of Object.entries(L)) if (l && l.state === "pooled" && (l.poolIds || []).length && l.poolIds.some(id => mine.has(String(id))) && l.poolIds.every(id => on.has(String(id)))) patch[k] = { state: "written" };
+    if (Object.keys(patch).length) { const r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: patch }, `restore-lines|${S.id}|${Object.keys(patch).sort().join(",").slice(0, 400)}`); if (err(r)) w.why.push(`its order lines are marked written at the next set look (${err(r)})`); }
+    w.linesDone = true;
+  }
+  // the words, then the target's nest
+  const parts = [];
+  if (w.back && w.back.n) parts.push(`${nameOf(S)}: ${plural(w.back.n, "piece")} back where ${job} left ${w.back.n === 1 ? "it" : "them"} (${placedIds.size} on it, nothing nested again)${w.aside && w.aside.cut ? "; its automatic cut set aside, its physical sheet its own at its pre-cut outline" : ""}; files, green line and cut follow`);
+  else if (!pending.length) parts.push(`${nameOf(S)} holds every piece of ${job} already: it was not changed`);
+  if (w.gone) parts.push(`${w.gone} emptied${w.did.some(d => /physical sheet back/.test(d)) ? ", its stock given back" : ""}, removed: the run is no longer stopped by it (press Resume)`);
+  if (w.why.length) parts.push(w.why.join("; "));
+  w.said = parts.join(". ");
+  if (w.rest && w.rest.n && !w.rest.asked) {
+    const s2 = await startNest(x, w.rest.to, false, `${plural(w.rest.n, "piece")} moved from ${nameOf(D)}, asked by ${by || "a person"}`);
+    w.rest.asked = true;
+    if (s2.error) return ok(`${w.said}. ${and(w.rest.names)} ${w.rest.n === 1 ? "waits" : "wait"} on ${w.rest.toName}; its nest could not start yet (${s2.error}): the run nests it`);
+    return wait(`Nesting ${and(w.rest.names)} on ${w.rest.toName}…`, Object.assign({}, w, { stage: "nest", sheets: [{ id: w.rest.to, layoutRev: w.rest.layoutRev, at: Date.now() }] }));
+  }
+  return ok(w.said || "Nothing to put back");
+}
+async function restoreSettled(x, w) {
+  const R = w.rest || {}, want = (R.ids || []).map(String), rec0 = await sheetRec(x.ctx, R.to);
+  const tail = (rec, late) => { const n = rec ? want.filter(id => seated(rec, id)).length : 0; return `${w.said}. ${and(R.names || [])} ${n === want.length ? `nested on ${R.toName}: ${placedWords(rec)}` : `${want.length === 1 ? "waits" : "wait"} on ${R.toName}${late ? ` (its nest did not finish: ${(rec && rec.status) || "waiting"})` : ""}`}`; };
+  if (rec0 && want.length && want.every(id => seated(rec0, id))) return ok(tail(rec0, false));
+  return settleNests(x, `Nesting ${and(R.names || [])} on ${R.toName || "the sheet"}…`, async late => ok(tail(await sheetRec(x.ctx, R.to), late)));
+}
+
+const EXEC = { reorder, delete: del, leaveset, setrebuild, unkeep, repicture, placewaiting, pairnow, sendhome, remakeline, keepsync, remake, skuonce, release, renest, consolidate, empty, seat, customsend, hop, backhome, restorenest };
 module.exports = { EXEC, strandedFix, placedNow, staleLines, runSheets, runSets, sheetRec, nameOf, cutRec, lineDrawn, listedBy, seated, has, lane, WORK };
