@@ -398,6 +398,9 @@ async function inplace(x, label) {
     let busy = 0;
     for (const k of w.keys) {
       if (vac[k]) continue; const l = L[k]; if (!l || !OPEN_LINE(l)) { vac[k] = { skip: true }; continue; }
+      /* VACATEONCE (Paul, 23 Nov 2026, the lemon 4236768670: "made again: 1 piece(s) on GF Sheet 1", and the sheet kept the kiwi): the pass whose lease the request ran under ended right after this step; the request
+         began the step again from its journal, found the line already without pieces, took it for a line of no sheet, so the new drawing was never put in. What the line says it left (vacated, this request's own) is it. */
+      if (!(l.poolIds || []).length && l.vacated && Array.isArray(l.vacated.sheetIds) && l.vacated.sheetIds.length && num(l.vacated.at) >= num(x.cmd.at) - 2000) { vac[k] = { sheets: l.vacated.sheetIds.map(String) }; continue; }
       const bySheet = new Map(); for (const id of l.poolIds || []) { const s = on.get(String(id)); if (s) (bySheet.get(s) || bySheet.set(s, []).get(s)).push(String(id)); }
       // (a line is made again whole or not at all: a sheet that keeps what it holds (cut, behind a green line, in a set sent to the station) keeps the whole line as it is)
       const keeps = [...bySheet.keys()].find(s => cutRec(s) || lineDrawn(s) || committedSheet(s, sets));
@@ -452,8 +455,9 @@ async function inplace(x, label) {
   if (w.stage === "back") {
     const run = await runNow(ctx), L = (run && run.lines) || lines(ctx), placedOn = new Map(), why = (w.why || []).slice(), unvac = {}, loose = [], swapped = new Set();
     for (const k of w.ready || []) {
-      const l = L[k], home = ((w.vac[k] || {}).sheets || [])[0]; unvac[k] = { vacated: null };
+      const l = L[k]; let home = ((w.vac[k] || {}).sheets || [])[0]; unvac[k] = { vacated: null };
       if (!l) continue;
+      if (!home && x.swap && (l.poolIds || []).length) { const still = listedBy(await sheetsWith(ctx, l.poolIds)), s0 = (l.poolIds || []).map(id => still.get(String(id))).find(Boolean); if (s0 && !cutRec(s0) && !lineDrawn(s0)) home = s0.id; }   // (VACATEONCE: a sheet that still lists its pieces holds the old drawing of them: the new one goes in there)
       // (NEWLINE, Paul 22 Nov 2026: Michelle's Change SKU SHEEP3-CO → SHEEP 3 made the 2 pieces and answered "made again: 0 piece(s)", failed: the order was new, on no sheet, so it had no
       //  place to go back to and was skipped here, never placed. Such a line is placed now as any new piece is)
       if (!home) { loose.push(k); continue; }
@@ -502,6 +506,9 @@ async function inplace(x, label) {
        no longer waits a minute or two more for that nest. A piece not on a sheet yet keeps the request at its nest step, which says how it ended. */
     { const g = await runNow(ctx), L2 = (g && g.lines) || {}, on2 = listedBy(await sheetsWith(ctx, (w.ready || []).flatMap(k => (L2[k] && L2[k].poolIds) || []))), names = new Set(); let pieces = 0, listed = 0;
       for (const k of w.ready || []) for (const id of (L2[k] || {}).poolIds || []) { pieces++; const sh = on2.get(String(id)); if (sh) { listed++; names.add(nameOf(sh)); } }
+      /* (VACATEONCE: never said done while the sheet's entry is still another charm than the piece: the new drawing is put in once more, then said) */
+      if (x.swap && (w.ready || []).length) { const all = (w.ready || []).flatMap(k => ((L2[k] || {}).poolIds || []).map(String)), rows2 = await pools(ctx, all), old = all.filter(id => { const sh = on2.get(id), r = rows2.get(id), c = sh && (sh.charms || []).find(y => y && String(y.poolId) === id); return c && r && r.charmHash && c.hash && String(c.hash) !== String(r.charmHash); });
+        if (old.length) { const t = num(w.again) + 1; if (t > 2) return no(`Not made again: ${and([...new Set(old.map(id => nameOf(on2.get(id))))])} still holds the old drawing of ${old.length} piece(s). Press it again`); return wait("Putting the new pieces in place…", Object.assign({}, w, { stage: "back", again: t, vac: Object.fromEntries(Object.entries(w.vac || {}).map(([k, v]) => [k, Object.assign({}, v, { sheets: [...new Set(((L2[k] || {}).poolIds || []).map(id => (on2.get(String(id)) || {}).id).filter(Boolean))] })])) })); } }
       if ((w.ready || []).length && pieces && listed === pieces && !(w.late || []).length)
         return ok(`${(w.ready || []).length} order line(s) made again: ${listed} piece(s) on ${and([...names])}, being nested${why.length ? " · " + why.join("; ") : ""}`); }
     return wait("Seating the new pieces…", Object.assign({}, w, { stage: "nest", sheets: [...placedOn.values()], why }));
@@ -622,6 +629,8 @@ async function remakeline(x) {
     const open = ask.filter(k => OPEN_LINE(lines(x.ctx)[k])), read = open.length ? await readLinesNow(x, open) : null;
     if (read) {
       const done = await madeSince(x, open, read);
+      /* (VACATEONCE: a piece made right whose sheet still holds the old drawing of it is not done: the drawing is put in) */
+      if (done.size) { const on0 = listedBy(await sheetsWith(x.ctx, [...done.values()].flatMap(rows => rows.map(r => r.poolId)))); for (const [k, rows] of [...done]) if (rows.some(r => { const sh = on0.get(String(r.poolId)), c = sh && (sh.charms || []).find(y => y && String(y.poolId) === String(r.poolId)); return c && c.hash && r.charmHash && String(c.hash) !== String(r.charmHash); })) done.delete(k); }
       if (open.length && done.size === open.length) { const on = listedBy(await sheetsWith(x.ctx, [...done.values()].flatMap(rows => rows.map(r => r.poolId)))), names = new Set(); let n = 0; for (const rows of done.values()) for (const r of rows) { n++; const sh = on.get(String(r.poolId)); if (sh) names.add(nameOf(sh)); } return ok(`Made as it reads now: ${plural(n, "piece")}${names.size ? " on " + and([...names]) : ", being placed"}`); }
       x.skip = new Set(done.keys()); x.noWorld = true;
     }
