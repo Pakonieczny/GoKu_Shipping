@@ -47,6 +47,12 @@ const ENDED = new Set(["done", "superseded", "failed", "skipped", "waiting"]);
 const num = v => (Number.isFinite(+v) ? +v : 0);
 /** ONCEWHOLE: the pieces a nest's keepOrdersWhole took off (lifted, a pair's or order's mates, the order's pieces left behind): they fitted, they went on to keep the order whole and oldest first. */
 const liftedOf = r => { const w = r && r.ordersWhole; return w ? ["lifted", "mates", "wholeMates", "behind"].flatMap(k => (Array.isArray(w[k]) ? w[k] : [])).map(String) : []; };
+/* STUCKDIRTY (Paul, 22 Nov 2026: "I have an error in this set": Set 2 formed at 17:17 without GF Draft 1, gold-s19-mwpqrju5, which shares order 4240577089 with SS Sheet 1). Its write of 21 Nov
+   21:44 carried releaseFull AND dirty (a piece, KEY2, left it while it was nested: layoutOf's `gone`). A sheet released full is never nested again for a change (_charmNestNest.js owedNest, OWNNEST:
+   only its own unplaced pieces owe it a nest, and they still do), so nobody ever cleared that mark: the cloud's set assembly read the sheet as "still being nested or saved" for good
+   (charm-nest-orders.js sheetRelease, charm-nest-assembly-core.js cannotJoin), it never joined the set its shared orders are in, and Rebuild called it busy. Three 10K drafts were stuck the same
+   way. The layout written with the release mark, verified and saved, IS the sheet: a sheet released full is written not dirty. → the dirty mark the record write carries */
+const dirtyAfter = (sheet, rec) => !!(sheet && sheet.dirty) && !(sheet.releaseFull === true || (sheet.releaseFull === undefined && !!(rec && rec.releaseFull)));
 const sha =(s, n) => crypto.createHash("sha256").update(String(s)).digest("hex").slice(0, n || 24);
 const newToken = () => (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"));
 const urlOf = (bucket, path, token) => "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket.name) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(token);
@@ -370,6 +376,7 @@ STEP.S7 = async X => {
       const fw = ((W.result && W.result.feedWait) || []).map(String).filter(id => X.byId.has(id) && !placedIds.has(id));
       sheet.feedWait = fw.length ? fw : null;
     }
+    sheet.dirty = dirtyAfter(sheet, rec);   // (STUCKDIRTY: a sheet released full is never left "being nested")
     if (rec.problemStop && sh.placements.length) { sheet.problem = null; sheet.problemStop = null; }
     const ans = await X.call(Object.assign({ op: "putSheet", sheet, layoutBase: job.base.layoutRev, contentBase: job.base.contentRev, filesJobBase: job.jobId }, typeof W.pinKey === "string" && W.pinKey ? { pinsBase: W.pinKey } : {}), "record");
     /* G8: a person pinned or unpinned a charm of the sheet after this layout was made (putSheet pinMoved): nothing was written; the layout is made again from the record as it is
@@ -719,4 +726,4 @@ async function membershipCheck(X) {
   return { own, wanted, differs, why: differs ? "NOPARTIALSET: a partial sheet its set does not list is a draft; the writer changes no membership (P4): the assembly unit drafts it" : null, at: Date.now() };
 }
 
-module.exports = { run, carries, STEPS, STEP, WRITER_FIELDS, workDir, FINISH, BUDGET_MS, afterNestMarks, pathsOf, layoutOf, sheetOf, liftedOf };
+module.exports = { run, carries, STEPS, STEP, WRITER_FIELDS, workDir, FINISH, BUDGET_MS, afterNestMarks, pathsOf, layoutOf, sheetOf, liftedOf, dirtyAfter };
