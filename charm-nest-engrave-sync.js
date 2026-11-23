@@ -92,6 +92,15 @@
     }
     return o;
   }
+  /* RECBACK (Paul, 23 Nov 2026, "Fix everything"; orders 4234003099, 4236658718, 4223534659, 4224907625: approved, their backs saved on their sheets, and Orders.rows() said engraving "review", approved false): placing the words of a
+     piece already decided (fitJob, at the start of the page and in the background) marks the piece's own record (row.engrave) "fitting", then "review", and makes one, not approved, for a line read with none (Engrave.engRec); the job's
+     state was put back after it, its record never. The record says again what its job is: approved, or written. A record marked as invalidated (the order changed) is left as it is. */
+  function recBack(j) {
+    const r = j && j.row; if (!r || j.archived || j.approving || j.editingBack || (r._engraveLinked && !r.parentRow)) return;
+    if (!(j.state === "written" || (j.state === "approved" && +j.approvedAt > 0))) return;
+    safe(() => { const e = r.engrave; if (e && (e.invalidatedBy || e.state === "reclassify" || (e.approved && e.state === j.state))) return;
+      r.engrave = Object.assign({}, e || {}, { needed: true, state: j.state, approved: true, approvedBy: j.approvedBy || (e && e.approvedBy) || null, approvedAt: j.approvedAt || (e && e.approvedAt) || null, reason: null }, j.text != null ? { text: j.text } : {}); });
+  }
   /** A line's whole engraving as plain JSON, or null when it has none. */
   function lineRec(line) {
     const jobs = jobsOfLine(line);
@@ -175,7 +184,7 @@
     /* (ENGSAME, Paul 20 Nov 2026: three pieces were "Saved to sheet" in the cloud and on Michelle's computer and "blocked" on Paul's, which never took the cloud's record: the record still carried the signature Paul's computer
        had sent, so it was read as this computer's own write. The signature is trusted only when every piece's state is the cloud's too: a piece in another state than the record's takes the record.) */
     const items0 = safe(() => E().items(), null), statesDiffer = (l.rec.jobs || []).some(rj => { const j = items0 && rj && items0.get(rj.key); return !!j && !j.archived && String(j.state || "") !== String(rj.state || ""); });
-    const sigNow = sigOf(line); if (l.sig && sigNow === l.sig && !statesDiffer) { SIGS.set(l.key, sigNow); return said(l.key, "same sig"); }
+    const sigNow = sigOf(line); if (l.sig && sigNow === l.sig && !statesDiffer) { SIGS.set(l.key, sigNow); jobsOfLine(line).forEach(recBack); return said(l.key, "same sig"); }
     if (mine && !statesDiffer && why !== "start" && why !== "stale") return said(l.key, "mine");   // (this computer's own write coming back: already here)
     said(l.key, "taken (" + why + ")");
     TAKING.add(l.key);
@@ -213,6 +222,7 @@
           finally { j.state = keepState; if (keepApproved.approvedAt !== undefined) Object.assign(j, keepApproved); if (!j.fit && had) Object.assign(j, had); }   // (FITKEEP: not placed again here: the same placement stays)
         } else if (!FIT_STATES.has(rj.state)) { j.fit = null; }
       }
+      jobsOfLine(line).forEach(recBack);   // (RECBACK)
       if (REPAIR.has(l.key)) { REPAIR.delete(l.key); setTimeout(() => repairSend(l.key), 400); }
       safe(() => root.CharmNestMadeThumb && root.CharmNestMadeThumb.changed("engrave-sync", (line.poolIds || []).slice()));
       safe(() => S().schedule());
@@ -314,6 +324,7 @@
       FITERR.delete(j.key); j.state = "ready"; try { await E().fitJob(j); } catch (e) { FITERR.set(j.key, String((e && e.message) || e).slice(0, 160)); console.warn("[engrave-sync] place", j.key, e); }   // (ENGREC: an error is said (placeNow), never swallowed)
     } finally {
       j.state = keep.state; if (keep.approvedAt !== undefined) { j.approvedAt = keep.approvedAt; j.approvedBy = keep.approvedBy; }
+      recBack(j);   // (RECBACK)
       FITTING.delete(j.key); setTimeout(() => { TAKING.delete(line.key); SIGS.set(line.key, sigOf(line)); }, 50);
     }
     return !!j.fit;

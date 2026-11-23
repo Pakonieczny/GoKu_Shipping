@@ -12764,8 +12764,8 @@ const Engrave = window.Engrave = (() => {
     rows = E ? E.groupRows(a, { lineIndex: ix }).concat(E.groupRows(b, { lineIndex: ix })) : a.concat(b);
     return rows;
   }
-  /** What a piece's line in a row says it is: "Saved to sheet" for a written one, else the stage word of charm-nest-engrave-rows.js ("Approved", "No engraving", "Placement to check", ...). */
-  const stageText = (j, busy) => (j.state === "written" ? "Saved to sheet" : j.backPending && j.state === "approved" ? `Approved · ${faceNoun(faceOfJob(j))} file waits for the cloud` : ROWS() ? ROWS().stageOf(j, busy) : "");
+  /** What a piece's line in a row says it is: nothing for a written one (NOSAVED, Paul 23 Nov 2026: "I don't want to see these green Saved to sheet UI pills": its seal and green number say it; no word, so no dot), else the stage word of charm-nest-engrave-rows.js ("Approved", "No engraving", "Placement to check", ...). */
+  const stageText = (j, busy) => (j.state === "written" ? "" : j.backPending && j.state === "approved" ? `Approved · ${faceNoun(faceOfJob(j))} file waits for the cloud` : ROWS() ? ROWS().stageOf(j, busy) : "");
   /** What is still to settle, and what is decided, counted in ROWS: the numbers on the tabs and rails say what the lists show. (pendingCount and reviewedCount count jobs and stay as they are for the run's own checks.) */
   /* CLOUDWORLD (Paul, 20 Nov 2026): the Design & Engrave tab lists the lines whose engraving work the cloud holds (Charm_Nest_Engrave, as every computer saves it: charm-nest-engrave-sync.js), the same on
      every computer; a line one computer prepared alone in the background, and never sent, is not listed there. null: no cloud world (the page lists what it holds, as before). */
@@ -20911,7 +20911,7 @@ const Review = window.Review = (() => {
     await Orders.loadMaps(true); toast(`${p.sku || "No SKU"} → ${sku} remembered${lids.length > 1 ? ` on ${lids.length} listings` : ""}`, "ok");
     linkHolds(rows || rowsOf(it), sku); pickedMarks(rows || rowsOf(it), sku, who);
     // (LISTPICK: every open order of the listing made up again with the pick first; a line it held for a person, or made up, is not made up again here)
-    const relinked = (await relinkNow().catch(() => null)) || { keys: new Set() }; askRelink([sku]);   // (LINKASK)
+    const relinked = (await relinkNow().catch(() => null)) || { keys: new Set() }; relinkKeys([...answerKeysOf(it, rows).values()], sku, rows || rowsOf(it)).then(ks => ks.length ? askRemake(ks, `Use this charm: ${p.sku || "no SKU"} → ${sku}`) : askRelink([sku]));   // (LINKASK; RELINKNOW: the lines named when they are known)
     for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId)) && !relinked.keys.has(rr.key)) await repool(rr);
   }
   /** "Use both: X 1 + X 2" (SIBLINGS, 12 Oct 2026): the page's saved pair link (aliasPut with pair, kept per listing and per transaction SKU under Charm_Sku_Aliases/{listing}.pairBySku), so this
@@ -20964,7 +20964,7 @@ const Review = window.Review = (() => {
     const who = by(); if (!who) return;
     if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; }
     const lidP = String(row.line.listingId || "").replace(/\D/g, "");
-    const flow = relinkFlow({ title: `Listing ${lidP} → ${sku}`, sub: "Kept for this listing only. Etsy is not changed.", listingId: lidP, fromSku: p.sku || "", toSku: sku,
+    const flow = relinkFlow({ title: `Listing ${lidP} → ${sku}`, sub: "Kept for this listing only. Etsy is not changed.", listingId: lidP, fromSku: p.sku || "", toSku: sku, rows: [row],
       pre: [{ id: "link", text: `Saving the link: listing ${lidP} · ${p.sku ? `SKU “${p.sku}”` : "no SKU"} → ${sku}…`, state: "work" }] });   // (WRONGCHARM2: the same progress panel as "Wrong charm?")
     let r; try { r = await RL.pick(row, sku, { by: who }); } catch (e) { r = { ok: false, why: (e && e.message) || String(e) }; }
     if (!r || !r.ok) { flow.fail((r && r.why) || "the link was not saved", "link", `Not linked: listing ${lidP} → ${sku}`); toast((r && r.why) || "That charm could not be kept for this listing", "bad", 7000); return; }
@@ -21016,7 +21016,7 @@ const Review = window.Review = (() => {
     // (WRONGCHARM2, Paul 20 Oct 2026: the progress panel opens first and follows every sweep of the listing from the write on: relinkFlow)
     const scope = off.via === "option" && off.option ? `option “${off.option.name}: ${off.option.value}”` : off.from ? `SKU “${off.from}”` : "no SKU";
     // (EDITSKU: Edit SKU gives its own title and words, keeps the panel open for its own end (o.keepOpen) and starts its Etsy write with the link write (o.onFlow))
-    const flow = relinkFlow({ title: o.title || `Wrong charm? · listing ${off.listingId} → ${sku}`, sub: o.sub || "Kept for this listing and its SKU only. Etsy is not changed.", listingId: off.listingId, fromSku: off.from, toSku: sku, keepOpen: !!o.keepOpen, host: o.host,
+    const flow = relinkFlow({ title: o.title || `Wrong charm? · listing ${off.listingId} → ${sku}`, sub: o.sub || "Kept for this listing and its SKU only. Etsy is not changed.", listingId: off.listingId, fromSku: off.from, toSku: sku, rows: aff.rows, keepOpen: !!o.keepOpen, host: o.host,
       pre: [{ id: "link", text: `Saving the link: listing ${off.listingId} · ${scope} → ${sku}…`, state: "work" }] });
     if (o.onFlow) o.onFlow(flow);
     let r; try { r = await RL.pick(row, sku, { by: who }); } catch (e) { r = { ok: false, why: (e && e.message) || String(e) }; }   // (REVLINK: ONE write under the matcher's key, read back by the server, the maps read again; it throws when it is not saved)
@@ -21445,6 +21445,25 @@ const Review = window.Review = (() => {
       .then(ans => { if (ans && ans.text) toast(`The cloud: ${ans.text}`.slice(0, 300), ans.ok ? "ok" : "bad", 8000); return ans; }).catch(() => null);
   }
   const unmadeOf = (lids, froms) => Orders.rows().filter(r => r && r.key && r.line && lids.includes(String(r.line.listingId)) && (!froms || froms.includes(String(r.line.sku || "").trim().toUpperCase())) && !r.hold && !(r.poolIds || []).length && !["gone", "committed", "skipped", "noDesign"].includes(r.state)).map(r => r.key);
+  /* RELINKNOW (Paul, 23 Nov 2026: "You have a budget of 30 sec to make the update ... This should be a simple process"): a charm linked to a listing ("Wrong charm?", a Review pick, an option answer) asked the cloud for
+     keepsync, which waits for the next reading of ALL open orders, a minute or two. The lines the link changes are known here: they are asked for by name (remakeline reads only those, at once). → their keys (80 at most): the open
+     lines of `pairs` ([{ lid, from: its Etsy SKU, "" = any }]) whose saved link names `sku` now (or that are in `own`: the lines answered), whose pieces are another charm or that have no piece yet. [] = none known here, or this
+     page does not follow the cloud: asked as before. A piece this page never read is read from the cloud first. */
+  async function relinkKeys(pairs, sku, own, skip) {
+    const U = x => String(x == null ? "" : x).trim().toUpperCase(), to = U(sku); if (!to || B.run || !(window.CNViewer && CNViewer.on && CNViewer.on()) || typeof window.CNRelayAsk !== "function") return [];
+    try {
+      const RL = relinkRL(), same = k => !!U(k) && (U(k) === to || !!O.sameDesign(U(k), to, x => Master.entryFor(x))), dec = t => U(O.decodeEntities ? O.decodeEntities(t) : t), mine = new Set((own || []).map(r => r && r.key)), want = (pairs || []).map(q => ({ lid: String(q.lid || "").replace(/\D/g, ""), from: dec(q.from) })).filter(q => q.lid);
+      const list = Orders.rows().filter(r => {
+        if (!r || !r.key || !r.line || r.hold || (skip && skip.has(r.key)) || ["gone", "committed", "skipped", "noDesign"].includes(r.state) || (r.spec && (r.spec.ownDesign || r.spec.customDone))) return false;
+        if (!want.some(q => q.lid === rlLid(r) && (!q.from || q.from === dec(r.line.sku) || (RL && RL.fromOf && q.from === U(RL.fromOf(r.line, r.spec)))))) return false;
+        if (r.skuOverride && r.skuOverride.sku && !same(r.skuOverride.sku)) return false;   // (ONESKU: its own charm, for this order alone)
+        if (mine.has(r.key)) return true; const k = RL && RL.linkOf ? RL.linkOf(r, B.maps) : null; return !!k && same(k.sku);
+      });
+      const ids = [...new Set(list.flatMap(r => r.poolIds || []).map(String))].filter(id => !B.pool.rows.has(id));
+      for (let i = 0; i < ids.length; i += 300) { try { const got = await api("charmNestLibrary", { op: "poolGet", poolIds: ids.slice(i, i + 300) }, { quiet: true }); for (const [id, x] of Object.entries((got && got.pools) || {})) if (x && !B.pool.rows.has(id)) B.pool.rows.set(id, x); } catch (_) { /* asked for: the cloud looks at its pieces itself */ } }
+      return [...new Set(list.filter(r => { const ps = (r.poolIds || []).map(id => B.pool.rows.get(String(id))); return !ps.length || ps.some(x => !x || (!x.custom && !same(x.sku))); }).map(r => r.key))].slice(0, 80);
+    } catch (e) { console.warn("[relink] the listing's lines were not told apart:", e && e.message); return []; }
+  }
   function relinkNow() { clearTimeout(relinkTimer); relinkTimer = 0; const p = relinkChain.then(relinkSweep, relinkSweep); relinkChain = p.catch(() => {}); return p; }
   // an order whose Review is resolved (or marked) is looked at again: a line kept on its sheet while it was in Review is made up now
   try { document.addEventListener("cn-review-mark", ev => { const rid = String((ev && ev.detail && ev.detail.rid) || ""); if (rid && [...relinkWait.values()].some(e => e.row && e.row.order && String(e.row.order.receiptId) === rid)) relinkLater(300); }); } catch (_) {}
@@ -21569,7 +21588,7 @@ const Review = window.Review = (() => {
      sheet and made from the new design / kept, and why / not made yet), each sheet nested again and saved, the pictures, Etsy (the keeper's line). A failure is said on its line, in red, with its
      reason. The panel can be closed at any time; the work carries on. In the sandbox it says what it WOULD do, from what the page holds, and writes nothing.
      relinkFlow(o) → { line, fail(why), run({ loadMaps }) → { first: after the first sweep, all: once every order and sheet is settled }, rehearse(), done() }
-       o = { title, sub, listingId, fromSku, toSku, sandbox, keepOpen, pre: [{ id, text, state, why }], after: [...] (rehearsal), skip: [line keys not to tell (the designs window's own order)] } */
+       o = { title, sub, listingId, fromSku, toSku, rows: the lines known to be changed (RELINKNOW), sandbox, keepOpen, pre: [{ id, text, state, why }], after: [...] (rehearsal), skip: [line keys not to tell (the designs window's own order)] } */
   const rlSleep = ms => new Promise(r => setTimeout(r, ms));
   const rlLid = r => String((r && r.line && r.line.listingId) || "").replace(/\D/g, "");
   const rlName = sh => (sh && (sh.fileBase || sheetName(sh))) || "a sheet";
@@ -21641,11 +21660,14 @@ const Review = window.Review = (() => {
           const remote = !B.run && typeof window.CNRelayAsk === "function";
           if (remote) {
             const skus = [...new Set([to, also].filter(Boolean))], cloudOn = !!(window.CNViewer && CNViewer.on && CNViewer.on());   // (G9: in mode "on" the words name the cloud)
-            line("carrier", `Other open orders of ${skus.join(", ")}: asking ${cloudOn ? "the cloud" : "the computer that carries the run"}…`, "work");
-            const ans = await window.CNRelayAsk({ type: "keepsync", ids: skus, label: `Make the open orders of ${skus.join(", ")} again from the new design`.slice(0, 150) }, t => line("carrier", `Other open orders: ${t}`, "work"), 420000);
-            if (ans && ans.ok) { line("carrier", `Other open orders: ${ans.text}`.slice(0, 260), "done"); tally.orders.add("carrier"); }
+            const keys = cloudOn && !also ? await relinkKeys([{ lid, from: o.fromSku }], to, o.rows, skip) : [], named = keys.length > 0;   // (RELINKNOW: the lines the link changes are asked for by name; a moved SKU (also), or no such line known here: keepsync, as before)
+            const doneSay = a => named ? `The cloud: ${a.text || "made again"}` : `Other open orders: ${a.text}`, badSay = named ? "The cloud did not make them again" : "Other open orders: the cloud did not make them again";
+            line("carrier", named ? `Asking the cloud to make ${keys.length === 1 ? "the piece" : `${keys.length} pieces`} again as ${to}…` : `Other open orders of ${skus.join(", ")}: asking ${cloudOn ? "the cloud" : "the computer that carries the run"}…`, "work");
+            const ans = named ? await window.CNRelayAsk({ type: "remakeline", ids: keys, label: `Listing ${lid}: ${o.fromSku || "no SKU"} → ${to}`.slice(0, 150) }, t => line("carrier", String(t || "").slice(0, 260), "work"), 300000, { always: true })
+              : await window.CNRelayAsk({ type: "keepsync", ids: skus, label: `Make the open orders of ${skus.join(", ")} again from the new design`.slice(0, 150) }, t => line("carrier", `Other open orders: ${t}`, "work"), 420000);
+            if (ans && ans.ok) { line("carrier", doneSay(ans).slice(0, 260), "done"); tally.orders.add("carrier"); if (named) await freshNow({ keys }).catch(() => null); }   // (SYNCNOW: the pictures below are drawn from what the cloud made)
             else if (ans && ans.cloud) {   // (NOWCMD: the cloud failed it or has not done it after 5 minutes: red, with the reason and a Try again on the panel; a later answer replaces the line)
-              const shown = a => { try { if (a && a.ok) { line("carrier", `Other open orders: ${a.text}`.slice(0, 260), "done"); return a; } tally.failed.add("carrier"); line("carrier", a && a.late ? `Other open orders: ${a.text}`.slice(0, 260) : "Other open orders: the cloud did not make them again", "failed", a && a.late ? "" : String((a && a.text) || "no answer")); if (a && typeof a.retry === "function" && fl && typeof fl.act === "function") fl.act("carrier", "Try again", () => Promise.resolve(a.retry()).then(shown)); if (a && a.late && a.later) Promise.resolve(a.later).then(x => { if (x) shown(x); }); } catch (_) { /* a word only */ } return a; };
+              const shown = a => { try { if (a && a.ok) { line("carrier", doneSay(a).slice(0, 260), "done"); if (named) freshNow({ keys }).catch(() => null); return a; } tally.failed.add("carrier"); line("carrier", a && a.late ? (named ? String(a.text) : `Other open orders: ${a.text}`).slice(0, 260) : badSay, "failed", a && a.late ? "" : String((a && a.text) || "no answer")); if (a && typeof a.retry === "function" && fl && typeof fl.act === "function") fl.act("carrier", "Try again", () => Promise.resolve(a.retry()).then(shown)); if (a && a.late && a.later) Promise.resolve(a.later).then(x => { if (x) shown(x); }); } catch (_) { /* a word only */ } return a; };
               shown(ans);
             }
             else line("carrier", `Other open orders of this charm are updated by ${(ans && ans.cloud) || cloudOn ? "the cloud" : (ans && ans.name ? ans.name + "'s computer" : "the computer that carries the run")} as soon as it is free`, "warn", (ans && ans.text) || "");
@@ -22521,7 +22543,8 @@ const Review = window.Review = (() => {
         await Orders.loadMaps(true);
         toast(allv ? `every value of “${p.optionName}” → ${sku} · remembered for listing ${p.listingId}` : `“${p.optionValue}” → ${sku} · remembered for listing ${p.listingId}`, "ok");
         linkHolds(rowsOf(it), sku); pickedMarks(rowsOf(it), sku, who);
-        await relinkNow().catch(() => null); askRelink([sku]);   // (LISTPICK: the open orders with this option value made up again with the pick; LINKASK)
+        const nm = t => O.norm(t), optRows = Orders.rows().filter(x => x && x.line && String(x.line.listingId) === String(p.listingId) && ((x.spec && x.spec.options) || []).some(q => q && nm(q.name) === nm(p.optionName) && (allv || nm(q.value) === nm(p.optionValue))));
+        await relinkNow().catch(() => null); relinkKeys([{ lid: p.listingId }], sku, rowsOf(it).concat(optRows)).then(ks => ks.length ? askRemake(ks, `Option “${p.optionName}”: ${sku}`) : askRelink([sku]));   // (LISTPICK: the open orders with this option value made up again with the pick; LINKASK; RELINKNOW)
         for (const rr of Orders.rows()) if (String(rr.line.listingId) === String(p.listingId) && rr.problems.length) await repool(rr);
       })();
       c.querySelectorAll("[data-dsku]").forEach(b => { b.onclick = () => pickCharm(b.dataset.dsku); });

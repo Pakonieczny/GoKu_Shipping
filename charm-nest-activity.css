@@ -698,6 +698,7 @@
 .egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]::before,.egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]::after{display:none}
 /* NOSAVED (Paul, 23 Nov 2026: "I don't want to see these green Saved to sheet UI pills"): an approved or saved piece's chip says it by its green number alone; the label (which spilled over the next chip) and its tick are not drawn. */
 .egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]:is([data-s=approved],[data-s=written]){display:none!important}
+[data-stage][data-s=written]:empty{display:none!important}   /* (NOSAVED: no row of Orders or Engraving says "Saved to sheet" any more (stageText): no word, no dot, no empty pill) */
 .egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar:has([data-s=approved],[data-s=written])::before{background:#e3efe4;color:#2f6a3c}
 .egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage][data-s=review]{background:#d49a2a}
 .egEars:has(> .egEar:nth-child(3)):not(:has(.egPiece[data-face])) > .egEar [data-stage]:is([data-s=words],[data-s=blocked]){background:#c2452f}
