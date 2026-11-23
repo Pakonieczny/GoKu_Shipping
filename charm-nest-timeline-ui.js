@@ -851,6 +851,15 @@
    *  step being worked towards (-1 when all are done, or it was completed by hand), stop: where a cancelled order
    *  stopped, hand: the Complete Order press that completed it by hand (handOf; the steps after `step` are skipped). */
   const PLACE_STATES = new Set(["sheet", "waiting", "hold", "hand", "cancelled", "loading"]);
+  /** REVIEWNOW: the order's review stage came from a question (needsDecision, its last word of rank 1) and Review holds no open card for the order now (the page's Review.openOrders: its
+      questions, holds, marks and custom orders). Unknown (no Review here, no question): false, the history stands. */
+  function questionGone(events) {
+    let lastAsk = null; for (const e of events || []) if (e && (RANK[e.type] === 1)) lastAsk = e;
+    if (!lastAsk || lastAsk.type !== "needsDecision") return false;
+    const rid = String(lastAsk.lineKey || lastAsk.rid || "").split("_")[0], R = root && root.Review;
+    if (!rid || !R || typeof R.openOrders !== "function") return false;
+    try { return !R.openOrders().has(rid); } catch (_) { return false; }
+  }
   function derive(events, cancelRec, where, rail, place, faces, pools) {
     events = events || [];
     rail = Array.isArray(rail) && rail.length ? rail : STAGES;
@@ -904,6 +913,11 @@
         if (!beyond && st !== "held") W = Object.assign({}, W, said("held", "On hold"), pl.onSheet ? {} : { sheet: "", sheetId: "" });
       } else if (pl.state === "waiting" || pl.state === "sheet") {
         hold = null;
+        /* REVIEWNOW (Paul, 23 Nov 2026, order 4243367845: "I get this quite a bit where the system chooses the correct SKU/charm but still says that it's an unknown SKU"): the history's last word
+           was a question ("Unknown SKU: SKU SEAL 1: not in any master file", 8:25 PM); the SKU was matched since (the line reads its design, the cloud's line is pooled, Review holds no card
+           for it), but no answer was ever pressed, so the pill said "In review" and the order's card said the question. A piece waiting for a sheet whose order Review no longer holds is
+           waiting, whatever an old question said. A hold, an engraving or a custom order's reading is not touched; a question still asked keeps it in review. */
+        if (pl.state === "waiting" && st === "review" && questionGone(events)) W = Object.assign({}, W, said("waiting", pl.text || "Waiting for a sheet"));
         if (pl.fence && !beyond && (st === "sheet" || st === "held")) W = Object.assign({}, W, said("waiting", pl.text || "Waiting for a sheet"), { sheet: "", sheetId: "" });
         else if (pl.state === "sheet" && pl.sheets && pl.sheets.length) {
           const a = pl.sheets[0], names = pl.sheets.map(x => x.label).filter(Boolean).join(" + ") || "a sheet", mine = W.sheetId && pl.sheets.some(x => x.id === W.sheetId);

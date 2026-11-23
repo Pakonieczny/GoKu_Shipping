@@ -1904,11 +1904,18 @@ const Orders = window.Orders = (() => {
       // the page's other orders of this listing: a line is read again when they say something new about its SKU (a SKU on another choice of an option, a new choice with its own SKU)
       (seenIx[String(l.listingId)] || {}).sig];
   }
+  // (LIBREADY: the questions the charm library answers, and whether this page's library is still being read: loading, or never read yet)
+  const LIB_ASKS = new Set(["unmatchedSku", "blockedSku", "missingSize", "needsMapping"]);
+  const libLoading = () => { try { return !!(B.master && (B.master.loading || !B.master.loadedAt)); } catch (_) { return false; } };
   // the order timeline: a line read, once, and again only when what it reads as changes (its SKU, metal, size, questions)
   const readSaid = new Map();
   function readEvent(row) {
     try {
       const s = row.spec; if (!s) return;
+      /* LIBREADY (Paul, 23 Nov 2026, order 4243367845: "the system chooses the correct SKU/charm but still says that it's an unknown SKU"): a page that read the line at 09:19 while its charm library
+         was still loading (or catching up) wrote "Read as SEAL 1 · SS · 1 question" and "Unknown SKU" into the order's history for good, a question no page asks once the library is read. While
+         the library loads, a reading with a question the library answers is not written: it is written once the library is read, if it still holds */
+      if (libLoading() && (s.problems || []).some(p => LIB_ASKS.has(p.kind))) return;
       const qs = (s.problems || []).map(p => p.kind), sig = [s.designSku, s.material, s.form, s.size, s.chain, s.quantity, s.special ? s.special.kind : "", s.noDesign ? "nd" : "", qs.slice().sort().join("+")].join("|");
       if (readSaid.get(row.key) === sig) return; readSaid.set(row.key, sig);
       const what = s.noDesign ? `not cut (${s.noDesignWhy || "no design"})` : [(O.setDesignsOf(s) || []).join(" + ") || s.designSku || "no SKU", s.material ? labelOf(s.material) : "metal not read", s.form, s.size].filter(Boolean).join(" · ");
@@ -20209,7 +20216,9 @@ const Review = window.Review = (() => {
       const probs = it.kind === "customOrder" ? (it.problems || []) : [it.problem && it.problem.kind === it.kind ? it.problem : { kind: it.kind }];
       const fw = it.job ? faceWordOf(it.job) : "";   // (a line engraved on both faces asks once for each: the front's question has its own id and says "Front")
       for (const r of rowsOf(it)) for (const p of probs) {
-        const id = r.key + "." + p.kind + (fw === "Front" ? ".front" : ""); if (!p.kind || askedSeen.has(id)) continue; askedSeen.add(id);
+        const id = r.key + "." + p.kind + (fw === "Front" ? ".front" : ""); if (!p.kind || askedSeen.has(id)) continue;
+        if (["unmatchedSku", "blockedSku", "missingSize", "needsMapping"].includes(p.kind) && B.master && (B.master.loading || !B.master.loadedAt)) continue;   // (LIBREADY: a question the charm library answers is written into the history only once this page's library is read: asked again then, if it still holds)
+        askedSeen.add(id);
         TL.line(r, "needsDecision", { id, once: true, text: `${KIND_WORDS[p.kind] || p.kind}${fw ? " · " + fw : ""}: ${it.kind === "customOrder" || !it.why ? problemText(p) : it.why}`.slice(0, 200), data: { kind: p.kind, custom: it.kind === "customOrder", why: String(it.kind === "customOrder" || !it.why ? problemText(p) : it.why).slice(0, 300) } });
       }
     } catch (_) {}
@@ -20314,6 +20323,7 @@ const Review = window.Review = (() => {
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
   const SEP = "\u0000";
   function decisionKey(row, p) {
+    if (p.kind === "unmatchedSku" && p.everyOrder) return `ord:once:${row.key}`;   // (REVIEWLIST: each order of an always-Review listing is its own decision)
     if (p.kind === "unmatchedSku") return p.sku ? `ord:sku:${p.sku}${p.zodiac ? SEP + p.zodiac : ""}${p.generic ? SEP + "L" + p.generic : ""}${p.lookalike ? SEP + "K" + p.lookalike : ""}` : `ord:listing:${p.listingId || row.key}${p.huggie ? SEP + "huggie" : ""}`;   // a huggie set's is its own
     if (p.kind === "blockedSku") return `ord:blocked:${p.sku}`;
     if (p.kind === "needsMapping") return `ord:opt:${p.optionName}${SEP}${p.optionValue}`;
@@ -20829,6 +20839,9 @@ const Review = window.Review = (() => {
   async function saveCharm(it, p, sku, rows) {
     sku = String(sku || "").trim().toUpperCase(); if (!sku) return; const who = by(); if (!who) return;
     if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; }
+    // (REVIEWLIST, Paul 23 Nov 2026: an always-Review listing is never matched for the listing: the pick is "Just this order" for each order of the card, nothing saved for the listing)
+    { const all = rows || rowsOf(it), own = all.filter(x => x && x.line && O.reviewListing && O.reviewListing(x.line.listingId));
+      if (own.length) { for (const x of own) await editSkuOnce(x, sku, { by: who }); if (own.length === all.length) return; rows = all.filter(x => !own.includes(x)); } }
     const lids = [...new Set((rows || rowsOf(it)).map(x => String(x.line.listingId)))];
     for (const q of answerKeysOf(it, rows).values()) savedLink(await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, sku, fromSku: q.from || undefined, huggie: q.hug || undefined, via: q.via && q.via.length ? q.via : undefined, by: who, title: q.title }));
     answered(rows ? { kind: it.kind, rows } : it, "decided", `Use this charm: ${sku}`, { sku, from: p.sku || null }, who);
@@ -21012,7 +21025,7 @@ const Review = window.Review = (() => {
     const off = editSkuOffer(row); if (!off.ok) return { ok: false, why: off.why };
     if (off.viaLink) return { ok: false, why: "this listing is cut through a saved option link: change it with Change SKU", lid: off.lid };
     if (!who) return { ok: false, why: "sign in first: the listing's charm is saved under your name", lid: off.lid };
-    if (off.from && off.from !== sku) {
+    if (off.from && off.from !== sku && !(O.reviewListing && O.reviewListing(off.lid))) {   // (REVIEWLIST: an always-Review listing keeps no charm for the listing)
       say(`Listing ${off.lid}: “${off.from}” is cut as ${sku} from now on…`);
       try { savedLink(await api("charmNestLibrary", { op: "aliasPut", listingId: off.lid, sku, fromSku: off.from, by: who, title: String(row.line.title || "").slice(0, 200) || undefined })); }
       catch (err) { return { ok: false, why: `the listing's charm was not saved: ${(err && err.message) || err}`, lid: off.lid, from: off.from }; }
@@ -21079,6 +21092,7 @@ const Review = window.Review = (() => {
       });
   }
   async function editSku(row, sku, opt) {
+    if (row && row.line && O.reviewListing && O.reviewListing(row.line.listingId)) return editSkuOnce(row, sku, opt);   // (REVIEWLIST: an always-Review listing keeps no charm for the listing: this order only)
     sku = String(sku || "").trim().toUpperCase(); const host = (opt && opt.host) || null;   // (host: the Edit SKU window's progress area: the panel is drawn there)
     // (ONESKU: a change for the listing replaces this line's own "Just this order" charm: the line is read as the listing says before the change is weighed, and keeps its own charm when nothing is changed)
     const onceWas = row && row.skuOverride; if (onceWas) { delete row.skuOverride; delete row.poolTry; try { Orders.interpretAll(); } catch (_) { /* read at the next pass */ } }
@@ -25165,8 +25179,9 @@ const OrderWin = window.OrderWin = (() => {
     const field = byId("owSkuField"), fmark = byId("owSkuMark"), list = byId("owSkuList"), scope = byId("owSkuScope"), to = byId("owSkuTo"), toPic = byId("owSkuToPic"), toName = byId("owSkuToName");
     const saveLbl = save.querySelector("span") || save;
     const once = byId("owSkuOnce"), onceRow = byId("owSkuOnceRow"), onceP = byId("owSkuOnceP");
-    let one = false;   // (ONESKU: "Just this order" is off whenever the window opens)
-    form.hidden = false; prog.hidden = true; prog.innerHTML = ""; save.hidden = false; saveLbl.textContent = "Change SKU"; cancel.textContent = "Cancel"; input.disabled = false; once.disabled = false;
+    const askEvery = !!(O.reviewListing && O.reviewListing(r.line && r.line.listingId));   // (REVIEWLIST: an always-Review listing: "Just this order" only, on and locked)
+    let one = askEvery;   // (ONESKU: "Just this order" is off whenever the window opens)
+    form.hidden = false; prog.hidden = true; prog.innerHTML = ""; save.hidden = false; saveLbl.textContent = "Change SKU"; cancel.textContent = "Cancel"; input.disabled = false; once.disabled = askEvery;
     // FROM: the listing's photo (as the window shows it) and its Etsy SKU
     const im = tryDo(() => byId("owPhoto").querySelector("img")), src = im && im.getAttribute("src");
     byId("owSkuFromPic").innerHTML = src ? `<img class="photo" alt="" src="${esc(src)}">` : SKI.tag.replace("<svg ", '<svg class="q" ');
@@ -25236,7 +25251,7 @@ const OrderWin = window.OrderWin = (() => {
       if (ev.key === "ArrowDown") { const f = list.querySelector("[data-sku]:not(:disabled)"); if (f) { ev.preventDefault(); f.focus(); if (!sel) paintTo(f.dataset.sku, "peek"); } }
       else if (ev.key === "Enter") { ev.preventDefault(); clearTimeout(timer); show(); if (!save.disabled) save.click(); else { const only = list.querySelectorAll("[data-sku]:not(:disabled)"); if (only.length === 1) only[0].click(); } }
     };
-    const back = () => { d.dataset.busy = ""; form.hidden = false; prog.hidden = true; prog.innerHTML = ""; input.disabled = false; once.disabled = false; save.hidden = false; cancel.textContent = "Cancel"; paintOnce(); show(); };
+    const back = () => { d.dataset.busy = ""; form.hidden = false; prog.hidden = true; prog.innerHTML = ""; input.disabled = false; once.disabled = askEvery; save.hidden = false; cancel.textContent = "Cancel"; paintOnce(); show(); };
     save.onclick = async () => {
       const k = sel; if (save.disabled || !k) return;
       // (SIGNIN, Paul 27 Oct 2026: nobody signed in, the sign-in is asked under Save and the change goes on once signed in; put away, the window's own line says why: needSignIn, the one helper)

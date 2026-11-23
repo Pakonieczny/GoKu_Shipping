@@ -1770,6 +1770,15 @@
   /* Paul, 9 Nov 2026, order 4218451815, listing 531495758 "TINY Gold Bar Necklace, Engraved Horizontal Bar Necklace …", Etsy SKU "TINY_5758" (in no master file: the SKU tag said "!" and the Vector design
      "No vector available"): "This is the tiny bar", the repo's ADD-ON drawing TINY_4758 (15.9 × 3.9 mm, 2 holes; TINY_7557 and TINY GOLD BAR_0090 are the same drawing), pinned the same way. */
   const PINNED_LISTING_DESIGNS = { "1816178147": "BEADY DOVE 4", "1819190283": "BEADY SQUIRREL3", "531495758": "TINY_4758" };
+  /* REVIEWLIST (Paul, 23 Nov 2026: "whenever this listing (718177133) gets purchased, make sure you automatically place it in Review. Also do not auto match it to any SKU/Charm moving forward", and the same
+     for listing 628970499). A line of a listing named here is matched by NO rule (its SKU, Etsy's table, a saved link, an option map, Claude's reading, the no-design list): it is held in Review with ONE plain
+     line and no design (spec.formHold.everyOrder, the form guard's own hold: nothing pools it), until a person picks its charm for THIS order only ("Just this order", skuOverride, read as `once`) or completes it
+     by hand. Nothing is saved for the listing, so every new order of it asks again. ONLY ORDERS PLACED FROM `since` (Etsy's order time, seconds) ON: an order bought before it (13 were open on 23 Nov, 12 already
+     written on sheets) keeps the charm it was read as, so no piece is taken off a sheet. TO ADD ONE: "<listing id>": { since: <now, seconds>, what: "<what it is>" }. TO TAKE ONE OUT: delete its line. */
+  const REVIEW_LISTINGS = Object.freeze({ "718177133": { since: 1795450500, what: "listing 718177133" }, "628970499": { since: 1795450500, what: "the chain extender listing" } });
+  const reviewListing = listingId => { const id = String(listingId == null ? "" : listingId).replace(/\D/g, ""); return id && Object.prototype.hasOwnProperty.call(REVIEW_LISTINGS, id) ? id : ""; };
+  /** Does this order of the line's listing go to Review (bought from the listing's `since` on)? An order with no time is one read before (never held). */
+  const reviewAsks = (listingId, order) => { const id = reviewListing(listingId); return !!id && +((order && order.createTs) || 0) >= REVIEW_LISTINGS[id].since; };
   /* PINNED HUGGIE SETS (Paul, 17 Oct 2026, order 4192003305, a charm-only listing, Charm Type "Huggie CHARM SET", Etsy SKU "OCTOPUS 2" read as "OCTOPUS 2 (HUGGIE)", in no master file: "The Huggie Set option for this charm
      only listing needs to be associated with SKU from our charm repo" ... "Here is the Etsy listing SKU for the Huggie Octopus earrings: Huggie Hoops- Octopus2"). The huggie set of a SKU named here is the library's design named
      for it WHATEVER spelling of the dash, the case or the spaces the library holds (the master's own spelling is found by the loose key), as a person's own answer (source "alias"). Keyed by the loose key of the SKU
@@ -4439,6 +4448,7 @@
     // the next order of the listing reads as it always did. A charm no longer in the repo is not used (the line reads as Etsy has it).
     const once = ctx.skuOverride && ctx.skuOverride.sku && me && me(upSku(ctx.skuOverride.sku)) ? upSku(ctx.skuOverride.sku) : "";
     if (once) line = Object.assign({}, line, { sku: once });
+    const askEvery = !once && reviewAsks(line.listingId, order);   // (REVIEWLIST: a listing that always goes to Review; only a person's charm for this order reads it)
     // 0 · the SKU Etsy keeps for the product bought, in the listing's inventory table (when the page holds one): it stands in
     // for a transaction SKU that is missing or names no design, and for one that is the listing's own (held by products that
     // differ in their options) while the product has a SKU of its own. Never for a SKU that names a design and is no one
@@ -4550,12 +4560,12 @@
     };
     let members = once ? null : pairMembers(line, { me, loose, optionMaps: ctx.optionMaps, aliases: ctx.aliases, sku, lineId: secondId, report, designOf });
     if (members && PIECE_RULES.mismatchedMakesTwo && !viaProfile) { sku = members.members[0].sku; skuSource = "pair"; }
-    const listed = isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(set ? line.title + " (HUGGIE)" : line.title, ctx.noDesign));
+    const listed = !askEvery && (isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(set ? line.title + " (HUGGIE)" : line.title, ctx.noDesign)));
     // a special purchase (custom, rework, chain only, add-on…): chain only is never cut, and a special line a person
     // finished by hand (its QR label printed from Custom Orders) is done; either reads as the no-design list does
     const lk = lineKey(order, line);
     const alias = ctx.aliases && ctx.aliases[String(line.listingId)];
-    const special = specialOf(line, { sku, masterEntry: ctx.masterEntry, optionMaps: ctx.optionMaps, read: ctx.customRead && ctx.customRead[lk], decided: ctx.customDecided && ctx.customDecided[lk], listingKind: alias && alias.listingKind, auto: FORM_AUTO.has(skuSource) });
+    const special = askEvery && !(ctx.customDecided && ctx.customDecided[lk]) ? null : specialOf(line, { sku, masterEntry: ctx.masterEntry, optionMaps: ctx.optionMaps, read: ctx.customRead && ctx.customRead[lk], decided: ctx.customDecided && ctx.customDecided[lk], listingKind: alias && alias.listingKind, auto: FORM_AUTO.has(skuSource) });
     const done = (ctx.customDone && ctx.customDone[lk]) || null;
     const noDesign = listed || !!(special && special.notCut) || !!done;
     // an add-on listing's line (specialOf: own): its design is the order's own, never the master design its SKU happens to match. It is not "no design" (nothing cuts it and
@@ -4971,7 +4981,14 @@
     if (!quiet) { try { const lfe = listingFaceOf(line, spec); if (lfe) spec.engraving = lfe; } catch (_) { /* the line stays as it was read */ } }
     // HUGGIEGUARD: the line's form and the design's form are always told; a clash holds the line with ONE plain line and the siblings that fit (spec.formHold), and no design is on the row
     spec.lineForm = lf.form; spec.designForm = df.soft ? "unknown" : df.form;   // (a necklace read only from a distinct huggie twin is not told: it only keeps a huggie line off the plain design)
-    if (symHeld) {
+    if (askEvery && !quiet) {
+      // REVIEWLIST: ONE plain line, no design on the row, every other SKU question of the line dropped (this is the one); the decision is this order's own (problem.everyOrder, decisionKey)
+      const lid = reviewListing(line.listingId), reason = `Listing ${lid} always goes to Review: pick its charm for this order`;
+      for (let i = problems.length - 1; i >= 0; i--) if (problems[i] && (problems[i].kind === "unmatchedSku" || problems[i].kind === "blockedSku")) problems.splice(i, 1);
+      spec.formHold = { sku: spec.boughtSku, design: "", lineForm: lf.form, designForm: "unknown", reason, siblings: [], everyOrder: lid };
+      spec.siblings = []; spec.designSku = null; spec.skuSource = null; spec.sources.sku = null;
+      problems.unshift({ kind: "unmatchedSku", reason, sku: spec.boughtSku || txSku || "", listingId: String(line.listingId || ""), title: line.title || "", formHold: true, everyOrder: lid, lineForm: lf.form, designForm: "unknown", siblings: [] });
+    } else if (symHeld) {
       // HUGSYM: a symbol the library does not hold (or no / too many symbols named): ONE plain line and no design on the row (the held line is made by no pool: the form guard's own hold, makePool). The decision is per
       // symbol (problem.zodiac carries the profile, its kind and the names, as the zodiac holds do), and the line is read again whenever the library grows
       const reason = symbol.hold.reason, names = (symbol.hold.missing || symbol.symbols.map(x => x.name)).join("+");
@@ -5396,7 +5413,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { engraveLimitRead, engraveLimitCheck, limitLength, sizeFit, sizeMmOf, SIZE_PAD_PT, pairCountOf, questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, orderNote, orderNotes, orderShown, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, tidyOption, optionView, optionViews, shownText, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, PINNED_LISTING_DESIGNS, pinnedDesign, PINNED_HUGGIE_SETS, pinnedHuggieSet, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, nonDesignOption, staleShared, OPTION_ALL, optionPicksDesign, heldOnOption, oneSkuOf, designLike, colourOf, familyNumberSays, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, PIECE_LISTINGS, pieceListing, pieceValueRead, pieceOptionOf, pieceSlots, pieceExtra, profileDesignOf, pieceBodiesOf, piecesFixed, pieceFacesRead, pieceNouns, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, SET_RULES, SET_LAYOUT_OPT, setRuleOf, setLengthsOf, setEngravedOf, barLengthOf, setLayoutAskOf, setPiecesOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { engraveLimitRead, engraveLimitCheck, limitLength, sizeFit, sizeMmOf, SIZE_PAD_PT, pairCountOf, questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, orderNote, orderNotes, orderShown, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, tidyOption, optionView, optionViews, shownText, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, PINNED_LISTING_DESIGNS, pinnedDesign, REVIEW_LISTINGS, reviewListing, reviewAsks, PINNED_HUGGIE_SETS, pinnedHuggieSet, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, nonDesignOption, staleShared, OPTION_ALL, optionPicksDesign, heldOnOption, oneSkuOf, designLike, colourOf, familyNumberSays, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, PIECE_LISTINGS, pieceListing, pieceValueRead, pieceOptionOf, pieceSlots, pieceExtra, profileDesignOf, pieceBodiesOf, piecesFixed, pieceFacesRead, pieceNouns, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, SET_RULES, SET_LAYOUT_OPT, setRuleOf, setLengthsOf, setEngravedOf, barLengthOf, setLayoutAskOf, setPiecesOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY, earringNeverBackEngraves, EAR_NEVER_WHY, letterDesignNeverEngraves, LETTER_NEVER_WHY,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,

@@ -157,6 +157,7 @@
   }
   /** An unknown SKU is ONE decision however many orders bought it; an unmapped option one however many lines carry it. */
   function decisionKey(l, p) {
+    if (p.kind === "unmatchedSku" && p.everyOrder) return `ord:once:${l.key}`;   // (REVIEWLIST: each order of an always-Review listing is its own decision)
     if (p.kind === "unmatchedSku") return p.sku ? `ord:sku:${p.sku}${p.zodiac ? SEP + p.zodiac : ""}${p.generic ? SEP + "L" + p.generic : ""}${p.lookalike ? SEP + "K" + p.lookalike : ""}` : `ord:listing:${p.listingId || l.key}${p.huggie ? SEP + "huggie" : ""}`;
     if (p.kind === "blockedSku") return `ord:blocked:${p.sku}`;
     if (p.kind === "needsMapping") return `ord:opt:${p.optionName}${SEP}${p.optionValue}`;
