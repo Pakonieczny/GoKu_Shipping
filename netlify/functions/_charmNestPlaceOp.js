@@ -26,7 +26,7 @@ const str = (v, n = 200) => String(v == null ? "" : v).slice(0, n);
 const num = v => (Number.isFinite(+v) ? +v : 0);
 const sha16 = s => crypto.createHash("sha256").update(String(s)).digest("hex").slice(0, 16);
 const MADE = new Set(["committed", "engraved", "labelled"]);
-const ROW_FIELDS = ["state", "sheetId", "runId", "material", "metal", "orderId", "heldAt", "removedAt", "heldBy", "removedBy", "repooledAt", "side", "mirror", "custom"];
+const ROW_FIELDS = ["sku", "state", "sheetId", "runId", "material", "metal", "orderId", "heldAt", "removedAt", "heldBy", "removedBy", "repooledAt", "side", "mirror", "custom"];
 const SHEET_PIECE_KEYS = ["id", "hash", "name", "sourceId", "sourceName", "index", "order", "layer", "poolId", "custom", "sku", "metal", "lineKey", "areaPt2", "widthPt", "heightPt", "aiPath", "orderDate", "arrivedAt", "frontAt",
   "excluded", "open", "side", "mirror", "bodyIndex", "groupKey", "groupSize", "oneBody", "chunk", "placedBy", "placedAt", "hand"];   // (hand: S3, artwork a person added by hand)
 
@@ -116,6 +116,19 @@ module.exports = function placeOp(d) {
         const mine = !!home && own.has(home) && adding.every(x => String(orderOfKey(x)) === home);
         if (!mine || !Place.reopensHomeRec(Object.assign({ id }, old), listing, run, now)) return { error: `${label} takes no new order now: nothing was placed on it`, status: 409, refused: "closed" };
       }
+      /* RELINK (Paul, 23 Nov 2026, orders 4230787700 and 4238855149: taken off a Rose Gold sheet, released and placed again in the right metal, their approved engraving was on no sheet: the piece "approved already" could not be
+         approved again and its sheet never became ready). A piece that comes back onto a sheet brings its own saved engraving (Charm_Pool_Back, back and front) when that record still stands (not invalidated, approved by a
+         person), belongs to no sheet now, and is of the same design (SKU). Nothing is approved here: the approval a person gave is put back where the piece is. */
+      const relink = [];
+      if (d.BACK && d.Faces && typeof d.sheetBack === "function") {
+        const want = adding.flatMap(x => ["back", "front"].map(f => d.Faces.recKey(x, f)));
+        for (let i = 0; i < want.length; i += 100) for (const s0 of await tx.getAll(...want.slice(i, i + 100).map(k => col(d.BACK).doc(k)))) {
+          const bk = s0.exists ? s0.data() || {} : null; if (!bk || bk.invalidated !== false || !(num(bk.approvedAt) > 0) || !bk.approvedBy || (bk.sheetId && bk.sheetId !== id)) continue;
+          const pid = String(bk.poolId || String(s0.id).replace(/~front$/, "")), r = rows.get(pid); if (!r || !adding.includes(pid)) continue;
+          if (bk.sku && r.sku && String(bk.sku).trim().toUpperCase() !== String(r.sku).trim().toUpperCase()) continue;
+          relink.push({ ref: s0.ref, back: d.sheetBack(Object.assign({}, bk, { poolId: pid, sheetId: id })) });
+        }
+      }
       // ── the writes ──
       const keep = Array.isArray(old.charms) ? old.charms.slice() : [];
       // (a charm the record already names but does not list, written by a page before the cloud carried the run, is that piece: it is named once, and what the page traced of it is kept)
@@ -129,6 +142,7 @@ module.exports = function placeOp(d) {
       const ordOf = x => { const c = sent.find(p => String(p.poolId) === x); return str((c && c.order) || String(x).split("_")[0], 40); };
       const orders = [...new Set((Array.isArray(old.orders) ? old.orders : []).map(String).concat(adding.map(ordOf)).filter(Boolean))];
       const patch = { id, runId, metal, charms: keep, poolIds, orders, charmCount: keep.length, ...(srcAdd.length ? { sources: srcs.concat(srcAdd) } : {}), nestOwed: now, dirty: true, layoutRev, contentRev, cloudPlaced: { at: now, n: adding.length }, archived: false, updatedAt: FV.serverTimestamp() };
+      if (relink.length) { const keys = new Set(relink.map(x => d.recKeyOf(x.back))); patch.backPool = (old.backPool || []).filter(x => !keys.has(d.recKeyOf(x))).concat(relink.map(x => x.back)); }   // (RELINK)
       if (create) Object.assign(patch, { page: Math.max(1, Math.floor(num(create.page)) || 1), draft: true, setId: null, setSeq: null, sheetIndex: null, placements: [], placedCount: 0, status: "ready", current: true,
         cardStartedAt: now, createdAt: FV.serverTimestamp(), createdBy: "Cloud", day: str(create.day, 20) || null, ...(create.greenLeftover && typeof create.greenLeftover === "object" ? { greenLeftover: { stockId: str(create.greenLeftover.stockId, 120), revision: num(create.greenLeftover.revision), partialId: str(create.greenLeftover.partialId, 160), from: str(create.greenLeftover.from, 120) || null } } : {}) });
       const bytes = Buffer.byteLength(JSON.stringify(Object.assign({}, old, patch)));
@@ -136,6 +150,7 @@ module.exports = function placeOp(d) {
       if (create) { tx.create(ref, patch); tx.set(stateRef, { draftSeq: seq }, { merge: true }); }
       else tx.set(ref, patch, { merge: true });
       for (const x of adding) tx.set(col(POOL).doc(x), { sheetId: id, placedAt: now, placedBy: "Cloud", updatedAt: FV.serverTimestamp() }, { merge: true });
+      for (const x of relink) tx.set(x.ref, { sheetId: id, relinkedAt: now, updatedAt: FV.serverTimestamp() }, { merge: true });   // (RELINK)
       answer = { ok: true, sheetId: id, created: !!create, layoutRev, contentRev, placed: adding, already };
       return null;
     });

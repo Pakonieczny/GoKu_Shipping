@@ -39,6 +39,7 @@
  *  Never calls Etsy, never builds the world, never starts an agent. Every write of the cloud's own call is fenced (fenceTx), and a page's call of the PRODUCTION op is refused in
  *  mode "on" by the handler (the cloud does it).                                                                                                                              */
 "use strict";
+const Faces = require("../../charm-nest-engrave-faces.js");
 const crypto = require("crypto");
 const SetEdit = require("../../charm-nest-set-edit.js");
 const SheetName = require("../../charm-nest-sheet-name.js");
@@ -442,14 +443,19 @@ module.exports = function make(d) {
       if (rows.some(x => Placement.takenOff(x.data()) || x.data().state === "committed" || (x.data().sheetId && x.data().sheetId !== sheetId))) return words(409, "the line's new pieces are elsewhere or taken off", { gone: true });
       for (let i = 0; i < ids.length; i += 30) { const q = await tx.get(col(SHEETS).where("poolIds", "array-contains-any", ids.slice(i, i + 30))); if (q.docs.some(x => x.id !== sheetId && !x.data().archived)) return words(409, "a sheet already holds one of the line's new pieces", { gone: true }); }
       const placed = (base.placements || []).length > 0, idSet = new Set(ids);
-      const backs = b.keepBacks === true ? ((swap ? base.backsGoing : hold.backPool) || []).filter(x => x && idSet.has(String(x.poolId))) : [];
+      // (SWAPNOW: an engraving is fitted to its drawing: a piece whose drawing changed does not keep the old one's back; the request says which, backsDropped, and it is approved again)
+      const oldHash = new Map(swap ? (r.charms || []).filter(c => c && oldIds.has(String(c.poolId))).map(c => [String(c.poolId), String(c.hash || "")]) : []), newHash = new Map(charms.map(c => [String(c.poolId), String(c.hash || "")]));
+      const same = x => !swap || (!!oldHash.get(String(x.poolId)) && oldHash.get(String(x.poolId)) === newHash.get(String(x.poolId)));
+      const had0 = ((swap ? base.backsGoing : hold && hold.backPool) || []).filter(x => x && idSet.has(String(x.poolId))), backs = b.keepBacks === true ? had0.filter(same) : [], backsDropped = [...new Set(had0.filter(x => !backs.includes(x)).map(x => String(x.poolId)))];
       const next = { ...(swap ? { placements: base.placements, rejects: base.rejects, feedWait: base.feedWait, filesOwed: now } : {}), charms: (base.charms || []).concat(charms.map(c => Object.assign({}, c, { pinned: null, metal: r.metal }))), poolIds: [...have, ...ids], orders: [...new Set((Array.isArray(r.orders) ? r.orders : []).map(String).concat([rid]))],
         backPool: (base.backPool || []).concat(backs), nestOwed: { at: now, n: ids.length, by: "cloud", why: "made again in place" }, appendOnly: placed, intakeAppend: placed, status: "ready", dirty: true,
         inplaceHold: FV.delete(), layoutRev: num(r.layoutRev) + 1, contentRev: num(r.contentRev) + 1, updatedAt: FV.serverTimestamp() };
+      const dropKeys = swap ? [...new Set(had0.filter(x => backsDropped.includes(String(x.poolId))).map(x => Faces.recKey(String(x.poolId), Faces.faceOf(x))))] : [];
       if (bytesOf(Object.assign({}, r, next, { inplaceHold: null, updatedAt: 0 })) > SHEET_DOC_BYTES) return words(413, `${n} cannot hold these pieces in one record`, { gone: true });
       tx.set(ref, next, { merge: true });
+      for (const k of dropKeys) tx.set(col("Charm_Pool_Back").doc(k), { invalidated: true, invalidatedAt: now, invalidatedWhy: "the charm changed", sheetId: null, updatedAt: FV.serverTimestamp() }, { merge: true });   // (SWAPNOW)
       for (const x of rows) tx.set(x.ref, Object.assign({ sheetId, placedAt: now, placedBy: "cloud", updatedAt: FV.serverTimestamp() }, r.fileBase ? { sheetName: r.fileBase } : {}), { merge: true });
-      return { ok: true, sheetId, name: n, placed: ids.length, layoutRev: next.layoutRev, contentRev: next.contentRev };
+      return { ok: true, sheetId, name: n, placed: ids.length, layoutRev: next.layoutRev, contentRev: next.contentRev, ...(swap && backsDropped.length ? { backsDropped } : {}) };
     });
     if (out && out.ok && !out.noop && !out.released) { revTouch(b, ["s:" + sheetId]); feedOrders(b, [[rid]]); }
     return out;

@@ -7099,7 +7099,7 @@ OPS.nestStart = b => NestLane.start({ db, FV, PREFIX, MARKED, fenceTx: tx => (FE
 NO_GEN_BUMP.add("nestStart");
 /* placeOnSheet (CLOUDDRIVE §1.4, build step 5; P4, P5; CLOUD_ONLY: the handler refuses it on every page's request, in every mode): the cloud puts one line's pieces of one metal on ONE
    sheet record in ONE transaction, fenced on its lease (_charmNestPlaceOp.js: SETSHUT, a piece on exactly one sheet, the revisions it read, its own order's late pieces only on a closed sheet). */
-const PlaceOp = require("./_charmNestPlaceOp")({ db, col, FV, txGetAll, Placement, isPoolId, isId, orderOfKey, SHEETS, SETS, POOL, RUNS, SHEET_DOC_BYTES, fenceTx: tx => fenceTx(tx),
+const PlaceOp = require("./_charmNestPlaceOp")({ db, col, FV, txGetAll, Placement, isPoolId, isId, orderOfKey, SHEETS, SETS, POOL, RUNS, SHEET_DOC_BYTES, BACK, Faces, sheetBack: x => sheetBack(x), recKeyOf: x => recKeyOf(x), fenceTx: tx => fenceTx(tx),
   revTouch: (b, k) => revTouch(b, k), feedOrders: (b, l) => feedOrders(b, l), marked: () => MARKED, fenced: () => !!FENCE, sandbox: () => !!PREFIX });
 OPS.placeOnSheet = b => PlaceOp.placeOnSheet(b); REV_OPS.add("placeOnSheet");
 /* (CLOUDDRIVE build step 7a, DORMANT while the drive is off): the one sheet writer's ops, finishSheet (a press), finishGet (a read) and finishClaim (the cloud's own, fenced): _charmNestFinishOps.js */

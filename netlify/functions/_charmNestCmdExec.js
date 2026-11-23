@@ -449,7 +449,11 @@ async function inplace(x, label) {
       const r = await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: home, poolIds: mine.map(c => String(c.poolId)), charms: mine, keepBacks: !!x.keepBacks, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "", ...(x.swap ? { swap: true } : {}) }, `back|${k}|${home}|${num(s.contentRev)}`);
       if (err(r) && r.busy && now - num(w.backAt || now) < FIRST_MS) { await stopFor(x, [s], `${label} (a person's request goes first)`); return wait(`Putting the new pieces back as soon as ${nameOf(s)} is still…`, Object.assign({}, w, { backAt: num(w.backAt) || now, why })); }   // (FIRSTNOW)
       if (err(r)) { why.push(`${ridOf(k)}: ${err(r)}; it is placed as any piece is`); loose.push(k); continue; }
-      swapped.add(k); if (!r.noop) placedOn.set(home, { id: home, layoutRev: num(r.layoutRev), at: now });
+      swapped.add(k); if ((r.backsDropped || []).length) {   // (SWAPNOW: the drawing changed: the engraving fitted to the old one is approved again on the new one, said on the order)
+        if (l.engrave && typeof l.engrave === "object") unvac[k].engrave = Object.assign({}, l.engrave, { invalidatedBy: "charm changed", approved: false, state: "reclassify" });
+        why.push(`${ridOf(k)}: its engraving is approved again on the new charm`);
+      }
+      if (!r.noop) placedOn.set(home, { id: home, layoutRev: num(r.layoutRev), at: now });
       const origin = (w.vac[k] || {}).origin;   // (ORIGINHOME: then on to the sheet they first came from)
       if (origin && origin !== home) {
         const f = await sheetRec(ctx, home), t = await sheetRec(ctx, origin);
