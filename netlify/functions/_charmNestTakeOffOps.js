@@ -107,7 +107,8 @@ module.exports = function (d) {
       if (live) {
         out.label = Placement.labelOf(s) || ""; out.setId = s.draft ? null : s.setId || null; out.metal = s.metal || null;
         // cut, or its set went to the station: what was made stays (as a page's take-off keeps it)
-        let keptWhy = !Placement.editable(s) || s.recalled ? "already cut" : "";
+        const line = (kind === "hold" || kind === "sheetOff") && Placement.lineOnly(s);   // (LINEOFF: a person's press, a cut line recorded, not cut on the laser)
+        let keptWhy = (!Placement.editable(s) && !line) || s.recalled ? "already cut" : "";
         if (!keptWhy) { const sets = (await tx.get(col(N.SETS).where("sheetIds", "array-contains", sheetId))).docs.map(x => x.data() || {}); if (sets.some(x => num(x.laserDoneAt) > 0)) keptWhy = "already cut"; else if (sets.some(x => d.setEdit().committedSet(x))) keptWhy = "sent to the station"; }
         // a sheet another run still carries is that run's to change
         const fr = d.fenceRun ? d.fenceRun() : null;
@@ -126,14 +127,14 @@ module.exports = function (d) {
         if (!take.size) { out.already = true; return out; }
         // the green lines give up the pieces inside them, in this commit (roseTakeOff's math); a guard that cannot be rewritten exactly refuses, and the order waits with words
         const charmIds = (s.charms || []).filter(c => c && take.has(String(c.poolId))).map(c => String(c.id));
-        if (Rose.cuts(s.metal)) {
+        if (Rose.cuts(s.metal) && !line) {
           const guard = RoseStockMod.protectedLayout(s), stockDoc = guard && d.isId(s.roseStockId) ? await tx.get(col("Charm_Nest_Rose_Stock").doc(String(s.roseStockId))) : null;
           roseG = RoseStockMod.guardTakeOff(s, stockDoc && stockDoc.exists ? stockDoc.data() : null, new Set(charmIds), { allowanceMm: s.roseAllowanceMm });
           if (roseG.partialGroups && roseG.partialGroups.length) return { error: `${out.label}: only part of a group would leave its green lines (${roseG.partialGroups.map(g => g.taken + " of " + (g.taken + g.left)).join(", ")}): nothing was taken off; take the pieces off by hand in the sheet window`, status: 409, refused: "roseGroups", partialGroups: roseG.partialGroups };
           if (roseG.changed && !roseG.exact) return { error: `${out.label}: its green lines could not be drawn again exactly without these pieces: nothing was taken off; take them off by hand in the sheet window (Cut Sheet draws the line again)`, status: 409, refused: "roseExact" };
         }
         // the sheet's own fields, as a page's take-off writes them, and the pieces out of its layout (every other pose stays as it is)
-        const t = Placement.takeOffUpdate(s, take, at);
+        const t = Placement.takeOffUpdate(s, take, at, { line });
         if (t) {
           const charms = (s.charms || []).filter(c => !(c && take.has(String(c.poolId)))), keepIds = new Set(charms.map(c => c && String(c.id)));
           sheetUpd = Object.assign({}, t.update, { charms, placements: (s.placements || []).filter(p => p && keepIds.has(String(p.id))), filesOwed: now, layoutRev: num(s.layoutRev) + 1, contentRev: num(s.contentRev) + 1, takenOffAt: now });

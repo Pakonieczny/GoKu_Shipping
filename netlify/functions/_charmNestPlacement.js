@@ -68,6 +68,10 @@ function takenOff(p) {
 const REPOOLED = "repooledAt";
 /** A sheet record a take-off may edit: saved, not archived, not cut. */
 const editable = s => !!s && !s.archived && !(num(s.laserDoneAt) > 0) && !(num(s.roseCutAt) > 0);
+/* LINEOFF (Paul, 23 Nov 2026, order 4235923653, a Gold Filled disc on RG_Nov.18.26_Set-2_Sheet-1: "Please also move this piece off the rose gold sheet", "Not cut: take it off", "Do not renest the RG"; and 9 Nov 2026:
+   "Nothing can block this unless the sheet has already been laser cut"): a sheet whose cut line is recorded but that the laser has not cut gives up a piece a PERSON takes off it. Only that piece leaves: every other piece
+   stays where it lies, nothing is nested, and the recorded cut, its line, its physical sheet and its leftover stay exactly as they are. A sheet with lines still protected, or cut on the laser, keeps its pieces as before. */
+const lineOnly = s => !!s && !s.archived && num(s.roseCutAt) > 0 && !(num(s.laserDoneAt) > 0) && !s.roseProtectedJson;
 
 /* ── pairs, mismatched pairs and multi-piece orders (Paul, 9 Oct 2026) ───────────────────────────────────────────────────────
    Every rule on this page is by POOL ID and by ORDER, never by SKU or design: a mismatched pair's two pieces are different
@@ -152,8 +156,8 @@ function splitsOf(placement, pools) {
     the engraving backs of the pieces that left, its counts, and dirty: true (the record's own flag for "the layout changes: write
     it again"; Readiness holds a dirty sheet back from the laser until the page has written it). null: nothing of it is listed.
     The files, charms and placements are the page's to write (rewritePage): this only stops the record from saying what is not true. */
-function takeOffUpdate(sheet, ids, serverTs) {
-  if (!editable(sheet)) return null;
+function takeOffUpdate(sheet, ids, serverTs, o) {
+  if (!editable(sheet) && !(o && o.line === true && lineOnly(sheet))) return null;   // (LINEOFF)
   const list = Array.isArray(sheet.poolIds) ? sheet.poolIds.map(String) : [];
   const removed = list.filter(id => ids.has(id));
   if (!removed.length) return null;
@@ -263,4 +267,4 @@ function repairPoolRows(rows, gone) {
   return rows.map(r => (r && r.sheetId && gone.has(String(r.sheetId)) && !TAKE_OFF_STATES.has(r.state) ? Object.assign({}, r, { sheetId: null, sheetName: null, setId: null, sheetIdWas: r.sheetId, repaired: ["sheetGone"] }) : r));
 }
 
-module.exports = { isTakeOff, takenOff, editable, takeOffUpdate, reconcile, repairPoolRows, revOf, digest, labelOf, orderOfKey, REPOOLED, TAKE_OFF_STATES, groupOfPool, cleanPiece, cleanCharms, cleanPieceSides, groupMates, splitsOf };
+module.exports = { isTakeOff, takenOff, editable, lineOnly, takeOffUpdate, reconcile, repairPoolRows, revOf, digest, labelOf, orderOfKey, REPOOLED, TAKE_OFF_STATES, groupOfPool, cleanPiece, cleanCharms, cleanPieceSides, groupMates, splitsOf };

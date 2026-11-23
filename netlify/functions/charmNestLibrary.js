@@ -1088,6 +1088,12 @@ async function modernRunOf(tx, runId) {
   if (!isId(runId)) return false;
   try { const [r] = await txGetAll(tx, [col(RUNS).doc(String(runId))], ["releasePolicy"]); return !!r && r.exists && (r.data() || {}).releasePolicy === 2; } catch (_) { return false; }
 }
+/** The same pieces in the same places (LINEOFF). */
+function sameLayout(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  const at = new Map(a.filter(p => p && p.id != null).map(p => [String(p.id), p]));
+  return b.every(p => { const q = p && at.get(String(p.id)); return !!q && Math.abs(num(p.cxPt) - num(q.cxPt)) < 0.01 && Math.abs(num(p.cyPt) - num(q.cyPt)) < 0.01 && Math.abs(num(p.angle) - num(q.angle)) < 0.01; });
+}
 async function op_putSheet(b) {
   { const s0 = b.sheet || {}, dev0 = str(b.dev, 60);
     if (dev0 && Array.isArray(s0.placements) && !(typeof b.layoutBase === "number" && Number.isFinite(b.layoutBase)) && isId(s0.runId)) {
@@ -1197,11 +1203,14 @@ async function op_putSheet(b) {
       }
       if (off.length) return { error: `${name} was not saved: it would put back ${off.length === 1 ? what(off[0]) : `${off.length} pieces (${off.slice(0, 3).map(what).join(", ")})`}, which ${off.length === 1 ? "was" : "were"} taken off on purpose (on hold or cancelled). Reload the page to see the sheet as it is now`, status: 409, taken: off.slice(0, 20), conflict: true };   // (TAKENRELOAD, Paul 15 Nov 2026: the page that still shows the piece reads the sheet again from the cloud, as for any save made from an older copy; it was left with a sheet that "could not be saved" and its run stopped)
     }
-    if(old.roseCutAt && (s.placements || s.stock || s.sources))throw new Error('This layout was already cut. Start a new sheet to use its remnant');
+    /* LINEOFF (_charmNestPlacement.js lineOnly): the cloud's own writer writes the files of a sheet a piece was taken off after its cut line was recorded, with every piece left exactly where the record has it: the layout
+       is the record's own, nothing is moved, and its line, its physical sheet and its leftover are not touched. Any other layout over a recorded cut is refused, as before. */
+    const lineOff=!!old.roseCutAt&&b.lineOff===true&&!!FENCE&&Placement.lineOnly(old)&&num(old.takenOffAt)>num(old.roseCutAt)&&!s.sources&&sameLayout(old.placements,s.placements)&&(!s.stock||(Math.abs(num(s.stock.wPt)-num((old.stock||{}).wPt))<0.01&&Math.abs(num(s.stock.hPt)-num((old.stock||{}).hPt))<0.01));
+    if(old.roseCutAt && !lineOff && (s.placements || s.stock || s.sources))throw new Error('This layout was already cut. Start a new sheet to use its remnant');
     const protection=require('./_charmNestRoseStock'),guard=protection.protectedLayout(old);
     if(Object.prototype.hasOwnProperty.call(s,'placements'))protection.assertProtected(guard,s.placements,old.metal||s.metal);
     if(guard&&Object.prototype.hasOwnProperty.call(s,'charms')&&(!Array.isArray(s.charms)||guard.placements.some(p=>!s.charms.some(c=>c?.id===p.id))))throw new Error('The protected '+CutLine.cutWord(old.metal||s.metal)+' charms cannot be removed');
-    if(old.rosePlanJson && s.placements && require('./_charmNestRoseStock').fingerprint(s)!==old.roseFingerprint)Object.assign(doc,{rosePlanJson:null,rosePlanHash:null,roseFingerprint:null});
+    if(!lineOff && old.rosePlanJson && s.placements && require('./_charmNestRoseStock').fingerprint(s)!==old.roseFingerprint)Object.assign(doc,{rosePlanJson:null,rosePlanHash:null,roseFingerprint:null});
     /* (Paul, 7 Oct) the sheets of a committed set are added and taken out by flowApply's set edit alone (charm-nest-set-edit.js): a page
        that still holds an older membership (a second screen, a save that was under way) saves the rest of its sheet and leaves
        the sheet's set, number and draft state as the edit made them. Read only when the save would change them. */

@@ -163,7 +163,10 @@ STEP.S0 = async X => {
   if (!rec || rec.archived) throw new Stop("skipped", "The sheet is no longer in the Library: no files were written");
   if (num(rec.laserDoneAt) > 0) throw new Stop("skipped", `${rec.fileBase || "This sheet"} has been cut on the laser: its files are not written again`);
   // (a Rose Gold, 10K or 14K sheet whose green-line cut is recorded keeps its layout as cut: putSheet refuses a layout over it; the person sets the cut aside first)
-  if (rec.roseCutAt) throw new Stop("skipped", `${rec.fileBase || "This sheet"}'s green-line cut is recorded: its layout is not written again until the cut is set aside`);
+  // (LINEOFF, Paul 23 Nov 2026: a piece a person took off such a sheet after its cut was recorded, _charmNestPlacement.js lineOnly: its files are written again without that piece, every other piece exactly where the
+  //  record has it; nothing is nested, and its line, its physical sheet and its leftover are not touched. Only when the pieces left are the files' own pieces in the files' own places)
+  const lineOff = !!rec.roseCutAt && require("./_charmNestPlacement").lineOnly(rec) && num(rec.takenOffAt) > num(rec.roseCutAt) && !want.nestJobId;
+  if (rec.roseCutAt && !lineOff) throw new Stop("skipped", `${rec.fileBase || "This sheet"}'s green-line cut is recorded: its layout is not written again until the cut is set aside`);
   let nest = null;
   if (want.nestJobId && !(task.lastDone && task.lastDone.nestJobId === String(want.nestJobId))) {
     const js = await db.collection(JOBS).doc(String(want.nestJobId)).get(), j = js.exists ? js.data() || {} : null;
@@ -186,6 +189,7 @@ STEP.S0 = async X => {
     let report = null; try { const rp = rec.outputs && rec.outputs.report && rec.outputs.report.path; if (rp) { const [b] = await X.bucket.file(rp).download(); report = JSON.parse(b.toString("utf8")); } } catch (_) { report = null; }
     const was = new Set(((report && report.placements) || []).filter(p => p && p.id != null).map(key)), now = new Set((rec.placements || []).filter(p => p && p.id != null).map(key));
     const changed = !report || was.size !== now.size || [...now].some(k => !was.has(k));
+    if (lineOff && (!report || now.size >= was.size || [...now].some(k => !was.has(k)))) throw new Stop("skipped", `${rec.fileBase || "This sheet"}'s green-line cut is recorded: its files are written again only without a piece taken off it, every other piece where the files have it`);
     /* FILESCURRENT (Paul, 21 Nov 2026: "implement all of the updates"): the files already show the sheet's layout exactly, so nothing is owed and its picture stands for the layout
        as it is: the owed mark comes off and the picture's version is the layout's (putSheet stamps previewRev when the save carries the picture). Only those two labels change:
        nothing is written to the files, nothing is nested (the files lane's own check could not see it: this skip comes before the job records the sheet's version) */
@@ -198,7 +202,7 @@ STEP.S0 = async X => {
   if (!nest && !(num(rec.filesOwed) > 0)) throw new Stop("skipped", "Nothing is owed: the sheet's files stand as they are");
   if (!(rec.placements || []).length && !(nest && nest.result.placements.length)) throw new Stop("skipped", "The sheet places no piece: there is nothing to write");
   const jobId = "fin-" + sha([X.sheetId, num(rec.layoutRev), num(rec.contentRev), nest ? nest.jobId : "", num(want.at)].join("|"), 20);
-  X.task.job = { jobId, step: "S0", steps: [], startedAt: Date.now(), nestJobId: nest ? nest.jobId : null, appendOnly: nest ? nest.appendOnly : null, intakePhase: nest ? nest.intakePhase : null, wantAt: num(want.at), reason: want.reason || null };
+  X.task.job = { jobId, step: "S0", steps: [], startedAt: Date.now(), nestJobId: nest ? nest.jobId : null, appendOnly: nest ? nest.appendOnly : null, intakePhase: nest ? nest.intakePhase : null, wantAt: num(want.at), reason: want.reason || null, ...(lineOff ? { lineOff: true } : {}) };
   const c = await X.call({ op: "finishClaim", id: X.sheetId, jobId, stage: "begin", nestJobId: nest ? nest.jobId : null }, "begin");
   if (!c || c.status >= 400 || !c.ok) {
     if (c && c.busy) throw new Stop("waiting", c.error || "the sheet is busy");
@@ -378,7 +382,7 @@ STEP.S7 = async X => {
     }
     sheet.dirty = dirtyAfter(sheet, rec);   // (STUCKDIRTY: a sheet released full is never left "being nested")
     if (rec.problemStop && sh.placements.length) { sheet.problem = null; sheet.problemStop = null; }
-    const ans = await X.call(Object.assign({ op: "putSheet", sheet, layoutBase: job.base.layoutRev, contentBase: job.base.contentRev, filesJobBase: job.jobId }, typeof W.pinKey === "string" && W.pinKey ? { pinsBase: W.pinKey } : {}), "record");
+    const ans = await X.call(Object.assign({ op: "putSheet", sheet, layoutBase: job.base.layoutRev, contentBase: job.base.contentRev, filesJobBase: job.jobId, ...(job.lineOff ? { lineOff: true } : {}) }, typeof W.pinKey === "string" && W.pinKey ? { pinsBase: W.pinKey } : {}), "record");
     /* G8: a person pinned or unpinned a charm of the sheet after this layout was made (putSheet pinMoved): nothing was written; the layout is made again from the record as it is
        now (S1: the pins merged again), three times at most, then the job ends superseded and the files stay owed. */
     if (ans && ans.pinMoved) {
@@ -550,7 +554,7 @@ async function ready(X, o = {}) {
     X.sources = made.sources; X.byId = new Map(made.charms.map(c => [c.id, c]));
     X.sh = sheetOf(X, made.charms);
     // (a Rose Gold / 10K / 14K sheet's stock: its size and the shape left of it, which the geometry check and the corners read; the page's sh.roseStock)
-    if (X.rec.roseStockId) { try { const rs = await X.db.collection("Charm_Nest_Rose_Stock").doc(String(X.rec.roseStockId)).get(), d = rs.exists ? rs.data() || {} : null; if (d && +d.wPt > 0 && +d.hPt > 0) X.sh.roseStock = { id: rs.id, revision: d.revision || 0, profileJson: d.profileJson || null, wPt: +d.wPt, hPt: +d.hPt }; } catch (_) { /* its record's own size stands */ } }
+    if (X.rec.roseStockId && !job.lineOff /* (LINEOFF: the outline left after its own cut is not what its pieces lie on) */) { try { const rs = await X.db.collection("Charm_Nest_Rose_Stock").doc(String(X.rec.roseStockId)).get(), d = rs.exists ? rs.data() || {} : null; if (d && +d.wPt > 0 && +d.hPt > 0) X.sh.roseStock = { id: rs.id, revision: d.revision || 0, profileJson: d.profileJson || null, wPt: +d.wPt, hPt: +d.hPt }; } catch (_) { /* its record's own size stands */ } }
     X.st = X.Host.stockFor(X.rec.metal, X.sh, X.S);
     X.specHost = { sourceOf: id => X.sources[id], labelOf: m => X.Host.labelOf(m), charmScale: X.Host.CHARM_SCALE };
     X.buildJob = s => X.NP.buildJob(s, { settings: X.S.settings, stockFor: (m, z) => X.Host.stockFor(m, z, X.S), cornerPt: z => X.Host.cornerPtSetting(z, X.S), angleSet: () => angleSet(X.S), carefulAngles: X.NP.CAREFUL_ANGLES,
