@@ -117,6 +117,8 @@
     if (id.size) geom = (entry.sizes && entry.sizes[id.size]) || null;
     return { entry, geom: geom || entry };
   }
+  /* SAVETHENREPO (Paul, 24 Nov 2026, the Charm Editor test: Save, then Update repository, was refused: "nothing has changed since this drawing was opened"): a piece saved with its own front drawing differs from the repository's */
+  function ownEdit(id) { try { const pid = id && id.piece ? String(id.piece) : ''; if (!pid) return false; const r = root.B && root.B.pool && root.B.pool.rows && root.B.pool.rows.get(pid); return !!((r && r.artEdit && r.artEdit.front) || (root.CharmNestSavedCharms && root.CharmNestSavedCharms.has(pid))); } catch (_) { return false; } }
   /** How many live pieces of this SKU (and size) the run holds on this page. */
   function piecesOf(id) {
     let n = 0;
@@ -201,7 +203,7 @@
     async function update() {
       if (st.busy || !st.made) return;
       // (an untouched drawing is not written: the file is written again by this page's writer, so even an unchanged drawing would come back with another hash and every open piece would be made again for nothing)
-      if (wrap.dataset.dirty !== '1') { st.err = 'Not updated · nothing has changed since this drawing was opened here (or last updated): change the drawing first'; paint(); return; }
+      if (wrap.dataset.dirty !== '1' && !ownEdit(st.id)) { st.err = 'Not updated · nothing has changed since this drawing was opened here (or last updated): change the drawing first'; paint(); return; }
       const Ms = root.Master; if (!Ms || typeof Ms.replaceDrawing !== 'function') { st.err = 'The page has not finished loading: reload it'; paint(); return; }
       st.busy = true; st.err = ''; st.steps = ['Checking the drawing…']; paint();
       const say = t => { if (!t) return; st.steps.push(String(t)); paint(); };
