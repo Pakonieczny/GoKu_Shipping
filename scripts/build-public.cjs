@@ -279,6 +279,7 @@ const assets = [
   "vendor/fonts/LibreFranklin-OFL.txt",
   "vendor/fonts/Charm-OFL.txt",
   "vendor/fonts/Angelina-LICENSE.txt",
+  "vendor/fonts/BritesPen-OFL.txt",
   "vendor/fonts/Unicode-LICENSE.txt",
   "vendor/fonts/DejaVuSans-LICENSE.txt",
   "charm-nest-shape.js",
