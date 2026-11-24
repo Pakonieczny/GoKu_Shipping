@@ -214,6 +214,7 @@
     "_charmNestFinishRender.js",
     "_charmNestGreenLine.js",
     "_charmNestHoldRelease.js",
+    "_charmNestSetOverride.js",
     "_charmNestIntake.js",
     "_charmNestLabels.js",
     "_charmNestLease.js",

@@ -241,6 +241,7 @@ const assets = [
   "charm-nest-export.js",
   "charm-nest-export-ui.js",
   "charm-nest-library.js",
+  "charm-nest-set-override.js",
   "charm-nest-flow.js",
   "charm-nest-library-approval-ui.js",
   "charm-nest-library-fx.js",
