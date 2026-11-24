@@ -28764,7 +28764,7 @@ const Recall = window.Recall = (() => {
   async function charmOfRecord(d, rc, row) {
     const m = !(+d.laserDoneAt > 0 || d.roseCutAt) && Review.skuNowOf ? Review.skuNowOf(rc.lineKey) : null, sku = m ? m.sku : rc.sku, me = Master.entryFor(sku), own = !m && (rc.custom || row.custom || rc.hand) ? CharmNestPoolPieces.sourceOf(d, rc) : null;   // (SKUNOW: a change in hand is the charm that was pressed; TAKEOVERSAFE2: a custom design is made from its own file)
     const file = own ? { sku, aiPath: own.path || own.url, aiUrl: own.url } : !m && rc.aiPath ? { sku, aiPath: rc.aiPath, aiUrl: rc.aiUrl || null } : null, sized = me && Pool.sizeEntry(me, row.size);
-    const fromLib = !own && sized && sized.aiPath;   // (as the cloud's own writer draws it, _charmNestFinishHost.js: the library's drawing of the record's SKU; the record's own file only when the library has none. Order 4231992262, 23 Nov 2026: its discs were drawn from an older file, 29.8 mm for 9 mm)
+    const fromLib = !own && sized && sized.aiPath && (m || !rc.aiPath || sized.aiPath === rc.aiPath);   // (the library's own entry of that very file: its upright angle; else the record's own file, as the cloud's writer draws it)
     if (!fromLib && !(file && file.aiPath)) return null;
     const src = await Pool.masterCharm(fromLib ? me : file, fromLib ? row.size : null).catch(() => null); if (!src) return null;
     const piece = CharmNestPoolPieces.cleanFields(rc).side ? rc : CharmNestPoolPieces.cleanFields(row).side ? row : null, base = await Pool.ensureBase(src, piece, m ? null : rc.hash ? rc : row).catch(() => null); if (!base) return null;

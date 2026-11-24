@@ -104,6 +104,7 @@
     say("cloud", `${rec.fileBase || p.sheetId}: read again from the cloud (${why || "changed on another computer"}) · ${(p.placements || []).length} pieces`);
     safe(() => root.CN.renderCard(p));
     // (FOLLOWFEED: the pieces of this sheet are other charms now, so every thumbnail on this page that shows one looks at its piece again: its picture key names the piece this sheet holds (charm-nest-bridge.js ListMedia pieceSig))
+    if (!(o && o.background)) safe(() => root.OrderWin && typeof root.OrderWin.remade === "function" && root.OrderWin.remade([p.sheetId]));   // (an order window open on this sheet draws it again at once: order 4231992262, 23 Nov 2026, showed the old discs until its tab was opened again)
     if (!(o && o.background)) safe(() => root.CharmNestMadeThumb && typeof root.CharmNestMadeThumb.refreshSoon === "function" && root.CharmNestMadeThumb.refreshSoon());   // (a background build asks once, when the last sheet is built)
     return p;
   }
