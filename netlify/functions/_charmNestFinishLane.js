@@ -39,7 +39,7 @@ async function driveUnit(ctx) {
     if (started >= MAX_START) break;
     const t = tasks.get(s.id) || null;
     if (t && Lease.held(t, now)) continue;   // (its writer is at work, or was just started)
-    const nest = await finishedNest(db, s, t), owed = num(s.filesOwed) > 0, going = midway(t);
+    const nest = await finishedNest(db, s, t), owed = num(s.filesOwed) > 0 || num(s.artOwed) > 0, going = midway(t);   // (TWOEDITS: a front edit the sheet's files do not show yet is owed, whatever the other mark says)
     const ld = t && t.lastDone, picture = !owed && !nest && !going && num(s.pictureOwed) > 0;
     if (!owed && !nest && !going && !picture) continue;
     /* (SHIPPEDSTAYS: the sheet's picture alone is drawn again, its shipped pieces grey with a red outline; its files are not touched. One that could not be drawn is asked again after half an hour) */
@@ -54,8 +54,8 @@ async function driveUnit(ctx) {
       /* FILESCURRENT (Paul, 21 Nov 2026: "implement all of the updates"): the writer skipped because the sheet's files already show its layout exactly (NOREWRITE: no piece added,
          removed or moved since they were written). Then nothing is owed and the picture stands for the layout as it is: the owed mark comes off and the picture's version is the
          layout's (putSheet stamps previewRev when the save carries the picture). Nothing is written to the files, nothing is nested. Only the record's two labels change. */
-      if (ld.outcome === "skipped" && /^No new nest and no piece added, removed or moved/.test(String(ld.why || "")) && (owed || num(s.previewRev) < num(s.layoutRev)) && s.outputs && s.outputs.preview && s.outputs.preview.url) {
-        const r = await ctx.call({ op: "putSheet", sheet: { id: s.id, filesOwed: null, outputs: s.outputs }, contentBase: num(s.contentRev), layoutBase: num(s.layoutRev) }, ["filescurrent", runId, s.id, num(s.layoutRev), num(s.contentRev), num(s.filesOwed)].join("|"));
+      if (ld.outcome === "skipped" && /^No new nest and no piece added, removed or moved/.test(String(ld.why || "")) && !(num(s.artOwed) > 0) && (owed || num(s.previewRev) < num(s.layoutRev)) && s.outputs && s.outputs.preview && s.outputs.preview.url) {
+        const r = await ctx.call({ op: "putSheet", sheet: { id: s.id, filesOwed: null, outputs: s.outputs }, contentBase: num(s.contentRev), layoutBase: num(s.layoutRev), filesOwedBase: num(s.filesOwed) }, ["filescurrent", runId, s.id, num(s.layoutRev), num(s.contentRev), num(s.filesOwed)].join("|"));
         if (r && r.status < 400 && r.ok) say(`[drive] files: ${s.fileBase || s.id}: its files already show its layout: the owed mark is off and its picture is current`);
         continue;
       }

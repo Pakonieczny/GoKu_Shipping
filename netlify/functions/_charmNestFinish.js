@@ -179,7 +179,7 @@ STEP.S0 = async X => {
     return { report, changed: !report || art || redrawn || was.size !== now.size || [...now].some(k => !was.has(k)) };
   };
   const filesCurrent = async () => {
-    try { await X.call({ op: "putSheet", sheet: { id: X.sheetId, filesOwed: null, outputs: rec.outputs } }, `files-current|${num(rec.layoutRev)}|${num(rec.contentRev)}|${num(rec.filesOwed)}`); X.notes.push("its files already show its layout: the owed mark is off and its picture is current"); }
+    try { await X.call({ op: "putSheet", sheet: { id: X.sheetId, filesOwed: null, outputs: rec.outputs }, contentBase: num(rec.contentRev), filesOwedBase: num(rec.filesOwed) }, `files-current|${num(rec.layoutRev)}|${num(rec.contentRev)}|${num(rec.filesOwed)}`);   /* (TWOEDITS, 24 Nov 2026: a front edit saved while the back's was looked at lost its owed mark here) */ X.notes.push("its files already show its layout: the owed mark is off and its picture is current"); }
     catch (e) { if (e && e.fenced) throw e; }
   };
   if (rec.roseCutAt && !(await filesNow()).changed) {
@@ -213,7 +213,7 @@ STEP.S0 = async X => {
     if (report && !changed && rec.outputs && rec.outputs.preview && rec.outputs.preview.url && (num(rec.filesOwed) > 0 || num(rec.previewRev) < num(rec.layoutRev))) await filesCurrent();
     if (!art && (!report || !changed)) throw new Stop("skipped", "No new nest and no piece added, removed, moved or drawn anew since its files were written: the sheet and its files stay exactly as they are");
   }
-  if (!nest && !(num(rec.filesOwed) > 0)) throw new Stop("skipped", "Nothing is owed: the sheet's files stand as they are");
+  if (!nest && !art && !(num(rec.filesOwed) > 0)) throw new Stop("skipped", "Nothing is owed: the sheet's files stand as they are");
   if (!(rec.placements || []).length && !(nest && nest.result.placements.length)) throw new Stop("skipped", "The sheet places no piece: there is nothing to write");
   const jobId = "fin-" + sha([X.sheetId, num(rec.layoutRev), num(rec.contentRev), nest ? nest.jobId : "", num(want.at)].join("|"), 20);
   X.task.job = { jobId, step: "S0", steps: [], startedAt: Date.now(), nestJobId: nest ? nest.jobId : null, appendOnly: nest ? nest.appendOnly : null, intakePhase: nest ? nest.intakePhase : null, wantAt: num(want.at), reason: want.reason || null};
