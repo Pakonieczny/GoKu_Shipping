@@ -27,7 +27,7 @@
        body: params
      });
      const data = await r.json();
-     if (!r.ok) return { statusCode: r.status, body: JSON.stringify(data) };
+     if (!r.ok) return { statusCode: r.status, ...(data && data.error === "etsy_stopped" ? { headers: { "x-etsy-stopped": "1" } } : {}), body: JSON.stringify(data) };
   
      const issued_at = Math.floor(Date.now()/1000);
      return { statusCode: 200, body: JSON.stringify({ ...data, issued_at }) };

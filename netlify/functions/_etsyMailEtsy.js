@@ -151,8 +151,32 @@ async function getValidEtsyAccessToken() {
     return tok.access_token;
   }
 
-  // Both caches stale — refresh from Etsy.
-  return await refreshEtsyToken(tok.refresh_token);
+  // Both caches stale — renewed once, by one process (TOKENLEASE).
+  return await renewOnce();
+}
+
+/* TOKENLEASE (Paul, 24 Nov 2026: "my main concern is that Etsy token"): the login lasts an hour, and every function that found it old renewed it itself, at once, with the same refresh token, which Etsy changes at
+   each renewal. One process renews (a 20 s lease in EtsyApi_Config/tokenLease); the others wait for the login it writes. A process that fails lets go, and the next one tries. */
+const LEASE_DOC = "EtsyApi_Config/tokenLease", LEASE_MS = 20000;
+let renewing = null;
+const tokenNow = async () => { const s = await db.doc(OAUTH_DOC_PATH).get(), t = (s.exists && s.data()) || {}, at = (typeof t.expires_at_ms === "number" && t.expires_at_ms) || (typeof t.expires_at === "number" && t.expires_at) || 0; return { tok: t, at, good: !!t.access_token && at - Date.now() > TOKEN_REFRESH_BUFFER_MS }; };
+function renewOnce() {
+  if (renewing) return renewing;
+  renewing = (async () => {
+    const ref = db.doc(LEASE_DOC), until = Date.now() + 25000;
+    for (;;) {
+      let mine = true;
+      try { mine = await db.runTransaction(async tx => { const s = await tx.get(ref), d = (s.exists && s.data()) || {}; if (+d.until > Date.now()) return false; tx.set(ref, { until: Date.now() + LEASE_MS }); return true; }); }
+      catch (e) { console.warn("[etsy] the renewal lease could not be taken:", e && e.message); }   // (renewed without it: an old login is worse)
+      const now = await tokenNow();
+      if (now.good) { if (mine) await ref.set({ until: 0 }).catch(() => {}); _cacheTokenInMemory(now.tok.access_token, now.at); return now.tok.access_token; }
+      if (mine) { try { return await refreshEtsyToken(now.tok.refresh_token); } finally { await ref.set({ until: 0 }).catch(() => {}); } }
+      if (Date.now() > until) throw new Error("the Etsy login is being renewed by another process and is not here yet");
+      await new Promise(r => setTimeout(r, 400));
+    }
+  })();
+  const done = () => { renewing = null; }; renewing.then(done, done);
+  return renewing;
 }
 
 // ─── Low-level fetch wrapper ────────────────────────────────────────────

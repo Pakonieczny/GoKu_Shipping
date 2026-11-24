@@ -5917,7 +5917,7 @@ OPS.sheetRevsGet = op_sheetRevsGet; OPS.computerReport = op_computerReport; OPS.
 /* ETSYSTOP (Paul, 20 Nov 2026: "Once a 429 is reached the application must stop all work related to Etsy" … "a manual reset somewhere in the
    settings … I should be able to select this on my computer and then all the other computers should comply through the cloud"): the shop's one
    Etsy switch (_etsyStop.js, EtsyApi_Config/stop). etsyStopGet → the switch; etsyResume { by } → turns it off for every function, station and computer. */
-async function op_etsyStopGet() { return { ok: true, ...(await EtsyStop.state(true)) }; }
+async function op_etsyStopGet(b) { return { ok: true, ...(await EtsyStop.state(true)), ...(b && b.gate ? { gate: await EtsyStop.recent() } : {}) }; }   // (ETSYGATE: gate: true, the last calls that went to Etsy, when and by which function)
 async function op_etsyResume(b) {
   const by = str(b.by, 80) || "someone"; const st = await EtsyStop.resume(by); console.warn(`[charmNestLibrary] Resume Etsy pressed by ${by}`);
   // PHOTOPAUSE (Paul, 20 Nov 2026, "Yes, lift it"): the listing photos' block goes with the Resume (_etsyImageCache.js; the pauses set before it are ignored there too)
