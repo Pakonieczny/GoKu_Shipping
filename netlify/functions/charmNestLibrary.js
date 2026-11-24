@@ -1590,7 +1590,7 @@ async function op_getSheet(b) {
   const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt);
   await withFullBacks(d);
   await refreshLinks(d);
-  return { sheet: (await readinessRecords([d]))[0], rev: revOf(s) };
+  return { sheet: (await readinessRecords([d]))[0], rev: revOf(s), ...(b.pieces === true ? { pools: (await op_poolGet({ poolIds: d.poolIds || [] })).pools } : {}) };   // (NOSTORE, Paul 23 Nov 2026: "no information on the computer": the sheet's pieces' rows with the sheet, in one answer)
 }
 /** LOCAL (see LOCAL_READS): several records in one call. keys 's:<sheet>' 't:<set>' 'r:<run>' 'c:<custom order key>' (at most MANY_MAX); ifRevs { key: rev }
     the revisions the page holds; full: a sheet whole, as getSheet answers it (its links as saved: a link that fails is recovered where it fails,
