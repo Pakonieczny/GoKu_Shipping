@@ -77,7 +77,7 @@ const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(R
 let PREFIX = "";
 /* (CLOUDDRIVE, cloud plan v2 §1.3-1.4, build step 1b; DORMANT): MARKED says this request is the cloud's own in-process call (exports.call, a private Symbol on the event that
    no HTTP request can carry); FENCE, set only by such a call, is the lease nonce every write of that call is fenced on (fenceTx). Both are reset at every request, as PREFIX. */
-let MARKED = false, FENCE = null;
+let MARKED = false, FENCE = null, PACK = false;
 const CLOUD_DEV = "cloud", CLOUD_FRESH_MS = 180000;   // (the cloud's reserved carrier name; alive for the cron's minute plus the drive's 2-minute dispatch window)
 const SANDBOXED = new Set(["Charm_Nest_Engrave", "Charm_Nest_Rose_Stock", "Charm_Nest_Remnants", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Pool_Art", "Charm_Pool_Art_Draft", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
@@ -324,15 +324,16 @@ async function runsOfOrders(get, orders, fresh) {
     if (kept && now - kept.at < ttl) out.set(o, new Set(kept.runs)); else { out.set(o, new Set()); ask.push(o); }
   }
   const forms = v => [String(v)].concat(Number.isSafeInteger(+v) ? [+v] : []);
-  for (let i = 0; i < ask.length; i += 15) {
-    const batch = ask.slice(i, i + 15), values = batch.flatMap(forms), asked = new Set(batch);
+  const batches = []; for (let i = 0; i < ask.length; i += 15) batches.push(ask.slice(i, i + 15));
+  await Promise.all(batches.map(async batch => {   // (FASTOPEN: side by side: 600 orders were 40 rounds one after the other)
+    const values = batch.flatMap(forms), asked = new Set(batch);
     const [a, b] = await Promise.all([get(col(RUNS).where("orders", "array-contains-any", values).select("orders")), get(col(RUN_LINES).where("orders", "array-contains-any", values).select("runId", "orders"))]);
     for (const [docs, runOf] of [[a.docs, d => d.id], [b.docs, d => d.data().runId]]) for (const d of docs) {
       const id = runOf(d);
       if (isId(id)) for (const o of new Set((d.data().orders || []).map(String))) if (asked.has(o)) out.get(o).add(id);
     }
     if (!fresh && ttl) for (const o of batch) holders.set(PREFIX + o, { at: now, runs: [...out.get(o)] });
-  }
+  }));
   if (holders.size > HOLDERS_MAX) { for (const [k, v] of holders) if (now - v.at >= ttl) holders.delete(k); if (holders.size > HOLDERS_MAX) holders.clear(); }
   return out;
 }
@@ -397,8 +398,8 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
   // (a line the run saved as completed by hand, handDone, was never pooled and is not looked for on another sheet: its own custom order record decides, below)
   const present=new Set(records.flatMap(Readiness.idsOf)),lostIds=l=>!(l.poolIds || []).length && l.state!=='gone' && !l.noDesign && !l.problems?.length && !l.handDone,
     missingOrders=[...new Set([...lines.values()].filter(l=>(l.poolIds || []).some(id=>!present.has(id)) || (lostIds(l) && Readiness.copyIds(l,l.key).some(id=>!present.has(id)))).map(l=>l.orderId))];
-  for(let i=0;i<missingOrders.length;i+=30){
-    const snap=await get(col(SHEETS).where('orders','array-contains-any',missingOrders.slice(i,i+30)).select(...SLIM_SHEET));
+  const parts=[];for(let i=0;i<missingOrders.length;i+=30)parts.push(missingOrders.slice(i,i+30));
+  for(const snap of await Promise.all(parts.map(x=>get(col(SHEETS).where('orders','array-contains-any',x).select(...SLIM_SHEET))))){
     for(const d of snap.docs){if(revs)revs['s:'+d.id]=revOf(d);if(!d.data().archived && !evidence.has(d.id))evidence.set(d.id,{...d.data(),id:d.id});}
   }
   // A dependent sheet can also carry other orders. Read their engraving evidence too;
@@ -448,17 +449,17 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
   if(candidates.length){
     const rules={skus:[],patterns:[]};
     for(const x of await noDesignRows(get)){if(x.sku)rules.skus.push(x.sku);if(x.pattern)rules.patterns.push(x.pattern);}
-    for(const l of candidates){
+    await Promise.all(candidates.map(async l=>{
       const line={sku:l.sku,title:l.snap?.title || '',variations:(l.snap?.vars || []).map(v=>{const [name,value]=v.split('␟');return {name,value};})};
-      if(OrderRules.isNoDesign(l.sku || line.title,rules) || OrderRules.specialOf(line)?.notCut){l.noDesign=true;continue;}
+      if(OrderRules.isNoDesign(l.sku || line.title,rules) || OrderRules.specialOf(line)?.notCut){l.noDesign=true;return;}
       // A special item completed by hand has its own permanent seal, and is not a missing charm (its record was read above with the lines on no sheet: not read twice).
       const custom=seenCustom.has(l.key)?seenCustom.get(l.key):lineKeyOk(l.key)?await get(col(CUSTOM).doc(l.key)).then(d=>d.exists?d.data():null):null;
-      if(custom && custom.state!=='open'){l.noDesign=true;continue;}
+      if(custom && custom.state!=='open'){l.noDesign=true;return;}
       if(lineKeyOk(l.key)){
         const saved=await get(db.collection(require('./_charmNestCustomRead').COLL).doc(l.key)),x=saved.exists?saved.data():{};
         if(OrderRules.specialOf(line,{read:x.reads?.[x.latest],decided:x[PREFIX?'decidedSandbox':'decided']})?.notCut)l.noDesign=true;
       }
-    }
+    }));
   }
   const decisions=Readiness.decisions([...lines.values()]);
   /* CUSTOMPOOL (Paul, 28 Oct 2026: a custom charm on GF Draft 10 read "The words need a decision · Nothing read yet" and its sheet "1 to approve"): a design sent to a sheet from the Charm Editor
@@ -1352,7 +1353,7 @@ async function op_listSheets(b) {
      the sheet list is at most LIST_SHEETS_BYTES, half a megabyte, not ANSWER_BYTES: 300 sheets of a 30,000-order history answered ~0.9 MB in one
      part. The rest comes with `next` as before (every page reading a run, a day or the Library follows it: `all: "sheets"`); one set's own
      sheets (setId, read by the set editor and the rose flow without following `next`) keep the whole budget, a set being a few sheets. */
-  const { sheets, rest } = await sheetEntries(rows, answerBudget(Date.now(), b.setId ? ANSWER_BYTES : LIST_SHEETS_BYTES));
+  const { sheets, rest } = await sheetEntries(rows, answerBudget(Date.now(), b.whole === true && PACK ? Infinity : b.setId ? ANSWER_BYTES : LIST_SHEETS_BYTES));
   return { sheets, next: rest.length ? { sheets: rest } : null, truncated: rest.length > 0, ...(ids ? { ids, upTo, revs: Object.fromEntries(rows.map(r => [r[0], own.get(r[0]) || "0"])) } : {}), ...(ask.rev !== null ? { rev: ask.rev } : {}) };
 }
 /* Manual Control (Paul, 18 Oct 2026): one person at a time moves, turns and resizes the charms of a 10K / 14K sheet by hand in the sheet window. The claim is the
@@ -1991,8 +1992,20 @@ async function masterIndexSig() {
    used to be the first 3,000 documents Firestore handed out, in no set order, and a library past that lost the rest
    without a word. The first part says the index's signature (index), read before any entry is: a change made while the
    parts are read shows as a change the next time. */
+/** The whole index in one answer (FASTOPEN: `whole`): read in SKU order by many queries side by side, and kept by this instance while its signature stands. */
+const MASTER_CUTS = ["", ..."BCDEFGHIKLMNOPRSTUW", null]; let masterKept = null;
+async function masterWhole() {
+  const index = await masterIndexSig(), sig = JSON.stringify(index);
+  if (!masterKept || masterKept.sig !== sig) {
+    const snaps = await Promise.all(MASTER_CUTS.slice(0, -1).map((lo, i) => { let q = db.collection(Master.INDEX); if (lo) q = q.where(docOrder(), ">=", lo); if (MASTER_CUTS[i + 1]) q = q.where(docOrder(), "<", MASTER_CUTS[i + 1]); return q.get(); }));
+    const entries = [], shells = []; for (const x of snaps) for (const d of x.docs) { const e = d.data(); if (e.sku) entries.push(Master.slimEntry(e)); else shells.push(d.id); }
+    masterKept = { sig, entries: entries.sort((x, y) => x.sku.localeCompare(y.sku)), shells };
+  }
+  return { entries: masterKept.entries, shells: masterKept.shells, index, next: null, truncated: false };
+}
 async function op_masterList(b) {
   if (b.since && typeof b.since === "object" && !b.cursor && !b.q && !b.masterHash) return masterListSince(b);
+  if (b.whole === true && PACK && !b.cursor && !b.q && !b.masterHash && !b.links) return masterWhole();
   const began = Date.now(), q = str(b.q, 80).toUpperCase(), limit = Math.min(3000, Math.max(1, num(b.limit) || 1500));
   const index = b.cursor ? null : await masterIndexSig(), rows = [], size = q || b.masterHash ? 500 : Math.min(500, limit);   // a few entries (the connections check) read a few
   let after = b.cursor ? str(b.cursor, 80) : null, used = 0, next = null, truncated = false;
@@ -5954,12 +5967,12 @@ async function op_worldGet(b) {
   let q = since > 0 ? db.collection(WORLD_LINES).where("at", ">", since).orderBy("at").orderBy(docId) : db.collection(WORLD_LINES).orderBy(docId);
   if (since <= 0 && b.cursor) q = q.startAfter(str(b.cursor, 80));
   if (since > 0 && b.cursor) { const [ca, ci] = String(b.cursor).split("|"); q = q.startAfter(num(ca), str(ci, 80)); }
-  const snap = await q.limit(1500).get(), cap = Math.max(2000, Math.min(ANSWER_BYTES, num(b.maxBytes) || ANSWER_BYTES));   // (maxBytes: a smaller page, for the tests)
+  const whole = b.whole === true && PACK, part = whole ? 20000 : 1500, snap = await q.limit(part).get(), cap = whole ? Infinity : Math.max(2000, Math.min(ANSWER_BYTES, num(b.maxBytes) || ANSWER_BYTES));   // (whole: FASTOPEN; maxBytes: a smaller page, for the tests)
   let used = 0, next = null;
   // (next: the last record this answer holds, so the next page starts right after it: none skipped)
   let lastId = null, lastAt = null;
   for (const d of snap.docs) { const x = d.data(), n = String(x.data || "").length + 200; if (lines.length && used + n > cap) { next = since > 0 ? lastAt + "|" + lastId : lastId; break; } lastId = d.id; lastAt = x.at; if (since <= 0 && x.gone) continue; lines.push(W.lineOf(x)); used += n; }
-  if (!next && snap.size === 1500) { const last = snap.docs[snap.docs.length - 1]; next = since > 0 ? last.data().at + "|" + last.id : last.id; }
+  if (!next && snap.size === part) { const last = snap.docs[snap.docs.length - 1]; next = since > 0 ? last.data().at + "|" + last.id : last.id; }
   return Object.assign(out, { lines, next });
 }
 async function op_worldBuild(b) {
@@ -7211,7 +7224,12 @@ exports.engApprovedByBack = engApprovedByBack;   // (ENGLABEL; tests: tests/char
 exports.feedStats = feedStats;   // (FEED: bumpRev's counts, for the contention test)
 /** CLOUDWORLD: the world was built again (charmNestWorld-background.js): every page that follows w:world reads it. Production only. */
 exports.worldBump = async () => { PREFIX = ""; FEED_TOUCHED = new Set(); return feedBump(["w:world"]); };
-exports.handler = async (event) => {
+/* FASTOPEN (Paul, 23 Nov 2026: "nowhere in the application is the system allowed to make the user wait"): an answer of a megabyte or more goes out compressed by this function, so the lists a page opens with (the SKU list, the order
+   lines, the run's sheets) are ONE answer (`whole`) and not parts read one after the other: the platform carries 6 MB, and 10 MB of SKU list is 1.6 MB compressed. A caller that takes no gzip has its parts, as before. */
+const pack = res => (!PACK || !res || typeof res.body !== "string" || res.body.length < 1000000 ? res : Object.assign({}, res, { headers: Object.assign({}, res.headers, { "Content-Encoding": "gzip", Vary: "Accept-Encoding" }), body: require("zlib").gzipSync(res.body, { level: 4 }).toString("base64"), isBase64Encoded: true }));
+exports.handler = async event => { const res = await answer(event); return pack(res); };
+async function answer(event) {
+  PACK = event[MARK] !== true && /\bgzip\b/.test(String((event.headers && (event.headers["accept-encoding"] || event.headers["Accept-Encoding"])) || ""));
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: require("./_charmNestAuth").CORS, body: "" };
   // SAL1: Etsy's order.paid webhook (no passcode: Etsy signs it instead; _etsyOrderWebhook.js verifies the signature before anything is read or written)
   if ((event.queryStringParameters || {}).hook === "etsy-order") return require("./_etsyOrderWebhook").handle(event, { db, OrderDays, bump: async () => { PREFIX = ""; FEED_TOUCHED = new Set(); return feedBump(["d:orderdays"]); } });

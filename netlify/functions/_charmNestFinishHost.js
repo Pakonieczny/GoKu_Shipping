@@ -172,7 +172,10 @@ async function makePieces(env) {
       const entry = own ? null : await Master.fetchEntry(pool.sku);
       if (!own && !entry && (pool.custom || rc.custom) && pool.aiPath) own = { path: String(pool.aiPath).replace(/#fit-.*$/, "") };   // (OWNFILE: _charmNestNestPieces.js)
       if (!entry && !(own && (own.url || own.path))) { miss(`${pool.orderId || rc.poolId} · ${pool.sku || rc.sku}: no design in the library`); continue; }
-      const src = entry ? await maker.masterCharm(entry, pool.size) : await maker.masterCharm({ sku: rc.sku || pool.sku, aiPath: own.path || own.url, aiUrl: own.url }, null);
+      /* ONEDRAWING (Paul, 23 Nov 2026, GF Sheet 1 of Nov 18: its pandas, made at 7.4 mm, were written at 11 mm, the hoop's size, over their neighbours): a sheet's piece is drawn from the file its record names, as it was made and
+         nested, never made up again from the library and a size. The library's entry only when the record names no file. */
+      const ofLib = () => (entry ? maker.masterCharm(entry, pool.size) : maker.masterCharm({ sku: rc.sku || pool.sku, aiPath: own.path || own.url, aiUrl: own.url }, null));
+      const src = !own && rc.aiPath ? await maker.masterCharm({ sku: rc.sku || pool.sku, aiPath: rc.aiPath, aiUrl: null, charmHash: rc.hash, upAngle: entry && entry.upAngle, facing: entry && entry.facing, facings: entry && entry.facings }, null).catch(e => { if (!entry) throw e; return ofLib(); }) : await ofLib();
       const piece = PoolPieces.cleanFields(pool).side ? pool : PoolPieces.cleanFields(rc).side ? rc : null;
       const base = await maker.ensureBase(src, piece, rc.hash ? rc : pool).catch(() => null);
       if (!base) { miss(`${pool.orderId || rc.poolId} · ${pool.sku}: its ${piece && piece.side === "L" ? "left" : "right"} body is no longer in the design`); continue; }

@@ -108,7 +108,8 @@ function create(o) {
     const entry = own ? null : await fetchEntry(sku);
     if (!own && !entry && (pool.custom || rc.custom) && pool.aiPath) own = { path: String(pool.aiPath).replace(/#fit-.*$/, "") };   // (OWNFILE, Paul 23 Nov 2026: "why would you stop a sheet from being fully filled just because there's a custom order?": SS Draft 11 placed nothing from the evening of 22 Nov on: order 4241324766's custom drawing was not in the sheet's own list of files (empty), so it was "not in the library", and every nest of the sheet was thrown away. A custom piece's record names its drawing: it is made from that)
     if (!entry && !(own && (own.path || own.url))) throw new Error(`its design ${sku || "(no SKU)"} is not in the library`);
-    const src = entry ? await Make.masterCharm(entry, pool.size || null) : await Make.masterCharm({ sku: sku || "CUSTOM", aiPath: own.path || own.url, aiUrl: null }, null);
+    const ofLib = () => (entry ? Make.masterCharm(entry, pool.size || null) : Make.masterCharm({ sku: sku || "CUSTOM", aiPath: own.path || own.url, aiUrl: null }, null));
+    const src = !own && rc.aiPath ? await Make.masterCharm({ sku, aiPath: rc.aiPath, aiUrl: null, charmHash: rc.hash, upAngle: entry && entry.upAngle, facing: entry && entry.facing, facings: entry && entry.facings }, null).catch(e => { if (!entry || (e && e.budget)) throw e; return ofLib(); }) : await ofLib();   // (ONEDRAWING: nested from the file the record names, as _charmNestFinishHost.js writes it)
     // a piece of a pair is cut from its own body, turned over when it is the mirror image (the pool row says which; the record too)
     const piece = PoolPieces.cleanFields(pool).side ? pool : PoolPieces.cleanFields(rc).side ? rc : null;
     let base = null;
