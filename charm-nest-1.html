@@ -4176,6 +4176,7 @@ const TRAY = "#efe9de";   // the part of the 100 × 50 mm frame a smaller sheet 
 const fmt = { pct: v => Math.round(v * 100) + "%", area: v => Math.round(v * MM_PER_PT * MM_PER_PT).toLocaleString() + " mm²", mm: v => (v * MM_PER_PT).toFixed(1) + " mm", mmN: v => +(v * MM_PER_PT).toFixed(1), s: ms => { const t = Math.round(ms / 1000); return t < 60 ? t + "s" : Math.floor(t / 60) + "m " + (t % 60) + "s"; } };   // (whole seconds first: 539.6 s read "8m 60s")
 /* Storage redirects are read through the same-origin production asset route. */
 const cors = u => CharmNestAssets.url(u);
+window.picUrl = r => cors(r.previewAt ? r.preview + (r.preview.includes("?") ? "&" : "?") + "v=" + r.previewAt : r.preview);   // (PICNOW: a sheet's picture under the time it was made)
 /* A stored design picture (charm-nest-thumbs.js): kept on this computer and asked for only near the screen. The tag carries the address and a
    key; mountPics(host) fills the images in. Without the module it is the plain lazy image it always was. */
 const picTag = (url, id) => !url ? "" : window.CharmNestThumbs ? `<img crossorigin="anonymous" data-pic="${esc(cors(url))}" data-pic-key="${esc(CharmNestThumbs.weeklyKey("c|" + id))}" alt="">` : `<img crossorigin="anonymous" src="${cors(url)}" loading="lazy" alt="">`;
@@ -8589,7 +8590,7 @@ function renderLibrary() {
   const rows = CNListActivity.select("library", [...newest.values()]);
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">${focus ? "" : "No sheets match."}</div>`; if (LD) LD.decorate(body); return; }
   const place = S.mode === "library" && body.querySelector(".libCard") ? libraryPlace() : null;
-  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}">${sheetHead(r, {inFan:r._inFan})}<div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${pvRatio(r)} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)} free</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${CharmNestReadiness.counter(LaserReview.sheet(r),'Sheet',r)}</span></div></div>`; };
+  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}">${sheetHead(r, {inFan:r._inFan})}<div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${pvRatio(r)} crossorigin="anonymous"${r.preview ? ` src="${esc(picUrl(r))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)} free</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${CharmNestReadiness.counter(LaserReview.sheet(r),'Sheet',r)}</span></div></div>`; };
   LaserReview.sections(body);
   LaserReview.batch(()=>{for(const r of rows){
     LaserReview.record(r);
@@ -9185,7 +9186,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26-now-inst1"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=1120-pair2-pmake1-apc1-place1-v14-dr1-dr2-sd1-sl1-or1-fa1-br1-sbc1-photo1-rm1-va1-it9-k14-it8-vi7-i16-cs1-g6-g9-s1-g4-s4-s3-s2-cd-now-nm1-lb1-lb2-se1-ia1-ts1-an1-rl1-ld1-ck1-src1-oa1-swh1-po1-lr1-rvl1-pf1-er1-sv1-ps1-ps2-mn1-ws1-la1-bp1-ub1-wc1-one1-an1-ac1-ah1-ia1-lc1-dp2-lbx1-ons1-inst1-ls1-dr1-dr2-fo1-nw1-na1-na2-lo1-ces1-ov1-tw2-tw3-n25"></script>
+<script src="charm-nest-bridge.js?v=1120-pair2-pmake1-apc1-place1-v14-dr1-dr2-sd1-sl1-or1-fa1-br1-sbc1-photo1-rm1-va1-it9-k14-it8-vi7-i16-cs1-g6-g9-s1-g4-s4-s3-s2-cd-now-nm1-lb1-lb2-se1-ia1-ts1-an1-rl1-ld1-ck1-src1-oa1-swh1-po1-lr1-rvl1-pf1-er1-sv1-ps1-ps2-mn1-ws1-la1-bp1-ub1-wc1-one1-an1-ac1-ah1-ia1-lc1-dp2-lbx1-ons1-inst1-ls1-dr1-dr2-fo1-nw1-na1-na2-lo1-ces1-ov1-tw2-tw3-n27"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1-sy1-sy2"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1-ob1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
@@ -9265,7 +9266,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=1117-c7a0840c-v14-all1-rm1-fl1-it1-qr6-i5-it4-g1-s5-now-bb1-src1-rgw1-er1-lo1-cb1-an1-ac1-ia1-dp2-in1-na1-lo1-ces1-tw2-n25"></script>
+<script src="charm-nest-sheetwin.js?v=1117-c7a0840c-v14-all1-rm1-fl1-it1-qr6-i5-it4-g1-s5-now-bb1-src1-rgw1-er1-lo1-cb1-an1-ac1-ia1-dp2-in1-na1-lo1-ces1-tw2-n27"></script>
 <!-- 10K / 14K: a charm dragged onto the next or previous sheet of its metal, in the sheet window's Manual Control (SheetHop; Paul, 18 Oct 2026) -->
 <script src="charm-nest-sheet-hop.js?v=20261018-hop1-hp2-mv1-mc9-mi9b-gk1-fr1-ged1-hm1-b3-i13-g2-now-in1"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
