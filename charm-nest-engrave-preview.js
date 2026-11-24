@@ -60,7 +60,7 @@
   /* ── the one formula of the engraving job ──────────────────────────────────────
    * charm-nest-geom.js layoutLines: cap = size * capPerEm(font) (OS/2 sCapHeight / unitsPerEm of the file the job fits with), the gap between rows is size * 0.216, a block of n
    * rows is n*cap + (n-1)*gap tall and is centred on the position. CAP_PER_EM is that capPerEm measured from the files of vendor/fonts (the test checks it against them). */
-  const CAP_PER_EM = { 'source-sans-3': 0.66, 'playwrite-us-trad': 1, 'marck-script': 0.638, mynerve: 0.67, 'crimson-text': 0.6406, 'playwrite-us-modern': 0.938, jost: 0.7, 'alegreya-sans': 0.644, vibur: 0.6699, 'jost-ace': 0.7, 'libre-franklin': 0.742, angelina: 0.5576, charm: 0.684 };
+  const CAP_PER_EM = { 'source-sans-3': 0.66, 'playwrite-us-trad': 1, 'marck-script': 0.638, mynerve: 0.67, 'crimson-text': 0.6406, 'playwrite-us-modern': 0.938, jost: 0.7, 'alegreya-sans': 0.644, vibur: 0.6699, 'jost-ace': 0.7, 'libre-franklin': 0.742, angelina: 0.5576, charm: 0.684, 'brites-pen': 0.7 };
   const GAP = 0.216, AUTO = { x: 0.5, y: 0.5, size: 0.2, angle: 0 };
   const capPerEm = id => CAP_PER_EM[id] || 0.7;
 

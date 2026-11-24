@@ -436,12 +436,14 @@
     { id: "libre-franklin", name: "Libre Franklin", names: ["Libre Franklin"], files: { Regular: "vendor/fonts/LibreFranklin-Bold.ttf", Semibold: "vendor/fonts/LibreFranklin-ExtraBold.ttf" } },
     // (24 Nov 2026: Angelina itself, and the closest open font to Pristina)
     { id: "angelina", name: "Angelina", names: ["Angelina"], files: { Regular: "vendor/fonts/Angelina-Regular.ttf" } },
-    { id: "charm", name: "Charm", names: ["Charm"], files: { Regular: "vendor/fonts/Charm-Bold.ttf" } }
+    { id: "charm", name: "Charm", names: ["Charm"], files: { Regular: "vendor/fonts/Charm-Bold.ttf" } },
+    // (24 Nov 2026, Paul: "custom make a very similar font", "a little bit more edgy": the shop's own pen script for Pristina orders, every letter and number drawn by us, nothing traced; its punctuation is Charm's, SIL OFL)
+    { id: "brites-pen", name: "Brites Pen", names: ["Brites Pen"], files: { Regular: "vendor/fonts/BritesPen-Regular.ttf" } }
   ];
   /** The font words the shop's drop-downs offer, any spelling (case, spacing, punctuation, "Typewrite" for "Typewriter"), and the installed font each one is. */
   const FONT_WORDS = [
     { id: "playwrite-us-trad", words: ["Stylish"] },
-    { id: "charm", words: ["Pristina"] },
+    { id: "brites-pen", words: ["Pristina"] },
     { id: "angelina", words: ["Angelina"] },
     { id: "crimson-text", words: ["Typewriter", "Typewrite", "TypeWrit", "Typewritr", "TypeWrt"] },   // (seven real spellings; any other that starts "typewr" is read by FONT_STEMS)
     { id: "source-sans-3", words: ["Comic"] },
@@ -688,7 +690,7 @@
    *  one per disc when a listing asks per disc) wins over the line's (spec.font); a font word the shop does not offer, or none, is Source Sans 3 with `asked` kept. */
   /* FONTNOW (Paul, 24 Nov 2026: "Did you find the correct fonts and replace them throughout the application?"): what a saved reading or a saved engraving calls by the font that stood in for the shop's word before (Pristina:
      Marck Script; Angelina: Mynerve) is engraved in the font the word is now. Only where the order asks for that very word; a font a person locked, and approved work, stay as they are. */
-  const FONT_WAS = { "marck-script": "charm", mynerve: "angelina" };
+  const FONT_WAS = { "marck-script": "brites-pen", charm: "brites-pen", mynerve: "angelina" };
   const fontNowId = (id, asked) => (FONT_WAS[id] && asked && fontOfPhrase(String(asked)) === FONT_WAS[id] ? FONT_WAS[id] : id);
   /** The font an engraving not approved yet is set in again ("" when it stays in the one it has). */
   function fontNow(job, spec, index) {
