@@ -161,31 +161,31 @@ const STEP = {};
 
 /** S0: the job — what is written (a finished nest, or the record as it stands), and the sheet taken for it (finishClaim begin). */
 STEP.S0 = async X => {
-  const { db, task } = X, rec = await readSheet(db, X.sheetId), want = task.want || {};
+  const { db, task } = X, want = task.want || {}; let rec = await readSheet(db, X.sheetId);
+  if (rec && !rec.archived && !(num(rec.laserDoneAt) > 0)) rec = await seatChanged(X, rec);
   if (rec) X.seen = { layoutRev: num(rec.layoutRev), contentRev: num(rec.contentRev), owedAt: num(rec.filesOwed) };
   if (!rec || rec.archived) throw new Stop("skipped", "The sheet is no longer in the Library: no files were written");
   if (num(rec.laserDoneAt) > 0) throw new Stop("skipped", `${rec.fileBase || "This sheet"} has been cut on the laser: its files are not written again`);
-  // (a Rose Gold, 10K or 14K sheet whose green-line cut is recorded keeps its layout as cut: putSheet refuses a layout over it; the person sets the cut aside first)
-  // (LINEOFF, Paul 23 Nov 2026: a piece a person took off such a sheet after its cut was recorded, _charmNestPlacement.js lineOnly: its files are written again without that piece, every other piece exactly where the
-  //  record has it; nothing is nested, and its line, its physical sheet and its leftover are not touched. Only when the pieces left are the files' own pieces in the files' own places)
-  // (OWEDCUT, Paul 23 Nov 2026: a nest asked for such a sheet is never written, whatever it says: what it owes is its files without the piece taken off, so the ask no longer stands in their way)
-  const lineOff = !!rec.roseCutAt && require("./_charmNestPlacement").lineOnly(rec) && num(rec.takenOffAt) > num(rec.roseCutAt);
-  // what the sheet's own files show, against its layout now (NOREWRITE, FILESCURRENT below)
+  // (a Rose Gold, 10K or 14K sheet whose green-line cut is recorded is never laid out by a nest: what it owes is its files as the record has its pieces now (one was taken off, one was made again in its place), every
+  //  other piece where it lies; its line, its physical sheet and its leftover are not touched)
+  // what the sheet's own files show, against its layout now (NOREWRITE, FILESCURRENT below); a piece whose own drawing changed in the Charm Editor (CESAVE: artOwed) is a change of it
+  const art = num(rec.artOwed) > 0;
   const filesNow = async () => {
     const key = p => `${p.id}@${Math.round(+p.cxPt * 100)},${Math.round(+p.cyPt * 100)},${Math.round((+p.angle || 0) * 100)}`;
     let report = null; try { const rp = rec.outputs && rec.outputs.report && rec.outputs.report.path; if (rp) { const [b] = await X.bucket.file(rp).download(); report = JSON.parse(b.toString("utf8")); } } catch (_) { report = null; }
     const was = new Set(((report && report.placements) || []).filter(p => p && p.id != null).map(key)), now = new Set((rec.placements || []).filter(p => p && p.id != null).map(key));
-    return { report, was, now, changed: !report || was.size !== now.size || [...now].some(k => !was.has(k)) };
+    const drawn = new Map(((report && report.placements) || []).filter(p => p && p.hash).map(p => [String(p.id), String(p.hash)])), redrawn = (rec.placements || []).some(p => p && p.hash && drawn.has(String(p.id)) && drawn.get(String(p.id)) !== String(p.hash));   // (a piece made again in its own place: another drawing)
+    return { report, changed: !report || art || redrawn || was.size !== now.size || [...now].some(k => !was.has(k)) };
   };
   const filesCurrent = async () => {
     try { await X.call({ op: "putSheet", sheet: { id: X.sheetId, filesOwed: null, outputs: rec.outputs } }, `files-current|${num(rec.layoutRev)}|${num(rec.contentRev)}|${num(rec.filesOwed)}`); X.notes.push("its files already show its layout: the owed mark is off and its picture is current"); }
     catch (e) { if (e && e.fenced) throw e; }
   };
-  if (rec.roseCutAt && !lineOff) {
+  if (rec.roseCutAt && !(await filesNow()).changed) {
     // (OWEDCUT: a mark only the ask for its nest made, on files that show its layout exactly, comes off; a person's, or an artwork edit's, stays)
     const ld = task.lastDone || {}, owed = num(rec.filesOwed), ownAsk = owed > 0 && ((want.nestJobId && num(want.at) === owed) || (ld.nestJobId && ld.forNest !== false && num(ld.wantAt) === owed));
-    if (ownAsk && rec.outputs && rec.outputs.preview && rec.outputs.preview.url && !(await filesNow()).changed) await filesCurrent();
-    throw new Stop("skipped", `${rec.fileBase || "This sheet"}'s green-line cut is recorded: its layout is not written again until the cut is set aside`);
+    if ((ownAsk || (owed > 0 && num(rec.takenOffAt) > num(rec.roseCutAt))) && rec.outputs && rec.outputs.preview && rec.outputs.preview.url) await filesCurrent();
+    throw new Stop("skipped", `${rec.fileBase || "This sheet"}'s green-line cut is recorded and its files show its layout: nothing is written again`);
   }
   let nest = null;
   if (!rec.roseCutAt && want.nestJobId && !(task.lastDone && task.lastDone.nestJobId === String(want.nestJobId))) {
@@ -205,18 +205,17 @@ STEP.S0 = async X => {
   /* (Paul, 21 Nov 2026: "Users can also be allowed to remove not only add pieces"): with no new nest the sheet is written only when its pieces changed since its files were written
      (a person or a cancellation took a piece off, or a person moved one): the files then show exactly that change. A sheet whose pieces are as its files show is never written again. */
   if (!nest) {
-    const { report, was, now, changed } = await filesNow();
-    if (lineOff && (!report || (changed && (now.size >= was.size || [...now].some(k => !was.has(k)))))) throw new Stop("skipped", `${rec.fileBase || "This sheet"}'s green-line cut is recorded: its files are written again only without a piece taken off it, every other piece where the files have it`);
+    const { report, changed } = await filesNow();
     /* FILESCURRENT (Paul, 21 Nov 2026: "implement all of the updates"): the files already show the sheet's layout exactly, so nothing is owed and its picture stands for the layout
        as it is: the owed mark comes off and the picture's version is the layout's (putSheet stamps previewRev when the save carries the picture). Only those two labels change:
        nothing is written to the files, nothing is nested (the files lane's own check could not see it: this skip comes before the job records the sheet's version) */
     if (report && !changed && rec.outputs && rec.outputs.preview && rec.outputs.preview.url && (num(rec.filesOwed) > 0 || num(rec.previewRev) < num(rec.layoutRev))) await filesCurrent();
-    if (!report || !changed) throw new Stop("skipped", "No new nest and no piece added, removed or moved since its files were written: the sheet and its files stay exactly as they are");
+    if (!art && (!report || !changed)) throw new Stop("skipped", "No new nest and no piece added, removed, moved or drawn anew since its files were written: the sheet and its files stay exactly as they are");
   }
   if (!nest && !(num(rec.filesOwed) > 0)) throw new Stop("skipped", "Nothing is owed: the sheet's files stand as they are");
   if (!(rec.placements || []).length && !(nest && nest.result.placements.length)) throw new Stop("skipped", "The sheet places no piece: there is nothing to write");
   const jobId = "fin-" + sha([X.sheetId, num(rec.layoutRev), num(rec.contentRev), nest ? nest.jobId : "", num(want.at)].join("|"), 20);
-  X.task.job = { jobId, step: "S0", steps: [], startedAt: Date.now(), nestJobId: nest ? nest.jobId : null, appendOnly: nest ? nest.appendOnly : null, intakePhase: nest ? nest.intakePhase : null, wantAt: num(want.at), reason: want.reason || null, ...(lineOff ? { lineOff: true } : {}) };
+  X.task.job = { jobId, step: "S0", steps: [], startedAt: Date.now(), nestJobId: nest ? nest.jobId : null, appendOnly: nest ? nest.appendOnly : null, intakePhase: nest ? nest.intakePhase : null, wantAt: num(want.at), reason: want.reason || null};
   const c = await X.call({ op: "finishClaim", id: X.sheetId, jobId, stage: "begin", nestJobId: nest ? nest.jobId : null }, "begin");
   if (!c || c.status >= 400 || !c.ok) {
     if (c && c.busy) throw new Stop("waiting", c.error || "the sheet is busy");
@@ -225,7 +224,7 @@ STEP.S0 = async X => {
   X.task.job.base = { layoutRev: num(c.layoutRev), contentRev: num(c.contentRev) };
   X.task.job.owedAt = num(c.filesOwed);
   // (finishNest's shortcut: a nest that changed nothing (its layout key is the record's, and the record has its files and checks): only its state is brought up to date)
-  if (nest && ["gold", "silver"].includes(rec.metal) && nest.result.endedBy !== "stopped" && rec.outputs && rec.outputs.ai && rec.verification) {
+  if (nest && !art && ["gold", "silver"].includes(rec.metal) && nest.result.endedBy !== "stopped" && rec.outputs && rec.outputs.ai && rec.verification) {
     const FC = require("../../charm-nest-finish-core.js"), byId = new Map((rec.charms || []).map(ch => [ch.id, ch]));
     const keyOf = placements => FC.layoutKey({ sheetId: rec.id, placements }, byId);
     if (keyOf(nest.result.placements.map(p => Object.assign({}, p, { scale: ((rec.placements || []).find(q => q.id === p.id) || {}).scale || p.scale }))) === keyOf(rec.placements || [])) {
@@ -250,6 +249,51 @@ STEP.S0 = async X => {
   return "S1";
 };
 
+/* CESAVE (Paul, 23 Nov 2026: "those changes should be reflective on the original charm on the original sheet, and the only reason a charm would be removed and not placed back on original sheet, as if the update to the charm
+   made the charm not fit in the original place on the sheet"): the pieces whose cut line a person changed in the Charm Editor (the sheet's cutCheck), seated before the sheet is written by the one seat search every change of a
+   piece has (_charmNestSeatNow.js); a line that fits nowhere on the sheet goes whole to the next draft of its colour. Nothing else moves and nothing is nested here. → the record as it is then */
+async function seatChanged(X, rec) {
+  for (let t = 0; t < 4 && rec && Object.keys(rec.cutCheck || {}).length; t++) {
+    const Seat = require("./_charmNestSeatNow"), P = require("./_charmNestPlacement"), checked = Object.fromEntries(Object.entries(rec.cutCheck).map(([k, v]) => [k, num(v && v.at)])), lineOf = c => String((c && c.poolId) || "").replace(/_\d+$/, ""), same = (p, q) => p.cxPt === +q.cxPt && p.cyPt === +q.cyPt && p.angle === (+q.angle || 0) && num(p.scale) === num(q.scale);
+    const poseOf = new Map((rec.placements || []).map(p => [String(p.id), p])), keys = [...new Set((rec.charms || []).filter(c => c && !c.excluded && checked[String(c.poolId)] != null && poseOf.has(String(c.id))).map(lineOf))], seats = [], off = [], said = [];
+    let view = Object.assign({}, rec, { charms: (rec.charms || []).map(c => (c && keys.includes(lineOf(c)) && checked[String(c.poolId)] != null ? P.fullSize(Object.assign({}, c, c.manual && c.manual.fit === "inplace" ? { pinned: null } : {})) : c)) });
+    for (const lineKey of keys) {
+      const all = view.charms.filter(c => lineOf(c) === lineKey), charms = all.filter(c => !c.excluded && poseOf.has(String(c.id)));
+      const got = await Seat.seat({ db: X.db, bucket: X.bucket, rec: view, lineKey, charms, rows: [], changed: new Set(Object.keys(checked)), say: X.log });
+      const by = (rec.cutCheck[(charms.find(c => checked[String(c.poolId)] != null) || {}).poolId] || {}).by || "a person", at = Math.max(...charms.map(c => checked[String(c.poolId)] || 0));
+      if (got.poses) { const at2 = new Map(got.poses.map(p => [String(p.id), p])), off2 = got.poses.filter(p => checked[String(p.poolId)] != null || !same(p, poseOf.get(String(p.id)))); seats.push(...off2); view = Object.assign({}, view, { placements: view.placements.map(p => (at2.has(String(p.id)) ? Object.assign({}, p, at2.get(String(p.id))) : p)) });
+        said.push({ lineKey, by, at, size: Math.min(1, ...got.poses.map(p => num(p.size) || 1)), here: off2.every(p => { const w = poseOf.get(String(p.id)); return Math.hypot(p.cxPt - w.cxPt, p.cyPt - w.cyPt) < 0.01; }) }); }
+      else { const ids = all.map(c => String(c.id)); off.push(...ids); said.push({ lineKey, by, at, off: true }); view = Object.assign({}, view, { charms: view.charms.filter(c => lineOf(c) !== lineKey), placements: view.placements.filter(p => !ids.includes(String(p.id))) }); }
+    }
+    const r = await X.call({ op: "finishSeat", id: X.sheetId, layoutBase: num(rec.layoutRev), checked, seats, off }, `seat|${num(rec.layoutRev)}|${sha(JSON.stringify([checked, seats, off]), 12)}`);
+    if (r && r.conflict) { rec = await readSheet(X.db, X.sheetId); continue; }
+    if (!r || !r.ok) throw new Error((r && r.error) || "the changed piece was not seated");
+    const name = P.labelOf(rec) || "its sheet", base = num(rec.layoutRev); let to = "the next draft";
+    rec = await readSheet(X.db, X.sheetId);
+    if (off.length) { const m = await moveOn(X, rec, rec.charms.filter(c => c && off.includes(String(c.id))), "its new shape did not fit", "seat"); if (m && m.ok && m.moved) to = P.labelOf(await readSheet(X.db, m.to.sheetId)) || to; rec = await readSheet(X.db, X.sheetId); }
+    await X.call({ op: "timelineAdd", events: said.map(z => ({ orderId: z.lineKey.split("_")[0], type: z.off ? "moved" : "note", id: `${z.lineKey}.ceseat.${z.at}`, at: Date.now(), by: z.by, station: "sorter", sheetId: X.sheetId, sheet: String(z.off ? to : name).slice(0, 80), lineKey: z.lineKey,
+      text: `Charm Editor save · ${z.off ? `moved to ${to}: its new shape did not fit` : `on ${name}, ${z.here ? "in its place" : "in free room of the sheet"}${z.size < 1 ? `, resized to ${Math.round(z.size * 100)}% to fit` : ""}`}` })) }, `seat-tl|${base}|${Object.values(checked).join(",")}`).catch(e => { if (e && e.fenced) throw e; });
+  }
+  return rec;
+}
+/** Pieces a sheet turned away go on to the next sheet in line (charm-nest-place.js nextSheet: NOSPREAD, PAIR / PAIR2, ONEFILL / PAIRFIX), or a new draft, in one transaction; that sheet nests them at once. */
+async function moveOn(X, rec, moving, why, unit) {
+  const Nest = require("./_charmNestNest"), NP = require("../../charm-nest-nest-plan.js"), Place = require("../../charm-nest-place.js"), S = await Nest.readSettings(X.db);
+  const world = await require("./_charmNestPlaceUnit").readWorld({ db: X.db, runId: rec.runId, read: X.read });
+  const rs = await X.db.collection("Charm_Nest_Runs").doc(String(rec.runId)).get(), run = Object.assign({ runId: rec.runId }, rs.exists ? rs.data() || {} : {});
+  const H = Place.recordHost({ run, records: world.records, sets: world.sets, settings: world.settings, preset: world.preset, partial: world.partial });
+  const me = H.views().find(v => v.sheetId === rec.id) || H.refresh(rec), ids = new Set(moving.map(c => String(c.id))), movingV = (me.charms || []).filter(c => ids.has(String(c.id)));
+  const next = H.rules.nextSheet(me, movingV.length ? movingV : moving, { orderKey: NP.orderKey, admitted: (p, units) => Nest.planEnv(S).nospreadAdmitted(p, units) });
+  const fresh = () => ({ create: { metal: rec.metal, page: next && next._new ? next.page : Math.max(0, ...H.views().filter(v => v.metal === rec.metal).map(v => num(v.page))) + 1, day: run.day || null, greenLeftover: next && next._new ? next.greenLeftover || null : null } });
+  const body = { op: "finishOverflow", id: rec.id, runId: rec.runId, layoutBase: num(rec.layoutRev), contentBase: num(rec.contentRev), pieceIds: [...ids], why,
+    to: !next || next._new || !next.sheetId ? fresh() : { sheetId: next.sheetId, layoutBase: num(next.layoutRev), contentBase: num(next.contentRev) } };
+  let r = await X.call(body, unit || "overflow");
+  // (the sheet chosen changed or shut meanwhile: a new draft takes them, as the page opens one when the next sheet is shut or busy)
+  if (r && r.status === 409 && r.conflict && body.to.sheetId && !/changed since its pieces were turned away/.test(String(r.error || ""))) r = await X.call(Object.assign({}, body, { to: fresh() }), (unit || "overflow") + "-new");
+  if (r && r.ok && r.moved) { const n = await X.call({ op: "nestStart", sheetId: r.to.sheetId, auto: true, why: `${r.moved} piece(s) moved on from ${rec.fileBase || rec.metalLabel || rec.id}` }, (unit || "nest") + "-next"); if (!n || n.status >= 400) X.notes.push("the next sheet's nest was not asked: " + ((n && n.error) || "no answer")); }
+  else if (r && r.status >= 400) X.notes.push("what was turned away was not moved on: " + (r.error || r.status));
+  return r;
+}
 /** S1: the pieces (made again from the library) and the work state: the layout to write, from the nest's result or the record. */
 STEP.S1 = async X => {
   await ready(X, { fresh: true });
@@ -396,7 +440,7 @@ STEP.S7 = async X => {
     }
     sheet.dirty = dirtyAfter(sheet, rec);   // (STUCKDIRTY: a sheet released full is never left "being nested")
     if (rec.problemStop && sh.placements.length) { sheet.problem = null; sheet.problemStop = null; }
-    const ans = await X.call(Object.assign({ op: "putSheet", sheet, layoutBase: job.base.layoutRev, contentBase: job.base.contentRev, filesJobBase: job.jobId, ...(job.lineOff ? { lineOff: true } : {}) }, typeof W.pinKey === "string" && W.pinKey ? { pinsBase: W.pinKey } : {}), "record");
+    const ans = await X.call(Object.assign({ op: "putSheet", sheet, layoutBase: job.base.layoutRev, contentBase: job.base.contentRev, filesJobBase: job.jobId }, typeof W.pinKey === "string" && W.pinKey ? { pinsBase: W.pinKey } : {}), "record");
     /* G8: a person pinned or unpinned a charm of the sheet after this layout was made (putSheet pinMoved): nothing was written; the layout is made again from the record as it is
        now (S1: the pins merged again), three times at most, then the job ends superseded and the files stay owed. */
     if (ans && ans.pinMoved) {
@@ -429,7 +473,7 @@ STEP.S7 = async X => {
     W.save.phase = "final"; await saveW(X);
   }
   if (W.save.phase === "final") {
-    const fin = await X.call({ op: "putSheet", sheet: { id: X.sheetId, saving: false, filesOwed: null, filesJob: null }, contentBase: job.written.contentRev, filesOwedBase: job.owedAt, filesJobBase: job.jobId }, "final");
+    const fin = await X.call({ op: "putSheet", sheet: { id: X.sheetId, saving: false, filesOwed: null, artOwed: null, filesJob: null }, contentBase: job.written.contentRev, filesOwedBase: job.owedAt, filesJobBase: job.jobId }, "final");
     if (!fin || fin.status >= 400 || !fin.ok) {
       // (the files are at their paths and the record names them; only the clear was refused: they stay owed, and the driver asks again)
       throw new Stop("superseded", (fin && fin.error) || "the sheet changed as its files were written: they stay owed");
@@ -472,7 +516,7 @@ STEP.S8 = async X => {
   const rec = await readSheet(db, X.sheetId);
   if (!rec || rec.archived || num(rec.laserDoneAt) > 0 || rec.roseCutAt || !rec.runId || rec.endedBy === "stopped") return end("");
   if (job.written && (num(rec.layoutRev) !== num(job.written.layoutRev) || num(rec.contentRev) !== num(job.written.contentRev))) return end("the sheet changed after its files were written: what it turned away waits for its next nest");
-  const Nest = require("./_charmNestNest"), NP = require("../../charm-nest-nest-plan.js"), FC = require("../../charm-nest-finish-core.js"), O = require("../../charm-nest-orders.js"), Place = require("../../charm-nest-place.js");
+  const Nest = require("./_charmNestNest"), NP = require("../../charm-nest-nest-plan.js"), FC = require("../../charm-nest-finish-core.js"), O = require("../../charm-nest-orders.js");
   const S = await Nest.readSettings(db), view = Object.assign({}, rec, { sheetId: rec.id }), name = rec.fileBase || rec.metalLabel || rec.id, said = [];
   const env = { maxFill: +S.settings.maxFill || 0.8, orderKey: NP.orderKey, orderRank: c => NP.orderRank(c, O), inflatedArea: c => Nest.inflatedArea(S, c), usablePt2: Nest.usableArea(S, view), groupOf: Nest.groupOf,
     NS: S.settings.nospread !== "off" ? require("../../charm-nest-nospread.js") : null, topupRoom: v => Nest.topupRoom(v, false) };
@@ -494,23 +538,8 @@ STEP.S8 = async X => {
     return end(said.join(" · "));
   }
   if (plan.kind === "move") {
-    // (b) the next sheet in line (charm-nest-place.js nextSheet: NOSPREAD, PAIR / PAIR2, ONEFILL / PAIRFIX), or a new draft, takes them in one transaction and nests once
-    const world = await require("./_charmNestPlaceUnit").readWorld({ db, runId: rec.runId, read: X.read });
-    const rs = await db.collection("Charm_Nest_Runs").doc(String(rec.runId)).get(), run = Object.assign({ runId: rec.runId }, rs.exists ? rs.data() || {} : {});
-    const H = Place.recordHost({ run, records: world.records, sets: world.sets, settings: world.settings, preset: world.preset, partial: world.partial });
-    const me = H.views().find(v => v.sheetId === rec.id) || H.refresh(rec), ids = new Set(plan.moving.map(c => String(c.id))), movingV = (me.charms || []).filter(c => ids.has(String(c.id)));
-    const next = H.rules.nextSheet(me, movingV.length ? movingV : plan.moving, { orderKey: NP.orderKey, admitted: (p, units) => Nest.planEnv(S).nospreadAdmitted(p, units) });
-    const fresh = () => ({ create: { metal: rec.metal, page: next && next._new ? next.page : Math.max(0, ...H.views().filter(v => v.metal === rec.metal).map(v => num(v.page))) + 1, day: run.day || null, greenLeftover: next && next._new ? next.greenLeftover || null : null } });
-    const body = { op: "finishOverflow", id: rec.id, runId: rec.runId, layoutBase: num(rec.layoutRev), contentBase: num(rec.contentRev), pieceIds: [...ids], why: `turned away by ${name}'s nest`,
-      to: !next || next._new || !next.sheetId ? fresh() : { sheetId: next.sheetId, layoutBase: num(next.layoutRev), contentBase: num(next.contentRev) } };
-    let r = await X.call(body, "overflow");
-    // (the sheet chosen changed or shut meanwhile: a new draft takes them, as the page opens one when the next sheet is shut or busy)
-    if (r && r.status === 409 && r.conflict && body.to.sheetId && !/changed since its pieces were turned away/.test(String(r.error || ""))) r = await X.call(Object.assign({}, body, { to: fresh() }), "overflow-new");
-    if (r && r.ok && r.moved) {
-      said.push(`${r.moved} piece(s) moved on to ${r.to.name || "a new draft"}`);
-      const n = await X.call({ op: "nestStart", sheetId: r.to.sheetId, auto: true, why: `${r.moved} piece(s) moved on from ${name}` }, "nest-next");
-      if (!n || n.status >= 400) X.notes.push("the next sheet's nest was not asked: " + ((n && n.error) || "no answer"));
-    } else if (r && r.status >= 400) X.notes.push("what the nest turned away was not moved on: " + (r.error || r.status));
+    const r = await moveOn(X, rec, plan.moving, `turned away by ${name}'s nest`);   // (b)
+    if (r && r.ok && r.moved) said.push(`${r.moved} piece(s) moved on to ${r.to.name || "a new draft"}`);
   }
   // (c) feedOn: the later orders waiting their turn on this sheet get it, once
   if (feed.act === "nest" || feed.act === "pass+nest") {
@@ -568,7 +597,7 @@ async function ready(X, o = {}) {
     X.sources = made.sources; X.byId = new Map(made.charms.map(c => [c.id, c]));
     X.sh = sheetOf(X, made.charms);
     // (a Rose Gold / 10K / 14K sheet's stock: its size and the shape left of it, which the geometry check and the corners read; the page's sh.roseStock)
-    if (X.rec.roseStockId && !job.lineOff /* (LINEOFF: the outline left after its own cut is not what its pieces lie on) */) { try { const rs = await X.db.collection("Charm_Nest_Rose_Stock").doc(String(X.rec.roseStockId)).get(), d = rs.exists ? rs.data() || {} : null; if (d && +d.wPt > 0 && +d.hPt > 0) X.sh.roseStock = { id: rs.id, revision: d.revision || 0, profileJson: d.profileJson || null, wPt: +d.wPt, hPt: +d.hPt }; } catch (_) { /* its record's own size stands */ } }
+    if (X.rec.roseStockId && !X.rec.roseCutAt /* (the outline left after its own cut is not what its pieces lie on) */) { try { const rs = await X.db.collection("Charm_Nest_Rose_Stock").doc(String(X.rec.roseStockId)).get(), d = rs.exists ? rs.data() || {} : null; if (d && +d.wPt > 0 && +d.hPt > 0) X.sh.roseStock = { id: rs.id, revision: d.revision || 0, profileJson: d.profileJson || null, wPt: +d.wPt, hPt: +d.hPt }; } catch (_) { /* its record's own size stands */ } }
     X.st = X.Host.stockFor(X.rec.metal, X.sh, X.S);
     X.specHost = { sourceOf: id => X.sources[id], labelOf: m => X.Host.labelOf(m), charmScale: X.Host.CHARM_SCALE };
     X.buildJob = s => X.NP.buildJob(s, { settings: X.S.settings, stockFor: (m, z) => X.Host.stockFor(m, z, X.S), cornerPt: z => X.Host.cornerPtSetting(z, X.S), angleSet: () => angleSet(X.S), carefulAngles: X.NP.CAREFUL_ANGLES,

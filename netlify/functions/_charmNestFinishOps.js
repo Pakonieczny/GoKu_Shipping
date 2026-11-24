@@ -15,6 +15,7 @@
  *                       if they were not; → { layoutRev, contentRev, filesOwed }
  *        stage "files"  the claim before any final path is written: goes on only when layoutRev, contentRev and filesJob.jobId are still the job's; → { owedAt }, or 409 moved
  *        stage "end"    a job that stops without its files: filesJob cleared when it is still this job's (filesOwed stays: the files are still owed)
+ *    finishSeat { id, layoutBase, contentBase, checked, seats, off }                                (CLOUD_ONLY, fenced; CESAVE: where a piece lies whose cut line was changed, below)
  *    finishOverflow { id, runId, layoutBase, contentBase, pieceIds, to }                            (CLOUD_ONLY, fenced; build step 7b: the writer's overflow, below)            */
 "use strict";
 const FINISH = "Charm_Nest_Finish", SHEETS = "Charm_Nest_Sheets", CARRIER = "Charm_Nest_Run_Carrier", JOBS = "Charm_Nest_Jobs";
@@ -112,6 +113,26 @@ function install(L) {
   };
   ["finishSheet", "finishGet", "finishClaim"].forEach(op => NO_GEN_BUMP.add(op));   // (none of them moves a piece: a placement answer is made from nothing they write)
 
+  /** finishSeat { id, layoutBase, checked: { poolId: when its cut line changed }, seats: [a place a piece], off: [charm ids] } (CESAVE: the writer's own, before it writes: the pieces whose cut line a person changed in the
+   *  Charm Editor lie where they fit (smaller to fit their place: fitted); a line that fits nowhere on the sheet is turned away (off), to go on). Nothing else of the sheet is touched, its green line stays (lineKeeps); a change
+   *  saved meanwhile stays to be checked. */
+  OPS.finishSeat = async function op_finishSeat(b) {
+    if (!marked() || !fenced() || prefix()) return { error: "only the cloud's sheet writer seats a changed piece", status: 403 };
+    const id = str(b.id, 80); if (!isId(id)) return { error: "bad sheet id" };
+    const seats = new Map((b.seats || []).map(p => [String(p.id), p])), off = new Set((b.off || []).map(String)), checked = b.checked || {}, ref = col(SHEETS).doc(id), now = Date.now(), { fullSize } = require("./_charmNestPlacement"), { fitted } = require("./_charmNestSeatNow");
+    const out = await db.runTransaction(async tx => {
+      await fenceTx(tx);
+      const ss = await tx.get(ref), s = ss.exists ? ss.data() || {} : null;
+      if (!s || s.archived || num(s.laserDoneAt) > 0 || num(s.layoutRev) !== num(b.layoutBase)) return { error: `${label(s)} changed while its piece was seated`, status: 409, conflict: true };
+      const moved = [...seats.keys()].concat([...off]), placements = (s.placements || []).filter(p => p && !off.has(String(p.id))).map(p => { const q = seats.get(String(p.id)); return q ? Object.assign({}, p, { cxPt: +q.cxPt, cyPt: +q.cyPt, angle: +q.angle || 0, wPt: num(q.wPt), hPt: num(q.hPt), scale: num(q.scale) || 1, fixScale: null }) : p; });
+      const charms = (s.charms || []).map(c => { const q = c && seats.get(String(c.id)); return q ? fitted(fullSize(Object.assign({}, c, c.manual && c.manual.fit === "inplace" ? { pinned: null } : {})), q, now) : c; }), left = Object.assign({}, s.cutCheck); for (const [k, at] of Object.entries(checked)) if (left[k] && num(left[k].at) === num(at)) delete left[k];
+      const n = moved.length ? 1 : 0, up = { placements, charms, placedCount: placements.length, cutCheck: Object.keys(left).length ? left : null, layoutRev: num(s.layoutRev) + n, contentRev: num(s.contentRev) + n, updatedAt: FV.serverTimestamp(),
+        ...(off.size ? { rejects: [...new Set((s.rejects || []).map(r => String(r && typeof r === "object" ? r.id : r)).concat([...off]))] } : {}), ...require("./_charmNestRoseStock").lineKeeps(s, new Set(moved), placements.filter(p => (seats.get(String(p.id)) || {}).shape).map(p => ({ placement: p, shape: seats.get(String(p.id)).shape }))) };
+      tx.update(ref, up); return { ok: true, id, layoutRev: up.layoutRev, contentRev: up.contentRev };
+    });
+    if (out && out.ok) revTouch(b, ["s:" + id]);
+    return out;
+  };
   /** finishOverflow { id, runId, layoutBase, contentBase, pieceIds, to: { sheetId, layoutBase, contentBase } | { create: { metal, page, greenLeftover? } }, why? }
    *  (CLOUD_ONLY, fenced on the writer's task nonce; build step 7b, C4: charm-nest-1.html overflowToNextSheet on the records.) In ONE transaction the pieces a sheet's nest turned away
    *  (its rejects, or the later orders a full sheet passes on: feedOn) leave sheet A (its charms, pool ids, rejects, feedWait and orders; A at the revisions the writer just wrote,
@@ -164,7 +185,7 @@ function install(L) {
       going = going.filter(c => { const r = rows.get(String(c.poolId)); return r && !["abandoned", "superseded", "committed", "engraved", "labelled"].includes(String(r.state || "")) && !(num(r.heldAt) > 0) && !(num(r.removedAt) > 0); });
       if (!going.length) return { ok: true, id, moved: 0, already: true };
       const gIds = new Set(going.map(c => String(c.id))), gPool = new Set(going.map(c => String(c.poolId)));
-      const moving = going.map(c => { const x = Object.assign({}, c, { pinned: null, metal: f.metal }); delete x.arrivalPin; return x; });
+      const moving = going.map(c => { const x = require("./_charmNestPlacement").fullSize(Object.assign({}, c, { pinned: null, metal: f.metal })); delete x.arrivalPin; return x; });
       // (CARRYBACKS, Paul 23 Nov 2026, lost approvals: the approved engraving of a piece that moves on stayed on the sheet it left, its list and its own record: both go with the piece)
       const goBacks = (f.backPool || []).filter(x => x && gPool.has(String(x.poolId))), bKeys = [], Faces = require("../../charm-nest-engrave-faces.js"), tSet = t && t.setId && !t.draft ? t.setId : null;
       for (const x of goBacks) { const s = await tx.get(col("Charm_Pool_Back").doc(Faces.recKey(String(x.poolId), Faces.faceOf(x)))); if (s.exists && (s.data() || {}).invalidated !== true) bKeys.push(s.id); }

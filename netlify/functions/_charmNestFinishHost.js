@@ -168,7 +168,7 @@ async function makePieces(env) {
     const pool = BB.pool.rows.get(String(rc.poolId));
     if (!pool) { miss(`${rc.poolId}: its piece record is not in the cloud`); continue; }
     try {
-      let own = pool.custom || rc.custom ? (rec.sources || []).find(s => s && (s.id === rc.sourceId || s.name === rc.sourceName)) : null;
+      let own = pool.custom || rc.custom ? PoolPieces.ownSource(rec, rc, pool) : null;
       const entry = own ? null : await Master.fetchEntry(pool.sku);
       if (!own && !entry && (pool.custom || rc.custom) && pool.aiPath) own = { path: String(pool.aiPath).replace(/#fit-.*$/, "") };   // (OWNFILE: _charmNestNestPieces.js)
       if (!entry && !(own && (own.url || own.path))) { miss(`${pool.orderId || rc.poolId} · ${pool.sku || rc.sku}: no design in the library`); continue; }

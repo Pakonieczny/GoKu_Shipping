@@ -22,7 +22,7 @@
  *                    (poolPut makes the row live again), which is how Release has always worked.
  *    a sheet gone    a pool row whose sheetId names a record that is deleted or archived, or that is read and does not list
  *                    the piece, is out of date: the piece is on no sheet (repaired: "sheetGone" / "hintStale").
- *    cut             the sheet record's laserDoneAt / roseCutAt. A cut sheet's record is never edited by a take-off.
+ *    cut             the sheet record's laserDoneAt (its one lock). A cut sheet's record is never edited by a take-off.
  *
  *  History is never rewritten here: seals, timeline events, set records of what was committed and cut sheets stay as they are.
  *  A repair is a different ANSWER, never a different record; the only writes are the ones a person's press asked for.
@@ -66,12 +66,9 @@ function takenOff(p) {
 }
 /** The one field a row that is live again must carry (written by poolPut over a taken-off row), and the one a take-off clears. */
 const REPOOLED = "repooledAt";
-/** A sheet record a take-off may edit: saved, not archived, not cut. */
-const editable = s => !!s && !s.archived && !(num(s.laserDoneAt) > 0) && !(num(s.roseCutAt) > 0);
-/* LINEOFF (Paul, 23 Nov 2026, order 4235923653, a Gold Filled disc on RG_Nov.18.26_Set-2_Sheet-1: "Please also move this piece off the rose gold sheet", "Not cut: take it off", "Do not renest the RG"; and 9 Nov 2026:
-   "Nothing can block this unless the sheet has already been laser cut"): a sheet whose cut line is recorded but that the laser has not cut gives up a piece a PERSON takes off it. Only that piece leaves: every other piece
-   stays where it lies, nothing is nested, and the recorded cut, its line, its physical sheet and its leftover stay exactly as they are. A sheet with lines still protected, or cut on the laser, keeps its pieces as before. */
-const lineOnly = s => !!s && !s.archived && num(s.roseCutAt) > 0 && !(num(s.laserDoneAt) > 0) && !s.roseProtectedJson;
+/** A sheet record whose pieces may change: saved, not archived, not marked laser cut (Paul, 23 Nov 2026: "Unless a sheet is marked as laser cut including RG 10k, 14k the user should be able to update/remove/cancel a
+    given charm/charms for a given order on that particular sheet. nothing should prevent that"): a green line, a recorded cut of it, an approval or a set sent to the station never keeps a piece. */
+const editable = s => !!s && !s.archived && !(num(s.laserDoneAt) > 0);
 
 /* ── pairs, mismatched pairs and multi-piece orders (Paul, 9 Oct 2026) ───────────────────────────────────────────────────────
    Every rule on this page is by POOL ID and by ORDER, never by SKU or design: a mismatched pair's two pieces are different
@@ -156,8 +153,8 @@ function splitsOf(placement, pools) {
     the engraving backs of the pieces that left, its counts, and dirty: true (the record's own flag for "the layout changes: write
     it again"; Readiness holds a dirty sheet back from the laser until the page has written it). null: nothing of it is listed.
     The files, charms and placements are the page's to write (rewritePage): this only stops the record from saying what is not true. */
-function takeOffUpdate(sheet, ids, serverTs, o) {
-  if (!editable(sheet) && !(o && o.line === true && lineOnly(sheet))) return null;   // (LINEOFF)
+function takeOffUpdate(sheet, ids, serverTs) {
+  if (!editable(sheet)) return null;
   const list = Array.isArray(sheet.poolIds) ? sheet.poolIds.map(String) : [];
   const removed = list.filter(id => ids.has(id));
   if (!removed.length) return null;
@@ -238,7 +235,7 @@ function reconcile(input) {
     const set = holder ? holder.setId || (row && row.setId) || null : null;
     if (holder) {
       placement[id] = { state: "sheet", sheetId: holder.id || holder.sheetId || null, sheetLabel: labelOf(holder) || (row && row.sheetName) || null, setId: set && !holder.draft ? set : null, metal: holder.metal || (row && row.material) || null,
-        draft: !!holder.draft, cut: num(holder.laserDoneAt) > 0 || num(holder.roseCutAt) > 0, via, sheetAt: ms(holder.updatedAt) || null, why: "its sheet's record lists it" };
+        draft: !!holder.draft, cut: num(holder.laserDoneAt) > 0, via, sheetAt: ms(holder.updatedAt) || null, why: "its sheet's record lists it" };
     } else if (takenOff(p)) {
       const removed = num(p.removedAt) > 0 || p.removedBy, cancel = /^cancel/i.test(String(p.removedReason || ""));
       placement[id] = p.state === "superseded" ? { state: "superseded", sheetId: null, setId: null, since: ms(p.updatedAt) || null, why: "its piece was made up again" }
@@ -267,4 +264,6 @@ function repairPoolRows(rows, gone) {
   return rows.map(r => (r && r.sheetId && gone.has(String(r.sheetId)) && !TAKE_OFF_STATES.has(r.state) ? Object.assign({}, r, { sheetId: null, sheetName: null, setId: null, sheetIdWas: r.sheetId, repaired: ["sheetGone"] }) : r));
 }
 
-module.exports = { isTakeOff, takenOff, editable, lineOnly, takeOffUpdate, reconcile, repairPoolRows, revOf, digest, labelOf, orderOfKey, REPOOLED, TAKE_OFF_STATES, groupOfPool, cleanPiece, cleanCharms, cleanPieceSides, groupMates, splitsOf };
+/** An entry that moves to another sheet: one made smaller to fit its place (manual.fit "inplace") is full size again there. */
+function fullSize(c) { if (c && c.manual && c.manual.fit === "inplace") delete c.manual; return c; }
+module.exports = { fullSize, isTakeOff, takenOff, editable, takeOffUpdate, reconcile, repairPoolRows, revOf, digest, labelOf, orderOfKey, REPOOLED, TAKE_OFF_STATES, groupOfPool, cleanPiece, cleanCharms, cleanPieceSides, groupMates, splitsOf };

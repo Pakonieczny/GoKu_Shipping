@@ -15,6 +15,7 @@ const Exec = require("./_charmNestCmdExec");
 
 const CMDS = "Charm_Nest_Run_Cmds", CLOUD_DEV = "cloud";
 const NOW_TYPES = new Set(["skuonce", "remakeline", "keepsync", "remake", "backhome", "customsend"]);   // (a person's requests done at once, in a process of their own: nowRun)
+const SWEEP = new Set(["keepsync", "remake"]);   // (REPOALL: every order of a design, some minutes: nothing a person asks next waits behind it)
 const LONG = new Set(["release", "skuonce"]), AGE_MS = 10 * 60000, LONG_AGE_MS = 6 * 3600000, STALE_MS = 10 * 60000, WORK_MAX_MS = 8 * 3600000;
 const PASSING = /answer in time|timed out|network|HTTP 5\d\d|ECONNRESET|ETIMEDOUT|socket hang up|is being written already|try again|DEADLINE_EXCEEDED|UNAVAILABLE|ABORTED/i;
 const num = v => (Number.isFinite(+v) ? +v : 0);
@@ -72,7 +73,7 @@ async function commands(ctx, held) {
     await free();
     if (Date.now() > ctx.budgetEnd) return { more: true, done: n };
     if (c.dev && behind.has(c.dev)) continue;
-    if (NOW_TYPES.has(c.type)) { held.go = await take(ctx, c); if (!held.go) { if (c.dev) behind.add(c.dev); continue; } }
+    if (NOW_TYPES.has(c.type)) { held.go = await take(ctx, c); if (!held.go) { if (c.dev && !SWEEP.has(c.type)) behind.add(c.dev); continue; } }
     // the age rule (charm-nest-run-follow.js runCommands): said, never a bare "too old"
     if (c.state === "waiting" && now - num(c.at) > (LONG.has(c.type) ? LONG_AGE_MS : AGE_MS)) {
       const cl = await ctx.call({ op: "runCmdClaim", runId, id: c.id }, key(c, "claim-old|" + bucket));
@@ -122,7 +123,7 @@ async function nowRun(o) {
   const fence = { path: HOLD + "/" + id, nonce: key, runId }, fenced = t => Object.assign(new Error(t), { fenced: true }), read = b => Lib.call(b, {}), cloudSteps = Array.isArray(began.drive.cloudSteps) ? began.drive.cloudSteps.map(String) : [];
   const call = async (b, unit) => { const r = await Lib.call(b, { unit: String(unit || ""), fence }); if (r && (r.fenced || (r.status === 409 && r.notCarrier))) throw fenced(r.error); if (r && r.inFlight) throw new Error(String(r.error || "is being written already")); return r; };
   try {
-    for (const until = t0 + (o.maxMs || 80000); Date.now() < until; await nap(500)) {
+    for (let until = t0 + (o.maxMs || 80000), step = ""; Date.now() < until; await nap(500)) {
       try {
         const got = await read({ op: "runGet", runId }), run = got && got.run;
         if (!run || ["abandoned", "complete"].includes(run.status)) return back("the run is closed");
@@ -130,6 +131,7 @@ async function nowRun(o) {
         await commandsUnit({ db, run: runFresh, runId, step: "pass:commands", cursor: {}, call, callNow: call, read, drive: began.drive, cloudSteps, state: {}, fence, say: say || (() => {}), live() {}, worker, only: NOW_TYPES, unitKey: `${runId}|now|${id}`, budgetEnd: Date.now() + 90000, _runNow: { at: Date.now(), run: runFresh } });
       } catch (e) { if (e && e.fenced) return back(str(e.message, 160)); if (say) say(`[cmd now] ${id}: ${str((e && e.message) || e, 200)}`); }
       const c = (((await db.collection(CMDS).doc(runId).get()).data() || {}).cmds || {})[id];
+      if (c && SWEEP.has(c.type) && c.step !== step) { step = c.step; until = Math.min(Date.now() + 80000, t0 + 12 * 60000); }   // (it goes on while it gets on)
       if (!c || !["waiting", "running"].includes(c.state)) { if (say) say(`[cmd now] ${id}: ${((Date.now() - t0) / 1000).toFixed(1)} s`); return { done: (c && c.state) || "gone" }; }
     }
     return back("not done in time");

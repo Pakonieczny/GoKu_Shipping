@@ -147,7 +147,7 @@ async function writeLine(ctx, l, rec, unit) {
 /** The line's own summary (row.engrave) after its jobs changed: a line of one job keeps that job's record; a line cut into pieces or faces is the slots' summary (CharmNestEngraveSides.summary). */
 function lineSummary(E, lc, rec) {
   const jobs = (rec.jobs || []).filter(Boolean);
-  const recOfJob = j => { const r = { needed: !["none", "skipped"].includes(j.state), state: j.state || "classify", approved: ["approved", "written"].includes(j.state), text: j.text == null ? undefined : j.text, approvedBy: j.approvedBy || undefined, approvedAt: num(j.approvedAt) || undefined, decidedAt: num(j.decidedAt) || undefined, reason: j.reason || null, seals: j.engravingSeals || [] }; if (isFrontJob(j)) r.face = "front"; for (const k of Object.keys(r)) if (r[k] === undefined) delete r[k]; return r; };
+  const recOfJob = j => { const r = { needed: !["none", "skipped"].includes(j.state), state: j.state || "classify", approved: ["approved", "written", "none", "skipped"].includes(j.state), text: j.text == null ? undefined : j.text, approvedBy: j.approvedBy || undefined, approvedAt: num(j.approvedAt) || undefined, decidedAt: num(j.decidedAt) || undefined, reason: j.reason || null, seals: j.engravingSeals || [] }; if (isFrontJob(j)) r.face = "front"; for (const k of Object.keys(r)) if (r[k] === undefined) delete r[k]; return r; };
   const one = jobs.length === 1 && !Faces.parseKey(jobs[0].key).slot && !isFrontJob(jobs[0]) && !jobs[0].linked;
   if (one) return Object.assign({}, rec.engrave || {}, recOfJob(jobs[0]));
   const list = jobs.map(j => ({ key: j.key, slot: Faces.parseKey(j.key).slot, face: Faces.faceOf(j), archived: j.archived, copies: copiesOf(E, lc, j), engraveRec: recOfJob(j) }));
@@ -161,6 +161,22 @@ async function patchRunLine(ctx, lineKey, summary, unit) {
   if (JSON.stringify(cur.engrave || null) === JSON.stringify(eng)) return;
   const res = await ctx.call({ op: "runLinesPatch", runId: ctx.runId, lines: { [lineKey]: { engrave: eng } } }, unit);
   if (res && res.status < 400) cur.engrave = eng;
+}
+
+/* ONECOUNT (Paul, 23 Nov 2026: Set-5's sheets said 5 / 5 and 8 / 8 and "Mark set completed" was refused). A line's engraving is written twice: its own record (the jobs, which every computer shows) and the run's
+   copy of the line (engrave), which is what the cloud counts. A person's None, and a reading that said there is nothing to engrave, wrote the record alone: 47 lines on 23 Nov said "nothing to engrave" or
+   "approved" on every screen and "waits for review" in the cloud's count (HIPPO "(NO engraving)", LIGHTHOUSE "None", MOUSE "No engraving please", SQUIRREL "keine"). The run's copy follows the record now: each
+   record written is looked at once, and what is decided on it is put on the run's line. It only ever settles (a decision is never taken back here: the fit, the reading and the back files do that). */
+const jobDone = j => ["none", "skipped"].includes(j.state) || (["approved", "written"].includes(j.state) && num(j.approvedAt) > 0 && !!j.approvedBy);
+async function followRecord(ctx, E, key, l) {
+  const rec = l && l.rec, cur = (ctx.run.lines || {})[key], e = cur && cur.engrave, ids = (cur && cur.poolIds) || [], jobs = ((rec && rec.jobs) || []).filter(j => j && !j.archived);
+  if (!e || typeof e !== "object" || !ids.length || !jobs.some(jobDone) || e.invalidatedBy || ["reclassify", "classify"].includes(e.state)) return false;   // (an order that changed is read again first)
+  const one = jobs.length === 1 && !Faces.parseKey(jobs[0].key).slot && !isFrontJob(jobs[0]) && !jobs[0].linked, lc = one ? null : await lineContext(ctx, E, key);
+  if (!one && !lc) return false;
+  const s = lineSummary(E, lc, rec), ok = (x, id) => !!(((x.pieces || {})[id]) || x).approved;
+  if (!s || ids.some(id => ok(e, id) && !ok(s, id)) || !ids.some(id => ok(s, id) && !ok(e, id))) return false;
+  await patchRunLine(ctx, key, s, `engrave-one|${key}|${l.rev}`);
+  return true;
 }
 
 /* ═══ 1 · FIT ═══════════════════════════════════════════════════════════ */
@@ -186,6 +202,7 @@ async function fitUnit(ctx) {
     const r = await ctx.read({ op: "engraveSyncGet", since }), got = (r && r.lines) || [];
     for (const l of got) { newest = Math.max(newest, num(l.at)); if (lines[l.key]) keys.add(l.key); }
     if (got.length >= 500) more = true;
+    if (num(cur.oneCount) < 1) for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.engrave && !l.engrave.approved) keys.add(k);   // (ONECOUNT: the lines whose copy said "waits" before this rule, looked at once)
     if (num(cur.artLook) < 1) for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.engrave && /"state":"approved"/.test(JSON.stringify(l.engrave))) keys.add(k);   // (ARTAPPROVED: the lines approved before this rule, whose file was never written, looked at once)
   }
   const all = [...keys], pending = {};
@@ -196,8 +213,9 @@ async function fitUnit(ctx) {
     const rec = l.rec; if (!rec || !Array.isArray(rec.jobs)) continue;
     const lineState = (lines[key] || {}).state; if (O.FINISHED_LINE.has(lineState)) continue;
     const need = rec.jobs.filter(j => needsFit(j, l)), resume = rec.jobs.filter(j => needsResume(j, l));
+    if (Date.now() > ctx.budgetEnd) { if (need.length || resume.length || ((lines[key] || {}).engrave || {}).approved === false) { more = true; pending[key] = true; } continue; }
+    if (!need.length) { try { await followRecord(ctx, E, key, l); } catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; ctx.say && ctx.say(`[engrave] ${key}: the run's line was not brought up to its record (${String((e && e.message) || e).slice(0, 160)})`); } }   // (ONECOUNT)
     if (!need.length && !resume.length) continue;
-    if (Date.now() > ctx.budgetEnd) { more = true; pending[key] = true; continue; }
     const lc = await lineContext(ctx, E, key); if (!lc) continue;
     if (lc.spec && lc.spec.engraveNever) continue;   // (NO EARRING IS EVER ENGRAVED: the reading puts its jobs away, never the fit)
     let changed = false;
@@ -224,7 +242,7 @@ async function fitUnit(ctx) {
     }
   }
   const pend = Object.keys(pending).slice(0, 1500);
-  await ctx.db.runTransaction(async tx => { await fenceTx(ctx, tx); tx.set(cref, { runId: ctx.runId, artLook: 1, since: newest, pending: Object.fromEntries(pend.map(k => [k, true])), at: Date.now() }); });
+  await ctx.db.runTransaction(async tx => { await fenceTx(ctx, tx); tx.set(cref, { runId: ctx.runId, artLook: 1, oneCount: 1, since: newest, pending: Object.fromEntries(pend.map(k => [k, true])), at: Date.now() }); });
   return more ? { more: true } : undefined;
 }
 
@@ -662,4 +680,4 @@ const passItems = [
 
 module.exports = { passItems, steps: {}, nowTask, fitUnit, backUnit, indexUnit, fitOne, applyAsks, runTask, oneCopy, finalize, poolFlags, sheetIndex, resumeTask, lineSummary, copiesOf, taskIdOf, fenceTx, pngOf,
   TASKS, ACTIVE, DEFAULTS, needsFit, needsResume,
-  readLines, writeLine, patchRunLine, runEngraveOf };   // (the line's record read and written, and the run line's copy of its summary: also the classify unit's, _charmEngraveClassify.js)
+  readLines, writeLine, patchRunLine, runEngraveOf, followRecord };   // (the line's record read and written, and the run line's copy of its summary: also the classify unit's, _charmEngraveClassify.js)

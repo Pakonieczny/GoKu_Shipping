@@ -103,7 +103,7 @@ function create(o) {
     if (!rc.poolId) throw new Error("a piece that is no order's (dropped on a page by hand) is nested on a computer");
     if (!pool) throw new Error(`its piece record ${rc.poolId} is not in the cloud`);
     // (a custom design is in no master file: it is made from its own file, the one its sheet was cut from: the record's sources)
-    let own = pool.custom || rc.custom ? (rec.sources || []).find(s => s && (s.id === rc.sourceId || s.name === rc.sourceName)) : null;
+    let own = pool.custom || rc.custom ? PoolPieces.ownSource(rec, rc, pool) : null;
     const sku = String(pool.sku || rc.sku || "").trim().toUpperCase();
     const entry = own ? null : await fetchEntry(sku);
     if (!own && !entry && (pool.custom || rc.custom) && pool.aiPath) own = { path: String(pool.aiPath).replace(/#fit-.*$/, "") };   // (OWNFILE, Paul 23 Nov 2026: "why would you stop a sheet from being fully filled just because there's a custom order?": SS Draft 11 placed nothing from the evening of 22 Nov on: order 4241324766's custom drawing was not in the sheet's own list of files (empty), so it was "not in the library", and every nest of the sheet was thrown away. A custom piece's record names its drawing: it is made from that)

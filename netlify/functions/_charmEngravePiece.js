@@ -88,7 +88,7 @@ function create(env) {
     rows.set(poolId, pool);
     const sheet = o.sheet || null, rc = sheet && Array.isArray(sheet.charms) ? sheet.charms.find(c => c && c.poolId === poolId) || {} : {};
     // a custom design is in no master file: it is made from its own file, the one its sheet was cut from (the sheet record's sources)
-    let own = pool.custom || rc.custom ? ((sheet && sheet.sources) || []).find(s => s && (s.id === rc.sourceId || s.name === rc.sourceName)) : null;
+    let own = pool.custom || rc.custom ? PoolPieces.ownSource(sheet, rc, pool) : null;
     const entry = own ? null : await fetchEntry(pool.sku);
     if (!own && !entry && (pool.custom || rc.custom) && pool.aiPath) own = { path: String(pool.aiPath).replace(/#fit-.*$/, "") };   // (OWNFILE: _charmNestNestPieces.js)
     if (!entry && !(own && (own.url || own.path))) throw pending(`the design ${pool.sku || "of this piece"} is not in the library`);

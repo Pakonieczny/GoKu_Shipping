@@ -7,15 +7,15 @@
  *    detect   · cancel records written since the lane's cursor (cancelList after state.takeoff.cancelCursor: no Etsy call; the first read takes the newest 5000 ids);
  *             · orders Etsy closed that a SHIPPING STATION marked shipped (OURSHIPONLY: the run's etsyClosed lines, shippedByUs), at most every 10 minutes;
  *             · orders the Design Station's ledger completed (never cut again; a custom piece made here is never judged by it), at most every 10 minutes;
- *             · a person's presses: takeOffAsk { hold | sheetOff | changed | retry } (Charm_Nest_TakeOff/<order>.asks).
+ *             · a person's presses: takeOffAsk { hold | sheetOff | retry } (Charm_Nest_TakeOff/<order>.asks).
  *    journal  Charm_Nest_TakeOff/<order>: one job per take-off (its key: kind and time), written BEFORE anything moves, then after each step; a job left half done by a
  *             pass that ended is finished by the next one (every step can run again and writes nothing the second time).
  *    a job    1 · a cancel is read again (cancelCheck): an order not cancelled any more is "restored" and nothing moves (its set-aside notice goes);
  *             2 · where every piece of the order is (getOrderPieces: its pool rows and every live sheet that lists them, one snapshot);
- *             3 · cloudTakeOff, ONE transaction per sheet (rows, sheet fields, charms and placements, green lines, filesOwed, layoutRev and contentRev; P10): a sheet that is
- *                 cut or sent keeps its pieces (set aside), one that is busy waits for the next pass, one whose green lines cannot give them up holds the order with words;
+ *             3 · cloudTakeOff, ONE transaction per sheet (rows, sheet fields, charms and placements, green lines, filesOwed, layoutRev and contentRev; P10): a sheet
+ *                 marked laser cut keeps its pieces (set aside), one that is busy waits for the next pass;
  *                 the pieces on no sheet: their rows only;
- *             4 · the run's lines (runLinesPatch): gone (cancelled, shipped, completed), held (Hold, sheet Take off), made up again (an accepted change);
+ *             4 · the run's lines (runLinesPatch): gone (cancelled, shipped, completed), held (Hold, sheet Take off);
  *             5 · the records: cancelFates (sheet by sheet), the order's timeline (its pieces' own events, written in the take-off), the set-aside notices in the shape every
  *                 page reads (Charm_Nest_Shared autocancel-production: n:<order>:<at>, d:<order>), and the freed sheets for the placement pass (state.takeoff.freed).
  *    Filling the freed room is the placement pass's (build step 5: placeOnSheet then nestStart), never the page's moveIn; the sheet's files are the files lane's (filesOwed).
@@ -25,7 +25,7 @@
  *  condition waits with words and clears by itself). Then each run line is compared with the world:
  *    · its order is not open any more: cancelled (its cancel record) → a take-off job; closed but not cancelled → etsyClosed only (OURSHIPONLY), unless a person kept it (keepShipped);
  *    · its order changed after it was read (the world build's change marks, Charm_World/changed) → changePending (and repoolChanged when what it is made of changed): its
- *      pieces move only after a person accepts the change (takeOffAsk changed);
+ *      pieces change only after a person accepts the change (remakeline, _charmNestCmdExec.js again);
  *    · an Etsy-closed order a shipping station marked shipped → a take-off job.
  *  No Etsy call, no world build, no browser.                                                                                                                                  */
 "use strict";
@@ -237,23 +237,13 @@ function stuckWords(env, why) {
 /** The pieces of the order the job takes off, from its answer of getOrderPieces: { onSheets: Map sheetId → { sheet, ids }, loose: [ids], lineKeys } */
 function scopeOf(job, o, lines, rid) {
   const placement = (o && o.placement) || {}, sheets = new Map(((o && o.sheets) || []).map(s => [String(s.id), s]));
-  // (an accepted change that names no line: the order's lines that wait on a change; a completed order: the lines the ledger covers)
-  // (S1, Paul 21 Nov 2026: a hold that names its lines, a person's Skip piece in Review on a staff computer, takes off the pieces of those lines only)
-  let lineKeys = (job.kind === "changed" || job.kind === "completed" || (job.kind === "hold" && (job.lineKeys || []).length)) ? ((job.lineKeys || []).length ? job.lineKeys.slice() : job.kind === "changed" ? Object.keys(lines).filter(k => ridOf(k) === rid && lines[k] && (lines[k].changePending || lines[k].repoolChanged)) : null) : null;
-  /* (S2, Paul 21 Nov 2026: "Accept the new order" pressed on a viewer is this job.) An accepted change names only lines that still wait on a change: the same press from a second computer,
-     or a job run again after its lines were written, moves nothing a second time. And, as the page's acceptChange: a line whose pieces were made already (written / pooled) and whose change
-     does not touch what it is made of (no repoolChanged) keeps its pieces where they are and only stops waiting (keepPlace); the others come off and are made up again. */
-  let keepPlace = null;
-  if (job.kind === "changed") {
-    lineKeys = lineKeys.filter(k => lines[k] && (lines[k].changePending || lines[k].repoolChanged));
-    keepPlace = new Set(lineKeys.filter(k => !lines[k].repoolChanged && ["written", "pooled"].includes(String(lines[k].state || ""))));
-  }
-  const moves = lineKeys && keepPlace ? lineKeys.filter(k => !keepPlace.has(k)) : lineKeys;
+  // (a completed order: the lines the ledger covers; S1, Paul 21 Nov 2026: a hold that names its lines, a person's Skip piece in Review on a staff computer, takes off the pieces of those lines only)
+  const lineKeys = job.kind === "completed" || (job.kind === "hold" && (job.lineKeys || []).length) ? ((job.lineKeys || []).length ? job.lineKeys.slice() : null) : null;
   // (S5, Paul 21 Nov 2026: the sheet window's "Only this charm" / "The whole order" on a staff computer: only the pieces the person chose come off, the rest of the order stays;
   //  scope "order" takes them off wherever they are, scope "sheet" (or none, as before) off the job's sheet only)
   const only = Array.isArray(job.only) && job.only.length ? new Set(job.only.map(String)) : null;
   const bySheet = !!job.sheetId && job.scope !== "order";
-  const inScope = id => (!only || only.has(String(id))) && (!moves || moves.some(k => String(id).startsWith(k + "_"))) && String(id).startsWith(rid + "_");
+  const inScope = id => (!only || only.has(String(id))) && (!lineKeys || lineKeys.some(k => String(id).startsWith(k + "_"))) && String(id).startsWith(rid + "_");
   const onSheets = new Map(), loose = [];
   for (const [id, p] of Object.entries(placement)) {
     if (!p || !inScope(id)) continue;
@@ -265,7 +255,7 @@ function scopeOf(job, o, lines, rid) {
   }
   // (the lines the job changes: those it names, else every line of the order the run holds)
   const keys = lineKeys || Object.keys(lines).filter(k => ridOf(k) === rid);
-  return { onSheets, loose, lineKeys: keys, keepPlace };
+  return { onSheets, loose, lineKeys: keys };
 }
 
 /** One take-off job, from its first step to its last; every step can run again. → { status } */
@@ -286,24 +276,13 @@ async function workJob(env, rid, key, job, save) {
   const a = await read({ op: "getOrderPieces", orderIds: [rid] });
   if (!a || a.error || !a.orders) throw new Error("where the order's pieces are could not be read: " + ((a && a.error) || "no answer"));
   const o = a.orders[rid] || { pools: [], sheets: [] }, sc = scopeOf(job, o, lines, rid);
-  // an accepted change whose piece the laser has cut already: nothing comes off; the line waits for a person, who makes the change by hand (Review.repoolLine's own rule)
-  if (job.kind === "changed") {
-    const cutIds = [...sc.onSheets.values()].flatMap(x => x.ids).filter(id => o.placement && o.placement[id] && o.placement[id].cut);
-    if (cutIds.length) {
-      // (every line of the change waits with its pieces where they are: none is made up again while one of its pieces is cut)
-      const keep = new Set(sc.lineKeys.flatMap(k => ((lines[k] && lines[k].poolIds) || []).map(String)).concat(cutIds));
-      await patchLines(env, rid, key, job, sc, new Set(), keep, [], [], []);
-      await call({ op: "takeOffJournal", orderId: rid, job: key, set: { status: "held", why: "Etsy changed this piece after it was cut: make the change by hand, then release it or skip it" } }, "held|cut");
-      return { status: "held" };
-    }
-  }
   // 3 · off each sheet, one transaction each; then the pieces on no sheet
-  const taken = [], left = [], waiting = [], refused = [], spots = [], freed = [], looseMore = [];
+  const taken = [], left = [], waiting = [], freed = [], looseMore = [];
   // (a piece already off since an earlier pass of this job, or an earlier take-off: its line no longer names it either)
   const removed = new Set(Object.entries(o.placement || {}).filter(([, p]) => p && ["held", "removed", "superseded"].includes(p.state)).map(([id]) => String(id))), kept = new Set();
   for (const [sheetId, x] of sc.onSheets) {
     if (Date.now() >= num(env.budgetEnd)) { waiting.push({ where: x.label, why: "the pass ran out of time: the next one goes on" }); continue; }
-    const r = await call({ op: "cloudTakeOff", orderId: rid, sheetId, ids: x.ids, kind: job.kind, at: job.at, who: by, note: job.note || "", reason: job.kind === "cancel" ? "cancelled" : "", job: key, autoOnly: job.kind === "cancel" }, "sheet|" + sheetId + "|" + x.ids.slice().sort().join(","));
+    const r = await call({ op: "cloudTakeOff", orderId: rid, sheetId, ids: x.ids, kind: job.kind, at: job.at, who: by, note: job.note || "", reason: job.kind === "cancel" ? "cancelled" : "", job: key, autoOnly: job.kind === "cancel" && !!job.etsy }, "sheet|" + sheetId + "|" + x.ids.slice().sort().join(","));
     const where = (r && r.label) || x.label || sheetId;
     if (r && r.status < 400 && r.ok) {
       for (const id of r.removed || []) removed.add(String(id));
@@ -312,9 +291,8 @@ async function workJob(env, rid, key, job, save) {
       if ((r.kept || []).length) { for (const id of r.kept) kept.add(String(id)); left.push({ where, sheetId, ids: r.kept, cut: r.keptWhy === "already cut" || r.keptWhy === "sent to the station", only: !!r.only, why: r.keptWhy || "" }); }
       // (the sheet does not list them after all: a row's hint was out of date, or an earlier pass took them off: their rows are looked at on their own below)
       if (r.already && !(r.removed || []).length && !(r.kept || []).length) looseMore.push(...x.ids);
-      for (const sp of r.spots || []) spots.push(sp);
+      if (r.refile) await call({ op: "labelsAsk", kind: "setFiles", setId: r.refile, by }, "setfiles|" + r.refile);   // (its set was released: its labels, manifest and files are made again)
     } else if (r && r.waiting) waiting.push({ where, why: r.error || "busy" });
-    else if (r && r.refused) refused.push({ where, sheetId, ids: x.ids, why: r.error || "refused" });
     else throw new Error(`${where}: ${(r && r.error) || "the take-off was not answered"}`);
   }
   const loose = [...new Set(sc.loose.concat(looseMore))];
@@ -326,11 +304,10 @@ async function workJob(env, rid, key, job, save) {
   }
   if (freed.length) save.freed = [...new Set([...(save.freed || ((env.state && env.state.takeoff && env.state.takeoff.freed) || [])), ...freed])].slice(-100);
   // 4 · the run's lines (only once every sheet has given its pieces up: a line never says gone while a piece of it still waits on a sheet)
-  if (!waiting.length) await patchLines(env, rid, key, job, sc, removed, kept, taken, refused, spots);
+  if (!waiting.length) await patchLines(env, rid, key, job, sc, removed, taken);
   // 5 · the records
   if (job.kind === "cancel" && !waiting.length) {
-    const leftAll = left.concat(refused.map(x => ({ where: x.where, open: true, why: x.why })));
-    const fates = fatesOf(taken, leftAll);
+    const fates = fatesOf(taken, left);
     if (fates.length && !job.fatesSaved) { const r = await call({ op: "cancelFates", orderId: rid, fates, cancelAt: job.at, by }, "fates|" + fates.map(f => f.sheet + ":" + f.fate).join(",")); if (r && r.status < 400) job.fatesSaved = true; }
     const queued = sc.lineKeys.filter(k => liveLine(lines[k]) || (lines[k] && lines[k].state === "gone" && lines[k].reason === reasonOf(job))).length;
     if (queued && !job.queueSaid) {
@@ -340,31 +317,31 @@ async function workJob(env, rid, key, job, save) {
       job.queueSaid = true;
     }
     // what stays on sheets that were cut (or could not give the pieces up) is said in the run pill of every page, until someone sets it aside
-    if (leftAll.length && !job.noticed) {
-      const text = noticeText(rid, leftAll), where = joinAnd(leftAll.map(l => l.where));
-      const n = { rid, at: num(job.at), text, where, t: Date.now(), sheets: leftAll.filter(l => !l.open).map(l => l.where).slice(0, 12) };
+    if (left.length && !job.noticed) {
+      const text = noticeText(rid, left), where = joinAnd(left.map(l => l.where));
+      const n = { rid, at: num(job.at), text, where, t: Date.now(), sheets: left.map(l => l.where).slice(0, 12) };
       await call({ op: "sharePut", name: NOTICES, set: { [`n:${rid}:${num(job.at)}`]: n } }, "notice");
-      await call({ op: "timelineAdd", events: [{ orderId: rid, type: "note", by: "System", station: "sorter", text: text.slice(0, 200), data: { cancelled: true, sheets: leftAll.map(l => l.where), pieces: leftAll.reduce((s, l) => s + ((l.ids || []).length || 1), 0) }, id: `autocancel-aside-${num(job.at)}`, at: Date.now() }] }, "notice|timeline");
+      await call({ op: "timelineAdd", events: [{ orderId: rid, type: "note", by: "System", station: "sorter", text: text.slice(0, 200), data: { cancelled: true, sheets: left.map(l => l.where), pieces: left.reduce((s, l) => s + ((l.ids || []).length || 1), 0) }, id: `autocancel-aside-${num(job.at)}`, at: Date.now() }] }, "notice|timeline");
       job.noticed = true;
       const prev = save.notices || ((env.state && env.state.takeoff && env.state.takeoff.notices) || []);
       save.notices = prev.filter(x => !(x.rid === rid && num(x.at) === num(job.at))).concat([{ rid, at: num(job.at) }]).slice(-100);
     }
   }
-  // the job's end: done, waiting (a sheet at work, the next pass goes on) or held (words: a person takes the pieces off by hand, or presses Try again)
-  const status = waiting.length ? "waiting" : refused.length ? "held" : "done";
-  const why = waiting.length ? waiting.map(w => `${w.where}: ${w.why}`).join("; ").slice(0, 400) : refused.length ? refused.map(w => w.why).join("; ").slice(0, 400) : null;
+  // the job's end: done, or waiting (a sheet at work, the next pass goes on)
+  const status = waiting.length ? "waiting" : "done";
+  const why = waiting.length ? waiting.map(w => `${w.where}: ${w.why}`).join("; ").slice(0, 400) : null;
   const longWait = status === "waiting" && Date.now() - num(job.at) > WAIT_WORDS_MS;
-  await call({ op: "takeOffJournal", orderId: rid, job: key, set: { status, why: longWait ? `Waiting since ${new Date(num(job.at)).toISOString().slice(11, 16)} UTC: ${why}` : why, taken: taken.map(t => ({ where: t.where, sheetId: t.sheetId, n: (t.ids || []).length })), left: left.map(l => ({ where: l.where, sheetId: l.sheetId, why: l.why, n: (l.ids || []).length })), removed: [...removed].slice(0, 300), fatesSaved: !!job.fatesSaved, queueSaid: !!job.queueSaid, noticed: !!job.noticed, ...(spots.length ? { spots: spots.slice(0, 100) } : {}), ...(status === "done" ? { doneAt: Date.now() } : {}) } }, "end|" + status + "|" + removed.size + "|" + kept.size + "|" + waiting.length + "|" + refused.length);
+  await call({ op: "takeOffJournal", orderId: rid, job: key, set: { status, why: longWait ? `Waiting since ${new Date(num(job.at)).toISOString().slice(11, 16)} UTC: ${why}` : why, taken: taken.map(t => ({ where: t.where, sheetId: t.sheetId, n: (t.ids || []).length })), left: left.map(l => ({ where: l.where, sheetId: l.sheetId, why: l.why, n: (l.ids || []).length })), removed: [...removed].slice(0, 300), fatesSaved: !!job.fatesSaved, queueSaid: !!job.queueSaid, noticed: !!job.noticed, ...(status === "done" ? { doneAt: Date.now() } : {}) } }, "end|" + status + "|" + removed.size + "|" + kept.size + "|" + waiting.length);
   if (job.kind === "cancel" && status === "done") await call({ op: "sharePut", name: NOTICES, set: { [`d:${rid}`]: { at: num(job.at), t: Date.now() } } }, "done");
   if (env.say) env.say(`[takeoff] ${rid} (${job.kind}): ${status}${taken.length ? " · taken off " + joinAnd(taken.map(t => t.where)) : ""}${left.length ? " · stays on " + joinAnd(left.map(l => l.where)) : ""}${why ? " · " + why : ""}`);
   return { status };
 }
 
 /** The run's lines after the take-off (only the fields that change; a line that already says it is not written again). */
-async function patchLines(env, rid, key, job, sc, removed, kept, taken, refused, spots) {
+async function patchLines(env, rid, key, job, sc, removed, taken) {
   const lines = (env.run && env.run.lines) || {}, patch = {}, now = Date.now(), names = joinAnd([...new Set(taken.map(t => t.where))]);
   for (const k of sc.lineKeys) {
-    const l = lines[k]; if (!l || l.state === "committed") continue;
+    const l = lines[k]; if (!l || (l.state === "committed" && !(l.poolIds || []).some(id => removed.has(String(id))))) continue;
     const ids = (l.poolIds || []).map(String), rest = ids.filter(id => !removed.has(id)), p = {};
     if (rest.length !== ids.length) p.poolIds = rest;
     if (AUTO.has(job.kind)) {
@@ -380,13 +357,6 @@ async function patchLines(env, rid, key, job, sc, removed, kept, taken, refused,
         const text = `Taken off ${names || "its sheet"} by ${job.by || "someone"}${job.note ? ": " + job.note : ""}`;
         Object.assign(p, { state: "held", hold: text, reason: text, heldAt: now, holdSeen: false });
       }
-    } else if (job.kind === "changed") {
-      const cut = ids.filter(id => kept.has(id));
-      if (sc.keepPlace && sc.keepPlace.has(k)) { if (l.changePending || l.repoolChanged) Object.assign(p, { changePending: false, repoolChanged: false }); }   // (S2: its pieces stay where they are)
-      else if (cut.length || refused.length) {
-        const where = joinAnd([...new Set(refused.map(x => x.where))]), text = cut.length ? "Etsy changed this piece after it was cut: make the change by hand, then release it (the piece on that sheet is kept) or skip it" : `The new piece could not replace the old one yet (${where}): try it again, or make the change by hand`;
-        Object.assign(p, { changePending: false, repoolChanged: false, state: "held", hold: text, reason: text });
-      } else if (l.changePending || l.repoolChanged || ids.length) Object.assign(p, { poolIds: [], changePending: false, repoolChanged: false, state: "pulled", reason: null, hold: null });
     }
     const changed = Object.entries(p).filter(([f, v]) => JSON.stringify(l[f] === undefined ? null : l[f]) !== JSON.stringify(v === undefined ? null : v));
     if (changed.length) patch[k] = Object.fromEntries(changed);

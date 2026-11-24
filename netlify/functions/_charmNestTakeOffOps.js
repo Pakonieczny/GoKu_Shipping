@@ -6,19 +6,19 @@
  *    cloudTakeOff  { orderId, sheetId | null, ids, kind, at, who, note?, reason?, job?, autoOnly? }   (CLOUD_ONLY, fenced on the driver's lease and the run's carrier;
  *                  who: the person, or "Etsy", the take-off is for: the call itself is always sent by "Cloud")
  *       ONE transaction per sheet, with only that sheet's rows in it (so a commit stays well under Firestore's 10 MiB with a 900 KB sheet record, m:C14). It:
- *         1. marks the rows abandoned (superseded for an accepted change) with the take-off's own mark (removedAt / heldAt …), as poolTakeOff does;
+ *         1. marks the rows abandoned with the take-off's own mark (removedAt / heldAt …), as poolTakeOff does;
  *         2. writes takeOffUpdate's sheet fields (poolIds, orders, backPool, counts, dirty) — the same pure function a page's take-off uses (_charmNestPlacement.js);
  *         3. drops the pieces from the sheet's charms and placements (and its rejects, feedWait and pieceSides): every other piece keeps its pose, byte for byte;
- *         4. rewrites the green lines (roseProtectedJson) of a Rose Gold, 10K or 14K sheet with roseTakeOff's math (_charmNestRoseStock.js guardTakeOff), in the same commit;
+ *         4. keeps every green line of a Rose Gold, 10K or 14K sheet as saved (THELINE: _charmNestRoseStock.js lineKeeps), the pieces no longer named inside it;
  *         5. sets filesOwed = now (the sheet's files are written again by the files lane), layoutRev + 1 and contentRev + 1;
- *       and in the same commit: the pieces' engraving records leave the sheet (their sheetId), the copies leave the order list of the sheet's set when the set is formed but not
- *       committed (the sheet window's dropFromSets), and the order's take-off journal (Charm_Nest_TakeOff/<order>) records the sheet as done.
- *       It refuses (409, nothing written) and says why in words when the green lines cannot give the pieces up whole (part of a group, or lines that cannot be drawn
- *       again exactly), when the sheet is busy (nesting, finishing, saving, Manual Control, a nest task) or belongs to another run that is still open. A sheet that is cut, whose
- *       set went to the station, or (autoOnly) that holds this order alone, keeps the pieces: answered as kept, rows untouched (the page's leftWhy).
+ *       and in the same commit: the pieces' engraving records leave the sheet (their sheetId), the copies leave the order list of the sheet's set
+ *       (the sheet window's dropFromSets), and the order's take-off journal (Charm_Nest_TakeOff/<order>) records the sheet as done.
+ *       It refuses (409, nothing written) and says why in words when the sheet is busy (nesting, finishing, saving, Manual Control, a nest task) or belongs to another run that is still
+ *       open. A sheet marked laser cut (its own mark, or its set's), or (autoOnly) that holds this order alone, keeps the pieces: answered as kept, rows untouched; so does, for an order
+ *       shipped or completed, a sheet with a recorded cut or whose set went to the station.
  *       sheetId null: the order's pieces that no live sheet lists (pooled, waiting): their rows only.
  *    takeOffJournal { orderId, job?, create?, set?, ask? }   (CLOUD_ONLY, fenced): the take-off journal, written before anything moves and after each step.
- *    takeOffAsk    { orderId, kind: hold | sheetOff | changed | retry, sheetId?, lineKeys?, only?, scope?, note?, by, dev }   (a person's press; production only. only: the pieces
+ *    takeOffAsk    { orderId, kind: hold | sheetOff | retry, sheetId?, lineKeys?, only?, scope?, note?, by, dev }   (a person's press; production only. only: the pieces
  *                  chosen, only those come off; scope: sheet | order. → { askId, at, job }: job is the take-off the lane makes of it, for the page to follow)
  *    takeOffAck    { orderId, at?, by, dev, forget? }   (a person's "Set aside", or the cloud's "not cancelled any more": the notice goes from the shared store)
  *    takeOffGet    { orderIds }   (read: the journals, for every page's progress)                                                                                   */
@@ -27,12 +27,11 @@ const crypto = require("crypto");
 const { str, num } = require("./_charmNestAuth");
 const Placement = require("./_charmNestPlacement");
 const RoseStockMod = require("./_charmNestRoseStock");
-const Rose = require("../../charm-nest-rose.js");
 const Faces = require("../../charm-nest-engrave-faces.js");
 
 const COLL = "Charm_Nest_TakeOff";
-const KINDS = new Set(["cancel", "shipped", "completed", "hold", "sheetOff", "changed"]);
-const ASK_KINDS = new Set(["hold", "sheetOff", "changed", "retry"]);
+const KINDS = new Set(["cancel", "shipped", "completed", "hold", "sheetOff"]);
+const ASK_KINDS = new Set(["hold", "sheetOff", "retry"]);
 const REASON = { shipped: "shipped at our Shipping station", completed: "completed at the Design Station (never cut again)" };
 const BUSY_STATUS = new Set(["nesting", "finishing", "queued", "saving"]);
 const TASK_STALE_MS = 14 * 60000;
@@ -44,7 +43,6 @@ const jobKeyOk = k => typeof k === "string" && /^[\w\-.:]{1,80}$/.test(k);
 function markOf(kind, o) {
   const at = Math.round(num(o.at)) || Date.now(), by = str(o.by, 80) || "System", note = str(o.note, 200);
   if (kind === "hold" || kind === "sheetOff") return { state: "abandoned", sheetId: null, setId: null, heldBy: by, heldReason: note || "on hold", heldAt: at };
-  if (kind === "changed") return { state: "superseded", sheetId: null, setId: null };
   const reason = kind === "cancel" ? str(o.reason, 300) || "cancelled" : REASON[kind] || str(o.reason, 300) || "taken off";
   return { state: "abandoned", sheetId: null, setId: null, removedBy: by, removedReason: reason, removedAt: at };
 }
@@ -69,6 +67,8 @@ function setOrdersWithout(orders, gone) {
   }
   return touched ? out : null;
 }
+/** A set already released (approved for laser cutting, its labels made, sent to the station): a change of one of its sheets has its files made again. rec: the sheet. */
+const released = (s, rec) => !!(s && (s.committedAt || s.processReady || s.laserSetPending || s.status === "labelled" || (s.labels && s.labels.pdf) || (rec && (rec.processReady || rec.laserSetPending))));
 /** Why a sheet record cannot be changed by a take-off now (it is at work), in words; "" when it can. */
 function busyWhy(s, now) {
   const name = Placement.labelOf(s) || "The sheet";
@@ -89,7 +89,7 @@ module.exports = function (d) {
   async function op_cloudTakeOff(b) {
     if (!d.marked()) return { error: "only the cloud sends cloudTakeOff", status: 403 };
     const rid = orderIdOf(b.orderId), kind = KINDS.has(b.kind) ? b.kind : null;
-    if (!rid || !kind) return { error: "orderId and kind (cancel, shipped, completed, hold, sheetOff or changed) required" };
+    if (!rid || !kind) return { error: "orderId and kind (cancel, shipped, completed, hold or sheetOff) required" };
     const sheetId = b.sheetId == null || b.sheetId === "" ? null : str(b.sheetId, 80);
     if (sheetId && !d.isId(sheetId)) return { error: "bad sheet id" };
     const ids = [...new Set((Array.isArray(b.ids) ? b.ids : []).map(String))].filter(id => d.isPoolId(id) && ridOfPiece(id) === rid).slice(0, 400);
@@ -103,13 +103,13 @@ module.exports = function (d) {
       const sd = sref ? await tx.get(sref) : null, s = sd && sd.exists ? Object.assign({}, sd.data(), { id: sheetId }) : null;
       const live = !!(s && !s.archived), out = { ok: true, orderId: rid, sheetId, kind, removed: [], extended: [], kept: [], onSheet: [] };
       const want = new Set(ids), at = FV.serverTimestamp();
-      let rows = [], sheetUpd = null, roseG = null, setRef = null, setOrders = null, backRows = [], backOf = new Map(), writeRows = [];
+      let rows = [], sheetUpd = null, setRef = null, setOrders = null, backRows = [], backOf = new Map(), writeRows = [];
       if (live) {
         out.label = Placement.labelOf(s) || ""; out.setId = s.draft ? null : s.setId || null; out.metal = s.metal || null;
-        // cut, or its set went to the station: what was made stays (as a page's take-off keeps it)
-        const line = (kind === "hold" || kind === "sheetOff") && Placement.lineOnly(s);   // (LINEOFF: a person's press, a cut line recorded, not cut on the laser)
-        let keptWhy = (!Placement.editable(s) && !line) || s.recalled ? "already cut" : "";
-        if (!keptWhy) { const sets = (await tx.get(col(N.SETS).where("sheetIds", "array-contains", sheetId))).docs.map(x => x.data() || {}); if (sets.some(x => num(x.laserDoneAt) > 0)) keptWhy = "already cut"; else if (sets.some(x => d.setEdit().committedSet(x))) keptWhy = "sent to the station"; }
+        // the laser's mark (the sheet's, or its set's) alone keeps a piece on its sheet (Placement.editable). An order shipped or completed, found by the cloud itself, also leaves what a recorded cut or a set sent to the station holds
+        const auto = kind === "shipped" || kind === "completed";
+        let keptWhy = !Placement.editable(s) || s.recalled || (auto && num(s.roseCutAt) > 0) ? "already cut" : "";
+        if (!keptWhy) { const sets = (await tx.get(col(N.SETS).where("sheetIds", "array-contains", sheetId))).docs.map(x => x.data() || {}); if (sets.some(x => num(x.laserDoneAt) > 0)) keptWhy = "already cut"; else if (auto && sets.some(x => d.setEdit().committedSet(x))) keptWhy = "sent to the station"; }
         // a sheet another run still carries is that run's to change
         const fr = d.fenceRun ? d.fenceRun() : null;
         if (!keptWhy && s.runId && fr && s.runId !== fr) { const rs = await tx.get(col(N.RUNS).doc(String(s.runId))), r = rs.exists ? rs.data() || {} : null; if (r && !["complete", "abandoned", "archived"].includes(String(r.status || "")) && !r.retiredInto) return { error: `${out.label} belongs to run ${s.runId}, which is still open: its pieces come off with that run`, status: 409, waiting: true, otherRun: s.runId }; }
@@ -125,31 +125,20 @@ module.exports = function (d) {
         for (const id of Placement.groupMates(s, take, grouped)) if (!take.has(id)) { take.add(id); out.extended.push(id); }
         if (out.extended.length) rows = rows.concat(await txGetAll(tx, out.extended.map(id => col(N.POOL).doc(id)), d.POOL_EVENT_FIELDS));
         if (!take.size) { out.already = true; return out; }
-        // the green lines give up the pieces inside them, in this commit (roseTakeOff's math); a guard that cannot be rewritten exactly refuses, and the order waits with words
-        const charmIds = (s.charms || []).filter(c => c && take.has(String(c.poolId))).map(c => String(c.id));
-        if (Rose.cuts(s.metal) && !line) {
-          const guard = RoseStockMod.protectedLayout(s), stockDoc = guard && d.isId(s.roseStockId) ? await tx.get(col("Charm_Nest_Rose_Stock").doc(String(s.roseStockId))) : null;
-          roseG = RoseStockMod.guardTakeOff(s, stockDoc && stockDoc.exists ? stockDoc.data() : null, new Set(charmIds), { allowanceMm: s.roseAllowanceMm });
-          if (roseG.partialGroups && roseG.partialGroups.length) return { error: `${out.label}: only part of a group would leave its green lines (${roseG.partialGroups.map(g => g.taken + " of " + (g.taken + g.left)).join(", ")}): nothing was taken off; take the pieces off by hand in the sheet window`, status: 409, refused: "roseGroups", partialGroups: roseG.partialGroups };
-          if (roseG.changed && !roseG.exact) return { error: `${out.label}: its green lines could not be drawn again exactly without these pieces: nothing was taken off; take them off by hand in the sheet window (Cut Sheet draws the line again)`, status: 409, refused: "roseExact" };
-        }
         // the sheet's own fields, as a page's take-off writes them, and the pieces out of its layout (every other pose stays as it is)
-        const t = Placement.takeOffUpdate(s, take, at, { line });
+        const t = Placement.takeOffUpdate(s, take, at);
         if (t) {
           const charms = (s.charms || []).filter(c => !(c && take.has(String(c.poolId)))), keepIds = new Set(charms.map(c => c && String(c.id)));
           sheetUpd = Object.assign({}, t.update, { charms, placements: (s.placements || []).filter(p => p && keepIds.has(String(p.id))), filesOwed: now, layoutRev: num(s.layoutRev) + 1, contentRev: num(s.contentRev) + 1, takenOffAt: now });
           if (Array.isArray(s.rejects)) sheetUpd.rejects = s.rejects.filter(x => keepIds.has(String(x)));
           if (Array.isArray(s.feedWait)) { const keepPool = new Set(charms.map(c => c && String(c.poolId))); sheetUpd.feedWait = s.feedWait.filter(x => keepIds.has(String(x)) || keepPool.has(String(x))); }
           if (s.pieceSides && typeof s.pieceSides === "object") { const ps = Object.assign({}, s.pieceSides); for (const id of take) delete ps[id]; sheetUpd.pieceSides = ps; }
-          if (roseG && roseG.changed) Object.assign(sheetUpd, { roseProtectedJson: roseG.protectedJson, rosePlanJson: null, rosePlanHash: null, roseFingerprint: null });
+          Object.assign(sheetUpd, RoseStockMod.lineKeeps(s, new Set((s.charms || []).filter(c => c && take.has(String(c.poolId))).map(c => String(c.id)))));   // (THELINE: every line as saved)
           // its QR label names the orders it holds: a draft's label (not one a person made) goes, as the sheet window's remakeLabels does; a set's is owed again (the labels unit)
           if (s.label) { if (s.draft && !(s.label && s.label.own)) sheetUpd.label = null; sheetUpd.labelOwed = now; }
           out.removed = t.removed; out.layoutRev = sheetUpd.layoutRev; out.contentRev = sheetUpd.contentRev; out.left = charms.length;
-          // (an accepted change: where each old piece stood, for its new piece to go back into: the placement pass's in-place refill, the sheet window's inPlaceAttach)
-          if (kind === "changed") { const poolOf = new Map((s.charms || []).filter(c => c && take.has(String(c.poolId))).map(c => [String(c.id), String(c.poolId)])); out.spots = (s.placements || []).filter(p => p && poolOf.has(String(p.id))).map(p => ({ sheetId, id: String(p.id), poolId: poolOf.get(String(p.id)), cxPt: num(p.cxPt), cyPt: num(p.cyPt), angle: num(p.angle) })).slice(0, 100); }
-          if (roseG && roseG.changed) { const orderOfCharm = new Map((s.charms || []).filter(Boolean).map(c => [String(c.id), String(c.order || ridOfPiece(c.poolId) || "")])); out.roseLines = (roseG.removedLines || []).map(l => ({ n: l.n, at: l.at, orders: [...new Set((l.ids || []).map(x => orderOfCharm.get(String(x))).filter(Boolean))] })); }
-          // the copies leave the order list of a set that is formed, not committed (dropFromSets)
-          if (s.setId && !s.draft && d.isId(s.setId)) { setRef = col(N.SETS).doc(String(s.setId)); const ss = await tx.get(setRef), sx = ss.exists ? ss.data() || {} : null; if (sx && !d.setEdit().committedSet(sx)) setOrders = setOrdersWithout(sx.orders, take); }
+          // the copies leave its set's order list (dropFromSets); a set already released has its labels, manifest and files made again (the lane asks for them)
+          if (s.setId && !s.draft && d.isId(s.setId)) { setRef = col(N.SETS).doc(String(s.setId)); const ss = await tx.get(setRef), sx = ss.exists ? ss.data() || {} : null; if (sx) { setOrders = setOrdersWithout(sx.orders, take); if (released(sx, s)) out.refile = s.setId; } }
           // the pieces' engraving records leave the sheet too (their approval stays: TAKEOFFSOLID G4)
           const refs = []; for (const id of t.removed) for (const face of ["back", "front"]) { const k = Faces.recKey(id, face); if (!backOf.has(k)) { backOf.set(k, sheetId); refs.push(col(N.BACK).doc(k)); } }
           backRows = refs.length ? await txGetAll(tx, refs, ["sheetId"]) : [];
@@ -162,7 +151,7 @@ module.exports = function (d) {
         const free = list.filter(id => !out.onSheet.includes(id));
         rows = free.length ? await txGetAll(tx, free.map(id => col(N.POOL).doc(id)), d.POOL_EVENT_FIELDS) : [];
         // (a row that is gone, committed (cut and sent), or already taken off with this very mark is left as it is: a second pass writes nothing)
-        writeRows = rows.filter(r => { if (!r.exists) return false; const p = r.data() || {}; if (p.state === "committed") return false; if (Placement.takenOff(p) && (kind === "changed" ? p.state === "superseded" : true)) return false; return true; }).map(r => r.id);
+        writeRows = rows.filter(r => { if (!r.exists) return false; const p = r.data() || {}; if (p.state === "committed") return false; if (Placement.takenOff(p)) return false; return true; }).map(r => r.id);
         out.removed = writeRows.slice();
         out.off = rows.filter(r => r.exists && Placement.takenOff(r.data() || {}) && !writeRows.includes(r.id)).map(r => r.id);   // (off already: its line no longer names it)
       }
@@ -192,8 +181,6 @@ module.exports = function (d) {
       if (patch.removedBy) { await d.stamp(() => d.poolEvents(all, patch, before, who), "cloud take-off"); if (/^cancel/i.test(String(patch.removedReason || ""))) await d.noteCancelRemovals(all, patch, before, who); }
       // a hold is recorded as held (the sheet window's own event)
       if (patch.heldBy && all.length) await d.stamp(() => [{ orderId: rid, type: "held", by: patch.heldBy, station: "sorter", device: "cloud", sheetId: sheetId || "", sheet: str(res.label || "", 80), id: `cloud-${sheetId || "pool"}-${patch.heldAt}`, at: patch.heldAt, text: `Taken off ${res.label || "the pool"} by ${patch.heldBy}${patch.heldReason && patch.heldReason !== "on hold" ? ": " + patch.heldReason : ""}, on hold`.slice(0, 200), data: { pieces: all.length, poolIds: all.slice(0, 40), cloud: true } }], "cloud hold");
-      // each green line that went with them, on the timeline of the orders it held (roseTakeOff's own note, its id)
-      if (res.roseLines && res.roseLines.length) await d.stamp(() => res.roseLines.flatMap(l => (l.orders.length ? l.orders : [rid]).map(orderId => ({ orderId, type: "note", at: num(b.at) || Date.now(), by: str(b.who, 80) || "System", station: "sorter", sheetId: sheetId || "", sheet: str(res.label, 80), setId: res.setId || "", text: `Green line ${l.n} taken off ${res.label}: nothing was left inside it`, data: { roseLineOff: l.n, lineAt: l.at, sheets: [sheetId], cancel: kind === "cancel" }, id: `roseLineOff-${sheetId}-${l.n}-${l.at || 0}` }))), "rose line off");
     }
     delete res.wrote;
     return res;
@@ -230,7 +217,7 @@ module.exports = function (d) {
   async function op_takeOffAsk(b) {
     if (d.prefix()) return { error: "the cloud takes pieces off in production only: this computer does it in the sandbox", status: 400, notCloud: true };
     const rid = orderIdOf(b.orderId), kind = ASK_KINDS.has(b.kind) ? b.kind : null;
-    if (!rid || !kind) return { error: "orderId and kind (hold, sheetOff, changed or retry) required" };
+    if (!rid || !kind) return { error: "orderId and kind (hold, sheetOff or retry) required" };
     const sheetId = b.sheetId ? str(b.sheetId, 80) : null; if (sheetId && !d.isId(sheetId)) return { error: "bad sheet id" };
     const lineKeys = [...new Set((Array.isArray(b.lineKeys) ? b.lineKeys : []).map(String).filter(k => k.startsWith(rid + "_") && k.length <= 80))].slice(0, 50);
     /* (S5, Paul 21 Nov 2026: the sheet window's "Take off and hold", "Only this charm" or "The whole order", pressed on a staff computer, was refused: no sheet was sent, and the
@@ -295,4 +282,5 @@ module.exports.COLL = COLL;
 module.exports.markOf = markOf;
 module.exports.setOrdersWithout = setOrdersWithout;
 module.exports.busyWhy = busyWhy;
+module.exports.released = released;
 module.exports.REASON = REASON;

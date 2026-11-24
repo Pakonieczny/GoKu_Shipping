@@ -97,7 +97,8 @@ function make(d) {
         if (cur.hold || o.heldKeys.has(k)) holds++;
         const next = Object.assign({}, cur), was = String(cur.state || "");
         next.hold = null; next.heldAt = null; next.holdSeen = false;
-        if (was === "held") { next.state = Array.isArray(cur.poolIds) && cur.poolIds.length ? "pooled" : "pulled"; next.reason = null; }
+        if (cur.repoolChanged === true) { next.poolIds = []; next.repoolChanged = false; if (was !== "held") next.state = "pulled"; }   // (REPOALL: its design was drawn anew while it was on hold: its pieces are made again)
+        if (was === "held") { next.state = Array.isArray(next.poolIds) && next.poolIds.length ? "pooled" : "pulled"; next.reason = null; }
         else if (named && ["unmatched", "oversize"].includes(was) && !(Array.isArray(cur.poolIds) && cur.poolIds.length)) { next.state = "pulled"; next.reason = null; }
         else if (cur.reason != null && cur.hold != null && String(cur.reason) === String(cur.hold)) next.reason = null;
         if (skip) { next.state = "skipped"; next.poolIds = []; next.reason = `no charm made: skipped at Release Hold by ${o.by}`; skipped.push(k); }

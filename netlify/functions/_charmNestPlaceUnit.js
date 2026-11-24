@@ -89,7 +89,7 @@ async function placeAll(ctx) {
   /* CESEND (21 Nov 2026): ctx.customIds, the pool ids of a custom piece a viewer sent to a sheet (Charm Editor -> Send to sheet; customPiecePut rows with cloudPlace), placed by a
      person's request (runCmdPut placewaiting, _charmNestCmdExec.js): ONLY those rows are placed, and no run line is written for them (they are no line of the run). */
   const only = Array.isArray(ctx.customIds) && ctx.customIds.length ? new Set(ctx.customIds.map(String)) : null;
-  const W = Place.recordHost({ run, records: world.records, sets: world.sets, settings: world.settings, preset: world.preset, partial: world.partial, now });
+  const W = Place.recordHost({ run, records: world.records, sets: world.sets, settings: world.settings, preset: world.preset, partial: world.partial, now, notOn: ctx.notOn });
   const R = W.rules, out = { placed: 0, waited: 0, repaired: 0, resumed: 0 };
   // where each piece is: the live records that list it (the one truth of "on a sheet")
   const listed = new Map(); for (const r of world.records) for (const id of r.poolIds || []) listed.set(String(id), r.id);

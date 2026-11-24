@@ -84,7 +84,7 @@ CLOUD_WRITES.push(...words(`runCmdClaim cmdWorkPut cmdMovePieces cmdHopPieces cm
 CLOUD_ONLY.add("cmdRestoreNest"); CLOUD_WRITES.push("cmdRestoreNest");
 /* RGMERGE (Paul, 23 Nov 2026): two Rose Gold sheets of one set and one physical sheet made one (_charmNestCmdOps.js cmdRoseMerge; the request "rgmerge"). The cloud's own write only; no Etsy call follows from it. */
 CLOUD_ONLY.add("cmdRoseMerge"); CLOUD_WRITES.push("cmdRoseMerge");
-CLOUD_ONLY.add("finishOverflow"); CLOUD_WRITES.push("finishOverflow");   // (build step 7b: the sheet writer's overflow, what a nest turned away moved on to the next sheet: _charmNestFinishOps.js)
+CLOUD_ONLY.add("finishOverflow").add("finishSeat"); CLOUD_WRITES.push("finishOverflow", "finishSeat");   // (build step 7b: the sheet writer's overflow, what a nest turned away moved on to the next sheet: _charmNestFinishOps.js)
 const CLOUD_OPS = new Set([...CLOUD_READS, ...CLOUD_WRITES]);
 /* RELEASEHOLD (Paul, 20 Nov 2026; build step 13, live): a person's Release Hold press, done in the cloud at once (_charmNestHoldRelease.js): releaseAsk is a PRESS from a page and the cloud's own
    call when the driver's release unit finishes one a function left half done; releaseJobGet reads its journal. Neither calls Etsy. */
@@ -97,6 +97,8 @@ CLOUD_WRITES.push("releaseAsk"); CLOUD_READS.push("releaseJobGet"); CLOUD_OPS.ad
 CLOUD_WRITES.push("labelsAsk"); CLOUD_OPS.add("labelsAsk");
 /* (S2, Paul 21 Nov 2026): Review's Resolved decisions in the cloud (_charmNestReviewSettled.js): a person's answer, and its read (the cloud world reads it through Lib.ops, not a cloud call) */
 PRESS.add("reviewSettledPut"); READ.add("reviewSettledGet");
+/* OVERRIDE (Paul, 23 Nov 2026): the owner approves a set for laser cutting whatever it waits for, with his password (_charmNestSetOverride.js), and what that sets aside (a read) */
+PRESS.add("setOverride"); READ.add("setOverrideGet");
 
 /* Never the cloud's (E5), each with its own test: they call Etsy, its image CDN or its switch, build the world (which may call Etsy), or start an agent job
    (a customRead job fetches Etsy's image CDN, _charmNestCustomRead.js). */

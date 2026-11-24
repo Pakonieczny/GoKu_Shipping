@@ -226,7 +226,7 @@ module.exports = function (deps) {
     let why = "";
     try { if (deps.productionReadiness) await deps.productionReadiness(records); } catch (e) { why = String((e && e.message) || e).slice(0, 300); }
     const R = deps.Readiness, r = R && R.set ? R.set(Object.assign({}, set, { setId }), records) : { ready: false };
-    if (!why && R && R.orderBlockers && R.blockText) { const blocked = records.flatMap(x => R.orderBlockers(x)); if (blocked.length) why = `${blocked[0].id}: ${R.blockText(blocked[0])}`; }
+    if (!why && R && R.orderBlockers && R.blockText) { const blocked = records.filter(x => !(R.overridden && R.overridden(x))).flatMap(x => R.orderBlockers(x)); if (blocked.length) why = `${blocked[0].id}: ${R.blockText(blocked[0])}`; }
     if (!why && !r.ready) { const st = r.stages || {}, miss = Object.keys(st).filter(k => !st[k]); why = miss.length ? `Set is not ready for laser: ${miss.join(", ")} not done` : "Set is not ready for laser: finish every sheet's engraving approvals, saved back files, layout checks and QR labels"; }
     let split = [];
     try { if (deps.splitOfSet) split = (await deps.splitOfSet(setId, ids)).map(it => ({ orderId: it.orderId, there: it.there || [] })); } catch (_) { split = []; }

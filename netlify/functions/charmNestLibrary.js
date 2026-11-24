@@ -177,7 +177,7 @@ function slim(d) {
     names: str(d.names, 2000), sources: (d.sourcesLite || d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1, ...(d.draftOrder != null && Number.isFinite(+d.draftOrder) ? { draftOrder: +d.draftOrder } : {}),   /* (ORDERCLOUD, Paul 15 Nov 2026: the list a following computer reads left the draft order out, so its Draft 1 was another sheet) */
     setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url, payload:f.payload || null, orders:f.orders || [], part:f.part || 1 })) } : null,
     // cut on the laser and marked so (op_laserDone), and the listings its pieces were bought from (the Library's search)
-    laserDoneAt: num(d.laserDoneAt) || null, laserDoneBy: d.laserDoneBy || null, processSeals: Readiness.processStamps(d), processReady: !!d.processReady, stepStamps: Readiness.stepStamps(d), stepState: d.stepState && typeof d.stepState === "object" ? d.stepState : null, laserSetPending: !!d.laserSetPending, laserHold: d.laserHold && num(d.laserHold.at) > 0 ? { at: num(d.laserHold.at), by: str(d.laserHold.by, 80), note: str(d.laserHold.note, 200) } : null, listings: (d.listings || []).slice(0, 500),
+    laserDoneAt: num(d.laserDoneAt) || null, laserDoneBy: d.laserDoneBy || null, processSeals: Readiness.processStamps(d), processReady: !!d.processReady, stepStamps: Readiness.stepStamps(d), stepState: d.stepState && typeof d.stepState === "object" ? d.stepState : null, laserSetPending: !!d.laserSetPending, laserHold: d.laserHold && num(d.laserHold.at) > 0 ? { at: num(d.laserHold.at), by: str(d.laserHold.by, 80), note: str(d.laserHold.note, 200) } : null, ...(d.laserOverride && num(d.laserOverride.at) > 0 ? { laserOverride: { at: num(d.laserOverride.at), by: str(d.laserOverride.by, 80), setId: str(d.laserOverride.setId, 80) || null } } : {}), listings: (d.listings || []).slice(0, 500),
     cardStartedAt: ms(d.cardStartedAt) || ms(d.createdAt), updatedAt: ms(d.updatedAt), createdAt: ms(d.createdAt),
     // a cleanup made on the record (the pieces it took off, the green line it removed): a page whose own copy of the sheet
     // is older puts the same change on it (Cleanups, charm-nest-bridge.js). Only on a record that has one
@@ -191,7 +191,7 @@ function slim(d) {
 /* The fields of a sheet record that its list entry (slim) and its laser readiness (Readiness.sheet) read, and the lists
    filter on. A list reads only these: the rest of a record (its charms with their outlines, its placements) is most of
    its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
-const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit", "releasedChange", "filesOwed", "cutCheck", "draftOrder", "_w", "layoutRev", "previewRev"];   // (releasedChange: a set changed after it was released or approved for laser cutting, said on its Library card, Paul 27 Oct 2026)
+const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit", "releasedChange", "filesOwed", "cutCheck", "draftOrder", "_w", "layoutRev", "previewRev", "laserOverride"];   // (releasedChange: a set changed after it was released or approved for laser cutting, said on its Library card, Paul 27 Oct 2026)
 /** What the Library's live read (op_laserStatus) reads of a sheet: SLIM_SHEET, and the sheet's own number (readiness labels a sheet that is in no set by it). */
 const LASER_SHEET = SLIM_SHEET.filter(f => f !== "sources").concat(["seq", "sourcesLite"]);
 /** What decides whether a sheet is on the Library's Current list (op_listSheets with excludeDone): archived, completed, its set (filingRecords), the filters and the order. */
@@ -869,7 +869,7 @@ async function op_laserStatus(b) {
   // (its charms with their links, its placements) is most of its bytes and none of the answer; the placements only for a record with no placedCount
   for(let i=0;i<ids.length;i+=100){const docs=await db.getAll(...ids.slice(i,i+100).map(id=>col(SHEETS).doc(id)),{fieldMask:LASER_SHEET});for(const d of docs){if(revs)revs['s:'+d.id]=revOf(d);if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}}
   const setIds=[...new Set(records.map(s=>s.setId).concat(b.setIds || []).filter(isId))].slice(0,500),sets=[];
-  for(let i=0;i<setIds.length;i+=100){const docs=await db.getAll(...setIds.slice(i,i+100).map(id=>col(SETS).doc(id)));for(const d of docs){if(revs)revs['t:'+d.id]=revOf(d);const s=d.exists?d.data():{};sets.push({setId:d.id,sheetIds:s.sheetIds || [],laserDoneAt:num(s.laserDoneAt) || null,laserDoneBy:s.laserDoneBy || null,processSeals:Readiness.processStamps(s),processReady:!!s.processReady});}}
+  for(let i=0;i<setIds.length;i+=100){const docs=await db.getAll(...setIds.slice(i,i+100).map(id=>col(SETS).doc(id)));for(const d of docs){if(revs)revs['t:'+d.id]=revOf(d);const s=d.exists?d.data():{};sets.push({setId:d.id,sheetIds:s.sheetIds || [],laserDoneAt:num(s.laserDoneAt) || null,laserDoneBy:s.laserDoneBy || null,processSeals:Readiness.processStamps(s),processReady:!!s.processReady,laserOverride:overrideOf(s)});}}
   // The Sheets view may show only one metal or one member in the viewport. Read its
   // siblings too, so it follows the same complete-set gate as the Sets view.
   const have=new Set(records.map(s=>s.id)),missing=[...new Set(sets.flatMap(s=>s.sheetIds))].filter(id=>isId(id)&&!have.has(id)).slice(0,Math.max(0,500-records.length));
@@ -892,6 +892,8 @@ async function op_laserStatus(b) {
   return {sheets:(await readinessRecords(records,{revs})).map(slim),sets,added,checkedAt:Date.now(),...(revs?{revs}:{}),...(rev!==null?{rev}:{})};
 }
 
+/** A set's or a sheet's override (OVERRIDE, _charmNestSetOverride.js) as an answer carries it, or null. */
+const overrideOf = d => (d && d.laserOverride && num(d.laserOverride.at) > 0 ? { at: num(d.laserOverride.at), by: str(d.laserOverride.by, 80), setId: str(d.laserOverride.setId, 80) || null } : null);
 // All process seals are append-only. No trimming, replacement on re-completion, or client-written history.
 function processEvent(how,at,by,n){return {id:how+'-'+at+'-'+n,how,at,by};}
 function processRecord(kind,id,d){return {kind,id,patch:{processSeals:Readiness.processStamps(d),processReady:!!d.processReady,laserDoneAt:num(d.laserDoneAt) || null,laserDoneBy:d.laserDoneBy || null,...(kind==='sheet' && d.stepState && typeof d.stepState==='object'?{stepStamps:Readiness.stepStamps(d),stepState:d.stepState}:{})}};}
@@ -1089,7 +1091,7 @@ async function modernRunOf(tx, runId) {
   if (!isId(runId)) return false;
   try { const [r] = await txGetAll(tx, [col(RUNS).doc(String(runId))], ["releasePolicy"]); return !!r && r.exists && (r.data() || {}).releasePolicy === 2; } catch (_) { return false; }
 }
-/** The same pieces in the same places (LINEOFF). */
+/** The same pieces in the same places. */
 function sameLayout(a, b) {
   if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
   const at = new Map(a.filter(p => p && p.id != null).map(p => [String(p.id), p]));
@@ -1125,7 +1127,7 @@ async function op_putSheet(b) {
   // the step completions (stepStamps, stepState) are the server's record of when each step was done: a page can neither write nor clear them
   delete doc.stepStamps; delete doc.stepState;
   // a hold back from Laser cutting and the Library's move history are server-owned too (op_flowApply): a stale page cannot clear them
-  delete doc.laserHold; delete doc.flowHistory;
+  delete doc.laserHold; delete doc.flowHistory; delete doc.laserOverride;
   // the time the picture was saved is the server's: a record that carries a picture (the save after its upload) stamps it, nothing else does
   delete doc.previewAt; delete doc.previewRev; if (s.outputs && s.outputs.preview && s.outputs.preview.url) doc.previewAt = Date.now();
   // the short list of the sheet's sources that its Library entry reads (see withSources); the sources themselves stay as they were
@@ -1150,7 +1152,7 @@ async function op_putSheet(b) {
     // (CLOUDDRIVE P1/P2: the bases the cloud's sheet writer sends, each checked only when present; no page sends them)
     if (typeof b.contentBase === "number" && Number.isFinite(b.contentBase) && b.contentBase !== (num(old.contentRev) || 0)) return { error: `${Placement.labelOf(old) || "Sheet " + s.id} was changed (by hand or its artwork) since this save was made: nothing was overwritten`, status: 409, conflict: true, contentRev: num(old.contentRev) || 0 };
     if (Object.prototype.hasOwnProperty.call(b, "filesJobBase") && str(b.filesJobBase, 120) !== str(old.filesJob && old.filesJob.jobId, 120)) return { error: `${Placement.labelOf(old) || "Sheet " + s.id}: another job writes its files now: nothing was overwritten`, status: 409, conflict: true, filesJob: old.filesJob || null };
-    if (Object.prototype.hasOwnProperty.call(b, "filesOwedBase") && Object.prototype.hasOwnProperty.call(doc, "filesOwed") && doc.filesOwed == null && num(old.filesOwed) !== num(b.filesOwedBase)) { delete doc.filesOwed; filesOwedKept = true; }   // (compare-and-clear: a newer owed mark stays)
+    if (Object.prototype.hasOwnProperty.call(b, "filesOwedBase") && Object.prototype.hasOwnProperty.call(doc, "filesOwed") && doc.filesOwed == null && num(old.filesOwed) !== num(b.filesOwedBase)) { delete doc.filesOwed; delete doc.artOwed; filesOwedKept = true; }   // (compare-and-clear: a newer owed mark stays)
     if (contentOn && (Object.prototype.hasOwnProperty.call(s, "placements") || Object.prototype.hasOwnProperty.call(s, "charms"))) doc.contentRev = (num(old.contentRev) || 0) + 1;
     // (SETSHUT on the server, P4: a sheet in a set takes no new order; a piece of an order already on it may still join it. For the cloud's calls, and for every caller in mode "on")
     //  The cloud never changes a sheet's membership while a set that is not committed lists it (NOPARTIALSET; KEEPINSET stays the owner's: sheetKeepInSet)
@@ -1204,14 +1206,14 @@ async function op_putSheet(b) {
       }
       if (off.length) return { error: `${name} was not saved: it would put back ${off.length === 1 ? what(off[0]) : `${off.length} pieces (${off.slice(0, 3).map(what).join(", ")})`}, which ${off.length === 1 ? "was" : "were"} taken off on purpose (on hold or cancelled). Reload the page to see the sheet as it is now`, status: 409, taken: off.slice(0, 20), conflict: true };   // (TAKENRELOAD, Paul 15 Nov 2026: the page that still shows the piece reads the sheet again from the cloud, as for any save made from an older copy; it was left with a sheet that "could not be saved" and its run stopped)
     }
-    /* LINEOFF (_charmNestPlacement.js lineOnly): the cloud's own writer writes the files of a sheet a piece was taken off after its cut line was recorded, with every piece left exactly where the record has it: the layout
-       is the record's own, nothing is moved, and its line, its physical sheet and its leftover are not touched. Any other layout over a recorded cut is refused, as before. */
-    const lineOff=!!old.roseCutAt&&b.lineOff===true&&!!FENCE&&Placement.lineOnly(old)&&num(old.takenOffAt)>num(old.roseCutAt)&&!s.sources&&sameLayout(old.placements,s.placements)&&(!s.stock||(Math.abs(num(s.stock.wPt)-num((old.stock||{}).wPt))<0.01&&Math.abs(num(s.stock.hPt)-num((old.stock||{}).hPt))<0.01));
-    if(old.roseCutAt && !lineOff && (s.placements || s.stock || s.sources))throw new Error('This layout was already cut. Start a new sheet to use its remnant');
-    const protection=require('./_charmNestRoseStock'),guard=protection.protectedLayout(old);
+    /* A sheet whose cut line is recorded: its layout is the record's own (a piece taken off it, or made again in its place, is written there by those acts alone). The cloud's own writer writes its files with every piece
+       exactly where the record has it; its line, its physical sheet and its leftover are not touched. Any other layout over a recorded cut is refused. */
+    if(old.roseCutAt && (s.placements || s.stock || s.sources) && !(FENCE&&!(num(old.laserDoneAt)>0)&&!s.sources&&sameLayout(old.placements,s.placements)&&(!s.stock||(Math.abs(num(s.stock.wPt)-num((old.stock||{}).wPt))<0.01&&Math.abs(num(s.stock.hPt)-num((old.stock||{}).hPt))<0.01))))throw new Error('This layout was already cut. Start a new sheet to use its remnant');
+    const protection=require('./_charmNestRoseStock'),guard=old.roseCutAt?null:protection.protectedLayout(old);
     if(Object.prototype.hasOwnProperty.call(s,'placements'))protection.assertProtected(guard,s.placements,old.metal||s.metal);
     if(guard&&Object.prototype.hasOwnProperty.call(s,'charms')&&(!Array.isArray(s.charms)||guard.placements.some(p=>!s.charms.some(c=>c?.id===p.id))))throw new Error('The protected '+CutLine.cutWord(old.metal||s.metal)+' charms cannot be removed');
-    if(!lineOff && old.rosePlanJson && s.placements && require('./_charmNestRoseStock').fingerprint(s)!==old.roseFingerprint)Object.assign(doc,{rosePlanJson:null,rosePlanHash:null,roseFingerprint:null});
+    // (CESAVE: pieces whose artwork alone changed, each where it lay: the drawn green line stays. A changed outline is put inside it where it is seated: finishSeat)
+    if(!old.roseCutAt && old.rosePlanJson && s.placements && protection.fingerprint(s)!==old.roseFingerprint)Object.assign(doc,protection.drawnAlike(s,old)?{roseFingerprint:protection.fingerprint(s)}:{rosePlanJson:null,rosePlanHash:null,roseFingerprint:null});
     /* (Paul, 7 Oct) the sheets of a committed set are added and taken out by flowApply's set edit alone (charm-nest-set-edit.js): a page
        that still holds an older membership (a second screen, a save that was under way) saves the rest of its sheet and leaves
        the sheet's set, number and draft state as the edit made them. Read only when the save would change them. */
@@ -2348,7 +2350,7 @@ async function poolTakeOff(ids, patch, told) {
       const kept = new Set();
       if (patch.state === "abandoned") {
         const live = new Set(); for (const s of sheets.values()) if (Placement.editable(s)) for (const id of s.poolIds || []) live.add(String(id));
-        for (const s of sheets.values()) if (num(s.laserDoneAt) > 0 || num(s.roseCutAt) > 0) for (const id of s.poolIds || []) if (want.has(String(id)) && !live.has(String(id))) kept.add(String(id));
+        for (const s of sheets.values()) if (num(s.laserDoneAt) > 0) for (const id of s.poolIds || []) if (want.has(String(id)) && !live.has(String(id))) kept.add(String(id));
         for (const id of kept) seen.delete(id);
       }
       /* TAKEOFFSOLID G4 (Paul, 15 Nov 2026: "make sure it's absolutely rock solid"): the engraving BACK (and front) record of a piece that leaves a sheet kept that sheet's id,
@@ -3128,9 +3130,9 @@ async function op_backList(b) {
    Who and when: `by` (a signed-in person, required as for an approval) and `at` (this server's clock). The piece's pool row says it has an edit (artEdit { front | back: at }), so a page
    that makes the piece again from the master (a reload, a recall, a checkpoint) reads a record only for a piece that has one: the pool rows are read anyway, nothing is read for the rest
    (Paul is careful of the Firestore bill).
-   A piece already on a saved sheet: its sheet record owes its files again (filesOwed, the word the sheet window's move uses). Its CUT LINE changes too (SHAREDSHAPE, Paul 29 Oct 2026: "Don't
-   block the person"); the sheet was nested with the old shape, so its record says so (cutCheck { poolId: { at, by } }) until the page has checked the new shape where the piece stands and
-   written the sheet again (putSheet { cutCheck: null }); a set with such a sheet is not released. A sheet already cut by the laser is never changed. The back's record never holds a part of the
+   A piece already on a saved sheet: its sheet record owes its files again (filesOwed, artOwed), and the cloud writes them at once. Its CUT LINE changes too (SHAREDSHAPE, Paul 29 Oct 2026: "Don't
+   block the person"); the sheet was nested with the old shape, so its record says so (cutCheck { poolId: { at, by } }) until its writer has seated the new shape (CESAVE, _charmNestFinish.js
+   seatChanged); a set with such a sheet is not released. A sheet already cut by the laser is never changed. The back's record never holds a part of the
    drawing (its shape is the front record's). ── */
 const ART = "Charm_Pool_Art";
 const ART_DRAFT = "Charm_Pool_Art_Draft";   // (CEAUTOSAVE, below)
@@ -3272,7 +3274,7 @@ async function op_artPut(b) {
   }
   feedOrders(b, [[poolId]]);
   const contentOn = (await cloudMode()) !== "off";   // (CLOUDDRIVE P2, dormant: an artwork edit on a sheet raises the sheet's contentRev, never its layoutRev, only while the drive is on)
-  return db.runTransaction(async tx => {
+  const out = await db.runTransaction(async tx => {
     const snap = await tx.get(ref), pool = await tx.get(poolRef);
     /* ARTPRE (Paul, 12 Nov 2026: "The charm editor won't let me save this change", nesting paused: no piece pooled yet). A piece not pooled yet keeps its edit too, under the pool id it WILL have
        (the order's line and copy name it): no pool row is written now; op_poolPut stamps the row with the edit when the piece is pooled, so every page reads it then. */
@@ -3281,13 +3283,10 @@ async function op_artPut(b) {
     const sid = row.sheetId && !Placement.TAKE_OFF_STATES.has(row.state) ? str(row.sheetId, 80) : "", sheetRef = sid && isId(sid) ? col(SHEETS).doc(sid) : null;
     const sheet = sheetRef ? await tx.get(sheetRef).then(s => (s.exists ? s.data() : null)) : null, onSheet = !!sheet && !sheet.archived && Array.isArray(sheet.poolIds) && sheet.poolIds.map(String).includes(poolId);
     if (onSheet && num(sheet.laserDoneAt) > 0) return { error: `${sheetLabel(sheet) || "Its sheet"} was already cut by the laser: this piece's artwork is no longer changed`, status: 409 };
-    /* ARTUNCUT (Paul, 16 Nov 2026: "the Charm Editor is not allowing me to save a pasted and vectorized image. This sheet was NOT laser cut"). A recorded green line cut (roseCutAt) is the Cut Sheet
-       press, not the laser: the sheet is cut only when it is marked so (laserDoneAt, refused above). Until then a piece's ARTWORK may still change; its CUT LINE may not (the green line and the
-       metal left over were measured from it), in this save or in the one it replaces. The page that saved writes the sheet's files again from its record, the cut and its plan untouched. */
-    if (onSheet && sheet.roseCutAt && ((!clear && art && art.cut) || (!clear && cutKey) || (old && (old.cut || old.cutKey)))) return { error: `${sheetLabel(sheet) || "Its sheet"} has its green line cut recorded: this piece's cut line can no longer change (its artwork still can, until the laser has cut the sheet)`, status: 409 };
-    // (SHAREDSHAPE, Paul 29 Oct 2026: "Don't block the person"): a piece on a sheet changes its cut line too. Its sheet was nested with the old shape, so the sheet says so (cutCheck: the piece,
-    // when, by whom) besides owing its files: the page checks the new shape where the piece stands before it writes the sheet again, and a sheet with a cut line not checked again goes to no
-    // laser (the same cut edit sent again is no change)
+    /* CESAVE (Paul, 23 Nov 2026: "if I user makes small changes to the charm, any kind of changes and then presses the blue Save button that all those changes are correctly reflected on the same sheet ... the only reason
+       a charm would be removed and not placed back on original sheet, as if the update to the charm made the charm not fit"): any edit of a piece on a sheet the laser has not cut is taken, a recorded green line or not. The
+       sheet owes its picture and laser file with it (artOwed) and its writer is started at once (_charmNestFinish.js); a changed cut line (cutCheck) is seated by that writer before it writes: where it lay, else in free
+       room of the same sheet, else its line goes on to the next draft. Until it is seated the sheet goes to no laser (the same cut edit sent again is no change) */
     const wasCut = (old && old.cutKey) || "", nowCut = clear ? "" : cutKey, cutChanged = onSheet && nowCut !== wasCut;
     if (clear) { if (old) tx.delete(ref); }
     else tx.set(ref, Object.assign({ poolId, face, sku: str(row.sku, 60) || null, orderId: str(row.orderId || poolId.split("_")[0], 30), sheetId: onSheet ? sid : null }, art, { cutKey, by, at: now, edits: num(old && old.edits) + 1, updatedAt: FV.serverTimestamp() }, old ? { prev: { at: num(old.at), by: str(old.by, 80) } } : {}));
@@ -3296,10 +3295,14 @@ async function op_artPut(b) {
     //  ONE document lists the pre-pool edits by record key, read once by a page (artPrepoolList), in place of a stamp on a row that does not exist yet)
     if (!pool.exists) tx.set(col(ART).doc("_prepool"), { ids: { [key]: clear ? FV.delete() : now }, updatedAt: FV.serverTimestamp() }, { merge: true });
     if (pool.exists) tx.set(poolRef, { artEdit: Object.assign({}, row.artEdit && typeof row.artEdit === "object" ? row.artEdit : {}, { [face]: clear ? null : now }), updatedAt: FV.serverTimestamp() }, { merge: true });   // (ARTPRE: none yet: stamped when pooled)
-    if (onSheet) tx.set(sheetRef, Object.assign({ filesOwed: now, updatedAt: FV.serverTimestamp() }, contentOn ? { contentRev: (num(sheet.contentRev) || 0) + 1 } : {}, cutChanged ? { cutCheck: Object.assign({}, sheet.cutCheck && typeof sheet.cutCheck === "object" ? sheet.cutCheck : {}, { [poolId]: { at: now, by } }) } : {}), { merge: true });
+    if (onSheet) tx.set(sheetRef, Object.assign({ filesOwed: now, ...(face === "front" ? { artOwed: now } : {}), updatedAt: FV.serverTimestamp() }, contentOn ? { contentRev: (num(sheet.contentRev) || 0) + 1 } : {}, cutChanged ? { cutCheck: Object.assign({}, sheet.cutCheck && typeof sheet.cutCheck === "object" ? sheet.cutCheck : {}, { [poolId]: { at: now, by } }) } : {}), { merge: true });
     if (onSheet) revTouch(b, ["s:" + sid]);
-    return { ok: true, key, art: clear ? null : Object.assign({ poolId, face }, art, { cutKey, by, at: now }), sheetId: onSheet ? sid : null, filesOwed: onSheet ? now : null, cutChanged };
+    return { ok: true, key, art: clear ? null : Object.assign({ poolId, face }, art, { cutKey, by, at: now }), sheetId: onSheet ? sid : null, sheetName: onSheet ? sheetLabel(sheet) : null, runId: (onSheet && sheet.runId) || null, filesOwed: onSheet ? now : null, cutChanged };
   });
+  if (!out || !out.ok || !out.sheetId) return out;
+  if (!out.cutChanged) await stamp({ orderId: poolId.split("_")[0], type: "note", id: `${poolId.replace(/_\d+$/, "")}.ce.${Math.floor(out.filesOwed / 60000)}`, at: out.filesOwed, by, station: "sorter", sheetId: out.sheetId, sheet: str(out.sheetName, 80), text: `Charm Editor save · on ${out.sheetName || "its sheet"}, in its place` }, "Charm Editor save");
+  if (contentOn && !PREFIX) await require("./_charmNestFinishOps").startWriter(db, out.sheetId, { runId: out.runId, reason: "owed" });
+  return out;
 }
 async function op_artGet(b) {
   const poolId = str(b.poolId, 80); if (!isPoolId(poolId)) return { error: "bad pool id", status: 400 };
@@ -3637,7 +3640,7 @@ async function op_setUpdate(b) {
     // merged a map into the stored one key by key, so an order taken off a set stayed on its record for good
     const doc=Object.assign({}, patch,{setId:id,updatedAt:FV.serverTimestamp()});
     delete doc.laserDoneAt;delete doc.laserDoneBy;delete doc.processSeals;delete doc.processReady;   // process records are server-owned
-    delete doc.flowHistory;
+    delete doc.flowHistory; delete doc.laserOverride;   // (OVERRIDE: the owner's alone, behind his password)
     // COST (Oct 2026): the current flag is the server's (CURRENT_MARK): a set made here has no laser mark, so it is current
     delete doc.current; if(!old.exists)doc.current=true;
     if(old.exists && !/^complete/.test(String(next.status || '')) && setSame(old.data(),doc)){ wrote=false; return; }   // (SETNOOP: the very record it already is; a completed set is saved as it always was)
@@ -6008,6 +6011,10 @@ OPS.worldGet = op_worldGet; OPS.worldBuild = op_worldBuild; ["worldGet", "worldB
    learns of it from the feed (p:<order>, r:<run>) and the world built again (worldSoon, as after runLinesPatch); the computer that carries the run makes the pieces up through its intake. */
 { const HoldRelease = require("./_charmNestHoldRelease").make({ db, FV, col, prefix: () => PREFIX, marked: () => MARKED, fenceTx: tx => fenceTx(tx), liveParts, stamp, revTouch, feedOrders, ops: () => OPS });
   OPS.releaseAsk = HoldRelease.releaseAsk; OPS.releaseJobGet = HoldRelease.releaseJobGet; NO_GEN_BUMP.add("releaseJobGet"); WORLD_TRIGGERS.add("releaseAsk"); }
+/* OVERRIDE (Paul, 23 Nov 2026): setOverride, the owner's approval of a set whatever it waits for, with his password (RepoAuth SETTINGS_OPS), every hold of its orders released; setOverrideGet, what it sets aside: _charmNestSetOverride.js */
+{ const Override = require("./_charmNestSetOverride")({ db, FV, col, prefix: () => PREFIX, str, isId, Readiness, SetRules: require("../../charm-nest-set-rules.js"), SETS, SHEETS, FIELDS: SLIM_SHEET.concat(["topup", "flowHistory"]), sheetLabel: x => sheetLabel(x), processHistory, processEvent, processRecord,
+    readinessRecords, withPlacements, liveParts, withLiveLines, stamp, revTouch, feedOrders, fenceTx: tx => fenceTx(tx), ops: () => OPS });
+  OPS.setOverride = Override.setOverride; OPS.setOverrideGet = Override.setOverrideGet; NO_GEN_BUMP.add("setOverrideGet"); WORLD_TRIGGERS.add("setOverride"); }
 /* (S2, Paul 21 Nov 2026: "staff keep FULL use of every input, saved in the cloud, seen on every computer"): Review's Resolved decisions, kept in the cloud (_charmNestReviewSettled.js):
    reviewSettledPut, a person's answer (PRESS), named in the feed (g:review-settled) and read into the cloud world's Review (its settled list: the world is built again soon);
    reviewSettledGet, the list (READ). A viewer (mode "on") writes the decisions answered on it and draws the cloud's list; nothing else changes. */
@@ -6481,7 +6488,7 @@ async function op_flowState(b) {
   for (let i = 0; i < ids.length; i += 100) for (const d of await db.getAll(...ids.slice(i, i + 100).map(id => col(SETS).doc(id)))) {
     if (!d.exists) continue;
     const x = d.data();
-    docs.push({ setId: d.id, seq: num(x.seq) || null, day: x.day || null, name: x.name || null, runId: x.runId || null, status: x.status || null, committedAt: ms(x.committedAt) || num(x.committedAt) || null, sheetIds: x.sheetIds || [], materials: x.materials || [], laserDoneAt: num(x.laserDoneAt) || null, laserDoneBy: x.laserDoneBy || null, processReady: !!x.processReady, processSeals: Readiness.processStamps(x) });
+    docs.push({ setId: d.id, seq: num(x.seq) || null, day: x.day || null, name: x.name || null, runId: x.runId || null, status: x.status || null, committedAt: ms(x.committedAt) || num(x.committedAt) || null, sheetIds: x.sheetIds || [], materials: x.materials || [], laserDoneAt: num(x.laserDoneAt) || null, laserDoneBy: x.laserDoneBy || null, processReady: !!x.processReady, processSeals: Readiness.processStamps(x), laserOverride: overrideOf(x) });
   }
   const runIds = [...new Set((status.sheets || []).map(x => x.runId).concat(docs.map(x => x.runId)).filter(isId))].slice(0, 100), runs = {};
   // one batch asking only for `status` (a run record is a big document; the page asks every few seconds): same answer, one round trip
@@ -6905,7 +6912,8 @@ async function op_flowApply(b) {
           if (type === "release" && note === JOINED_NOTE && !/^Taken out of /.test(str(f.laserHold && f.laserHold.note, 200))) continue;     // (a person's own hold is theirs)
           const entry = { id: `${type}-${at}-${id}`, at, by, type, note: note || null, setId: f.setId || null, laserDoneAt: num(f.laserDoneAt) || null };
           const history = (Array.isArray(f.flowHistory) ? f.flowHistory : []).concat([entry]).slice(-100);
-          tx.set(col(SHEETS).doc(id), { laserHold: type === "hold" ? { at, by, note: note || null } : FV.delete(), flowHistory: history, updatedAt: FV.serverTimestamp() }, { merge: true });
+          if (type === "hold" && f.laserOverride && isId(f.setId)) tx.set(col(SETS).doc(f.setId), { laserOverride: FV.delete() }, { merge: true });   // (OVERRIDE: moved back to In progress, the set is judged as any other again)
+          tx.set(col(SHEETS).doc(id), { ...(type === "hold" && f.laserOverride ? { laserOverride: FV.delete() } : {}), laserHold: type === "hold" ? { at, by, note: note || null } : FV.delete(), flowHistory: history, updatedAt: FV.serverTimestamp() }, { merge: true });
           facts.set(id, { ...f, laserHold: type === "hold" ? { at, by, note } : null, flowHistory: history });
           changed.push({ id, type, d: f, note });
           process.push({ kind: "sheet", id, patch: { laserHold: type === "hold" ? { at, by, note: note || null } : null } });
@@ -7027,7 +7035,7 @@ async function cloudBusy(tx, runId, now) {
 }
 /* driveSoon (§1.2): a copy of worldSoon for the cloud driver. Never while the drive is off or absent (P7), never for the cloud's own calls (they never kick it again),
    never in the sandbox. Best-effort and bounded: at most 1.5 s of the press's time, never its failure. */
-const DRIVE_TRIGGERS = new Set(["runControl", "runCmdPut", "runCmdCancel", "releaseAsk", "engraveApprove", "takeOffAsk", "takeOffAck", "labelsAsk", "roseCutAsk", "nestStart", "finishSheet", "cancelPut", "cancelRestore", "sheetLayoutPatch", "artPut", "customDecide", "customSheetPut", "reviewMarkPut", "aliasPut", "optionMapPut", "noDesignPut", "runLinesPatch"]);
+const DRIVE_TRIGGERS = new Set(["setOverride", "runControl", "runCmdPut", "runCmdCancel", "releaseAsk", "engraveApprove", "takeOffAsk", "takeOffAck", "labelsAsk", "roseCutAsk", "nestStart", "finishSheet", "cancelPut", "cancelRestore", "sheetLayoutPatch", "artPut", "customDecide", "customSheetPut", "reviewMarkPut", "aliasPut", "optionMapPut", "noDesignPut", "runLinesPatch"]);
 async function driveSoon(by) {   // (the handler calls it only for a page's own press: never for the cloud's call, never in the sandbox)
   try {
     if (driveModeOf(await driveDoc()) === "off") return { skipped: true, off: true };
@@ -7041,7 +7049,7 @@ async function driveSoon(by) {   // (the handler calls it only for a page's own 
 /* Mode "on" (C1, §1.4): the cloud carries every run, so a page's production op is its work and is refused in words (a 409 with words and no retry flag: the outbox takes it as
    final). putSheet from a page is refused only when it carries what the cloud writes; flowApply only for its relabel and set-files steps; a production write from a page built
    before the cloud carried every run (no cv) is refused with the reload words. In "off" and "standby" (and in the sandbox) nothing is refused here. */
-const PAGE_SHEET_REFUSED = ["placements", "charms", "poolIds", "outputs", "label", "verification", "saving", "filesOwed", "setId", "setSeq", "sheetIndex", "draft", "releaseFull"];
+const PAGE_SHEET_REFUSED = ["placements", "charms", "poolIds", "outputs", "label", "verification", "saving", "filesOwed", "artOwed", "cutCheck", "setId", "setSeq", "sheetIndex", "draft", "releaseFull"];
 const filesSteps = b => b.op === "flowApply" && (Array.isArray(b.steps) ? b.steps : []).some(x => x && (x.type === "setFiles" || x.type === "relabel" || x.relabel));
 /* (CLOUDDRIVE C1, build step 14): a page's press that carries no cv was sent by a page built before pages became viewers. Only a page's own request is judged (its computer's name,
    charm-nest-run-follow.js dev(): "d" and 4 to 14 letters or digits); a function or a cron of the site that calls this handler names no such computer and is never refused for it. */

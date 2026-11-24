@@ -7,12 +7,12 @@
  *  placements, which the cloud nests and writes into the files, so the piece would still be cut. So the press is its own op, a person's (PRESS), done here in ONE transaction:
  *
  *    customDone { orderId, poolIds, cover: { poolId, lineKey, name, designId, version, at? }, by, dev }            (Done)
- *      · every piece named is a custom piece (its row custom: true) of that order, not cut or sent (committed); one already covered is left as it is (a retry writes nothing);
- *      · every live sheet that lists one of them (4 at most) must give it up now: one that is cut, whose set was sent or cut, that is approved for laser cutting, or that is at work
+ *      · every piece named is a custom piece (its row custom: true) of that order; one already covered is left as it is (a retry writes nothing);
+ *      · every live sheet that lists one of them (4 at most) must give it up now: one marked laser cut (its own mark, or its set's), or that is at work
  *        (nesting, finishing, saving, Manual Control, a nest job) refuses the WHOLE press with the reason, and nothing is written (the page's blockOf, said by the server);
  *      · each such sheet: the same edit as the cloud's own take-off (_charmNestTakeOffOps.js cloudTakeOff): takeOffUpdate's fields, the pieces out of its charms, placements, rejects,
- *        feedWait and pieceSides (every other pose byte for byte), the green lines rewritten exactly or the press refused, filesOwed now, layoutRev and contentRev + 1, a draft's label
- *        dropped / a set's label owed; the copies leave the order list of a formed (not committed) set; the pieces' engraving records leave the sheet;
+ *        feedWait and pieceSides (every other pose byte for byte), every green line as saved, filesOwed now, layoutRev and contentRev + 1, a draft's label
+ *        dropped / a set's label owed; the copies leave its set's order list; the pieces' engraving records leave the sheet;
  *      · the rows: { state: abandoned, sheetId: null, setId: null, removedBy, removedReason: "completed in the Charm Editor", removedAt, coveredBy { …cover, by, at } };
  *      · then, as a page's take-off: the order's timeline ("removed", poolEvents), the changes feed (the sheets, the order), the driver kicked (the sheet owes its files / its nest).
  *    customDone { undo: true, orderId, poolIds, by, dev }                                                               (Undo)
@@ -36,10 +36,8 @@ const CUSTOM_ORDER = /^CUSTOM-\d{8}-\d{1,6}$/;
 const orderIdOf = v => { const s = String(v == null ? "" : v).trim(); return CUSTOM_ORDER.test(s) ? s : s.replace(/\D/g, "").slice(0, 30); };
 const covered = p => !!(p && p.coveredBy && typeof p.coveredBy === "object" && num(p.coveredBy.at) > 0 && !num(p.coveredBy.undoneAt));
 /** Why a live sheet cannot give up a piece now, in words ("" when it can): the page's blockOf, and the cloud's take-off busy rule. */
-function blockWhy(s, sets, now, manualStaleMs, committedSet) {
+function blockWhy(s, sets, now, manualStaleMs) {
   if (!Placement.editable(s) || s.recalled || sets.some(x => num(x.laserDoneAt) > 0)) return "it is already cut on the laser";
-  if (sets.some(x => committedSet(x))) return "its set was already sent to the station";
-  if (num(s.releasedAt) > 0 || num(s.approvedAt) > 0 || num(s.laserReadyAt) > 0 || s.status === "released") return "it is already approved for laser cutting";
   return busyWhy(Object.assign({ manualStaleMs }, s), now) ? "it is being nested or saved right now: try again in a moment" : "";
 }
 
@@ -70,7 +68,6 @@ module.exports = function (d) {
         const p = r.exists ? r.data() || {} : null;
         if (!p) return refuse(`the piece ${r.id} is not in the cloud: nothing was changed`, 404);
         if (p.custom !== true) return refuse(`${r.id} is not a custom piece: only a custom piece is completed here. Nothing was changed`, 400);
-        if (p.state === "committed") return refuse(`the Custom piece was already sent to the station: nothing was changed`);
       }
       const want = new Set(rows.filter(r => !(covered(r.data()) && Placement.TAKE_OFF_STATES.has(r.data().state))).map(r => r.id));
       if (!want.size) return { ok: true, already: true, sheets: [], removed: [] };
@@ -82,25 +79,18 @@ module.exports = function (d) {
         const label = Placement.labelOf(s) || "its sheet", take = new Set((s.poolIds || []).map(String).filter(id => want.has(id)));
         if (!take.size) continue;
         const sets = (await tx.get(col(N.SETS).where("sheetIds", "array-contains", s.id))).docs.map(x => x.data() || {});
-        const why = blockWhy(s, sets, now, d.MANUAL_STALE_MS, x => d.setEdit().committedSet(x));
+        const why = blockWhy(s, sets, now, d.MANUAL_STALE_MS);
         if (why) return refuse(`${label}: ${why}. Nothing was changed`);
-        const charmIds = (s.charms || []).filter(c => c && take.has(String(c.poolId))).map(c => String(c.id));
-        let roseG = null;
-        if (Rose.cuts(s.metal)) {
-          const guard = RoseStockMod.protectedLayout(s), stock = guard && d.isId(s.roseStockId) ? await tx.get(col("Charm_Nest_Rose_Stock").doc(String(s.roseStockId))) : null;
-          roseG = RoseStockMod.guardTakeOff(s, stock && stock.exists ? stock.data() : null, new Set(charmIds), { allowanceMm: s.roseAllowanceMm });
-          if ((roseG.partialGroups && roseG.partialGroups.length) || (roseG.changed && !roseG.exact)) return refuse(`${label}: its green lines could not be drawn again exactly without the Custom piece: take it off by hand in the sheet window. Nothing was changed`);
-        }
         const t = Placement.takeOffUpdate(s, take, FV.serverTimestamp()); if (!t) continue;
         const charms = (s.charms || []).filter(c => !(c && take.has(String(c.poolId)))), keepIds = new Set(charms.map(c => c && String(c.id)));
         const upd = Object.assign({}, t.update, { charms, placements: (s.placements || []).filter(p => p && keepIds.has(String(p.id))), filesOwed: now, layoutRev: num(s.layoutRev) + 1, contentRev: num(s.contentRev) + 1, takenOffAt: now });
         if (Array.isArray(s.rejects)) upd.rejects = s.rejects.filter(x => keepIds.has(String(x)));
         if (Array.isArray(s.feedWait)) { const keepPool = new Set(charms.map(c => c && String(c.poolId))); upd.feedWait = s.feedWait.filter(x => keepIds.has(String(x)) || keepPool.has(String(x))); }
         if (s.pieceSides && typeof s.pieceSides === "object") { const ps = Object.assign({}, s.pieceSides); for (const id of take) delete ps[id]; upd.pieceSides = ps; }
-        if (roseG && roseG.changed) Object.assign(upd, { roseProtectedJson: roseG.protectedJson, rosePlanJson: null, rosePlanHash: null, roseFingerprint: null });
+        Object.assign(upd, RoseStockMod.lineKeeps(s, new Set((s.charms || []).filter(c => c && take.has(String(c.poolId))).map(c => String(c.id)))));   // (THELINE)
         if (s.label) { if (s.draft && !s.label.own) upd.label = null; upd.labelOwed = now; }
         let setRef = null, setOrders = null, setWas = null;
-        if (s.setId && !s.draft && d.isId(s.setId)) { setRef = col(N.SETS).doc(String(s.setId)); const ss = await tx.get(setRef), sx = ss.exists ? ss.data() || {} : null; if (sx && !d.setEdit().committedSet(sx)) { setOrders = setOrdersWithout(sx.orders, take); if (setOrders) setWas = sx.orders; } }
+        if (s.setId && !s.draft && d.isId(s.setId)) { setRef = col(N.SETS).doc(String(s.setId)); const ss = await tx.get(setRef), sx = ss.exists ? ss.data() || {} : null; if (sx) { setOrders = setOrdersWithout(sx.orders, take); if (setOrders) setWas = sx.orders; } }
         const backRefs = []; for (const id of t.removed) for (const face of ["back", "front"]) backRefs.push(col(N.BACK).doc(Faces.recKey(id, face)));
         const backRows = backRefs.length ? await txGetAll(tx, backRefs, ["sheetId"]) : [];
         edits.push({ s, label, upd, setRef, setOrders, backRows, removed: t.removed, setWas });
@@ -160,8 +150,8 @@ module.exports = function (d) {
   /** Why a piece cannot go back on its sheet now, in words ("" when it can). */
   function backWhy(s, sets, from, setNow, now) {
     if (!s || s.archived) return "its sheet is no longer in the Library";
-    const why = blockWhy(s, sets, now, d.MANUAL_STALE_MS, x => d.setEdit().committedSet(x)); if (why) return `${from.label || "its sheet"}: ${why}`;
-    if (Rose.cuts(s.metal) && (s.roseProtectedJson || s.rosePlanJson)) return `${from.label || "its sheet"}: its green lines were drawn again without it`;
+    const why = blockWhy(s, sets, now, d.MANUAL_STALE_MS); if (why) return `${from.label || "its sheet"}: ${why}`;
+    if (Rose.cuts(s.metal) && (s.roseProtectedJson || s.rosePlanJson)) return `${from.label || "its sheet"}: its green line is drawn`;
     if (from.setOrders) {
       if (!setNow || d.setEdit().committedSet(setNow)) return `${from.label || "its sheet"}: its set was sent or changed`;
       const ids = new Set((from.charms || []).map(c => String(c.poolId))), cur = setNow.orders || {};
