@@ -36,8 +36,9 @@
      that has not moved is one field read (getSheet ifRev / getMany ifRevs) and not the whole record. getRec(id, probe) → the record, SAME (probe: it has not moved since this page read it) or null. */
   const REVS = new Map(), SAME = Object.freeze({ same: true });
   const getRec = async (id, probe) => {
-    const ask = { op: "getSheet", id }; if (probe && REVS.has(id)) ask.ifRev = REVS.get(id);
+    const ask = { op: "getSheet", id, pieces: true }; if (probe && REVS.has(id)) ask.ifRev = REVS.get(id);
     const r = await api(ask); if (r && r.unchanged === true && ask.ifRev) return SAME;
+    if (r && r.sheet) r.sheet.pools = r.pools || await root.Recall.piecesOf(r.sheet);   // (NOSTORE: the pieces' rows come with the sheet, in one answer)
     if (r && r.sheet && r.rev) REVS.set(id, String(r.rev));
     return (r && r.sheet) || null;
   };
@@ -57,16 +58,12 @@
      workspace of the computer carrying the run. They are written to the sheet's cloud record whenever they change, by that computer only (a following computer's copy may be older),
      and every computer that builds the sheet from the cloud takes them from it (ensureLive below, the run's restore in charm-nest-bridge.js). A sheet with nothing on it is never written. */
   const MARKS = new Map(); let marking = false;
-  // (CLOUDSHARE, Paul 14 Nov 2026: "Make Firebase and Etsy cheaper without losing any real-time function"): what was last written is remembered across a reload (the run's computer rewrote every sheet's marks after each reload), and a sheet built from its cloud record starts from the marks it was read with
-  const MKEY = () => "cn.marks.sent." + (safe(() => typeof WORKSPACE_SANDBOX !== "undefined" && WORKSPACE_SANDBOX, false) ? "sandbox" : "production");
-  try { for (const [k, v] of Object.entries(JSON.parse(root.localStorage.getItem(MKEY()) || "{}"))) MARKS.set(k, v); } catch (_) {}
-  let mkT = 0; const keepMarks = () => { clearTimeout(mkT); mkT = setTimeout(() => { try { const o = {}; for (const [k, v] of [...MARKS].slice(-600)) o[k] = v; root.localStorage.setItem(MKEY(), JSON.stringify(o)); } catch (_) {} }, 1000); };
   async function marks() {
     const run = safe(() => root.B && root.B.run, null); if (marking || !run || !run.runId) return; marking = true;
     try { for (const p of pages()) { if (!p || !p.sheetId || p.recalled || p.runId !== run.runId || !(p.charms || []).length || !(p.persistedDone === true || p.layoutRev != null)) continue;
         const m = { joinedAt: +p.joinedAt || null, joinedBy: p.joinedBy || null, leftSet: p.leftSet || null }, sig = JSON.stringify(m); if (MARKS.get(p.sheetId) === sig) continue;
-        if (p.restored && !MARKS.has(p.sheetId)) { MARKS.set(p.sheetId, sig); keepMarks(); continue; }   // (built from its cloud record: these ARE the cloud's marks)
-        try { await api({ op: "putSheet", sheet: Object.assign({ id: p.sheetId }, m) }); MARKS.set(p.sheetId, sig); keepMarks(); st.marks = (st.marks || 0) + 1; } catch (_) { /* tried again at the next look */ } } }
+        if (p.restored && !MARKS.has(p.sheetId)) { MARKS.set(p.sheetId, sig); continue; }   // (built from its cloud record: these ARE the cloud's marks)
+        try { await api({ op: "putSheet", sheet: Object.assign({ id: p.sheetId }, m) }); MARKS.set(p.sheetId, sig); st.marks = (st.marks || 0) + 1; } catch (_) { /* tried again at the next look */ } } }
     finally { marking = false; }
   }
   const lockOf = rec => { const w = rec && rec.working; return w && w.status && w.dev && w.dev !== devId() && Date.now() - (+w.at || 0) < 15 * 60000 ? w : null; };
@@ -96,11 +93,12 @@
     if (!p || !p.sheetId || !root.Recall || typeof root.Recall.rebuild !== "function") return p;
     const rec = await getRec(p.sheetId); if (!rec) return p;
     safe(() => root.CNViewer && typeof root.CNViewer.sawSheet === "function" && root.CNViewer.sawSheet(p, rec));   // (S4: the cloud's nest of this sheet, as its record says)
-    p.charms = (p.charms || []).filter(c => !c.poolId); p.placements = [];
-    p.recalled = rec; p.recStockId = rec.roseStockId || "";   // (MOVESHOW, Paul 15 Nov 2026: the physical sheet the record names, kept for the tile that says what a sheet lies on; a rebuilt sheet no longer carries the record)
+    p.recalled = rec; p.answer = rec; p.recStockId = rec.roseStockId || "";   // (MOVESHOW, Paul 15 Nov 2026: the physical sheet the record names, kept for the tile that says what a sheet lies on; a rebuilt sheet no longer carries the record)
     p.outputs = null; p.verification = rec.verification || null; p.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
     p.backPool = Array.isArray(rec.backPool) ? rec.backPool : p.backPool;
-    await root.Recall.rebuild(p, o && o.background ? { background: true } : undefined);
+    // (a sheet is drawn whole from this answer or not at all: until then, and when a design cannot be read, the cloud's own saved picture stands)
+    try { await root.Recall.rebuild(p, Object.assign({ answer: rec }, o && o.background ? { background: true } : {})); }
+    catch (e) { p.charms = (p.charms || []).filter(c => !c.poolId); p.placements = []; safe(() => root.CN.renderCard(p)); throw e; }
     p.layoutRev = +rec.layoutRev || 0; p.persistedDone = true; p.persisted = Promise.resolve(); p.dirty = false; p.problem = null; delete p.saveOwed;
     st.reloads++; st.last = { at: Date.now(), id: p.sheetId, why: why || "" };
     say("cloud", `${rec.fileBase || p.sheetId}: read again from the cloud (${why || "changed on another computer"}) · ${(p.placements || []).length} pieces`);
@@ -169,12 +167,12 @@
       again(id, rec.dirty === true);
       // (ORDERCLOUD 2, Paul 15 Nov 2026: the carrier's new draft order never reached the computer that follows): a followed sheet whose order changed in the cloud has this computer list the run's sheets again
       if (p.followed && rec.draftOrder != null && Number.isFinite(+rec.draftOrder) && +rec.draftOrder !== +p.draftOrder) { clearTimeout(orderT); orderT = setTimeout(() => safe(() => { const R = root.Recall, F = root.CharmNestRunFollow, id = (F && F.state().runId) || p.runId; if (R && R.follow && id) Promise.resolve(R.follow(id, { force: true })).catch(() => {}); }), 1500); }
-      if (p.recalled) { p.recalled = rec; st.refreshed++; safe(() => root.CN.renderCard(p)); continue; }
+      if (p.recalled) { p.recalled = rec; p.answer = rec; st.refreshed++; safe(() => root.CN.renderCard(p)); if (!p.followed || revOf(p) === null) continue; }
       if (await completeTakeOff(p, rec)) continue;
       const mine = revOf(p);
       if (mine === null) { st.skipped++; continue; }   // (a sheet whose copy here was not the cloud's is never refreshed by itself)
       // (only a newer revision, saved by another computer, rebuilds a sheet held here: a sheet this page is changing itself is never rebuilt under it)
-      if ((+rec.layoutRev || 0) > mine) { try { await reload(p, "changed on another computer"); } catch (e) { PENDING.add(id); console.warn("[cloud-sheets] reload", id, e); } }
+      if ((+rec.layoutRev || 0) > mine) { try { await reload(p, "changed on another computer", { background: true }); } catch (e) { PENDING.add(id); console.warn("[cloud-sheets] reload", id, e); } }
     }
     if (PENDING.size && !pendT) pendT = setTimeout(() => { pendT = 0; const ks = [...PENDING].map(id => "s:" + id); PENDING.clear(); changed(ks, true); }, 5000);
   }

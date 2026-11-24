@@ -92,7 +92,7 @@
       if (!(B.orders.byKey instanceof Map)) B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
       for (const [k, l] of W.lines) {
         if (!l || !l.order || !l.line || !l.spec) continue;   // (a line whose receipt the cloud could not read yet: shown when it can)
-        const row = B.orders.byKey.get(k), next = toRow(l);
+        const row = B.orders.byKey.get(k), next = toRow(l); if (row && root.Review && root.Review.skuNowOf && root.Review.skuNowOf(k)) continue;   // (SKUNOW: a change pressed here and not answered yet is left as pressed)
         if (row && row.cloud === next.cloud) continue;
         if (!row) { B.orders.rows.push(next); B.orders.byKey.set(k, next); added++; fresh.add(k.split("_")[0]); continue; }
         const eng = row.engrave && typeof row.engrave === "object" ? row.engrave : null, cloudEng = l.run && l.run.engrave;

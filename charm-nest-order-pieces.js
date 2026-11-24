@@ -266,6 +266,8 @@
     }
     const pages = () => { try { return typeof allSheets === 'function' ? allSheets() : []; } catch (_) { return []; } };
     const livePlaced = id => { try { return root.Pool && root.Pool.sheetOf ? root.Pool.sheetOf(id) : null; } catch (_) { return null; } };
+    // (NOSTORE, Paul 23 Nov 2026, order 4245537582: a piece made again read "Waiting for a sheet" while its sheet's record listed it, because this page's drawing had no place for it yet: on a page that follows the cloud the records alone say where a piece is)
+    const follows = () => { try { return !(root.B && root.B.run) && !!(root.CNViewer && root.CNViewer.on && root.CNViewer.on()); } catch (_) { return false; } };
     const liveSheet = sid => { if (!sid) return null; for (const p of pages()) if (p.sheetId === sid) return p; return null; };
 
     // an earring PAIR line (Paul, 9 Oct 18:47: every earring pair, matching or mismatched, is one Left and one Right piece per unit; its form or the intake's spec.pair says so) makes the
@@ -306,7 +308,7 @@
       const e = learned.get(rid), lines = only ? only.map(lineOfRow) : linesOf(rid);
       const pools = new Map();
       for (const p of (e && e.pools) || []) pools.set(p.poolId, p);
-      const mem = root.B && root.B.pool && root.B.pool.rows;
+      const mem = follows() ? null : root.B && root.B.pool && root.B.pool.rows;   // (NOSTORE: the order's answer alone)
       // (this page's own pool rows, for the pieces its lines name: a hint, merged with what was read, a sheet id kept from either)
       // (the NEWER of the two says what the row is now: a row this page patched is newer than the read made before it; a row another computer wrote since is newer than
       //  this page's copy. A take-off (abandoned) carries no sheet, whichever copy held one.)
@@ -332,7 +334,7 @@
         for (const l of lines) for (let c = 1; c <= copiesOf(l); c++) for (const s of L.byPool.get(`${l.key}_${c}`) || []) take(s);
       }
       for (const s of (e && e.sheets) || []) take(s);
-      return { orderId: rid, lines, pools: [...pools.values()], sheets: [...sheets.values()], sheetsKnown: !!(e && e.ok), failed: !!(e && !e.ok && e.failed), livePlaced, liveSheet, pairOf, kindOf, groupLine, countOf,
+      return { orderId: rid, lines, pools: [...pools.values()], sheets: [...sheets.values()], sheetsKnown: !!(e && e.ok), failed: !!(e && !e.ok && e.failed), ...(e && e.ok && follows() ? {} : { livePlaced, liveSheet }), pairOf, kindOf, groupLine, countOf,
         thumbOf: id => { try { const c = root.Pool && root.Pool.charmOf ? root.Pool.charmOf(id) : null; return c && c.thumbUrl || null; } catch (_) { return null; } } };
     }
     function enrich(pieces) {
@@ -431,7 +433,8 @@
     const notify = () => bump();
     /** Read again now (forced) the orders given, else every order this page has learned; resolves when they are read. */
     const refresh = ids => load(ids && ids.length ? ids : [...learned.keys()], { force: true });
-    return { of, spread: spreadOf, ofLine, ofRow, nestedOfRow, nestedOf, onSheet, ordersOf, known, load, loadSheet, learn, forget, notify, refresh, subscribe: fn => { subs.add(fn); return () => subs.delete(fn); }, version: () => version, _resolve: resolve, _learned: learned };
+    const row = id => { const e = learned.get(String(id).split('_')[0]); return (e && e.pools || []).find(p => p && p.poolId === id) || null; }, rowIds = () => [...learned.values()].flatMap(e => (e.pools || []).map(p => p.poolId));
+    return { row, rowIds, of, spread: spreadOf, ofLine, ofRow, nestedOfRow, nestedOf, onSheet, ordersOf, known, load, loadSheet, learn, forget, notify, refresh, subscribe: fn => { subs.add(fn); return () => subs.delete(fn); }, version: () => version, _resolve: resolve, _learned: learned };
   }
   return { CODE, resolve, spread, makePage, labelOf, sheetNo, problemOf, handOf, REASON };
 });

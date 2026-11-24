@@ -44,6 +44,8 @@
 .rlFlow.rlInline{position:static;inset:auto;width:auto;max-height:none;padding:0;border:0;box-shadow:none;background:transparent}
 .rlFlow.rlInline ol{max-height:min(46vh,380px)}
 .rlFlow.rlInline [data-rl="close"]{display:none}
+.rlFlow li[data-s="quiet"]{color:var(--ink45,#7d766a)}.rlFlow li[data-s="quiet"] .rlI{border-style:dotted}
+.rlFlow[data-instant] .rlSum:empty::before{content:""}.rlFlow li[hidden]{display:none}
 .rlFlow .rlSum:empty::before{content:"Working… you can close this; it carries on.";font-weight:400;color:var(--ink45,#7d766a)}
 @keyframes rlSpin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.rlFlow li[data-s="work"] .rlI{animation:none}.rlFlow .rlBar i{transition:none}}`;
@@ -63,7 +65,10 @@
     const list = el.querySelector("ol"), bar = el.querySelector(".rlBar"), fill = bar.querySelector("i"), sum = el.querySelector(".rlSum"), step = el.querySelector(".rlStep");
     const inside = o.host && o.host.nodeType === 1 ? o.host : null;
     const lines = new Map(); let done = false;
-    const paintBar = () => { const all = [...lines.values()], n = all.length, f = all.filter(x => FINAL.has(x.state)).length, pct = done ? 100 : n ? Math.round(90 * f / n) : 5; fill.style.width = pct + "%"; bar.setAttribute("aria-valuenow", String(pct));
+    /* INSTANT (Paul, 23 Nov 2026: "nowhere in the application is the system allowed to make the user wait"): o.instant = what is done, in words: the panel opens finished (a full bar, "Done at hh:mm", no spinner), and the
+       cloud's own steps are listed quietly under it; only a failure is said, in red. */
+    const now = o.instant ? String(o.instant) : "", nowAt = new Date(); let endBad = false; const bad = () => endBad || [...lines.values()].some(x => x.state === "failed");
+    const paintBar = () => { if (now) { fill.style.width = "100%"; bar.setAttribute("aria-valuenow", "100"); const no = bad(); el.dataset.done = "1"; el.dataset.tone = no ? "bad" : "ok"; step.textContent = no ? "Not changed" : `Done at ${String(nowAt.getHours()).padStart(2, "0")}:${String(nowAt.getMinutes()).padStart(2, "0")}`; sum.textContent = no ? "Not changed" : now; const li = lines.get("now"); if (li) li.li.hidden = no; return; } const all = [...lines.values()], n = all.length, f = all.filter(x => FINAL.has(x.state)).length, pct = done ? 100 : n ? Math.round(90 * f / n) : 5; fill.style.width = pct + "%"; bar.setAttribute("aria-valuenow", String(pct));
       const t = new Date(); step.textContent = done ? `${el.dataset.tone === "bad" ? "Finished with a problem" : "Completed"} at ${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")} · 100%` : `${f} of ${n} step${n === 1 ? "" : "s"} done · ${pct}%`; };
     // (a modal window, the order window or the designs window, makes everything outside it inert: the panel lives inside the topmost one while one is open, else in the top layer (a manual popover),
     //  so it is always seen and can be closed; it moves when a window opens or closes)
@@ -88,7 +93,7 @@
         let x = lines.get(lid);
         if (!x) { const li = doc.createElement("li"); li.innerHTML = `<span class="rlI" aria-hidden="true"></span><span class="rlT"></span>`; li.dataset.id = lid; list.appendChild(li); x = { id: lid, li }; lines.set(lid, x); }
         x.text = String(text || ""); x.state = state; x.why = why ? String(why) : "";
-        x.li.dataset.s = state; const t = x.li.querySelector(".rlT"); t.textContent = x.text;
+        x.li.dataset.s = now && state === "work" ? "quiet" : state; const t = x.li.querySelector(".rlT"); t.textContent = x.text;
         if (x.why) { const w = doc.createElement("span"); w.className = "rlWhy"; w.textContent = x.why; t.appendChild(w); }
         x.li.scrollIntoView && list.scrollHeight > list.clientHeight && x.li.scrollIntoView({ block: "nearest" });
         paintBar(); return h;
@@ -100,12 +105,13 @@
         b.onclick = () => { b.disabled = true; h.line(lid, "Asking again…", "work"); Promise.resolve().then(fn).catch(() => {}); };
         t.appendChild(b); return h;
       },
-      finish(summary, tone) { done = true; sum.textContent = String(summary || "Done"); el.dataset.tone = tone || ([...lines.values()].some(x => x.state === "failed") ? "bad" : [...lines.values()].some(x => x.state === "warn") ? "warn" : "ok"); el.dataset.done = "1"; paintBar(); return h; },
+      finish(summary, tone) { if (now) { endBad = tone === "bad"; paintBar(); return h; } done = true; sum.textContent = String(summary || "Done"); el.dataset.tone = tone || ([...lines.values()].some(x => x.state === "failed") ? "bad" : [...lines.values()].some(x => x.state === "warn") ? "warn" : "ok"); el.dataset.done = "1"; paintBar(); return h; },
       close, finished: () => done,
       lines: () => [...lines.values()].map(x => ({ id: x.id, text: x.text, state: x.state, why: x.why })),
       shown: () => el.isConnected
     };
-    (inside || doc.body).appendChild(el); place(); paintBar();
+    if (now) { el.dataset.instant = "1"; done = true; }
+    (inside || doc.body).appendChild(el); place(); paintBar(); if (now) h.line("now", now, "done");
     return h;
   }
   root.CNRelinkFlow = { open };

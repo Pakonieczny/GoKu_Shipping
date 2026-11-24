@@ -519,6 +519,14 @@ function ONE_LOGIN(s) { const k = String(s).normalize("NFD").replace(/[\u0300-\u
    given user activities. The user that is officially logged in must have all attributes and actions recorded under that particular signed in
    user"): the name is the sorter's own sign-in and nothing else. It no longer falls back to the name the Design Station frame keeps in its own
    browser storage (another origin, another person maybe); the frame is told who is signed in here instead (DesignLink.employee). */
+/* NOSTORE (Paul, 23 Nov 2026, order 4245537582: "no information on the computer. That's the fix"): on a computer that follows the cloud there is no store of pieces. B.pool.rows says what the cloud answered for the piece's order
+   (OrderPieces); an order not asked about yet: what came with its sheet's answer. Nothing can be put into it. (A page that carries a run, none does in mode "on", keeps its own rows as before.) */
+{
+  let store = B.pool.rows; const sheets = () => (typeof allSheets === "function" ? allSheets() : []), ofSheet = id => { for (const p of sheets()) if (p.answer && p.answer.pools && p.answer.pools[id]) return p.answer.pools[id]; };
+  const get = id => (window.OrderPieces && OrderPieces.row ? OrderPieces.row(String(id)) : null) || ofSheet(String(id)), ids = () => [...new Set(sheets().flatMap(p => Object.keys((p.answer && p.answer.pools) || {})).concat(window.OrderPieces && OrderPieces.rowIds ? OrderPieces.rowIds() : []))], all = () => new Map(ids().map(id => [id, get(id)]));
+  const view = { get, has: id => !!get(id), set() { return view; }, delete: () => false, clear() {}, forEach: f => all().forEach(f), keys: () => all().keys(), values: () => all().values(), entries: () => all().entries(), [Symbol.iterator]: () => all()[Symbol.iterator](), get size() { return ids().length; } };
+  Object.defineProperty(B.pool, "rows", { configurable: true, enumerable: true, get: () => (!B.run && window.CNViewer && CNViewer.on && CNViewer.on() ? view : store), set: v => { store = v || new Map(); } });
+}
 const employeeName = () => B.employee || "";
 /* The last name used in this browser (cn.lastEmployee: kept after a sign-out, midnight or an idle end clears cn.employee), so the next
    press can offer "Continue as <name>" in one tap. A name only: nothing that records a person reads it (employeeName is the one source). */
@@ -2398,7 +2406,6 @@ const Orders = window.Orders = (() => {
     return out;
   }
   const STATE_PILL = { pulled: ["neutral", "pulled"], waiting: ["info", "waiting"], noDesign: ["info", "no design"], pooled: ["info", "pooled"], nested: ["ok", "nested"], written: ["ok", "written"], labelled: ["ok", "labelled"], committed: ["ok", "complete"], covered: ["ok", "done in editor"], unmatched: ["bad", "unmatched"], held: ["bad", "held"], contended: ["warn", "other run"], skipped: ["warn", "skipped"], gone: ["bad", "gone"], cancelled: ["bad", "cancelled"], oversize: ["bad", "oversize"] };
-  function engravePill(r) { const e = r.engrave; if (!e) return r.spec && r.spec.engraveCandidate ? ["warn", "words?"] : ["neutral", "—"]; if (!e.needed) return ["neutral", e.state === "skipped" ? "skipped" : "no engraving"]; if (e.approved) return ["ok", "approved"]; if (e.state === "words") return ["warn", "words"]; if (e.state === "review") return ["warn", "review"]; if (e.state === "fitted") return ["info", "fitted"]; if (e.state === "blocked") return ["bad", "blocked"]; return ["info", e.state || "engrave"]; }
   /** The face(s) a line engraves, as one small chip beside its state: "Front + back" or "Front only". A back-only line (every line there was) has none, so the table reads as it always did. */
   function faceChip(r) {
     const F = window.CharmNestEngraveFaces; if (!F || !F.setupOf || !r || !r.spec) return ["", ""];
@@ -5139,7 +5146,6 @@ const Pool = window.Pool = (() => {
   const ipBusy = sh => ["nesting", "finishing", "queued"].includes(sh.status) || !!sh._operationStarting || !!sh._learnedStarting || !!(sh.persisted && !sh.persistedDone && !sh.problem);
   /** A sheet that may take a new piece into an old spot: still on this page, its run's, NOT CUT (replaceCutWhy: a draft, a full sheet, a sheet in a formed, released or committed set all may; a
    *  Rose Gold / 10K / 14K sheet with a green line is left to its own rules), not held by a person or pulled to another set, not busy. */
-  function inPlaceOpen(sh, run) { return !inPlaceShut(sh, run); }
   /** IPL2: why a sheet cannot take a replaced piece back now, in a few words ("" when it can). */
   function inPlaceShut(sh, run) {
     if (!sh || !allSheets().includes(sh)) return "it is no longer on this page";
@@ -13045,13 +13051,6 @@ const Engrave = window.Engrave = (() => {
     : DECIDED.includes(job.state) ? `The saved ${facedJob(job) ? faceWord(job) + " " : ""}engraving, as it was approved. Change anything in the panel and approve it again.`   // (an approved piece whose placement is not in hand is never "waiting for a decision")
     : `the ${facedJob(job) ? faceWord(job) + " " : ""}words need a decision`;
   const matchesQ = j => { const q = (EG.q || "").trim().toLowerCase(); if (!q) return true; return [j.row.order.receiptId, j.row.spec && j.row.spec.designSku, j.row.line.sku, j.text, (j.lines || []).join(" "), j.row.line.title, j.slot && SIDES() ? SIDES().slotWord(j) : "", lineHasFront(j.row) ? faceNoun(faceOfJob(j)) : "", j.mono ? "monogram" : ""].some(x => String(x || "").toLowerCase().includes(q)); };
-  /** Which run's engraving this is. A tab that showed a queue and no run left nobody able to say whose queue it was. */
-  function runWord() {
-    // a recalled set names itself, even while a finished run is still remembered underneath
-    const rc = B.orders.recalled && window.Recall && Recall.on() ? Object.assign({ runId: B.orders.recalled.runId || "" }, B.orders.recalled) : null;
-    const r = rc || B.run || (B.orders.recalled ? Object.assign({ runId: B.orders.recalled.runId || "" }, B.orders.recalled) : null); if (!r) return "no run — earlier runs…";
-    return (r.seq ? `Set ${r.seq}` : r.runId.slice(-8)) + (r.day ? " · " + new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "");
-  }
   /** An empty queue has four different causes, and only one of them means "you are done". Say which one it is. */
   function emptyWhy(jobs, nWords, nDone) {
     const r = B.run;
@@ -13272,12 +13271,6 @@ const Engrave = window.Engrave = (() => {
     const nums = c.querySelector(".pvNums dd"); if (nums) nums.textContent = `${f.size.toFixed(2)} pt · cap ${f.capMm.toFixed(2)} mm · ${f.weight}${f.angle ? ` · ${f.angle}°` : ""}`;
     const cl = c.querySelector(".claude"); if (cl) cl.remove();
     LiveStrip.render();
-  }
-  /** What Claude last said about the rendered back — and, once it has been moved, that nothing has looked at it since. */
-  function claudeBlock(job) {
-    if (job.claude) return `<div class="claude">${job.claude.skipped ? `Claude could not look at the render: ${esc(job.claude.skipped)}` : `<b>${job.claude.legible ? "Reads clearly" : "Hard to read"}</b> — ${esc(job.claude.notes)}`}</div>`;
-    if (job.rereading) return `<div class="claude" style="opacity:.6">Claude is looking at the rendered back…</div>`;
-    return `<div class="claude" style="opacity:.75">Nothing has looked at this since you moved it.</div>`;
   }
   /** A placement that has been moved is exactly the one worth looking at again, so it is looked at again. */
   function reRead(job) {
@@ -16531,7 +16524,6 @@ const RunCtl = window.RunCtl = (() => {
   /* Auto used to finish a set, blank the screen and refill it minutes later with no countdown anywhere — a person came
      back from the bench to an empty app and could not tell whether the shift was done or something had crashed. */
   const NEXT = { at: 0, t: 0 };
-  function armNext(ms) { NEXT.at = Date.now() + ms; clearInterval(NEXT.t); NEXT.t = setInterval(() => { if (!NEXT.at) { clearInterval(NEXT.t); return; } renderBanner(); }, 1000); }
   function cancelNext() { NEXT.at = 0; clearInterval(NEXT.t); clearTimeout(autoTimer); renderBanner(); }
   /** A run that is given up lets go of its lines: its pool rows are marked abandoned and the station's claims are lifted,
       so the next run can take them without waiting a day for the rows to go stale. */
@@ -20287,6 +20279,8 @@ const Review = window.Review = (() => {
   const settled = [];                                                     // what this shift has answered, newest first
   // (S2, Paul 21 Nov 2026) a viewer: cloud mode "on" and no run carried here (Review's answers go to the cloud: Accept the new order, Resolved)
   const rvViewer = () => !B.run && !!(window.CNViewer && typeof CNViewer.on === "function" && CNViewer.on());
+  const askedAgain = new Set();   // (INSTANT: the cards whose Try again is with the cloud: off the list from the press to its answer)
+  const againNow = (it, go) => { const back = () => { askedAgain.delete(it.key); syncOrderItems(); render({ still: true }); }; askedAgain.add(it.key); syncOrderItems(); render({ still: true }); return Promise.resolve().then(go).then(back, back); };
   const changeAsked = new Map();                                          // (S2) line key → when "Accept the new order" was sent to the cloud from here: its card waits for the cloud's answer
   /* The order timeline: a question a line raises (needsDecision, once per line and kind) and a person's answer to it here
      (decided, skipped, held). A card notes its answer as it acts (answered); the event is recorded when the question
@@ -20471,6 +20465,7 @@ const Review = window.Review = (() => {
     const byRid = new Map();
     for (const r of Orders.rows()) { const k = r.order.receiptId; if (!byRid.has(k)) byRid.set(k, []); byRid.get(k).push(r); }
     B.review.items = items().filter(x => {
+      if (askedAgain.has(x.key)) return false;
       if (!isNotice(x)) return true;
       const lines = byRid.get(x.rid); if (!lines || !lines.length) return false;
       if (lines.every(l => ["committed", "gone"].includes(l.state))) return false;
@@ -21049,7 +21044,7 @@ const Review = window.Review = (() => {
     // (WRONGCHARM2, Paul 20 Oct 2026: the progress panel opens first and follows every sweep of the listing from the write on: relinkFlow)
     const scope = off.via === "option" && off.option ? `option “${off.option.name}: ${off.option.value}”` : off.from ? `SKU “${off.from}”` : "no SKU";
     // (EDITSKU: Edit SKU gives its own title and words, keeps the panel open for its own end (o.keepOpen) and starts its Etsy write with the link write (o.onFlow))
-    const flow = relinkFlow({ title: o.title || `Wrong charm? · listing ${off.listingId} → ${sku}`, sub: o.sub || "Kept for this listing and its SKU only. Etsy is not changed.", listingId: off.listingId, fromSku: off.from, toSku: sku, rows: aff.rows, keepOpen: !!o.keepOpen, host: o.host,
+    const flow = relinkFlow({ title: o.title || `Wrong charm? · listing ${off.listingId} → ${sku}`, sub: o.sub || "Kept for this listing and its SKU only. Etsy is not changed.", listingId: off.listingId, fromSku: off.from, toSku: sku, rows: o.rows || aff.rows, keys: o.keys || null, keepOpen: !!o.keepOpen, host: o.host, instant: o.instant || null,
       pre: [{ id: "link", text: `Saving the link: listing ${off.listingId} · ${scope} → ${sku}…`, state: "work" }] });
     if (o.onFlow) o.onFlow(flow);
     let r; try { r = await RL.pick(row, sku, { by: who }); } catch (e) { r = { ok: false, why: (e && e.message) || String(e) }; }   // (REVLINK: ONE write under the matcher's key, read back by the server, the maps read again; it throws when it is not saved)
@@ -21091,7 +21086,7 @@ const Review = window.Review = (() => {
      its sheet is still the old one (LEMON). The page said "Changed" for itself only: Review, which shows what the cloud knows, had no card, the picker said "this piece's charm already", and nobody could have it made again.
      → [the SKUs the pieces were made as] when they are another charm, else []. */
   function staleMade(row) {
-    try { const want = String((row && row.spec && row.spec.designSku) || ""); if (!want || row.spec.noDesign || row.spec.ownDesign || (O.setDesignsOf && O.setDesignsOf(row.spec))) return [];
+    try { const want = String((row && row.spec && row.spec.designSku) || ""); if (!want || skuNow.has(row.key) || row.spec.noDesign || row.spec.ownDesign || (O.setDesignsOf && O.setDesignsOf(row.spec))) return [];
       const made = (row.poolIds || []).map(id => B.pool.rows.get(id)).filter(Boolean).map(x => String(x.sku || "").toUpperCase()).filter(Boolean);
       return [...new Set(made.filter(m => !O.sameDesign(m, want, k => Master.entryFor(k))))]; } catch (_) { return []; }
   }
@@ -21106,9 +21101,37 @@ const Review = window.Review = (() => {
   async function remakeAsRead(row, o) {
     if (!row || !row.key) return { ok: false, why: "the piece is not read yet" };
     if (B.run) { row.repoolChanged = true; await repool(row); return { ok: true }; }
-    const ans = await cloudRemake([row.key], `Made again as ${row.spec.designSku} (was ${staleMade(row).join(" + ") || "another charm"})`, (o && o.lead) || "", o && o.onStep);
+    const was = staleMade(row).join(" + ") || "another charm", now = skuNowPut([row], String(row.spec.designSku || "").toUpperCase());   // (SKUNOW: shown at the press)
+    const ans = await cloudRemake([row.key], `Made again as ${row.spec.designSku} (was ${was})`, (o && o.lead) || "", o && o.onStep);
+    skuNowEnd(now, ans && (ans.ok || ans.queued) ? "" : `Not made again: ${String((ans && (ans.text || ans.why)) || "no answer").replace(/\.$/, "")}`, () => remakeAsRead(row, o));
     if (ans && ans.ok) { try { remove("chg:" + row.key); } catch (_) { /* its card goes with the next read */ } row.changePending = false; row.repoolChanged = false; await freshNow({ keys: [row.key] }).catch(() => null); try { Orders.interpretAll(); syncOrderItems(); Orders.render(); } catch (_) { /* drawn at the next pass */ } }
     return ans;
+  }
+  /* SKUNOW (Paul, 23 Nov 2026: "whatever the user inputs or changes must be instantaneous"): on a computer that follows the cloud the lines a Change SKU, a "Just this order" or a Make it again changes show the new charm at the PRESS
+     (skuNow: line key → the charm, in memory, from the press to the cloud's answer to that very request). Done: what the cloud has is drawn. Refused: what the cloud has is drawn, and why is said in red on the order (skuBad). */
+  const skuNow = new Map(), skuBad = new Map(), skuNowOn = () => !B.run && !!(window.CNViewer && typeof CNViewer.on === "function" && CNViewer.on());
+  const rowOfKey = key => (B.orders && B.orders.byKey && B.orders.byKey.get(key)) || null;
+  function skuNowPut(rows, sku, once) {
+    const marks = []; if (!skuNowOn()) return marks;
+    for (const row of rows) {
+      if (!row || !row.key || !row.spec || row.hold || ["gone", "committed", "skipped"].includes(row.state)) continue;
+      const m = { key: row.key, sku, was: { spec: row.spec, problems: row.problems, state: row.state, reason: row.reason } }; marks.push(m); skuNow.set(row.key, m); skuBad.delete(row.key);
+      if (String(row.spec.designSku || "").toUpperCase() === sku) continue;   // (Make it again: the line reads it already)
+      let sp = null; try { const c = Orders.ctx(); c.skuOverride = { sku, by: employeeName(), at: Date.now(), was: row.spec.designSku || "" }; sp = O.interpretLine(row.order, row.line, c); if (!once) delete sp.once; } catch (_) { /* its last reading, with the charm */ }
+      row.spec = sp && sp.designSku ? sp : Object.assign({}, row.spec, { designSku: sku, problems: [] }); row.problems = (row.spec.problems || []).slice();
+      if (["unmatched", "noDesign", "held"].includes(row.state)) { row.state = (row.poolIds || []).length ? "pooled" : "pulled"; row.reason = null; }
+    }
+    skuNowShow(marks); return marks;
+  }
+  /** The cloud answered the request these marks stand for. why: refused, in words; retry: asks it again. */
+  function skuNowEnd(marks, why, retry) {
+    for (const m of marks) { if (skuNow.get(m.key) !== m) continue; skuNow.delete(m.key); const row = rowOfKey(m.key); if (row) { if (why) Object.assign(row, m.was); if (row.cloud) row.cloud = "-"; } if (why) skuBad.set(m.key, { text: String(why).slice(0, 220), retry }); }
+    if (marks.length) { try { window.CloudWorld && CloudWorld.applyToRows("sku"); } catch (_) { /* its next read */ } skuNowShow(marks); }
+  }
+  function skuNowShow(marks) {
+    const keys = new Set(marks.map(m => m.key)); try { if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) { /* at its next paint */ }
+    for (const p of allSheets()) if (p.answer && (p.answer.charms || []).some(c => c && keys.has(c.lineKey))) Recall.redraw(p).then(() => { CN.renderCard(p); remadeRepaint([p]); }).catch(() => null);
+    setTimeout(() => { try { syncOrderItems(); Orders.render(); } catch (_) { /* at the next render */ } liveSku(); }, 0);
   }
   /** The lines one SKU edit covers: the open lines of the same listing with the same Etsy SKU. */
   /* ANYWHERE (Paul, 19 Nov 2026: the Iguana order: "SKU charm was updated ... system refused to place newly updated charm on the original sheet. This must be allowed to happen from any computer"): a line a computer that FOLLOWS the run
@@ -21179,11 +21202,7 @@ const Review = window.Review = (() => {
     const keys = new Set((o.keys || []).map(String));
     if (sku) for (const r of Orders.rows()) { if (!r || !r.key) continue; const ds = String((r.spec && r.spec.designSku) || "").toUpperCase(); if (ds === sku || (r.poolIds || []).some(id => String((B.pool.rows.get(id) || {}).sku || "").toUpperCase() === sku)) keys.add(r.key); }
     const ids = [...new Set([...keys].flatMap(k => (((B.orders && B.orders.byKey && B.orders.byKey.get(k)) || Orders.rows().find(r => r && r.key === k) || {}).poolIds) || []).filter(Boolean).map(String))];
-    for (let i = 0; i < ids.length; i += 300) {
-      try { const got = await api("charmNestLibrary", { op: "poolGet", poolIds: ids.slice(i, i + 300) }, { quiet: true });
-        for (const [id, p] of Object.entries((got && got.pools) || {})) { const mine = B.pool.rows.get(id); if (!mine) B.pool.rows.set(id, p); else if ((+p.updatedAt || 0) >= (+mine.updatedAt || 0)) B.pool.rows.set(id, Object.assign({}, mine, p)); out.pieces++; } }
-      catch (_) { /* the feed brings it */ }
-    }
+    try { if (window.OrderPieces && OrderPieces.load) { await OrderPieces.load([...new Set([...keys].map(k => String(k).split("_")[0]))].slice(0, 30), { force: true }); out.pieces = ids.length; } } catch (_) { /* the feed brings it */ }   // (NOSTORE: the orders' pieces as the cloud has them now)
     try { const rid = (F && F.state && F.state().runId) || (B.run && B.run.runId) || ""; if (rid && window.Recall && typeof Recall.follow === "function") { await Recall.follow(rid, { force: true }); out.sheets = true; } } catch (_) { /* the feed brings it */ }
     try { Orders.interpretAll(); syncOrderItems(); Orders.render(); } catch (_) { /* drawn with the next render */ }
     return out;
@@ -21197,20 +21216,6 @@ const Review = window.Review = (() => {
     const rows = Orders.rows().filter(editSkuSame(off)), sheets = new Set(), cut = new Set();
     for (const rr of rows) for (const id of rr.poolIds || []) { const sh = Pool.sheetOf(id) || allSheets().find(z => z.charms.some(c => c.poolId === id)); if (sh) ((sh.laserDoneAt || sh.roseCutAt) ? cut : sheets).add(rlName(sh)); }
     return { lid: off.lid, from: off.from, orders: new Set(rows.map(rr => String(rr.order.receiptId))).size, sheets: [...sheets], cut: [...cut] };
-  }
-  /** The Etsy half of an SKU edit, on the panel's "etsy" line: listing `off.lid` only, and only its products that carry the line's Etsy SKU take the new one (editSkuEtsy). → the answer */
-  function editSkuEtsy(flow, off, sku, who) {
-    const L = off.lid, say = (text, state, why) => { try { flow.line("etsy", text, state, why); } catch (_) { /* a word only */ } };
-    if (!off.from) { say(`Etsy listing ${L}: the piece has no Etsy SKU, so Etsy is not changed`, "skip"); return Promise.resolve({ ok: false, skipped: true }); }
-    say(`Etsy listing ${L}: changing the SKU “${off.from}” to ${sku} (this listing only)…`, "work");
-    return api("charmNestLibrary", { op: "editSkuEtsy", listingId: L, sku, onlySku: off.from, by: who }, { label: "Updating the Etsy listing" })
-      .catch(e => ({ ok: false, thrown: true, text: (e && e.message) || String(e) }))
-      .then(r => {
-        r = r || { ok: false, text: "no answer" };
-        if (r.ok) say(r.already ? `Etsy listing ${L} has ${sku} already` : `Etsy listing ${L} updated: “${off.from}” → ${sku}${r.changed ? ` on ${r.changed} product${r.changed === 1 ? "" : "s"}` : ""}`, "done", `only this listing: other listings with the same SKU are not changed${r.beforePath ? "; the listing as it was is kept" : ""}`);
-        else say(`Etsy listing ${L} was NOT updated`, "failed", r.thrown ? `${r.text}: Etsy may or may not have changed; look at the listing before trying again` : (r.text || r.reason || "refused"));
-        return r;
-      });
   }
   async function editSku(row, sku, opt) {
     if (row && row.line && O.reviewListing && O.reviewListing(row.line.listingId)) return editSkuOnce(row, sku, opt);   // (REVIEWLIST: an always-Review listing keeps no charm for the listing: this order only)
@@ -21233,9 +21238,10 @@ const Review = window.Review = (() => {
     //  the old charm leaves stays full (PICKFULL is not applied: the new charm goes into the old spot when it fits, else onto the next sheet of its colour))
     try { const M = window.CharmNestReviewMark; if (M && M.isMarked && M.resolve) await Promise.all([...new Set(rows.map(x => String(x.order.receiptId)))].filter(rid => M.isMarked(rid)).map(rid => Promise.resolve(M.resolve(rid, { by: who, how: "pick", sku })).catch(() => {}))); } catch (_) { /* answered by the sweep as before */ }
     for (const rr of rows) rr._editSku = sku;
+    const shadow = Object.assign({}, row), nowKeys = rows.filter(r => r && r.key && !r.hold && !["gone", "committed", "skipped"].includes(r.state)).map(r => r.key), now = skuNowPut(rows, sku);   // (SKUNOW: shown at the press; the link is worked out from the line as it was)
+    const answer = why => skuNowEnd(now, why ? `Not changed: ${String(why).replace(/\.$/, "")}` : "", () => editSku(rowOfKey(row.key) || row, sku, Object.assign({}, opt, { host: null })));
     const title = `Edit SKU · listing ${off.lid}: ${off.from || "no SKU"} → ${sku}`, sub = `Listing ${off.lid} only: the charm it is cut as, every open order of it and its sheets, and every view. Other listings with the same SKU are not changed, and Etsy is never changed.`;
-    let etsy = null, done = null;
-    const etsyGo = () => { etsy = Promise.resolve({ ok: false, skipped: true, never: true }); };   // (NOETSY, Paul 23 Nov 2026, listing 4494149020: "it's never supposed to update Etsy. This should not be recorded as a failure": a Change SKU asks nothing of Etsy, and says nothing of it)
+    let done = null;   // (NOETSY, Paul 23 Nov 2026, listing 4494149020: "it's never supposed to update Etsy": a Change SKU asks nothing of Etsy, and says nothing of it)
     // (the panel's end: the sheets saved, every view updated, then the Etsy answer; the lines keep their marks until then, so a sweep that waited for a busy sheet is still an SKU edit)
     const end = async (flow, all, linked) => {
       await Promise.resolve(all).catch(() => null);
@@ -21244,9 +21250,8 @@ const Review = window.Review = (() => {
         await freshNow({ keys: rows.map(r => r.key) }).catch(() => null);   // (SYNCNOW: the views are drawn from what the cloud made before this says so)
         liveSku(); try { flow.line("views", "Updated everywhere: Orders, Review, the order window, the sheets, Library, Design & Engrave and the run banner (other screens at once)", "done"); } catch (_) { /* a word only */ }
       }
-      const er = await Promise.resolve(etsy).catch(() => null), ls = flow.panel ? flow.panel.lines() : [];
+      const ls = flow.panel ? flow.panel.lines() : [];
       try { if (flow.panel) flow.panel.finish(linked ? `${sku} for listing ${off.lid}` : `Not saved in the app`, ls.some(x => x.state === "failed") ? "bad" : ls.some(x => x.state === "warn") ? "warn" : "ok"); } catch (_) { /* a word only */ }
-      return { etsy: er };
     };
     const later = (flow, all, linked) => (done = end(flow, all, linked).finally(() => { for (const rr of rows) delete rr._editSku; }));
     // (a line of the listing and SKU with no pieces yet, an unknown SKU or one with no design, is made up with the charm at once: it is not waiting for the next intake; each one's place is on the panel)
@@ -21262,16 +21267,16 @@ const Review = window.Review = (() => {
     };
     try {
       if (off.viaLink) {
-        const r = await fixCharm(row, sku, { confirm: () => true, title, sub, keepOpen: true, host, onFlow: etsyGo });
-        if (!r || !r.ok) { if (r && r.flow) later(r.flow, null, false); return Object.assign({ via: "link", done }, r); }
+        const r = await fixCharm(now.length ? shadow : row, sku, { confirm: () => true, title, sub, keepOpen: true, host, instant: opt && opt.instant, rows: now.length ? rows : null, keys: now.length ? nowKeys : null });
+        if (!r || !r.ok) { answer((r && r.why) || "no answer"); if (r && r.flow) later(r.flow, null, false); return Object.assign({ via: "link", done }, r); }
         await makeUp(r.flow); Orders.interpretAll(); syncOrderItems(); Orders.render(); liveSku();
+        Promise.resolve(r.all).catch(() => null).then(t => answer(!t || (t.failed && t.failed.has("carrier")) ? "the cloud did not make the orders again" : ""));
         later(r.flow, r.all, true);
         return Object.assign({ via: "link" }, r, { done });
       }
-      const flow = relinkFlow({ title, sub, listingId: off.lid, fromSku: off.from, toSku: sku, keepOpen: true, host, pre: [{ id: "link", text: `Saving the charm: listing ${off.lid} · SKU “${off.from || "none"}” → ${sku}…`, state: "work" }] });
-      etsyGo(flow);
+      const flow = relinkFlow({ title, sub, listingId: off.lid, fromSku: off.from, toSku: sku, keepOpen: true, host, instant: opt && opt.instant, pre: [{ id: "link", text: `Saving the charm: listing ${off.lid} · SKU “${off.from || "none"}” → ${sku}…`, state: "work" }] });
       try { savedLink(await api("charmNestLibrary", { op: "aliasPut", listingId: off.lid, sku, fromSku: off.from || undefined, by: who, title: String(row.line.title || "").slice(0, 200) || undefined })); }
-      catch (err) { const why = (err && err.message) || String(err); flow.fail(why, "link", `Not saved: listing ${off.lid} · SKU “${off.from || "none"}” → ${sku}`); later(flow, null, false); return Object.assign(no(`Not saved: ${why}`), { done }); }
+      catch (err) { const why = (err && err.message) || String(err); answer(why); flow.fail(why, "link", `Not saved: listing ${off.lid} · SKU “${off.from || "none"}” → ${sku}`); later(flow, null, false); return Object.assign(no(`Not saved: ${why}`), { done }); }
       flow.line("link", `Saved: listing ${off.lid} · SKU “${off.from || "none"}” is cut as ${sku}`, "done");
       answered({ kind: "unmatchedSku", rows }, "decided", `Edit SKU: ${off.from || "no SKU"} → ${sku}`, { sku, from: off.from || null }, who);
       await Orders.loadMaps(true);
@@ -21281,15 +21286,16 @@ const Review = window.Review = (() => {
       // (ITEM 16, Paul 21 Nov 2026: in cloud mode "on" no computer carries the run: the cloud is ASKED to make the listing's open lines again (remakeline: old pieces off, new ones made,
       //  placed, nested, files written), and the panel says what the cloud answers, never "the computer that carries the run")
       if (!B.run && window.CNViewer && CNViewer.on && CNViewer.on() && typeof window.CNRelayAsk === "function") {
-        const keys = rows.filter(r => r && r.key && !r.hold && !["gone", "committed", "skipped"].includes(r.state)).map(r => r.key);
+        const keys = nowKeys;
         Orders.interpretAll(); syncOrderItems(); Orders.render();
-        if (!keys.length) { try { flow.line("carrier", `No open piece of listing ${off.lid} needs making again: the cloud reads ${sku} at its next reading of the orders`, "done"); } catch (_) { /* a word only */ } later(flow, null, true); return { ok: true, sku, via: "alias", follower: true, cloud: true, orders: [], done }; }
+        if (!keys.length) { answer(""); try { flow.line("carrier", `No open piece of listing ${off.lid} needs making again: the cloud reads ${sku} at its next reading of the orders`, "done"); } catch (_) { /* a word only */ } later(flow, null, true); return { ok: true, sku, via: "alias", follower: true, cloud: true, orders: [], done }; }
         try { flow.line("carrier", `Asking the cloud to make ${keys.length === 1 ? "the piece" : `${keys.length} pieces`} again as ${sku}…`, "work"); } catch (_) { /* a word only */ }
         const asked = window.CNRelayAsk({ type: "remakeline", ids: keys.slice(0, 80), label: `Change SKU: ${off.from || "no SKU"} → ${sku}`.slice(0, 150) }, t => { try { flow.line("carrier", String(t || "").slice(0, 260), "work"); } catch (_) { /* a word only */ } }, 300000, { always: true })
           .then(ans => shown(ans));
         /* NOWCMD: followed until the cloud answers: its live step on the panel's line, its words when done; failed or not done after 5 minutes, the line is red with the reason and a
            Try again on the panel (the same request again), a toast says it too, and a late answer that comes afterwards replaces the line (ans.later) */
         const shown = ans => { try { flow.line("carrier", ans && ans.ok ? `The cloud: ${ans.text || "made again"}`.slice(0, 260) : ans && ans.late ? `${ans.text}`.slice(0, 260) : `The cloud did not make it again: ${(ans && ans.text) || "no answer"}`.slice(0, 260), ans && ans.ok ? "done" : "failed");
+          answer(ans && (ans.ok || ans.queued) ? "" : (ans && ans.text) || "no answer");
           if (ans && !ans.ok && typeof ans.retry === "function" && flow.panel && typeof flow.panel.act === "function") flow.panel.act("carrier", "Try again", () => Promise.resolve(ans.retry()).then(shown)); if (ans && ans.late && ans.later) Promise.resolve(ans.later).then(x => { if (x) shown(x); }); } catch (_) { /* a word only */ } return ans; };
         later(flow, asked, true);
         return { ok: true, sku, via: "alias", follower: true, cloud: true, orders: [...new Set(rows.map(r => String(r.order.receiptId)))], done };
@@ -21329,7 +21335,9 @@ const Review = window.Review = (() => {
     if (!B.run) {
       const rid0 = String(row.order.receiptId), cloudOn = !!(window.CNViewer && CNViewer.on && CNViewer.on());   // (G9: in mode "on" the words name the cloud)
       if (typeof window.CNRelayAsk !== "function") return no(cloudOn ? "The cloud cannot be asked from this page: reload it and try again" : "The run's computer cannot be asked from this page: reload it and try again");
+      const now = skuNowPut([row], sku, true);   // (SKUNOW: shown at the press)
       const ans = await window.CNRelayAsk({ type: "skuonce", ids: [row.key], sku, label: `Just this order: ${sku}` }, t => { try { if (opts && typeof opts.onStep === "function") opts.onStep(t); } catch (_) { /* a word only */ } }, 240000, { always: true });
+      skuNowEnd(now, ans && (ans.ok || ans.queued) ? "" : `Not changed: ${String((ans && ans.text) || "no answer").replace(/\.$/, "")}`, () => editSkuOnce(rowOfKey(row.key) || row, sku, opts));
       if (ans && ans.ok) { try { if (opts && typeof opts.onStep === "function") opts.onStep("Reading what the cloud made…"); } catch (_) { /* a word only */ } await freshNow({ keys: [row.key] }).catch(() => null); return { ok: true, sku, via: "once", rid: rid0, follower: true, text: ans.text }; }   // (SYNCNOW)
       if (ans && ans.late) return { ok: false, late: true, why: ans.text, retry: ans.retry, later: ans.later };   // (NOWCMD: never "asked" as if done; the window says it in red, the toast carries Try again)
       if (ans && ans.cloud && !ans.ok) return { ok: false, failed: true, why: `The cloud did not change it: ${String(ans.text || "no answer").replace(/\.$/, "")}`, retry: ans.retry };
@@ -21360,29 +21368,9 @@ const Review = window.Review = (() => {
     t(() => { if (S.mode === "library") CN.loadLibrary().catch(() => {}); });
     t(() => { if (OrderWin.isOpen()) OrderWin.paint(); }); t(() => RunCtl.poke());
   }
-  /** The picker, drawn into `host` for a line: the similar charms (one tap each), the master index search, Cancel. o.close() when it is put away, o.done(result) after a saved pick. */
-  function fixPicker(host, row, o) {
-    o = o || {}; if (!host) return false;
-    const off = fixOffer(row);
-    if (!off.ok) { host.innerHTML = `<div class="sibOffer cfPick"><div class="dsFor">${esc(off.why)}</div><div class="cfFind"><button type="button" class="btn ghost sm" data-a="close">Close</button></div></div>`; host.querySelector("[data-a=close]").onclick = () => o.close && o.close(); return false; }
-    const ch = fixChoices(row); masterSkuList();
-    const scope = off.via === "option" && off.option ? `its option “${off.option.name}: ${off.option.value}”` : off.from ? `the SKU “${off.from}”` : "no SKU";
-    host.innerHTML = `<div class="sibOffer cfPick" data-row="${esc(row.key)}"><div class="sibAsk">Which library charm is this? It is matched to ${esc(off.cur)} now.</div>`
-      + (ch.more.length ? `<div class="sibPicks">${sibButtons({ cur: ch.cur, more: ch.more, moreExtra: ch.moreExtra, siblings: [], pair: null })}</div>` : "")
-      + `<div class="cfFind"><input list="cnMasterSkus" data-f="dsku" aria-label="Search the library for the charm" placeholder="${ch.more.length ? "or search the library…" : "search the library…"}"><button type="button" class="btn gold sm" data-a="dsku">Use this charm</button><button type="button" class="btn ghost sm" data-a="close">Cancel</button></div>`
-      + `<div class="dsFor">Kept for listing ${esc(off.listingId)} and ${esc(scope)} only: every open order of it changes, the same SKU on other listings stays. Etsy is not changed.</div></div>`;
-    Master.mountPictures(host);
-    const box = host.querySelector(".cfPick");
-    const go = k => saving(box, async () => { const r = await fixCharm(row, k); if (r && r.ok && o.done) o.done(r); }, "button");
-    host.querySelectorAll("[data-dsku]").forEach(b => { b.onclick = go(b.dataset.dsku); });
-    bindNeeds(box, "dsku", "dsku");
-    host.querySelector("[data-a=dsku]").onclick = () => go(host.querySelector("[data-f=dsku]").value)();
-    host.querySelector("[data-f=dsku]").addEventListener("keydown", ev => { if (ev.key === "Enter" && String(ev.target.value || "").trim()) { ev.preventDefault(); go(ev.target.value)(); } });
-    host.querySelector("[data-a=close]").onclick = () => o.close && o.close();
-    return true;
-  }
   /** "Wrong charm?" under the Vector design of an Orders card: it opens the order window on the line with the picker open. Drawn, or taken away, as the line's offer says. */
   function fixMount(node, row) {
+    try { const bad = row ? skuBad.get(row.key) : null, pair = node && node.querySelector(".comparePair"); let n = node && node.querySelector(".skBad"); if (!bad || !pair) { if (n) n.remove(); } else { if (!n) { n = el("div", "skBad"); n.setAttribute("role", "alert"); pair.after(n); } n.innerHTML = `<span>${esc(bad.text)}</span>${bad.retry ? '<button type="button" class="btn xs">Try again</button>' : ""}`; const t = n.querySelector("button"); if (t) t.onclick = ev => { ev.stopPropagation(); ev.preventDefault(); Review.skuNowRetry(row.key); }; } } catch (_) { /* the order window says it too */ }   // (SKUNOW)
     const cap = node && node.querySelector(".comparePair figure:first-child figcaption"); if (!cap) return;
     let b = cap.querySelector(".cfOpen"); const off = row && !row.loading ? fixOffer(row) : { ok: false };
     if (!off.ok) { if (b) b.remove(); return; }
@@ -21407,12 +21395,11 @@ const Review = window.Review = (() => {
     /* (S2, Paul 21 Nov 2026): on a viewer (cloud mode "on") the line is made up again by the cloud: "Accept the new order" is a press the cloud acts on (CNViewer.acceptChange:
        takeOffAsk { kind: changed, lineKeys }), nothing is repooled here. Refused (in words, by CNViewer): the card stays and nothing is recorded. Taken: the answer is recorded and the
        card goes to Resolved (Review.remove: kept in the cloud), and it is not drawn again while the cloud makes the line up. */
-    if (rvViewer() && /\(a saved link\)/.test(String(it.why || "")) && staleMade(r).length) { const a = await remakeAsRead(r); if (a && a.ok) answered(it, "decided", "Accept the change", { accepted: true }); return a || { ok: false }; }   // (MADENOT: the piece is swapped in its place)
-    if (rvViewer() && typeof CNViewer.acceptChange === "function") {
-      const ans = await CNViewer.acceptChange({ rid: String(r.order.receiptId), lineKeys: [r.key], name: employeeName() || "" });
-      if (!ans || !ans.ok) return ans || { ok: false };
-      changeAsked.set(r.key, Date.now());
-      answered(it, "decided", "Accept the change", { accepted: true }); remove(it.key);
+    if (rvViewer() && typeof CNViewer.acceptChange === "function") {   // (INSTANT, Paul 23 Nov 2026: the card goes at the press; refused, it is back and the cloud's words are said in red; MADENOT: a saved link's piece is swapped in its place)
+      const made = /\(a saved link\)/.test(String(it.why || "")) && staleMade(r).length; changeAsked.set(r.key, Date.now()); syncOrderItems(); render({ still: true });
+      const ans = (await (made ? remakeAsRead(r) : CNViewer.acceptChange({ rid: String(r.order.receiptId), lineKeys: [r.key], name: employeeName() || "" }))) || { ok: false };
+      if (!ans.ok) { changeAsked.delete(r.key); if (!items().includes(it)) items().push(it); syncOrderItems(); render({ still: true }); return ans; }
+      answered(it, "decided", "Accept the change", { accepted: true }); if (!items().includes(it)) items().push(it); remove(it.key);
       return ans;
     }
     answered(it, "decided", "Accept the change", { accepted: true }); remove(it.key); r.changePending = false;
@@ -21655,7 +21642,7 @@ const Review = window.Review = (() => {
     o = o || {};
     const lid = String(o.listingId || "").replace(/\D/g, ""), to = String(o.toSku || "").trim().toUpperCase(), skip = new Set(o.skip || []);
     const also = String(o.alsoSku || "").trim().toUpperCase(), mine = r => rlLid(r) === lid || (!!also && !!r && !!r.spec && String(r.spec.designSku || "").toUpperCase() === also);   // (KEEPOVERRIDE: a moved SKU's lines of any listing)
-    let fl = null; try { fl = window.CNRelinkFlow ? CNRelinkFlow.open({ title: o.title || `Listing ${lid} → ${to}`, sandbox: !!o.sandbox, sub: o.sub, host: o.host || null }) : null; } catch (e) { console.warn("[relink] panel:", e && e.message); }
+    let fl = null; try { fl = window.CNRelinkFlow ? CNRelinkFlow.open({ title: o.title || `Listing ${lid} → ${to}`, sandbox: !!o.sandbox, sub: o.sub, host: o.host || null, instant: o.instant || null }) : null; } catch (e) { console.warn("[relink] panel:", e && e.message); }
     const line = (id, text, state, why) => { try { if (fl) fl.line(id, text, state, why); } catch (_) { /* a word only */ } };
     for (const p of o.pre || []) line(p.id, p.text, p.state, p.why);
     const tally = { orders: new Set(), held: new Set(), failed: new Set(), sheets: new Map(), setsChanged: new Set() }, rlStart = Date.now() - 1000;
@@ -21718,7 +21705,7 @@ const Review = window.Review = (() => {
           const remote = !B.run && typeof window.CNRelayAsk === "function";
           if (remote) {
             const skus = [...new Set([to, also].filter(Boolean))], cloudOn = !!(window.CNViewer && CNViewer.on && CNViewer.on());   // (G9: in mode "on" the words name the cloud)
-            const keys = cloudOn && !also ? await relinkKeys([{ lid, from: o.fromSku }], to, o.rows, skip) : [], named = keys.length > 0;   // (RELINKNOW: the lines the link changes are asked for by name; a moved SKU (also), or no such line known here: keepsync, as before)
+            const keys = cloudOn && o.keys && o.keys.length ? o.keys.slice(0, 80) : cloudOn && !also ? await relinkKeys([{ lid, from: o.fromSku }], to, o.rows, skip) : [], named = keys.length > 0;   // (RELINKNOW: the lines the link changes are asked for by name; a moved SKU (also), or no such line known here: keepsync, as before)
             const doneSay = a => named ? `The cloud: ${a.text || "made again"}` : `Other open orders: ${a.text}`, badSay = named ? "The cloud did not make them again" : "Other open orders: the cloud did not make them again";
             line("carrier", named ? `Asking the cloud to make ${keys.length === 1 ? "the piece" : `${keys.length} pieces`} again as ${to}…` : `Other open orders of ${skus.join(", ")}: asking ${cloudOn ? "the cloud" : "the computer that carries the run"}…`, "work");
             const ans = named ? await window.CNRelayAsk({ type: "remakeline", ids: keys, label: `Listing ${lid}: ${o.fromSku || "no SKU"} → ${to}`.slice(0, 150) }, t => line("carrier", String(t || "").slice(0, 260), "work"), 300000, { always: true })
@@ -22673,7 +22660,7 @@ const Review = window.Review = (() => {
     } else if (it.kind === "oversize") {
       c.innerHTML = head("Oversize", `${p.sku} · ${p.widthMm.toFixed(1)} × ${p.heightMm.toFixed(1)} mm`, orderSub) + `<div class="ev">${evRow("Plate", `${labelOf(p.material)} ${fmt.mm(stockFor(p.material).wPt)} × ${fmt.mm(stockFor(p.material).hPt)} under the ${fmt.pct(S.settings.maxFill)} ceiling`)}</div><div class="fixes"><button class="btn ghost sm" data-a="stock">Different stock (Settings)</button><button class="btn ghost sm" data-a="retry">Try again</button></div>`;
       // (S1: on a viewer Try again is the cloud's remake of the line, its answer said; it was repool, which a viewer does not do: nothing happened, in silence)
-      c.querySelector("[data-a=stock]").onclick = () => openSettings(); c.querySelector("[data-a=retry]").onclick = () => (viewerAnswers() ? saving(c, () => cloudRemake(rowsOf(it).filter(x => x && x.key && !x.hold && !["gone", "committed", "skipped"].includes(x.state)).map(x => x.key), `Try again: ${p.sku || "the piece"} too big for the plate`))() : repool(r));
+      c.querySelector("[data-a=stock]").onclick = () => openSettings(); c.querySelector("[data-a=retry]").onclick = () => (viewerAnswers() ? againNow(it, () => cloudRemake(rowsOf(it).filter(x => x && x.key && !x.hold && !["gone", "committed", "skipped"].includes(x.state)).map(x => x.key), `Try again: ${p.sku || "the piece"} too big for the plate`)) : repool(r));
     } else if (it.kind === "engraveWords" || it.kind === "notRepresentable" || it.kind === "fontMissing") {
       const j = it.job; const miss = j.missing || [];
       // (a line engraved on the front and the back: the card names its face in its title; a line with one face says nothing new)
@@ -23231,7 +23218,7 @@ const Review = window.Review = (() => {
     // (its custom buttons as a custom card's, and a click on the card opens its order; one whose line has left the pull
     // opens the order by its number)
     if(cx||row)wireAct(node,cx||{key:'rv:'+it.key,rows:[]},cx?cs:null,row);
-    { const ab=node.querySelector('[data-rv-accept]'); if(ab)ab.onclick=async e=>{e.stopPropagation();ab.disabled=true;try{for(const q of chgs)await acceptChange(q);}finally{ab.disabled=false;}}; }   // (Order changed: the card's own answer, on the item's row)
+    { const ab=node.querySelector('[data-rv-accept]'); if(ab)ab.onclick=async e=>{e.stopPropagation();ab.disabled=true;try{await Promise.all(chgs.map(q=>acceptChange(q)));}finally{ab.disabled=false;}}; }   // (Order changed: the card's own answer, on the item's row)
     const rid=String(rec?.receiptId || it.rid || '').replace(/\D/g,'');
     if(!row&&rid&&window.OrderWin){node.tabIndex=0;node.title='Open the order — everything about it, its conversations and its notes';
       const openIt=()=>OrderWin.openOrder(rid,{from:node});
@@ -23549,7 +23536,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { remakeAsRead, staleMade, linkMade, ensureBought, view: () => RV, settled: () => settled, screen: () => { try { return render({ count: true }) || screenNow; } catch (_) { return screenNow; } }, items, count, openCount, openOrders, mkeyOf, add, remove, render, shown, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawStale, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
+  return { remakeAsRead, staleMade, linkMade, skuNowOn, skuNowOf: key => skuNow.get(String(key)) || null, skuNowBad: key => skuBad.get(String(key)) || null, skuNowRetry: key => { const b = skuBad.get(String(key)); skuBad.delete(String(key)); if (b && b.retry) b.retry(); }, ensureBought, view: () => RV, settled: () => settled, screen: () => { try { return render({ count: true }) || screenNow; } catch (_) { return screenNow; } }, items, count, openCount, openOrders, mkeyOf, add, remove, render, shown, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawStale, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -25378,7 +25365,7 @@ const OrderWin = window.OrderWin = (() => {
      as picture tiles; a tap (or the exact SKU pasted) is the new SKU. Before Save, what it changes as icon chips (the Etsy listing, the open orders, the sheets, the cut pieces kept). Save is
      Review.editSku, and the window turns into its progress (the bar, a line per place changed, "Completed at hh:mm"); Close never stops the work; a closed window toasts the end. */
   async function openEditSku(prefill) {
-    { const r0 = rowOf(W.key); if (r0 && r0.fromRecord && window.Review && Review.ensureBought) { try { await Review.ensureBought(r0); } catch (_) { /* the window opens with what is known */ } } }   // (ANYWHERE: the SKU Etsy sold the piece under, on a computer that follows the run)
+    { const r0 = rowOf(W.key); if (r0 && r0.fromRecord && window.Review && Review.ensureBought) tryDo(() => { Promise.resolve(Review.ensureBought(r0)).catch(() => null); }); }   // (INSTANT: the window never waits to open; the change itself reads it)   // (ANYWHERE: the SKU Etsy sold the piece under, on a computer that follows the run)
     const r = rowOf(W.key), d = byId("owSkuDlg"); if (!r || !d || !window.Review || !Review.editSkuOffer) return;
     if (d.dataset.busy === "1") { try { d.showModal(); } catch (_) { d.setAttribute("open", ""); } return; }   // (a change still being made: its progress is shown again)
     const off = tryDo(() => Review.editSkuOffer(r)) || { ok: false, why: "" }; if (!off.ok) { toast(`Change SKU: ${off.why}`, "bad", 6000); return; }
@@ -25446,6 +25433,7 @@ const OrderWin = window.OrderWin = (() => {
     const show = () => {
       const raw = String(input.value || "").trim().toUpperCase(), v = raw ? verdict(raw) : "";
       sel = v === "ok" && armed === raw ? raw : null;
+      if (sel && W.skuWarm !== sel) { W.skuWarm = sel; tryDo(() => { const e = Master.entryFor(sel); if (e && e.aiPath) Promise.resolve(Pool.masterCharm(e, r.spec && r.spec.size)).catch(() => null); }); }   // (INSTANT: the chosen charm's drawing is read while the person looks at it, so the sheet shows it at the press)
       let got = drawList(); if (!sel && v === "ok" && got.n === 1) { sel = armed = raw; got = drawList(); }   // (the only charm that matches)
       const again = !!sel && !!(off.stale && off.stale.length) && (sel === off.cur || tryDo(() => O.sameDesign(sel, off.cur, x => Master.entryFor(x))));   // (MADENOT: the same charm, made again)
       if (d.dataset.busy !== "1") saveLbl.textContent = again ? "Make it again" : one ? "Use for this order" : "Change SKU";
@@ -25468,49 +25456,43 @@ const OrderWin = window.OrderWin = (() => {
       else if (ev.key === "Enter") { ev.preventDefault(); clearTimeout(timer); const was = sel, rawE = String(input.value || "").trim().toUpperCase(); if (verdict(rawE) === "ok") armed = rawE; show(); if (!save.disabled && was === sel) save.click(); else if (sel) { /* chosen: Enter once more saves */ } else { const only = list.querySelectorAll("[data-sku]:not(:disabled)"); if (only.length === 1) only[0].click(); } }
     };
     const back = () => { d.dataset.busy = ""; form.hidden = false; prog.hidden = true; prog.innerHTML = ""; input.disabled = false; once.disabled = askEvery; save.hidden = false; cancel.textContent = "Cancel"; paintOnce(); show(); };
+    /* INSTANT (Paul, 23 Nov 2026: "I didn't get any feedback inside the modal and then several seconds later the modal just closed by itself"; "nowhere in the application is the system allowed to make the user wait"):
+       the three presses of this window (the listing's SKU, Just this order, Make it again) are one: at the press the window says it is done and shows it, the order behind it reads the new charm (Review's SKUNOW), nothing is
+       greyed out or counted, and the window stays until it is closed or used again ("Change again"). The cloud works behind it: its steps stand quietly under the done line; its failure is red, with Try again, and
+       everything is put back. (A computer that carries the run makes the change itself: its steps are the panel's, as before.) */
+    const shown = () => { form.hidden = true; prog.hidden = false; prog.innerHTML = ""; d.dataset.busy = ""; save.hidden = false; save.disabled = false; saveLbl.textContent = "Change again"; cancel.textContent = "Close"; };
+    const follow = (P, go) => {   // (one line of the panel follows the request; asked again by its Try again)
+      const ask = () => { try { P.line("cloud", "The cloud makes it behind this", "work"); } catch (_) { /* a word only */ } return Promise.resolve().then(() => go(t => { try { if (t) P.line("cloud", `The cloud: ${String(t)}`.slice(0, 220), "work"); } catch (_) { /* a word only */ } })).catch(e => ({ ok: false, why: (e && e.message) || String(e) })).then(res => {
+        try {
+          if (res && (res.ok || res.queued)) P.line("cloud", `The cloud: ${String(res.text || (res.queued ? "asked" : "done"))}`.slice(0, 220), "done");
+          else { P.line("cloud", `Not changed: ${String((res && (res.why || res.text)) || "no answer").replace(/\.$/, "")}`.slice(0, 260), "failed"); if (P.act) P.act("cloud", "Try again", ask); }
+        } catch (_) { /* the order says it too */ }
+        if (!d.open && !(res && (res.ok || res.queued))) toast(`Order ${rid}: not changed · ${String((res && (res.why || res.text)) || "no answer").slice(0, 140)}`, "bad", 9000);
+        return res; }); };
+      return ask();
+    };
     save.onclick = async () => {
+      if (!prog.hidden && d.dataset.busy !== "1") { openEditSku(); return; }   // ("Change again": the form, read from the line as it is now)
       const k = sel; if (save.disabled || !k) return;
-      if (off.stale && off.stale.length && (k === off.cur || tryDo(() => O.sameDesign(k, off.cur, x => Master.entryFor(x)))) && employeeName()) {   // (MADENOT: the line reads this charm already; its piece is made again as it, nothing else is saved)
-        d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Making it again…"; input.disabled = true; once.disabled = true; const t0 = Date.now(); let word = "Asking the cloud to make the piece again…"; cancel.textContent = "Close";   // (MADESTEP, Paul 23 Nov 2026: "it's stuck. It's not doing anything": a minute and a half behind one sentence that never changed)
-        const tell = () => { if (d.dataset.busy === "1") say("", `<span class="spin"></span>${esc(word)} <b>${Math.round((Date.now() - t0) / 1000)} s</b> · it takes about a minute and a half, and goes on if you close this`); }; tell(); const tick = setInterval(tell, 1000);
-        let res = null; try { res = await Review.remakeAsRead(rowOf(W.key) || r, { onStep: t => { if (t) { word = t; tell(); } } }); } catch (e) { res = { ok: false, text: (e && e.message) || String(e) }; } finally { clearInterval(tick); }
-        d.dataset.busy = ""; cancel.textContent = "Cancel"; if (!res || !res.ok) { back(); say("bad", esc(`Not made again: ${String((res && (res.text || res.why)) || "no answer").replace(/\.$/, "")}`)); return; }
-        try { d.close(); } catch (_) { d.removeAttribute("open"); } if (W.dlg && W.dlg.open && rowOf(W.key)) tryDo(paint); return;
-      }
+      const again = !!(off.stale && off.stale.length && (k === off.cur || tryDo(() => O.sameDesign(k, off.cur, x => Master.entryFor(x)))));   // (MADENOT: the line reads this charm already; its piece is made again as it, nothing else is saved)
       // (SIGNIN, Paul 27 Oct 2026: nobody signed in, the sign-in is asked under Save and the change goes on once signed in; put away, the window's own line says why: needSignIn, the one helper)
       if (!employeeName()) { needSignIn(one ? "use this charm for this order" : "change this SKU", () => { if (d.open && d.dataset.busy !== "1" && !save.disabled && employeeName()) save.click(); }, { near: save, say: t => say("bad", esc(t)), note: "Not changed: nobody is signed in. Sign in to change this SKU." }); return; }
-      if (one) {   // (ONESKU: this order only)
-        /* ONCESEEN (Paul, 23 Nov 2026, order 4245537582: "I didn't get any feedback inside the modal and then several seconds later the modal just closed by itself"): this order's change has the same panel as the listing's, step by step,
-           and the window stays until it is closed. It is done when the PIECES are the new charm, never when an answer only says so. */
-        d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Changing…"; input.disabled = true; once.disabled = true; cancel.textContent = "Close";
-        form.hidden = true; prog.hidden = false; prog.innerHTML = "";
-        let P = null; try { P = window.CNRelinkFlow ? CNRelinkFlow.open({ title: `Just this order · ${rid}: ${off.cur || off.from || "no SKU"} → ${k}`, sub: "This order only: its piece is made again as this charm and put on its sheet. The listing is not changed.", host: prog }) : null; } catch (_) { P = null; }
-        const ln = (id, t, s, why) => { try { if (P) P.line(id, t, s, why); else say(s === "failed" ? "bad" : "", esc(t)); } catch (_) { /* a word only */ } };
-        ln("ask", `Asking the cloud to make order ${rid}'s piece as ${k}…`, "work");
-        let res = null; try { res = await Review.editSkuOnce(rowOf(W.key) || r, k, { onStep: t => { if (t) ln("ask", String(t).slice(0, 220), "work"); } }); } catch (e) { res = { ok: false, why: (e && e.message) || String(e) }; }   // (NOWCMD: the cloud's live step in the window while it works; its failure stays here in red)
-        const pcs = ((rowOf(W.key) || r).poolIds || []).map(id => B.pool.rows.get(id)).filter(x => x && !["abandoned", "superseded"].includes(x.state)), not = pcs.filter(x => { const u = String(x.sku || "").toUpperCase(); return u !== k && !tryDo(() => O.sameDesign(u, k, z => Master.entryFor(z))); });
-        const done = !!(res && res.ok && !res.queued && pcs.length && !not.length), where = [...new Set(pcs.map(x => (x.sheetId && tryDo(() => { const sh = allSheets().find(z => z.sheetId === x.sheetId); return sh ? sh.fileBase || "" : ""; })) || x.sheetName || "").filter(Boolean))];
-        if (done) { ln("ask", `The cloud: ${String(res.text || `${k} for order ${rid} only`).slice(0, 220)}`, "done"); ln("where", pcs.some(x => !x.sheetId) ? `${pcs.length} piece${pcs.length === 1 ? "" : "s"} made as ${k}: waiting for a sheet` : `${pcs.length} piece${pcs.length === 1 ? "" : "s"} made as ${k}${where.length ? `, on ${where.join(", ")}` : ""}`, pcs.some(x => !x.sheetId) ? "warn" : "done"); ln("views", "Updated everywhere: Orders, Review, the order window, the sheets, Library, Design & Engrave", "done"); }
-        else if (res && res.ok && res.queued) ln("ask", String(res.text || "asked of the cloud: it does it at its next pass").slice(0, 220), "warn");
-        else if (res && res.ok) ln("ask", `Not changed: the piece is still ${[...new Set(not.map(x => x.sku))].join(" + ") || "not made"}${res.text ? ` (the cloud said: ${String(res.text).slice(0, 120)})` : ""}`, "failed");
-        else ln("ask", String((res && res.why) || "Not changed").slice(0, 260), "failed");
-        if (!done && !(res && res.queued)) try { if (P && P.act) P.act("ask", "Try again", () => { back(); setTimeout(() => { if (!save.disabled) save.click(); }, 60); }); } catch (_) { /* the form is back with Close */ }
-        try { if (P) P.finish(done ? `${k} for order ${rid} only` : res && res.queued ? "Asked of the cloud" : "Not changed", done ? "ok" : res && res.queued ? "warn" : "bad"); } catch (_) { /* a word only */ }
-        d.dataset.busy = ""; save.hidden = true; saveLbl.textContent = "Use for this order"; cancel.textContent = "Close";
-        if (!P) { back(); if (!done) say("bad", esc(String((res && (res.why || res.text)) || "Not changed"))); }
-        if (W.dlg && W.dlg.open && rowOf(W.key)) tryDo(paint);
-        if (!d.open) toast(done ? `Order ${rid}: ${k} for this order only` : res && res.queued ? `Order ${rid}: ${k} is asked of the cloud` : `Order ${rid}: not changed · ${String((res && (res.why || res.text)) || "no answer").slice(0, 140)}`, done ? "ok" : res && res.queued ? "info" : "bad", 8000);
+      const row = () => rowOf(r.key) || r, instant = !!(Review.skuNowOn && Review.skuNowOn());
+      if (again || one) {   // (ONESKU: this order only)
+        const words = again ? `Order ${rid} is ${k}` : `Order ${rid} is cut as ${k}`;
+        shown(); paintTo(k, "ok");
+        const P = window.CNRelinkFlow ? tryDo(() => CNRelinkFlow.open({ title: again ? `Made again · ${rid}: ${k}` : `Just this order · ${rid}: ${off.cur || off.from || "no SKU"} → ${k}`, sub: again ? "Its piece is made again as this charm and put on its sheet. Nothing else is saved." : "This order only. The listing is not changed.", host: prog, instant: instant ? words : null })) : null;
+        const go = onStep => (again ? Review.remakeAsRead(row(), { onStep }) : Review.editSkuOnce(row(), k, { onStep }));
+        const res = await follow(P || { line: () => {} }, go);
+        if (!instant) { const ok = !!(res && res.ok); tryDo(() => P && P.finish(ok ? words : "Not changed", ok ? "ok" : "bad")); if (W.dlg && W.dlg.open && rowOf(W.key)) tryDo(paint); if (!ok && !P) { back(); say("bad", esc(String((res && (res.why || res.text)) || "Not changed"))); } }
         return;
       }
-      d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Changing…"; input.disabled = true; once.disabled = true; cancel.textContent = "Close";
-      form.hidden = true; prog.hidden = false; prog.innerHTML = "";
-      let res = null; try { res = await Review.editSku(rowOf(W.key) || r, k, { host: prog }); } catch (e) { res = { ok: false, why: (e && e.message) || String(e) }; }
-      if (!res || (!res.ok && !res.done)) { back(); if (res && res.why) say("bad", esc(res.why)); return; }   // (nothing was changed: the window is the form again, with the reason)
+      shown(); paintTo(k, "ok");
+      let res = null; try { res = await Review.editSku(row(), k, { host: prog, instant: instant ? `Listing ${off.lid} is cut as ${k}` : null }); } catch (e) { res = { ok: false, why: (e && e.message) || String(e) }; }
+      if (!res || (!res.ok && !res.done)) { if (!prog.hidden && d.open) { back(); say("bad", esc(String((res && res.why) || "Not changed"))); } return; }   // (nothing was changed: the window is the form again, with the reason)
+      const fin = await Promise.resolve(res.done).catch(() => null); void fin;
       if (W.dlg && W.dlg.open && rowOf(W.key)) tryDo(paint);
-      const fin = await Promise.resolve(res.done).catch(() => null), e = fin && fin.etsy;
-      d.dataset.busy = ""; save.hidden = true; saveLbl.textContent = "Change SKU"; cancel.textContent = "Close";
-      if (W.dlg && W.dlg.open && rowOf(W.key)) tryDo(paint);
-      if (!d.open) toast(`Change SKU ${k}: ${res.ok ? "finished" : "not saved in the app"}`, res.ok ? "ok" : "bad", 7000);
+      if (!d.open && !res.ok) toast(`Change SKU ${k}: not saved`, "bad", 7000);
     };
     try { d.showModal(); } catch (_) { d.setAttribute("open", ""); }
     setTimeout(() => { try { (prefill && !save.disabled ? save : input).focus(); } catch (_) {} }, 0);
@@ -25552,6 +25534,8 @@ const OrderWin = window.OrderWin = (() => {
     mark.innerHTML = st === "ok" ? SKI.check : st === "linked" ? SKI.link : st === "none" ? SKI.alert : "";
     mark.title = st === "ok" ? "A charm in the repo matches this SKU" : st === "linked" ? "Cut as this repo charm; the Etsy SKU is shown under it" : st === "none" ? "No charm in the repo matches this SKU" : "";
     mark.setAttribute("aria-label", mark.title || "");
+    { const bad = window.Review && Review.skuNowBad ? Review.skuNowBad(r.key) : null; let b = byId("owSkuBad");   // (SKUNOW: a change the cloud did not make, in red on the order, with Try again)
+      if (!bad) { if (b) b.remove(); } else { if (!b) { b = el("div", "skBad"); b.id = "owSkuBad"; b.setAttribute("role", "alert"); byId("owSkuVia").after(b); } b.innerHTML = `<span>${esc(bad.text)}</span>${bad.retry ? '<button type="button" class="btn xs">Try again</button>' : ""}`; const t = b.querySelector("button"); if (t) t.onclick = () => Review.skuNowRetry(r.key); } }
     const via = byId("owSkuVia"); via.hidden = st !== "linked";
     if (st === "linked") via.innerHTML = `${SKI.via}<span>Etsy</span><b>${esc(etsy)}</b>`;
     // the three buttons
@@ -28768,9 +28752,25 @@ const Recall = window.Recall = (() => {
   // opts.cutOk (only the partial sheet move, charm-nest-partial-nest.js): a saved sheet with a recorded cut that is not Completed may be opened, because the move sets that cut aside;
   // every other caller still refuses a cut layout
   function rebuild(pg, opts) {
-    if (pg._rebuilding) return pg._rebuilding;
+    if (pg._rebuilding) return opts && opts.answer ? pg._rebuilding.catch(() => null).then(() => rebuild(pg, opts)) : pg._rebuilding;   // (a newer answer is drawn after the one being drawn)
     const task = rebuildOnce(pg, opts || {}).finally(() => { pg._rebuilding = null; });
     pg._rebuilding = task; return task;
+  }
+  /** The cloud's answer for one sheet: its record, with its pieces' rows read in the same answer (d.pools; a library that does not send them yet: asked beside it). */
+  async function sheetAnswer(id) { const r = await api("charmNestLibrary", { op: "getSheet", id, pieces: true }, { quiet: true }), d = r && r.sheet; if (d) d.pools = r.pools || await piecesOf(d); return d || null; }
+  async function piecesOf(d) { const out = {}, ids = (d.poolIds || []).map(String); for (let i = 0; i < ids.length; i += 300) Object.assign(out, (await api("charmNestLibrary", { op: "poolGet", poolIds: ids.slice(i, i + 300) }, { quiet: true })).pools || {}); return out; }
+  /** One charm of a sheet's record, from its own design file. row: what the piece's row adds to it, as the same answer said. null: its design cannot be read. */
+  async function charmOfRecord(d, rc, row) {
+    const m = !(+d.laserDoneAt > 0 || d.roseCutAt) && Review.skuNowOf ? Review.skuNowOf(rc.lineKey) : null, sku = m ? m.sku : rc.sku, me = Master.entryFor(sku), own = !m && (rc.custom || row.custom || rc.hand) ? CharmNestPoolPieces.sourceOf(d, rc) : null;   // (SKUNOW: a change in hand is the charm that was pressed; TAKEOVERSAFE2: a custom design is made from its own file)
+    const file = own ? { sku, aiPath: own.path || own.url, aiUrl: own.url } : !m && rc.aiPath ? { sku, aiPath: rc.aiPath, aiUrl: rc.aiUrl || null } : null, sized = me && Pool.sizeEntry(me, row.size);
+    const fromLib = !own && sized && sized.aiPath && (m || !rc.aiPath || sized.aiPath === rc.aiPath);   // (the library's own entry of that very file: its scaled size and its upright angle)
+    if (!fromLib && !(file && file.aiPath)) return null;
+    const src = await Pool.masterCharm(fromLib ? me : file, fromLib ? row.size : null).catch(() => null); if (!src) return null;
+    const piece = CharmNestPoolPieces.cleanFields(rc).side ? rc : CharmNestPoolPieces.cleanFields(row).side ? row : null, base = await Pool.ensureBase(src, piece, m ? null : rc.hash ? rc : row).catch(() => null); if (!base) return null;
+    const c0 = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`), charm = typeof CharmNestArtEdit !== "undefined" && !m ? await CharmNestArtEdit.piece(c0, rc.poolId, row.poolId ? row : null) : c0, tail = String(rc.poolId).split("_");   // (ART EDIT: the piece's own artwork edit)
+    Object.assign(charm, { name: rc.name, order: rc.order || row.orderId, orderDate: rc.orderDate || row.orderDate || 0, arrivedAt: rc.arrivedAt || row.arrivedAt || 0, poolId: rc.poolId, metal: d.metal, lineKey: rc.lineKey || row.lineKey, sku,
+      orderInfo: { receiptId: rc.order || row.orderId, transactionId: row.transactionId || tail[1], sku, copy: row.copy || +tail[2] || 1, quantity: row.quantity, form: row.form, size: row.size, ...(rc.hand ? { custom: true, orderless: true } : {}) } }, piece ? CharmNestPoolPieces.fieldsOf(piece) : {}, own ? { custom: true } : {}, rc.hand === true ? { hand: true } : {});
+    return charm;
   }
   async function rebuildOnce(pg, opts) {
     const rec = pg.recalled; if (!rec) return;
@@ -28778,47 +28778,30 @@ const Recall = window.Recall = (() => {
     // (QUIETLIVE, Paul 19 Nov 2026: "whenever I refresh someone's computer after a while, it goes through this strange animation ... doesn't allow the user to use the system for a long time"; the video: "Rebuilding GF_Nov.12.26_Set-2_Sheet..." for 8, 11 seconds, then the next sheet, +1 more, the page frozen and the Library redrawn between them):
     //  after every reload a computer that follows the run builds each of the run's sheets from the master files (makeLive); the same build, started by the page itself (opts.background), shows no bar and lets the page answer between pieces
     const bar = window.CNProgress ? CNProgress.start(`Rebuilding ${rec.fileBase || rec.id}`, opts && opts.background ? { quiet: true } : undefined) : null;
-    let sliceAt = Date.now(); const breath = async () => { if (opts && opts.background && Date.now() - sliceAt > 20) { await new Promise(res => setTimeout(res, 6)); sliceAt = Date.now(); } };
+    let sliceAt = Date.now(); const breath = async () => { if (opts && opts.background && !opts.now && Date.now() - sliceAt > 20) { await new Promise(res => setTimeout(res, 6)); sliceAt = Date.now(); } };
     try {
-      const d = (await api("charmNestLibrary", { op: "getSheet", id: rec.id })).sheet; if (!d) throw new Error("the sheet record is gone");
-      for (const { p, c: rc } of placedOfRecord(d)) {   // (DUPID: the charm the record's poolIds names, as the restore above)
+      /* NOSTORE (Paul, 23 Nov 2026: "no information on the computer. That's the fix"): a sheet is drawn from the cloud's answer for it and from nothing else: the charms its record places (each its own design file, side and
+         drawing) and, in the same answer, what its pieces' rows add (a scaled size, an artwork edit). What this page held of a piece never says what it is. */
+      const d = opts.answer || await sheetAnswer(rec.id); if (!d) throw new Error("the sheet record is gone");
+      const rows = d.pools || {}, taken = d.dirty === true && Array.isArray(d.poolIds) ? new Set(d.poolIds.map(String)) : null, charms = [], placements = []; let missing = 0;
+      // (TAKENRELOAD, Paul 15 Nov 2026: a piece taken off this sheet on another computer leaves the record's list of pieces at once (poolIds, with dirty) while its place is still in the layout until it is written again: it is not drawn back here)
+      for (const { p, c: rc } of placedOfRecord(d)) {   // (DUPID: the charm the record's poolIds names)
         await breath();
-        if (!rc || !rc.poolId) continue;
-        // (TAKENRELOAD, Paul 15 Nov 2026): a piece taken off this sheet on another computer leaves the record's list of pieces at once (poolIds, with dirty: the layout is still to be written again) while its place is still in the record's layout until that computer has written it: it is not drawn back here
-        if (d.dirty === true && Array.isArray(d.poolIds) && !d.poolIds.map(String).includes(String(rc.poolId))) continue;
-        const pool = B.pool.rows.get(rc.poolId) || ((await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools || {})[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
-        // (TAKEOVERSAFE2, Paul 14 Nov 2026: "Yes, fix resume first"): a custom design is in no master file: it is rebuilt from its own file, the one its sheet was cut from (the sheet record's sources, as the back editor reads it); it was left out, and its sheet nested again from scratch
-        const own = pool.custom || rc.custom ? CharmNestPoolPieces.sourceOf(d, rc) : null;   // (SRCLIST: a design the record does not list is the piece's own entry's file)
-        const entry = own ? null : Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry && !(own && (own.url || own.path))) continue;
-        const src = entry ? await Pool.masterCharm(entry, pool.size) : await Pool.masterCharm({ sku: rc.sku || pool.sku, aiPath: own.path || own.url, aiUrl: own.url }, null);
-        // a piece of a mismatched pair is cut from its own body, never from both (the pool row says which; the sheet's record says so too)
-        const piece = CharmNestPoolPieces.cleanFields(pool).side ? pool : CharmNestPoolPieces.cleanFields(rc).side ? rc : null, base = await Pool.ensureBase(src, piece, rc.hash ? rc : pool).catch(() => null);
-        if (!base) { agent({ metal: d.metal }, "warn", `${pool.orderId} · ${pool.sku}: its ${piece.side === "L" ? "left" : "right"} body is no longer in the design — that piece is not put back`); continue; }
-        const charm = typeof CharmNestArtEdit !== "undefined" ? await CharmNestArtEdit.piece(Pool.cloneCharm(base, `${src.id}:${rc.poolId}`), rc.poolId, pool) : Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); /* (ART EDIT: the piece's own artwork edit, when its pool row names one: charm-nest-art-edit.js) */ charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (piece) Object.assign(charm, CharmNestPoolPieces.fieldsOf(piece));
+        if (!rc || !rc.poolId || (taken && !taken.has(String(rc.poolId)))) continue;
+        const charm = await charmOfRecord(d, rc, rows[rc.poolId] || {}); if (!charm) { missing++; agent({ metal: d.metal }, "warn", `${rc.order || ""} · ${rc.sku || ""}: its design could not be read — that piece is not drawn`); continue; }
+        charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle };
         // (Manual Control: a piece a person moved, turned or resized by hand keeps that, its pin and its size, from its record)
-        if (own) charm.custom = true;   // (TAKEOVERSAFE2, Paul 14 Nov 2026: "Yes, fix resume first")
-        if (rc.hand === true) charm.hand = true;   // (S3: artwork a person added by hand, sent to the cloud from a staff computer: its card offers Exclude / Include and Move to <metal>)
         const man = window.CNManual && CNManual.fromRecord ? CNManual.fromRecord(rc) : null; if (man) { charm.manual = man; if (man.size) charm.pinned.size = man.size; }
         // (OWNSCALE 2, Paul 15 Nov 2026: "6 charms overlap" on the computer that follows the run): a piece saved a little smaller than the standard (shrunk to go back into its old spot) and whose record carries no size mark takes its size from its placement, so the overlap check measures it as it lies
         { const std = typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971, ratio = Number.isFinite(+p.scale) && +p.scale > 0 ? +(+p.scale / std).toFixed(5) : 1; if (!(man && man.size) && Math.abs(ratio - 1) > 0.0005 && ratio >= 0.8 && ratio <= 1.2) { charm.manual = Object.assign({ by: "", at: 0 }, charm.manual || {}, { size: ratio, fit: "inplace" }); charm.pinned.size = ratio; } }
-        pg.charms.push(charm);
-        pg.placements.push({ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: Number.isFinite(+p.scale) && +p.scale > 0 ? +p.scale : man && man.size ? +((typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) * man.size).toFixed(5) : (typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) });   // (OWNSCALE, Paul 15 Nov 2026: a 14K sheet read "6 charms overlap" on the computer that follows the run): the piece is drawn at the scale ITS PLACEMENT was saved with (six pieces of that sheet were saved a little smaller); it was drawn at the standard scale, larger than it lies on the sheet
+        charms.push(charm);
+        placements.push({ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: Number.isFinite(+p.scale) && +p.scale > 0 ? +p.scale : man && man.size ? +((typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) * man.size).toFixed(5) : (typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971) });   // (OWNSCALE, Paul 15 Nov 2026: drawn at the scale ITS PLACEMENT was saved with)
       }
-      // (S3, Paul 21 Nov 2026: a piece added by hand that a person left out of the nest (Exclude, saved on the sheet's record from any computer) has no place on the sheet: it is shown in the
-      //  card's queue, marked excluded, so "Include in nest" can be pressed on every computer; it is made from its own file, as a placed one is)
-      for (const rc of (opts && opts.detached ? [] : (d.charms || []).filter(x => x && x.excluded === true && x.hand === true && x.poolId && !pg.charms.some(c => c.poolId === x.poolId)))) {
-        try {
-          await breath();
-          const pool = B.pool.rows.get(rc.poolId) || ((await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools || {})[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
-          const own = CharmNestPoolPieces.sourceOf(d, rc); if (!own || !(own.path || own.url)) continue;   // (SRCLIST: listed, else the piece's own entry's file)
-          const src = await Pool.masterCharm({ sku: rc.sku || pool.sku, aiPath: own.path || own.url, aiUrl: own.url }, null), base = await Pool.ensureBase(src, null, rc.hash ? rc : pool).catch(() => null); if (!base) continue;
-          const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`);
-          Object.assign(charm, { name: rc.name, order: pool.orderId, orderDate: pool.orderDate || 0, arrivedAt: pool.arrivedAt || 0, poolId: rc.poolId, metal: d.metal, lineKey: pool.lineKey, custom: true, hand: true, excluded: true, pinned: null,
-            orderInfo: { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, custom: true, orderless: true } });
-          pg.charms.push(charm);
-        } catch (e) { console.warn("[rebuild] a piece left out of the nest was not shown:", rc.poolId, e && e.message); }
-      }
-      if (opts && opts.detached) return;   // (ARTUNCUT: only the sheet's pieces, made again from its record: the page's own card is not touched)
+      // (S3: a piece added by hand that a person left out of the nest (Exclude) is shown in the card's queue)
+      for (const rc of opts.detached ? [] : (d.charms || []).filter(x => x && x.excluded === true && x.hand === true && x.poolId && !charms.some(c => c.poolId === x.poolId))) { const charm = await charmOfRecord(d, rc, rows[rc.poolId] || {}).catch(() => null); if (charm) charms.push(Object.assign(charm, { excluded: true, pinned: null })); }
+      if (missing && opts.background) throw new Error(`${missing} of its pieces could not be read: its saved picture stays`);   // (the cloud's picture is never drawn over by less than the sheet)
+      pg.charms = (pg.charms || []).filter(c => !c.poolId).concat(charms); pg.placements = placements; pg.answer = d;
+      if (opts.detached) return;   // (ARTUNCUT: only the sheet's pieces, made again from its record: the page's own card is not touched)
       pg.recalled = null; pg.status = "complete"; pg.dirty = false;
       // (FULLSAID, Paul 15 Nov 2026: the sheets of the computer that follows the run read "0% full" where the carrying computer reads 33%): how full the sheet is comes from its record (the free area saved with it), as the nest that made it measured it
       try { const fp = +rec.freePt2, us = typeof usableArea === "function" ? +usableArea(pg) : 0; if (!pg.liveInfo && Number.isFinite(fp) && fp >= 0 && us > 0) pg.liveInfo = { freePt2: Math.min(fp, us), usablePt2: us, placedPt2: Math.max(0, us - fp), fromRecord: true }; } catch (_) { /* the card says less */ }
@@ -28936,8 +28919,6 @@ const Recall = window.Recall = (() => {
       const CS = window.CharmNestCloudSheets; if (!CS || typeof CS.reload !== "function") return 0;
       const todo = () => allSheets().filter(p => p.followed && p.recalled && !(p.charms || []).length && (p.runId || null) === runId && !p._liveFailed && !(+p.recalled.laserDoneAt > 0) && !p.recalled.roseCutAt);
       let pages = todo(); if (!pages.length) return 0;
-      const want = [...new Set(pages.flatMap(p => (p.recalled.poolIds || []).map(String)))].filter(id => !B.pool.rows.has(id));
-      for (let i = 0; i < want.length; i += 300) { try { const got = (await api("charmNestLibrary", { op: "poolGet", poolIds: want.slice(i, i + 300) }, { quiet: true })).pools || {}; for (const id of Object.keys(got)) if (got[id]) B.pool.rows.set(id, got[id]); } catch (_) { /* a piece not read here is asked for with its sheet */ } }
       try { await Master.load(); } catch (_) {}
       let n = 0;
       for (;;) {
@@ -28992,7 +28973,9 @@ const Recall = window.Recall = (() => {
     agent({ metal: pg.metal }, "cloud", `${pg.fileBase || sheetId}: its saved picture was drawn again as the sheet is now (nothing else of the sheet was written)`);
     return { ok: true, text: `${d.fileBase || sheetId}: its picture was drawn again` };
   }
-  return { open, rebuild, on, state: () => RC, follow, unfollow, repicture, followState: () => Object.assign({}, followState) };
+  /** The sheet drawn again, now, from the answer its card holds (a change pressed here shows at once: SKUNOW). */
+  const redraw = pg => { if (!pg || !pg.answer || pg.laserDoneAt || pg.roseCutAt) return Promise.resolve(false); pg.recalled = pg.answer; return rebuild(pg, { background: true, now: true, answer: pg.answer }); };
+  return { open, rebuild, redraw, piecesOf, on, state: () => RC, follow, unfollow, repicture, followState: () => Object.assign({}, followState) };
 })();
 
 
