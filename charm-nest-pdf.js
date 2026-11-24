@@ -2866,8 +2866,8 @@
     page.pushOperators(ocgOps("ocEngrave"), pushGraphicsState());
     if (frontView) page.pushOperators(cm(Mp));
     // (BLUEBACK, Paul, 12 Nov 2026: "all back engraving ... needs to be blue ... which stands for hatching when using our laser system": a BACK's words are filled in the hatching blue
-    // [0, 0, 1], the colour the sheet's own hatching is written in (HATCH_BLUE), so the .ai keeps them blue and the DXF writes them as a blue SOLID hatch; a FRONT's words stay black, as ever)
-    const ink = isFront ? [0, 0, 0] : BACK_INK;
+    // [0, 0, 1], the colour the sheet's own hatching is written in (HATCH_BLUE), so the .ai keeps them blue and the DXF writes them as a blue SOLID hatch; FRONTBLUE: a front's words too)
+    const ink = BACK_INK;   // (FRONTBLUE, Paul 23 Nov 2026, order 4241959899: "it should be blue hatching like the back engraving")
     page.pushOperators(cm([1, 0, 0, 1, cx + T[4], cy + T[5]]), setFillingRgbColor(ink[0], ink[1], ink[2]));
     let glyphCount = 0;
     for (const g of spec.glyphs || []) {

@@ -1810,7 +1810,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         // from behind, this charm's own words, where the laser burns them (a charm with no engraving stays plain)
         if (backFace() && x.c) { const geo = engGeoOf(x, W.backs); tryDo(() => drawBackArt(ctx, x, tx0(x.c), k, backInk())); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: backInk() })); }   // (SHEETBACK: and what the Charm Editor added to its back. BLUEBACK, Paul 12 Nov 2026: in the hatching blue)
         // the front of the plate: this charm's FRONT words, as they lie on it (not turned over); a charm with no front engraving is drawn as it always was
-        else if (x.c && x.eng && x.eng.faces && x.eng.faces.front) { const geo = engGeoOf(x, W.backs, "front"); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: "#2f2512" })); }
+        else if (x.c && x.eng && x.eng.faces && x.eng.faces.front) { const geo = engGeoOf(x, W.backs, "front"); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: backInk() })); }   // (FRONTBLUE)
         if (cu) { outlinePath(ctx, x); ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = 1.6 * W.dpr; ctx.setLineDash([4 * W.dpr, 3 * W.dpr]); ctx.stroke(); ctx.setLineDash([]); }
       });
     }
@@ -1923,7 +1923,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!x.c) return;
     if (!backFace() && !(x.eng && x.eng.faces && x.eng.faces.front)) return;
     if (backFace()) tryDo(() => drawBackArt(ctx, x, tx0(x.c), W.k, backInk()));   // (SHEETBACK)
-    const geo = engGeoOf(x, W.backs, backFace() ? undefined : "front"); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: backFace() ? backInk() : "#2f2512" }));   // (BLUEBACK: a back's words blue, a front's in their ink)
+    const geo = engGeoOf(x, W.backs, backFace() ? undefined : "front"); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: backInk() }));   // (BLUEBACK: a back's words blue, a front's in their ink)
   }
   // a point clicked on a picture, where its charm is not known yet: a gold ring about a charm's size, and its centre
   function markAt(ctx, at) {
@@ -7487,7 +7487,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const geo = engGeoOf(x, G.backs, "front"); if (!geo || !geo.glyphs) continue;
       orderPiece(ctx, G, x, () => {
         const c = x.c, k = G.k, cx = c.centerPt[0], cy = c.centerPt[1];
-        CharmNestBacks.drawEngrave(ctx, geo, (px, py) => [(px - cx) * k, (cy - py) * k], { fill: mine.has(x) ? "#2f2512" : "#3f3320" });
+        CharmNestBacks.drawEngrave(ctx, geo, (px, py) => [(px - cx) * k, (cy - py) * k], { fill: backInk() });
       });
     }
     ctx.restore();
@@ -7681,7 +7681,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function frontWords(ctx, x, backs, k) {
     const c = x.c; if (!c || !(x.eng && x.eng.faces && x.eng.faces.front)) return false;
     const geo = engGeoOf(x, backs, "front"); if (!geo || !geo.glyphs) return false;
-    return !!tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, (px, py) => [(px - c.centerPt[0]) * k, (c.centerPt[1] - py) * k], { fill: "#2f2512" }));
+    return !!tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, (px, py) => [(px - c.centerPt[0]) * k, (c.centerPt[1] - py) * k], { fill: backInk() }));
   }
   /** Does a sheet (a page of the Nest tab, a saved record) carry a FRONT engraving? A saved front record, a decision with a front, or a front job on one of its pieces. */
   function hasFront(pg) {

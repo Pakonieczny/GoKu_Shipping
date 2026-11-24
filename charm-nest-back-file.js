@@ -20,7 +20,7 @@
  *    backName(fileBase, face, poolId, at)  "<fileBase>_<face>_<poolId>_<approvedAt>", the two files' name
  *    previewOps(o) / svgOfOps(p) / previewSvg(o) / drawPreview(ctx, p)
  *                                          the approval's picture (renderBack(job, 500, { grid: false, hatch: false })): white, the cut lines in black, the added parts and
- *                                          the words in the back's blue (a front's words in #111); its paint, as SVG (the cloud renders it to PNG with resvg), or drawn on a 2D context
+ *                                          the words in the hatching blue; its paint, as SVG (the cloud renders it to PNG with resvg), or drawn on a 2D context
  *  ═══════════════════════════════════════════════════════════════════════ */
 (function (root, factory) {
   const api = factory(root);
@@ -28,7 +28,7 @@
 })(typeof self !== "undefined" ? self : this, function (root) {
   "use strict";
   const VERSION = 1, PT = 72 / 25.4, MM = 25.4 / 72;
-  const BACK_INK_CSS = "#1a5fc4", FRONT_INK_CSS = "#111";   // (BLUEBACK: CharmNestBacks.INK, the words of a back on every picture; a front's words keep #111)
+  const BACK_INK_CSS = "#1a5fc4", FRONT_INK_CSS = BACK_INK_CSS;   // (BLUEBACK: CharmNestBacks.INK, the words of a back on every picture; FRONTBLUE, 23 Nov 2026: a front's too)
   const isFront = x => !!x && (x.face === "front" || (typeof x.key === "string" && x.key.endsWith("~front")));
   const faceWord = x => (typeof x === "string" ? (x === "front" ? "front" : "back") : isFront(x) ? "front" : "back");
 

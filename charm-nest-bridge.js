@@ -9774,6 +9774,8 @@ const Engrave = window.Engrave = (() => {
     { const tail = () => jobsOf(line).some(j => (j.slot || null) === slot && (j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving)), by4 = Date.now() + 4000 * scale; if (tail()) step("tail", "Letting the approval before this one finish…"); while (tail() && Date.now() < Math.min(until(), by4)) await wait(60); }   // (at most 4 s here: a file still being written for the sheets never holds a change back longer; step 4 waits for it before it approves again)
     if (!by) return { ok: false, cancelled: true, message: "Nobody is signed in.", approved: [] };
     // (1) the faces, their words and fonts (and the place dragged on a face that has no job yet)
+    // (TYPEWORDS 2: the typed words as the work area draws them, so Approve keeps that very size and place: it fitted them afresh, "Mazie" at 0.98 mm where 1.17 mm was shown)
+    const shown = {}; for (const f of on) { const j = mine(f); try { const d = j ? draftOf(j.key) : null; if (d && !d.empty && Array.isArray(d.centre) && d.size > 0) shown[f] = { key: j.key, centre: d.centre.slice(), angle: d.angle || 0, size: d.size, view: j.view }; } catch (_) { /* the fit's own place */ } }
     const before = new Set(jobsOf(line).map(j => j.key)), patch = stage.patch && typeof stage.patch === "object" ? stage.patch : null;   // (a job made by this commit takes its dragged place as _placeAt; one that was there, placed or opened again, is moved below)
     if (patch && (patch.mode || patch.front !== undefined || patch.back !== undefined)) {
       if (setupBusy.has(line.key)) step("keep", "Waiting for another piece of this order to be kept…");
@@ -9841,7 +9843,9 @@ const Engrave = window.Engrave = (() => {
     if (overtaken()) return { ok: true, overtaken: true, approved: [] };   // (the faces are kept and fitted: the newer press approves them, as it stages them)
     // (3) a place dragged on a face whose job was there before this commit (placed, or opened again)
     for (const f of on) {
-      const p = faces[f] && faces[f].pos, j = jobs[f]; if (!p || !j || !before.has(j.key) || !j.fit || j.fit.artOnly) continue;
+      const p = faces[f] && faces[f].pos, j = jobs[f]; if (!j || !before.has(j.key) || !j.fit || j.fit.artOnly) continue;
+      const as = shown[f]; if (as && as.key === j.key && charmEditSameView(as.view, j.view)) { try { if (refit(j, { centre: as.centre, angle: as.angle, size: as.size })) { j.nudged = true; refresh(j); continue; } } catch (_) { /* the place it has stands */ } }
+      if (!p) continue;
       let c = null; try { const E = window.Engrave; c = E && typeof E.stagePlaceOf === "function" ? E.stagePlaceOf(j, p) : Array.isArray(p.charm) && j.view ? viewPointOf(j.view, p.charm) : null; } catch (_) { c = null; }
       if (c && j.fit.centre && Math.hypot(c[0] - j.fit.centre[0], c[1] - j.fit.centre[1]) > 1e-6) { try { if (moveTo(j, c)) j.nudged = true; } catch (_) { /* the place it has stands */ } }
       applyLook(j, lookOf(p));   // (STAGEHANDLES: the size, turn, line gap and mode left on the staged words)
@@ -10040,7 +10044,7 @@ const Engrave = window.Engrave = (() => {
       if (n.textContent !== text) n.textContent = text;
     } catch (_) { /* the toast still says it */ }
   }
-  const notApproved = (job, text, ms) => { approveSay(job, text); toast(text, "bad", ms || 7000); };
+  const notApproved = (job, text, ms) => { approveSay(job, text); toast(text, "bad", ms || 7000); try { agent({ engrave: true }, "warn", `${(job.row && job.row.order && job.row.order.receiptId) || job.key} · ${faceWord(job)}: ${text}`); } catch (_) { /* a log line */ } };   // (kept in the shop's activity log: a refusal a person saw can be read again)
   /** Why this job cannot be approved now ('' = it can): what approveOnce used to return on without a word. */
   function approveBlocked(job, owner, pendingFit) {
     if (owner.get(job.key) !== job) return "stale";
@@ -10528,7 +10532,7 @@ const Engrave = window.Engrave = (() => {
     outline.getContext("2d").drawImage(cv, 0, 0);
     const under = () => outline;
     /** Repaint: the static layers, then the text — the fitted one, or a provisional one while a hand is moving it. */
-    const glyphsOf = g => { ctx.fillStyle = onFront ? "#111" : BACK_INK(); for (const gl of g) { ctx.beginPath(); for (const c of gl.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); } else if (c.type === "C") { const a = tx(c.x1, c.y1), b2 = tx(c.x2, c.y2), d2 = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b2[0], b2[1], d2[0], d2[1]); } else if (c.type === "Q") { const a = tx(c.x1, c.y1), d2 = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], d2[0], d2[1]); } else if (c.type === "Z") ctx.closePath(); } ctx.fill("nonzero"); } };
+    const glyphsOf = g => { ctx.fillStyle = BACK_INK(); for (const gl of g) { ctx.beginPath(); for (const c of gl.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); } else if (c.type === "C") { const a = tx(c.x1, c.y1), b2 = tx(c.x2, c.y2), d2 = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b2[0], b2[1], d2[0], d2[1]); } else if (c.type === "Q") { const a = tx(c.x1, c.y1), d2 = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], d2[0], d2[1]); } else if (c.type === "Z") ctx.closePath(); } ctx.fill("nonzero"); } };
     cv._paint = (prov) => {
       ctx.clearRect(0, 0, cv.width, cv.height); ctx.drawImage(under(), 0, 0);
       const dr = cv._draft ? draftPaint(job) : null, src = dr || job.fit;   // (the work area of a card with the panel: the staged words in the staged font, in place of the committed fit, until Save / Cancel; see 7.5b)
@@ -10669,7 +10673,7 @@ const Engrave = window.Engrave = (() => {
   }
   /* BLUEBACK (Paul, 12 Nov 2026: "All back engraving is the wrong color. Letters/numbers, all back engraving, unless otherwise chosen, needs to be blue, the same blue we already have an option for in the
      editor, which stands for hatching when using our laser system"): a back's words, in every picture renderBack draws (the work area, the approval .png the shelves and the index show, the cards, the
-     seals), are the hatching blue as the screen shows it (CharmNestBacks.INK, the Charm Editor's hatch swatch); the back's file writes them [0, 0, 1] (charm-nest-pdf.js BACK_INK). A front's stay #111. */
+     seals), are the hatching blue as the screen shows it (CharmNestBacks.INK, the Charm Editor's hatch swatch); the back's file writes them [0, 0, 1] (charm-nest-pdf.js BACK_INK). FRONTBLUE (Paul, 23 Nov 2026, order 4241959899): a front's words too. */
   const BACK_INK = () => (window.CharmNestBacks && CharmNestBacks.INK) || "#1a5fc4";
   /** The added parts of a back, in every picture of it, as the file engraves them (charm-nest-pdf.js backArtPaint): a traced image's grey part in its own grey, a coloured pen a person chose in its
    *  colour, everything else in the words' blue (BACK_INK); a fill filled, a line stroked at its pen. */
@@ -11261,7 +11265,8 @@ const Engrave = window.Engrave = (() => {
   function svDraft(ja, t) {
     const rec = DRAFTS.get(ja.key) || { token: 0 }, own = !!(window.CharmNestEngravePanel && CharmNestEngravePanel.stagePos); rec.svStage = true;
     const at = t.x.pos ? svPlaceOf(ja, t.x.pos) : !own && rec.svDragged && rec.staged && rec.staged.position ? rec.staged.position.centre : null;
-    rec.staged = { text: t.words.join("\n"), fontWord: t.x.font || "", mode: t.eng ? "both" : "none", position: at ? { centre: at } : null };
+    const px = t.x.pos || {}, look = { ...(at ? { centre: at } : {}), ...(px.size > 0 ? { size: px.size } : {}), ...(Number.isFinite(px.angle) ? { angle: px.angle } : {}) };   // (TYPEWORDS 2: the size and turn left on the typed words)
+    rec.staged = { text: t.words.join("\n"), fontWord: t.x.font || "", mode: t.eng ? "both" : "none", position: Object.keys(look).length ? look : null };
     if (t.x.pos || own) rec.svDragged = false;
     rec.sig = draftSig(ja); draftCompute(ja, rec); DRAFTS.set(ja.key, rec);
     return rec;
@@ -11677,6 +11682,8 @@ const Engrave = window.Engrave = (() => {
     look(res && res.faces && res.faces[face] && res.faces[face].items, false, false);
     const d = W ? W.diff(given, off ? null : hit, M && M.casedText) : { gone: !hit || off, changed: true, text: true, font: false, place: false, style: [], words: String((hit || given).text || "").split(/\r?\n/).filter(s => s.trim()) };
     if (repair && !d.gone) { d.changed = true; d.text = true; }
+    // (TYPEWORDS 2, Paul 23 Nov 2026, order 4241959899: "the Save did not work ... It just returned back to this page": the words typed in the card are not the job's yet, so a Save sized the OLD words. Save keeps them, where and as large as the editor shows them)
+    if (given.engraving && given.engraving.staged && hit && !d.gone) { d.changed = true; d.text = true; d.place = true; if (given.fontKey && given.engraving.job) { const jx = items().get(given.engraving.job); if (jx && String((hit && hit.fontKey) || given.fontKey) !== fontIdOf(jx)) d.font = true; } }
     return Object.assign(d, { item: hit, inGroup });
   }
   /** TYPEWORDS: the words of a face whose job has words but no placement in this frame (a face still being fitted, a shelved face that could not be built again, the piece made from its master
@@ -11701,15 +11708,17 @@ const Engrave = window.Engrave = (() => {
     const Mx = window.CharmEditor && window.CharmEditor.model, eng = window.CharmNestCeText ? window.CharmNestCeText.textToPaths : charmEditText, fr = doc && doc.frame;
     if (!Mx || !fr) return null;
     const fontKey = sf.font || (j ? fontIdOf(j) : O.DEFAULT_FONT);
-    let size = +((j && j.fit && j.fit.size) || (j && j.writtenFit && j.writtenFit.size)) || 0;
+    const dr = j ? (() => { try { const d = draftOf(j.key); return d && !d.empty ? d : null; } catch (_) { return null; } })() : null;   // (TYPEWORDS 2: at the size, turn and place the card draws them)
+    let size = +((dr && dr.size) || (sf.pos && sf.pos.size) || (j && j.fit && j.fit.size) || (j && j.writtenFit && j.writtenFit.size)) || 0;
     if (!(size > 0)) size = Math.max(1.5, Math.min(fr.hPt * 0.3, fr.wPt / Math.max(4, lines.reduce((a, l) => Math.max(a, l.length), 0) * 0.6)));
     const it = { id: CHARM_EDIT_WORDS + face + "-" + Date.now().toString(36), kind: "text", role: "hatch", source: "engrave", name: `Engraving (not approved yet) · ${lines.join(" ").slice(0, 40)}`, text: lines.join("\n"), fontKey,
       sizePt: Math.round(size * 1e6) / 1e6, align: "center", tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, engraving: { job: j ? j.key : null, face, placed: false, staged: true } };
     let b = null; try { const r = eng(it.text, fontKey, it.sizePt, { align: "center" }); b = r && Mx.bboxOf(r.subpaths || []); } catch (_) { b = null; }
     const c = b ? [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2] : [0, 0];
     let at = [fr.x0 + fr.wPt / 2, fr.y0 + fr.hPt / 2];
-    try { const p = j && charmEditSameView(j.view, view) ? (svPlaceOf(j, sf.pos) || (j.fit && Array.isArray(j.fit.centre) ? j.fit.centre : null)) : null; if (p && p.every(Number.isFinite)) at = [p[0], -p[1]]; } catch (_) { /* the middle */ }
-    return Object.assign(it, { tx: Math.round((at[0] - c[0]) * 1e9) / 1e9, ty: Math.round((at[1] - c[1]) * 1e9) / 1e9 });
+    try { const p = j && charmEditSameView(j.view, view) ? ((dr && dr.centre) || svPlaceOf(j, sf.pos) || (j.fit && Array.isArray(j.fit.centre) ? j.fit.centre : null)) : null; if (p && p.every(Number.isFinite)) at = [p[0], -p[1]]; } catch (_) { /* the middle */ }
+    const turn = +((dr && dr.angle) || (sf.pos && sf.pos.angle)) || 0;
+    return Object.assign(it, { tx: Math.round((at[0] - c[0]) * 1e9) / 1e9, ty: Math.round((at[1] - c[1]) * 1e9) / 1e9, rot: turn ? -turn : 0 });
   }
   function charmEditWordsLoose(j, view, face, doc) {
     if (!j || !view || ["none", "skipped"].includes(j.state) || (j.fit && j.fit.artOnly)) return null;
@@ -11810,6 +11819,7 @@ const Engrave = window.Engrave = (() => {
     if (!startEdit(job)) { out.lost = true; return out; }
     if (refit(job, { centre: place.centre, angle: place.angle, size: place.size })) { out.moved = true; try { Session.schedule(); } catch (_) {} try { refresh(job); } catch (_) {} }
     else out.lost = true;
+    if (w.item && w.item.engraving && w.item.engraving.staged) { try { CharmNestEngravePanel.stagePos(pieceKeyOfJob(job), face, null); } catch (_) { /* nothing staged */ } }   // (TYPEWORDS 2: the saved place is the job's: no older one of the card's is put back by Approve)
     return out;
   }
   /** What one face of the piece is to carry over its master, from what the editor hands back: `given` the layers it was opened with, `out` the face as edited, `diff` what changed in it.
@@ -13964,8 +13974,9 @@ const Engrave = window.Engrave = (() => {
         if (!job.fit || job.fit.artOnly || !placeEditable(job) || job.approvalPreparing || job.stamping || job.backSaving) return; bc.setPointerCapture(e.pointerId); e.preventDefault();
         const p = local(e), b = bc._box;
         const mode = b && near(p, b.rotate, 10) ? "rotate" : (b && b.corners.some(c => near(p, c, 9))) || e.shiftKey ? "resize" : "move";
-        const c0 = job.fit.centre.slice(); const cpx = b ? b.centrePx : bc._map.tx(c0[0], c0[1]);
-        drag = { mode, x: e.clientX, y: e.clientY, c: c0, size: job.fit.size, want:job.wantSize ?? job.fit.size, angle: job.fit.angle || 0, cpx, r0: Math.max(4, Math.hypot(p[0] - cpx[0], p[1] - cpx[1])), a0: Math.atan2(p[1] - cpx[1], p[0] - cpx[0]) };
+        const typed = draftSource(job) && DRAFTS.get(job.key).fit, f0 = typed || job.fit;   // (TYPEWORDS 2: typed words not approved yet are what the hand is on)
+        const c0 = f0.centre.slice(); const cpx = b ? b.centrePx : bc._map.tx(c0[0], c0[1]);
+        drag = { mode, x: e.clientX, y: e.clientY, c: c0, size: f0.size, want: typed ? f0.size : job.wantSize ?? job.fit.size, angle: f0.angle || 0, cpx, r0: Math.max(4, Math.hypot(p[0] - cpx[0], p[1] - cpx[1])), a0: Math.atan2(p[1] - cpx[1], p[0] - cpx[0]) };
         bc.classList.add("drag");
       });
       bc.addEventListener("pointermove", e => {
@@ -13998,6 +14009,15 @@ const Engrave = window.Engrave = (() => {
         cancelAnimationFrame(flowFrame);flowFrame=0;
         const d = drag; drag = null; bc.classList.remove("drag");
         if (job.approvalPreparing || job.stamping || job.backSaving || !placeEditable(job)) { bc._paint(); return; }
+        /* TYPEWORDS 2 (Paul, 23 Nov 2026, order 4241959899: "it tells me that this engraving is the maximum size, but it is not"): the job still held the words as read ("1. Engraving: Mazie / 2. Location: Center"),
+           so a hand on the typed "Mazie" was stopped at the old words' largest size. The size, turn and place are the typed words' own, kept with the stage; Approve puts them on the words. */
+        { const ds = panelOn ? draftSource(job) : null, moved = d.pendingSize != null || d.pendingAngle != null || d.pending;
+          if (ds && moved) {
+            const size = d.pendingSize ?? d.size, r = G.reflowAt(ds.lines, ds.font, job.mask, fitOpts(job, true), { centre: d.pending || d.c, angle: d.pendingAngle ?? d.angle, size }, "auto");
+            if (!r.ok) { toast("No room there — kept the previous position", "bad"); bc._paint(); return; }
+            if (r.size < size - .005) toast(`That is as large as these words fit on this charm · cap ${r.capMm.toFixed(2)} mm`, "", 5000);
+            if (svPosOut(svPk, faceOf(job), job.view, r.centre, { size: r.size, angle: r.angle || 0 })) return;
+          } }
         if (d.mode === "resize") { if (d.pendingSize != null) resize(job, d.pendingSize); else bc._paint(); }
         else if (d.mode === "rotate") { if (d.pendingAngle != null) rotateTo(job, d.pendingAngle); else bc._paint(); }
         else if (d.pending) { if (!moveTo(job, d.pending)) { toast("No room there — kept the previous position", "bad"); bc._paint(); } else if (panelOn && job.fit) svPosOut(svPk, faceOf(job), job.view, job.fit.centre); }   // (ENGSTAGE: the place is the stage's too)

@@ -551,7 +551,7 @@
       if (statusOf(id) === 'idle' || (statusOf(id) === 'failed' && Date.now() - (FONTS.get(id).at || 0) >= 30000)) ensure(id);
       const status = statusOf(id), fs = FONTS.get(id), picWait = !!(src.entry && src.entry.status === 'loading');
       N.root.dataset.face = o.face === 'front' ? 'front' : o.face === 'back' ? 'back' : ''; N.root.dataset.font = status; N.root.dataset.fontId = id; N.root.dataset.pic = src.kind + (picWait ? ':loading' : '');
-      N.root.dataset.ink = (o.job ? faceOfJob(o.job) : o.face === 'front' ? 'front' : 'back') === 'back' ? 'back' : 'front';   // (BLUEBACK: the words of the face this picture draws, by frameFor's rule: a back's in its blue)
+      N.root.dataset.ink = 'back';   // (BLUEBACK, FRONTBLUE: the words of either face are the hatching blue)
       if (src.flip) N.root.setAttribute('data-flip', '1'); else N.root.removeAttribute('data-flip');
       N.wait.hidden = status === 'ready' && !picWait; N.wait.removeAttribute('data-late'); if (status === 'failed') N.wait.setAttribute('data-fail', ''); else N.wait.removeAttribute('data-fail');
       const waitWord = status === 'failed' ? 'Font not available' : status !== 'ready' ? 'Loading font' : 'Loading charm';
