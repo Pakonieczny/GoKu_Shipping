@@ -404,8 +404,10 @@
      the four scripts below, engraves its Regular at every size). Chosen by LOOKING at the shop's own font photos (the Etsy "Font Choice" charts of listings
      1008920168 / 234758391 / 1445686334 and the Mini Tag chart of 1714117116 / 4458930445), see plans/discs-1010/images/:
        · Stylish   = a school cursive with looped capitals          -> Playwrite US Trad (Playwrite Project / TypeTogether)
-       · Pristina  = a slanted pen script (Microsoft Pristina is commercial) -> Marck Script (Denis Masharov)
-       · Angelina  = a light, upright handwriting                    -> Mynerve (Sarah Cadigan-Fried)
+       · Pristina  = ITC Pristina (Phill Grimshaw), which Monotype sells: no copy of it may be kept here -> Charm Bold (Cadson Demak, SIL OFL), the closest of the 254 open handwriting fonts, measured letter by letter
+                     (A-Z, a-z, 0-9) against Monotype's own preview (Paul, 24 Nov 2026: "find the exact match fonts, if exact does not exist then find the closest approximation"; Marck Script was the first match and stays
+                     installed: saved work may name it)
+       · Angelina  = Angelina itself (Anja Denali; freeware, personal and commercial use): the shop's own "E", stroke for stroke (24 Nov 2026; Mynerve was the first match and stays installed)
        · Typewriter= what the shop's chart draws as a humanist serif (descending J) -> Crimson Text (Sebastian Kosch); the name is the shop's, it is no typewriter face
        · Comic     = what the chart draws as a humanist sans (Myriad-like) -> Source Sans 3 (Adobe), already the app's font
        · Vibur     = the font itself is open source (Johan Kallas, Google Fonts, SIL OFL): the Mini Tag chart's lettering is Vibur, letter for letter (ENGFONT, 11 Oct: the first
@@ -431,13 +433,16 @@
     // ENGFONT (11 Oct 2026): the three Mini Tag words matched again against the shop's own chart. Added; nothing above was removed or changed (a saved back keeps its font).
     { id: "vibur", name: "Vibur", names: ["Vibur"], files: { Regular: "vendor/fonts/Vibur-Regular.ttf" } },
     { id: "jost-ace", name: "Jost Slashed Zero", names: ["Jost Slashed Zero"], caps: true, files: { Regular: "vendor/fonts/JostSlashedZero-Regular.ttf", Semibold: "vendor/fonts/JostSlashedZero-SemiBold.ttf" } },
-    { id: "libre-franklin", name: "Libre Franklin", names: ["Libre Franklin"], files: { Regular: "vendor/fonts/LibreFranklin-Bold.ttf", Semibold: "vendor/fonts/LibreFranklin-ExtraBold.ttf" } }
+    { id: "libre-franklin", name: "Libre Franklin", names: ["Libre Franklin"], files: { Regular: "vendor/fonts/LibreFranklin-Bold.ttf", Semibold: "vendor/fonts/LibreFranklin-ExtraBold.ttf" } },
+    // (24 Nov 2026: Angelina itself, and the closest open font to Pristina)
+    { id: "angelina", name: "Angelina", names: ["Angelina"], files: { Regular: "vendor/fonts/Angelina-Regular.ttf" } },
+    { id: "charm", name: "Charm", names: ["Charm"], files: { Regular: "vendor/fonts/Charm-Bold.ttf" } }
   ];
   /** The font words the shop's drop-downs offer, any spelling (case, spacing, punctuation, "Typewrite" for "Typewriter"), and the installed font each one is. */
   const FONT_WORDS = [
     { id: "playwrite-us-trad", words: ["Stylish"] },
-    { id: "marck-script", words: ["Pristina"] },
-    { id: "mynerve", words: ["Angelina"] },
+    { id: "charm", words: ["Pristina"] },
+    { id: "angelina", words: ["Angelina"] },
     { id: "crimson-text", words: ["Typewriter", "Typewrite", "TypeWrit", "Typewritr", "TypeWrt"] },   // (seven real spellings; any other that starts "typewr" is read by FONT_STEMS)
     { id: "source-sans-3", words: ["Comic"] },
     { id: "vibur", words: ["Vibur"] },

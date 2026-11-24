@@ -4104,7 +4104,14 @@ const Master = window.Master = (() => {
         const out = E.productionDxf ? await E.productionDxf(bytes) : await (async () => { const parsed = await CharmNestPDF.parseSource(bytes, base + ".ai"); return E.dxf(E.productionPaths(parsed), E.layerNames(parsed)); })();
         if (!out || !out.entityCount) throw new Error("the .ai file holds no outline or engraving the .dxf could carry");
         download(new TextEncoder().encode(out.text), base + ".dxf", "application/dxf");
-      } else download(bytes, r.name || base + ".ai", "application/illustrator");
+      } else {
+        /* REPOAI (Paul, 24 Nov 2026: "The .ai file is not storing/exporting the layers info correctly ... export individual charms in the exact same way as the .ai sheet export works now"): the file kept of a charm holds its
+           drawing in a form on the page, with the master's own layers inside it, and Illustrator lists none of those. It is written by the very writer of a sheet's .ai (charm-nest-export.js productionAi: the .dxf's own
+           entities, every layer a layer of the page, the same names and order). */
+        const E = window.CharmNestExport;
+        if (!E || !E.productionAi) throw new Error("the .ai writer is not loaded on this page");
+        download(await E.productionAi(bytes, base), base + ".ai", "application/illustrator");
+      }
       toast(`${sku}${size ? " · " + size : ""} ${ext} saved`, "ok");
     } catch (e) { if (!(e && e.cancelled)) toast(`${sku} ${ext} was not downloaded — ${e.message}`, "bad", 7000); }
     finally { if (btn) btn.disabled = false; }
@@ -14777,7 +14784,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
      sections in the library tab"): Laser cutting (the ready area) is its own box at the top of the Library, with its heading, its own cards and its empty note; ONELIST's one list by date
      is everything else (In progress, drafts, loose sheets) below it */
   const oneListCss=()=>{if(document.getElementById('laserOneCss3'))return;const st=document.createElement('style');st.id='laserOneCss3';
-    st.textContent='#libBody.laserOne{display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px 12px}#libBody.laserOne>.laserSection[data-laser-area="pending"]{display:contents}#libBody.laserOne>.laserSection[data-laser-area="pending"]>.laserEmpty{display:none}#libBody.laserOne>.laserSection[data-laser-area="pending"]>.laserAreaItems{display:contents}#libBody.laserOne>.laserDayRule{flex:0 0 100%;width:100%}'
+    st.textContent='#libBody.laserOne:not([hidden]){display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px 12px}#libBody.laserOne>.laserSection[data-laser-area="pending"]{display:contents}#libBody.laserOne>.laserSection[data-laser-area="pending"]>.laserEmpty{display:none}#libBody.laserOne>.laserSection[data-laser-area="pending"]>.laserAreaItems{display:contents}#libBody.laserOne>.laserDayRule{flex:0 0 100%;width:100%}'
       +'#libBody.laserOne>.laserSection[data-laser-area="ready"]{order:0;flex:0 0 100%;width:100%;box-sizing:border-box;margin:0 0 10px;padding:14px 16px 16px;border:2px solid #b8902f;border-radius:14px;background:rgba(184,144,47,.07)}#libBody.laserOne>.laserSection[data-laser-area="ready"]>h2{display:block;margin:0 0 12px;font-size:20px}#libBody.laserOne>.laserSection[data-laser-area="ready"]>h2>span{margin-left:8px;font-size:13px;opacity:.7}#libBody.laserOne>.laserSection[data-laser-area="ready"]>.laserAreaItems{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}#libBody.laserOne>.laserSection[data-laser-area="ready"]>.laserEmpty{margin:0;opacity:.75}'
       // (LASERLINE, Paul 22 Nov 2026: "Make the line very visible not just a thin line and make it tastefully done"): under the Laser cutting box, a divider across the Library: on each side a
       //  strong gold rule over a fine one, both fading toward the ends, and "In progress" in a gold-edged pill in its middle, with room above and below
@@ -15942,7 +15949,7 @@ const Sets = window.Sets = (() => {
           ${""/* (Paul, 12 Nov 2026: "Remove this text from all sets and from the UI, this is not necessary": the "Orders ... link ..." note is no longer drawn) */}
           ${releasedChangeHtml(st, all)}
           ${window.SetRepair ? SetRepair.lineHtml(st) : ""}
-          ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
+          ${!st.processReady && !(+st.laserDoneAt > 0) && !st.committedAt && st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
           `;
     card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
     try { if (window.SetRepair) SetRepair.wire(card, st); } catch (e) { console.warn("[SetRepair] wire", e); }      // (SETREPAIR, Paul 17 Oct 2026: the one button of a set that breaks the owner's rules, "Rebuild this set correctly"; its red line is drawn above, under the sheets)

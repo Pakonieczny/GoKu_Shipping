@@ -1604,14 +1604,14 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
 .ce-zoomtype input{ flex:1 1 auto; min-width:0; width:60px; border:0; padding:0; outline:none; background:none; font-family:inherit; font-size:var(--ai-fs); color:var(--ai-text); text-align:right; height:auto; font-variant-numeric:tabular-nums; }
 .ce-zoomtype i{ font-style:normal; font-size:11px; color:var(--ai-text-dim); }
 .ce-root .ce-zoomtype input:focus-visible{ outline:none; }
-.ce-stage{ grid-area:2/2; position:relative; overflow:hidden; background:var(--ai-pasteboard); touch-action:none; user-select:none; -webkit-user-select:none; cursor:default; }
+/* WHITEAREA (Paul, 24 Nov 2026: "the white background work area should always be larger than the charm. This entire area should be a work area and not just the small square in the center"): white and gridded everywhere */
+.ce-stage{ grid-area:2/2; position:relative; overflow:hidden; background:#fff; touch-action:none; user-select:none; -webkit-user-select:none; cursor:default; }
 .ce-stage[data-tool="text"]{ cursor:text; }
 .ce-stage[data-tool="marquee"],.ce-stage[data-tool="rect"],.ce-stage[data-tool="ellipse"],.ce-stage[data-tool="line"]{ cursor:crosshair; }
 .ce-stage[data-tool="hand"],.ce-stage.is-space{ cursor:grab; }
 .ce-stage.is-panning{ cursor:grabbing; }
 /* the artboard: white, a hairline edge and Illustrator's drop shadow on the pasteboard */
-.ce-paper{ position:absolute; background:#fff; pointer-events:none; box-shadow:0 0 0 1px rgba(0,0,0,.35), 3px 3px 0 rgba(0,0,0,.28); }
-.ce-root[data-canvas="white"] .ce-paper{ box-shadow:0 0 0 1px #9a9a9a, 3px 3px 0 rgba(0,0,0,.12); }
+.ce-paper{ position:absolute; pointer-events:none; visibility:hidden; }
 .ce-art,.ce-ui{ position:absolute; left:0; top:0; width:100%; height:100%; overflow:hidden; display:block; }
 .ce-ui{ pointer-events:none; }
 .ce-art .ce-p{ vector-effect:non-scaling-stroke; fill:none; stroke:none; stroke-width:max(calc(var(--lw, .25) * var(--k, 1) * 1px), var(--hair, 1px)); stroke-linejoin:round; stroke-linecap:round; }
@@ -2366,7 +2366,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
     function drawGrid(vx, vy, vw, vh) {
       if (!S.grid) { gridG.innerHTML = ''; return; }
       const f = frame(), pxmm = S.k * PT;
-      const x0 = Math.max(f.x0, vx), x1 = Math.min(f.x0 + f.wPt, vx + vw), y0 = Math.max(f.y0, vy), y1 = Math.min(f.y0 + f.hPt, vy + vh);
+      const x0 = vx, x1 = vx + vw, y0 = vy, y1 = vy + vh;   // (WHITEAREA: the whole view)
       if (!(x1 > x0 && y1 > y0)) { gridG.innerHTML = ''; return; }
       const fine = pxmm * 0.1 >= 6, mm = pxmm >= 4, five = pxmm * 5 >= 4;
       const lines = (stepMm, skip) => {
