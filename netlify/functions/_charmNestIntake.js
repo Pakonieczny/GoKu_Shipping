@@ -166,11 +166,12 @@ async function join(c, o = {}) {
   const firstSeen = (arr && arr.firstSeen) || {};
   // Claude's reading each new line takes (RVSAME: the run names the one every computer uses: the latest stored one, as the world read it)
   const crs = await docsOf(db, CUSTOMREAD, take.map(w => w[2])), customRead = {}; for (const [k, x] of crs) if (x && x.latest) customRead[k] = { hash: x.latest };
-  const B = { run, maps: { customRead } }, add = {};
+  const B = { run, maps: { customRead } }, add = {}, jobs = await docsOf(db, "Charm_Nest_Release_Jobs", orders.map(x => String(x.receiptId)));   // (NESTASK: what a person skipped at Release Hold stays skipped in a run opened later)
   for (const [ord, ln, k] of take) {
     // (a new line is "pulled", as merge makes it, and takes what its reading says of its state: no design, a custom order done by hand, an add-on's wait)
     const wl = read.get(k), sp = clone(wl.spec), row = { key: k, order: wl.order, line: wl.line, spec: sp, problems: clone(wl.problems || []), state: "pulled", reason: null, poolIds: [], hold: null, wait: null, engrave: null, arrivedAt: num(firstSeen[String(ord.receiptId)]) || now, material: sp.material || null };
     readState(row);
+    if (((jobs.get(ridOf(k)) || {}).skips || {})[k]) { row.state = "skipped"; row.reason = "no charm made: skipped at Release Hold"; }
     add[k] = PoolMake.lineRecord(row, B)[1];
   }
   // "Pulled" on each order's timeline (TL.pulled: once per order; the event's own id makes a second write the same event)

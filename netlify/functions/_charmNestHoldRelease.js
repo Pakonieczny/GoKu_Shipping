@@ -5,7 +5,7 @@
  *  What there was: a computer that only FOLLOWS the run asked the computer that CARRIES it (runCmdPut release) and waited for it, up to twenty minutes (charm-nest-order-release.js relayRelease);
  *  the hold stayed in the cloud until that computer had made the order's pieces up again, and every other computer kept showing the order held. Now the press itself releases the hold in the cloud:
  *
- *    releaseAsk { orderId, by, dev, runId?, seal?, lines?: { lineKey: { releaseAnyway?, blockOverride? } }, note?, resume?, queue? }
+ *    releaseAsk { orderId, by, dev, runId?, seal?, lines?: { lineKey: { releaseAnyway?, blockOverride?, skip?, skuOverride? } }, note?, resume?, queue? }
  *      queue (ITEM 8, Paul 21 Nov 2026): Release Hold pressed on a viewer for an order with NO line on hold (a blocked SKU cut anyway, a question set aside: the Review card's
  *                   "Release to nesting queue"). The lines it names (keys) that carry something set aside (lines) are taken too, held or not: what was set aside, the front of the queue,
  *                   the seal; a line the reading stopped (held, unmatched, oversize, no pieces) is "pulled" again, so the cloud's intake makes it up with what was set aside and the
@@ -48,10 +48,15 @@ function cleanAside(a) {
   const out = {};
   if (a && a.releaseAnyway && typeof a.releaseAnyway === "object" && num(a.releaseAnyway.at) > 0) out.releaseAnyway = { at: num(a.releaseAnyway.at), by: str(a.releaseAnyway.by, 80), kinds: (Array.isArray(a.releaseAnyway.kinds) ? a.releaseAnyway.kinds : []).slice(0, 8).map(x => str(x, 24)) };
   if (a && a.blockOverride && typeof a.blockOverride === "object" && a.blockOverride.sku) out.blockOverride = Object.assign({ sku: str(a.blockOverride.sku, 80), by: str(a.blockOverride.by, 80), at: num(a.blockOverride.at) }, Array.isArray(a.blockOverride.skus) && a.blockOverride.skus.length ? { skus: a.blockOverride.skus.slice(0, 20).map(x => str(x, 80)) } : {});
+  // (NESTASK: Nest on a line nobody matched uses the charm it shows, for this order only: "Just this order", skuOverride, as _charmNestCmdExec.js skuonce writes it)
+  if (a && a.skuOverride && typeof a.skuOverride === "object" && a.skuOverride.sku) out.skuOverride = { sku: str(a.skuOverride.sku, 80).trim().toUpperCase(), by: str(a.skuOverride.by, 80), at: num(a.skuOverride.at), was: str(a.skuOverride.was, 80) };
   return out;
 }
+/** NEST / SKIP (Paul, 23 Nov 2026: a Release Hold press asks whether the charm goes on a sheet or is skipped): per line, { skip: true } = its piece is never made (the line is "skipped", its hold released
+ *  in the same transaction: no pass can place it in between), { skip: false } = Nest, which makes a piece skipped before again. */
+const skipOf = a => (a && typeof a.skip === "boolean" ? { skip: a.skip } : {});
 /** The fields of a released line every page takes (the answer's `lines`). */
-const LINE_OUT = ["state", "poolIds", "hold", "heldAt", "holdSeen", "reason", "frontAt", "releasedAt", "releasedBy", "releaseHold", "releaseAnyway", "blockOverride", "_lp"];
+const LINE_OUT = ["state", "poolIds", "hold", "heldAt", "holdSeen", "reason", "frontAt", "releasedAt", "releasedBy", "releaseHold", "releaseAnyway", "blockOverride", "skuOverride", "_lp"];
 const pick = l => { const o = {}; for (const f of LINE_OUT) if (l[f] !== undefined) o[f] = l[f]; return o; };
 
 /** d: the library's own helpers, so every write goes through its sandbox prefix, its fence and its feed:
@@ -80,13 +85,14 @@ function make(d) {
       let lines = {};
       if (had.length) { const docs = await Promise.all(had.map(x => tx.get(d.col(RUN_LIVE).doc(x)))); if (docs.some(s => !s.exists)) throw new Error("the run was saved while its lines were read: try again"); for (const s of docs) Object.assign(lines, JSON.parse(s.data().json || "{}")); }
       else lines = Object.assign({}, old.lines || {});
-      const at = Date.now(), changed = [], out = {}, full = {};
+      const at = Date.now(), changed = [], out = {}, full = {}, skipped = [], picked = [];
       let holds = 0;
       for (const k of Object.keys(lines)) {
         if (!k.startsWith(rid + "_")) continue;
         const cur = lines[k]; if (!cur || typeof cur !== "object") continue;
         const held = !!cur.hold || o.heldKeys.has(k) || (o.askKeys.has(k) && String(cur.state || "") === "held");
-        const named = !held && !!o.queue && o.askKeys.has(k) && Object.keys(cleanAside(o.asides[k])).length > 0;   // (ITEM 8: a line the press set something aside on, not held)
+        const aside = cleanAside(o.asides[k]), skip = !!(o.asides[k] && o.asides[k].skip === true) && !["gone", "committed"].includes(String(cur.state || "")) && !o.placed.has(k);   // (a piece on a sheet is never skipped behind it: it is taken off there)
+        const named = !held && o.askKeys.has(k) && (skip || !!aside.skuOverride || (!!o.queue && Object.keys(aside).length > 0));   // (ITEM 8: a line the press set something aside on, not held)
         if (!held && !named) { out[k] = pick(cur); continue; }
         if (cur.hold || o.heldKeys.has(k)) holds++;
         const next = Object.assign({}, cur), was = String(cur.state || "");
@@ -94,9 +100,12 @@ function make(d) {
         if (was === "held") { next.state = Array.isArray(cur.poolIds) && cur.poolIds.length ? "pooled" : "pulled"; next.reason = null; }
         else if (named && ["unmatched", "oversize"].includes(was) && !(Array.isArray(cur.poolIds) && cur.poolIds.length)) { next.state = "pulled"; next.reason = null; }
         else if (cur.reason != null && cur.hold != null && String(cur.reason) === String(cur.hold)) next.reason = null;
+        if (skip) { next.state = "skipped"; next.poolIds = []; next.reason = `no charm made: skipped at Release Hold by ${o.by}`; skipped.push(k); }
+        else if (was === "skipped" && o.asides[k] && o.asides[k].skip === false) { next.state = "pulled"; next.reason = null; }
         next.frontAt = o.frontAt; next.releasedAt = o.frontAt; next.releasedBy = o.by;
         if (o.seal) next.releaseHold = { at: o.seal.at, by: o.seal.by, id: o.seal.id };
-        Object.assign(next, cleanAside(o.asides[k]));
+        Object.assign(next, aside);
+        if (aside.skuOverride) picked.push(k);
         delete next.releasing;   // (a release under way on a page is this one)
         next._lp = { at, dev: CLOUD_DEV, by: o.by };
         lines[k] = next; changed.push(k); out[k] = pick(next); full[k] = next;
@@ -108,7 +117,7 @@ function make(d) {
       for (const p of parts) if (!have.has(p.id)) tx.set(d.col(RUN_LIVE).doc(p.id), { runId, json: p.json, bytes: p.bytes, lines: p.lines, seq: p.seq, createdAt: FV.serverTimestamp() });
       for (const x of had) if (!keep.has(x)) tx.delete(d.col(RUN_LIVE).doc(x));
       tx.set(ref, { liveLines: { ids: parts.map(p => p.id), lines: parts.reduce((n, p) => n + p.lines, 0), bytes: parts.reduce((n, p) => n + p.bytes, 0) }, lines: FV.delete(), lineEditAt: at, updatedAt: FV.serverTimestamp() }, { merge: true });
-      return { runId, changed, lines: out, at, holds, full };
+      return { runId, changed, lines: out, at, holds, full, skipped, picked };
     });
   }
 
@@ -124,9 +133,10 @@ function make(d) {
       const s = await tx.get(jref), o = s.exists ? s.data() || {} : null;
       const same = !!o && ["lifting", "failed"].includes(o.state) && now - num(o.at) < SAME_PRESS_MS;   // (a press again after one that did not finish is that same release: its front time, its timeline id, what it did)
       if (resume && !(o && o.state === "lifting")) return null;   // (the driver's unit: nothing left to finish)
-      const j = same || resume ? Object.assign({}, o, { state: "lifting", error: null, tries: num(o.tries) + 1, beatAt: now }) : { rid, state: "lifting", at: now, frontAt: now, by: by || "Cloud", dev, seal: cleanSeal(b.seal), tries: 1, beatAt: now, runId: null, error: null, note: str(b.note, 300),
-        asides: b.lines && typeof b.lines === "object" && !Array.isArray(b.lines) ? Object.fromEntries(Object.keys(b.lines).filter(k => LINE_KEY.test(k) && k.startsWith(rid + "_")).slice(0, 40).map(k => [k, cleanAside(b.lines[k])])) : {},
+      const ask = resume ? {} : { note: str(b.note, 300),   // (what this press says of its lines: a press again after one that did not finish may have been answered otherwise: NESTASK)
+        asides: b.lines && typeof b.lines === "object" && !Array.isArray(b.lines) ? Object.fromEntries(Object.keys(b.lines).filter(k => LINE_KEY.test(k) && k.startsWith(rid + "_")).slice(0, 40).map(k => [k, Object.assign(cleanAside(b.lines[k]), skipOf(b.lines[k]))])) : {},
         askKeys: Array.isArray(b.keys) ? b.keys.map(k => str(k, 80)).filter(k => LINE_KEY.test(k) && k.startsWith(rid + "_")).slice(0, 40) : [], queue: b.queue === true };
+      const j = same || resume ? Object.assign({}, o, ask, { state: "lifting", error: null, tries: num(o.tries) + 1, beatAt: now }) : Object.assign({ rid, state: "lifting", at: now, frontAt: now, by: by || "Cloud", dev, seal: cleanSeal(b.seal), tries: 1, beatAt: now, runId: null, error: null, skips: (o && o.skips) || {} }, ask);
       tx.set(jref, j);
       return j;
     });
@@ -141,6 +151,7 @@ function make(d) {
       // 2 · the hold's marks on the order's pool rows
       const values = [rid].concat(Number.isSafeInteger(+rid) ? [+rid] : []);
       const ps = await d.col(POOL).where("orderId", "in", values).limit(400).get();
+      const placed = new Set(ps.docs.filter(x => { const p = x.data() || {}; return p.sheetId && !["abandoned", "superseded"].includes(String(p.state || "")); }).map(x => lineOfPool(x.id)));
       const held = ps.docs.filter(x => heldRow(x.data())), heldKeys = new Set(held.map(x => lineOfPool(x.id)));
       for (let i = 0; i < held.length; i += 200) {
         const part = held.slice(i, i + 200);
@@ -152,9 +163,12 @@ function make(d) {
       }
       // 3 · the run's lines
       const runId = await runOf(b.runId || job.runId);
-      const lineRes = runId ? await releaseLines(runId, rid, { heldKeys, askKeys: new Set(job.askKeys || []), frontAt, by, seal: job.seal || null, asides: job.asides || {}, queue: job.queue === true }) : { runId: null, changed: [], lines: {}, at: 0 };
+      const lineRes = runId ? await releaseLines(runId, rid, { heldKeys, placed, askKeys: new Set(job.askKeys || []), frontAt, by, seal: job.seal || null, asides: job.asides || {}, queue: job.queue === true }) : { runId: null, changed: [], lines: {}, at: 0 };
       // (RELNOW: the reading a fresh page takes says it too, at once; it said "on hold" until the next reading of all orders)
-      let worldSaid = 0; if (!d.prefix() && lineRes.full) try { worldSaid = await require("./_charmNestWorld").runNow({ db, lines: lineRes.full }); } catch (e) { console.warn("[release] the reading is put right by its next build:", (e && e.message) || e); }
+      let worldSaid = 0; if (!d.prefix() && lineRes.full) try { const World = require("./_charmNestWorld"), picked = lineRes.picked || [], rest = Object.fromEntries(Object.entries(lineRes.full).filter(([k]) => !picked.includes(k)));
+        worldSaid = await World.runNow({ db, lines: rest });
+        if (picked.length && d.ops) { const all = d.ops(), ops = {}; for (const op of ["masterList", "optionMapGet", "aliasGet", "noDesignGet", "customGet", "listingSkus", "customSheetGet"]) ops[op] = q => all[op](Object.assign({ op }, q || {})); worldSaid += (await World.readNow({ db, ops, keys: picked, lines: lineRes.full })).size; }   // (a line given its charm is read again with it now, so the intake that follows makes it)
+      } catch (e) { console.warn("[release] the reading is put right by its next build:", (e && e.message) || e); }
       // (what steps 2 and 3 did is kept in the journal before the timeline step: a press sent again, or the driver's unit, finds nothing held any more and still knows this release released something)
       const pieces = held.length + num(job.pieces), linesDone = [...new Set((Array.isArray(job.lines) ? job.lines : []).concat(lineRes.changed))];
       if (held.length || lineRes.changed.length) await db.runTransaction(async tx => { await d.fenceTx(tx); tx.set(jref, { pieces, lines: linesDone, runId: lineRes.runId || job.runId || null, beatAt: Date.now() }, { merge: true }); });
@@ -166,8 +180,13 @@ function make(d) {
           text: (`Released from hold by ${by} · front of the queue` + (job.note ? ` · ${job.note}` : "")).slice(0, 200),
           data: Object.assign({ frontAt, cloud: true, lines: linesDone.length, pieces }, seal ? { seal: "releaseHold", sealAt: seal.at, sealId: seal.id } : {}) }], "released");
       }
+      const skipped = lineRes.skipped || [], picks = (lineRes.picked || []).map(k => [k, lineRes.full[k].skuOverride]);
+      if (picks.length) await d.stamp(picks.map(([k, p]) => ({ orderId: rid, type: "decided", id: `${k}.once.${frontAt}`, at: frontAt, by, station: "sorter", lineKey: k, transactionId: k.split("_")[1] || "", text: `Decided by ${by} · Just this order: ${p.was || "no SKU"} → ${p.sku} (the listing and Etsy are not changed)`.slice(0, 200), data: { sku: p.sku, once: true, was: p.was || null, from: "releaseHold", cloud: true } })), "decided");
+      if (skipped.length) await d.stamp(skipped.map(k => ({ orderId: rid, type: "skipped", id: `${k}.relskip.${frontAt}`, at: frontAt, by, station: "sorter", lineKey: k, transactionId: k.split("_")[1] || "", text: `No charm made: skipped at Release Hold by ${by}`.slice(0, 200), data: { answer: "Skip", from: "releaseHold", cloud: true } })), "skipped");
       // 5 · done
-      await db.runTransaction(async tx => { await d.fenceTx(tx); tx.set(jref, { state: "done", doneAt: Date.now(), runId: lineRes.runId || job.runId || null, lines: linesDone, pieces, released, error: null }, { merge: true }); });
+      // (NESTASK: the lines a person skipped, kept with the order for good: a run opened later takes them in as skipped (_charmNestIntake.js join), never as new pieces)
+      const skips = Object.assign({}, job.skips); for (const k of lineRes.changed) if (skipped.includes(k)) skips[k] = frontAt; else delete skips[k];
+      await db.runTransaction(async tx => { await d.fenceTx(tx); tx.update(jref, { state: "done", doneAt: Date.now(), runId: lineRes.runId || job.runId || null, lines: linesDone, pieces, released, error: null, skips }); });
       d.feedOrders(b, [[rid]]);
       if (lineRes.runId && lineRes.changed.length) d.revTouch(b, ["r:" + lineRes.runId].concat(worldSaid ? ["w:world"] : []));
       return Object.assign({ ok: true, orderId: rid, frontAt, at: lineRes.at || Date.now(), stamp: lineRes.at ? { at: lineRes.at, dev: CLOUD_DEV, by } : null, runId: lineRes.runId || null, lines: lineRes.lines, pieces, released }, released ? {} : { already: true });

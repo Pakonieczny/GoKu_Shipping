@@ -179,7 +179,7 @@ function placeOfLine(r, f, cancelled) {
   const waits = !r.hold && !!(r.spec && r.spec.special && r.spec.special.monogram);
   const own = r.hold || (r.state === "held" && !waits) ? { reason: String(typeof r.hold === "string" ? r.hold : (r.hold && (r.hold.reason || r.hold.text)) || r.reason || "").slice(0, 200), at: +(r.hold && r.hold.at) || 0, by: String((r.hold && r.hold.by) || "").slice(0, 80) } : null;
   const hold = own || (f && f.ch) || null;
-  const hc = !hold ? (() => { const l = pieceLine(r), c = !(l.poolIds && l.poolIds.length) && (r.handDone || (l.spec && l.spec.customDone)); return c && typeof c === "object" && c.state !== "open" && c.how !== "sheet" ? c : null; })() : null;
+  const hc = !hold ? (() => { const l = pieceLine(r), c = !(l.poolIds && l.poolIds.length) && (r.state === "skipped" ? { state: "completed", how: "skip" } : r.handDone || (l.spec && l.spec.customDone)); return c && typeof c === "object" && c.state !== "open" && c.how !== "sheet" ? c : null; })() : null;
   return PPlace.resolve({ key: r.key, qty: Math.max((f && f.q) || 0, 1), copies: Math.max((f && f.q) || 0, 1), copiesOn: (f && f.on) || 0, sheets: (f && f.sh) || [], hold, hand: hc, cancelled: cancelled || r.state === "gone", loading: !!(f && f.ld), unsure: !!(f && f.un) || !f });
 }
 function flowOf(rows, facts, x) {

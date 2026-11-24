@@ -6006,7 +6006,7 @@ OPS.worldGet = op_worldGet; OPS.worldBuild = op_worldBuild; ["worldGet", "worldB
 /* RELEASEHOLD (Paul, 20 Nov 2026: "a Release Hold press on ANY computer releases the hold in the cloud at once ... no more waiting on the computer that carries the run"): releaseAsk, a person's
    press (the hold's marks on the pool rows, the run line's hold, the timeline's 'released' step and frontAt, in the cloud at once), and releaseJobGet: _charmNestHoldRelease.js. Every other computer
    learns of it from the feed (p:<order>, r:<run>) and the world built again (worldSoon, as after runLinesPatch); the computer that carries the run makes the pieces up through its intake. */
-{ const HoldRelease = require("./_charmNestHoldRelease").make({ db, FV, col, prefix: () => PREFIX, marked: () => MARKED, fenceTx: tx => fenceTx(tx), liveParts, stamp, revTouch, feedOrders });
+{ const HoldRelease = require("./_charmNestHoldRelease").make({ db, FV, col, prefix: () => PREFIX, marked: () => MARKED, fenceTx: tx => fenceTx(tx), liveParts, stamp, revTouch, feedOrders, ops: () => OPS });
   OPS.releaseAsk = HoldRelease.releaseAsk; OPS.releaseJobGet = HoldRelease.releaseJobGet; NO_GEN_BUMP.add("releaseJobGet"); WORLD_TRIGGERS.add("releaseAsk"); }
 /* (S2, Paul 21 Nov 2026: "staff keep FULL use of every input, saved in the cloud, seen on every computer"): Review's Resolved decisions, kept in the cloud (_charmNestReviewSettled.js):
    reviewSettledPut, a person's answer (PRESS), named in the feed (g:review-settled) and read into the cloud world's Review (its settled list: the world is built again soon);
