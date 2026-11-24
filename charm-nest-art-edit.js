@@ -60,6 +60,7 @@
     path: "its path could not be read (only m, l, c and h, with finite numbers)",
     offMetal: "it falls outside the piece's outline: an engraving stays on the metal",
     cutPlaced: "a cut line is the shape the sheet was nested with: it is not changed on a piece already on a sheet. Engraving can be changed; to change the cut, take the piece off its sheet and let it be nested again",
+    open: "the outline has a gap: the laser needs one closed line. Close it first (draw the missing part, or select it and press Object ▸ Path ▸ Join)",
     oneChange: "a part of the drawing is changed into one path (a group is added as new parts)"
   };
 
@@ -93,6 +94,8 @@
     return [a, b, cc, d, cx + tx - (a * cx + cc * cy), cy + ty - (b * cx + d * cy)];
   }
   /** Is `subs` a path this file can read: m first, then l / c / h, finite numbers? */
+  /** Every subpath closed (its own close, or its end on its start). */
+  function closedSubs(subs) { return (subs || []).every(sp => { const a = sp && sp[0] && sp[0][1], l = sp && sp[sp.length - 1]; if (!a || !l) return false; if (l[0] === "h") return true; const z = l[l.length - 1]; return Array.isArray(z) && Math.hypot(z[0] - a[0], z[1] - a[1]) < 0.02; }); }
   function okSubs(subs) {
     if (!Array.isArray(subs) || !subs.length) return false;
     for (const sp of subs) {
@@ -498,6 +501,7 @@
       if (role === was && sameSubs(subs, m.subpaths) && samePaint(leaf, m)) continue;   // (EDITSAVE: the master's own part, untouched: no change, never a refusal, on either face)
       if (back) { no(id, WHY.back); continue; }
       if (m === base.outline && role !== "cut") { no(id, WHY.outline); continue; }
+      if (m === base.outline && closedSubs(m.subpaths) && !closedSubs(subs)) { no(id, WHY.open); continue; }   // (CUTERASE: the black line can be erased and cut like any other; it is kept only closed again)
       if (role !== "cut" && !onMetal(subs, polys)) { no(id, WHY.offMetal); continue; }
       if (role === "cut" || was === "cut") rec.cutIds.push(id);
       const keep = role === was && leaf.stroke === undefined && leaf.fill === undefined && (leaf.lwPt == null) && (leaf.even == null);

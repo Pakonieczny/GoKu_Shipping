@@ -6,7 +6,7 @@
  *                   repo's Clipper): what is left stays closed filled paths, a shape cut in two becomes two paths, holes stay holes, every curve the brush did not touch is
  *                   the same curve. A line engraving (a path drawn by its stroke alone) is cut where the brush crosses it, the pieces outside left as open paths.
  *   What            with things selected, only those (their parts, inside groups too); with nothing selected, every unlocked, visible path under the stroke on this face.
- *                   Never what is locked: the cut lines (role 'cut': the charm's outline, its holes, its ring) are locked by the editor and never erased; live words are
+ *                   Never what is locked: the cut lines open locked; unlocked in Layers they erase as the engraving does (CUTERASE, Paul 24 Nov 2026); live words are
  *                   words (Type ▸ Create Outlines first, as in Illustrator); text made into outlines is paths and erases.
  *   Vectorized      a traced image (charm-nest-ce-trace.js, placed by charm-nest-ce-image.js as a group of grey bands that share their borders): the stroke takes the
  *   images          engraving out of every band it crosses, each band cut by one and the same brush shape, so the bands' borders stay exact: no sliver between them, none under
@@ -106,12 +106,12 @@
 
   /* ═══ 2 · ON THE EDITOR'S ITEMS (pure: the editor's tree in, a new tree out; CharmEditor.model does the tree work) ═══ */
   const evenOf = it => !!(it && (it.evenOdd || it.even === true || it.fillRule === 'evenodd'));
-  /** What the eraser may take from: the selection's paths (their parts at any depth) or, with nothing selected, every path on the face; never a locked, hidden or cut
-   *  thing, nor anything in a locked or hidden group; live words are not paths. -> [{ it, P (its parent's matrix), W, fill }] */
+  /** What the eraser may take from: the selection's paths (their parts at any depth) or, with nothing selected, every path on the face; never a locked or hidden
+   *  thing (CUTERASE, Paul 24 Nov 2026: "make it work the same for the black outlines as it does for the engravings": a cut line the person unlocked is a path like any other), nor anything in a locked or hidden group; live words are not paths. -> [{ it, P (its parent's matrix), W, fill }] */
   function targetsOf(items, sel, geo) {
     const M = MD(), out = [], ix = M.indexTree(items, geo);
     const leaf = (it, P) => {
-      if (it.kind !== 'path' || it.hidden || it.locked || it.role === 'cut' || !Array.isArray(it.subpaths) || !it.subpaths.length) return;
+      if (it.kind !== 'path' || it.hidden || it.locked || !Array.isArray(it.subpaths) || !it.subpaths.length) return;
       const fill = M.paintFill(it); if (!fill && !M.paintStroke(it)) return;
       out.push({ it, P, W: M.mul(P, geo.matrix(it)), fill });
     };
@@ -161,12 +161,12 @@
         for (const sp of it.subpaths) ops += (sp || []).length;
         if (ops <= 1500) try { reach = !!KR().erase([fill ? { subpaths: M.transformSubpaths(it.subpaths, W), evenOdd: evenOf(it) } : { subpaths: M.transformSubpaths(it.subpaths, W), open: true, step: er.step }], er.subpaths)[0]; } catch (e) { reach = true; }
         if (!reach) continue;
-        if (it.role === 'cut') hit.cut++; else if (lk) hit.locked++; else if (chosen.size && !ins) hit.left++;
+        if (it.role === 'cut' && lk) hit.cut++; else if (lk) hit.locked++; else if (chosen.size && !ins) hit.left++;
       }
     };
     rec(items, M.I, false, false);
     if (hit.left) return 'Nothing erased: the Eraser works only on what is selected, and the brush is not over a selected part. Click empty space to deselect, then erase';
-    if (hit.cut) return 'Nothing erased: that is the charm\'s cut line, which the Eraser leaves alone. Erase the engraving lines instead';
+    if (hit.cut) return 'Nothing erased: that black line is locked. Press its lock in the Layers panel, then erase';
     if (hit.locked) return 'Nothing erased: that part is locked (Object ▸ Unlock All)';
     return 'Nothing erased: the brush was not over a line';
   }
@@ -298,6 +298,7 @@
     const cuts = [];
     M.walk(ctx.items(), it => {
       if (it.kind === 'group' || it.hidden || it.role !== 'cut' || cuts.length > 40) return;
+      { const e0 = ctx.entry(it.id); if (e0 && !it.locked && !(e0.anc || []).some(a => { const x = ctx.entry(a); return !!(x && x.it && x.it.locked); })) return; }   // (CUTERASE: an unlocked cut line is erased like the rest: it is not drawn back over the stroke)
       const e = ctx.entry(it.id); if (!e) return;
       let path = null; try { path = new root.Path2D(M.dOf(M.outlinesOf(it, geo, e.P))); } catch (er) { path = null; }
       if (!path) return;
