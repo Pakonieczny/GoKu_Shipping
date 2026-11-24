@@ -200,4 +200,13 @@ async function kickWriter(sheetId, nonce) {
   } catch (e) { console.warn("[finish] the sheet writer was not kicked:", e && e.message); }
 }
 
-module.exports = { install, kickWriter, FINISH };
+/** The one sheet writer started now, for a sheet whose nest just ended or whose pieces a person changed: asked as finishSheet asks it, never at the driver's next pass (52 s for order 4245537582, 23 Nov 2026). */
+async function startWriter(db, sheetId, w) {
+  try {
+    const now = Date.now(), ref = db.collection(FINISH).doc(String(sheetId)), Lease = require("./_charmNestLease");
+    await ref.set({ sheetId: String(sheetId), runId: w.runId || null, want: { reason: w.reason, nestJobId: w.nestJobId || null, at: now, by: "Cloud", owedAt: now }, wantAt: now }, { merge: true });
+    const got = await Lease.dispatch(db, ref, "finish:" + w.reason, { heartbeat: true }); if (got && got.nonce) await kickWriter(String(sheetId), got.nonce);
+  } catch (e) { console.warn("[finish] not started at once:", sheetId, e && e.message); }
+}
+
+module.exports = { install, kickWriter, startWriter, FINISH };

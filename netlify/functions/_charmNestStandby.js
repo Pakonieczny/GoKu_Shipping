@@ -96,8 +96,8 @@ async function liveTasks(db, runId, now) {
   if (!runId) return [];
   const fresh = d => d && d.state === "running" && now - (num(d.beatAt) || num(d.startedAt) || 0) < TASK_BEAT_MS;
   const out = [];
-  for (const c of [JOBS, FINISH]) {
-    try { const q = await db.collection(c).where("runId", "==", runId).get(); for (const d of q.docs) { const x = d.data() || {}; if (fresh(x)) out.push({ id: d.id, coll: c, by: str(x.by || x.dev, 60), name: str(x.sheetName || x.fileBase || x.sheetId || d.id, 80) }); } }
+  for (const c of [JOBS, FINISH, "Charm_Nest_Cmd_Hold"]) {
+    try { const q = await db.collection(c).where("runId", "==", runId).get(); for (const d of q.docs) { const x = d.data() || {}; if (fresh(x)) out.push({ id: d.id, coll: c, by: c === "Charm_Nest_Cmd_Hold" ? "" : str(x.by || x.dev, 60), name: str(x.sheetName || x.fileBase || x.sheetId || d.id, 80) }); } }
     catch (_) { /* a collection a build step has not made yet: nothing of it runs */ }
   }
   return out;

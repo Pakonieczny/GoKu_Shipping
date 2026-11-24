@@ -14,7 +14,7 @@
 const Exec = require("./_charmNestCmdExec");
 
 const CMDS = "Charm_Nest_Run_Cmds", CLOUD_DEV = "cloud";
-const NOW_TYPES = new Set(["skuonce", "remakeline", "keepsync", "remake", "backhome"]);   // (SKUNOW: the requests that make order lines again go through their steps at once)
+const NOW_TYPES = new Set(["skuonce", "remakeline", "keepsync", "remake", "backhome", "customsend"]);   // (a person's requests done at once, in a process of their own: nowRun)
 const LONG = new Set(["release", "skuonce"]), AGE_MS = 10 * 60000, LONG_AGE_MS = 6 * 3600000, STALE_MS = 10 * 60000, WORK_MAX_MS = 8 * 3600000;
 const PASSING = /answer in time|timed out|network|HTTP 5\d\d|ECONNRESET|ETIMEDOUT|socket hang up|is being written already|try again|DEADLINE_EXCEEDED|UNAVAILABLE|ABORTED/i;
 const num = v => (Number.isFinite(+v) ? +v : 0);
@@ -33,7 +33,7 @@ async function take(ctx, c) {
     const s = await tx.get(ref), h = s.exists ? s.data() || {} : {};
     if (h.by && h.by !== me && at0 - num(h.at) < HOLD_MS && at0 >= num(h.at)) return false;
     if (me === "pass" && num(h.kickedAt) > 0 && at0 - num(h.kickedAt) < KICK_MS) return false;
-    tx.set(ref, { runId: ctx.runId, by: me, at: at0, expireAt: new Date(at0 + 2 * 86400000) }, { merge: true });
+    tx.set(ref, Object.assign({ runId: ctx.runId, by: me, at: at0 }, me === "pass" ? { state: "pass" } : {}, { expireAt: new Date(at0 + 2 * 86400000) }), { merge: true });
     return true;
   });
   if (!mine) return null;
@@ -56,7 +56,7 @@ async function commands(ctx, held) {
   const key = (c, what) => `${runId}|cmd|${c.id}|${what}`;
   const answer = async (c, ok, text, freed) => {
     text = str(text, 400) || (ok ? "Done" : "Not done");
-    await put({ op: "cmdWorkPut", runId, cmdId: c.id, patch: { state: "done", ok: !!ok, text, doneAt: Date.now() } }, key(c, "work-done"));
+    if (!NOW_TYPES.has(c.type)) await put({ op: "cmdWorkPut", runId, cmdId: c.id, patch: { state: "done", ok: !!ok, text, doneAt: Date.now() } }, key(c, "work-done"));   // (one done in one go needs no journal)
     await put(Object.assign({ op: "runCmdDone", runId, id: c.id, ok: !!ok, text }, freed ? { freed: str(freed, 120) } : {}), key(c, "done"));
   };
   let n = 0;
@@ -94,26 +94,6 @@ async function commands(ctx, held) {
       if (PASSING.test(why) && now - num(c.at) < 30 * 60000) { ctx.say && ctx.say(`[drive] request ${c.type} ${c.id}: ${why} — tried again in the next pass`); continue; }
       r = { done: { ok: false, text: why } };
     }
-    /* SKUNOW (Paul, 22 Nov 2026: "This process needs to happen in real-time … should take priority when users are doing this process"; a Change SKU took one step a pass, a minute
-       each): a request that makes order lines again (Change SKU, Just this order, a remake) goes on through its steps in this same pass: when a step moves it on it is run again at once.
-       It never sleeps in the pass: when a step waits on another part of the pass (the reading of the orders, a sheet's nest or files), the driver looks at the requests again between
-       units (NOWCMD), so it goes on as soon as that part has run. Every step is still saved as it is reached (cmdWorkPut), so a pass that ends midway loses nothing. */
-    if (r && r.wait && NOW_TYPES.has(c.type)) {
-      const firstAt = num(work.firstAt) || now;
-      let cur = Object.assign({}, work), hops = 0, stepAt = 0;
-      while (r && r.wait && hops < 12 && Date.now() < ctx.budgetEnd - 20000) {
-        const nextWork = Object.assign({}, r.wait.work || {});
-        if (String(nextWork.stage || "") === String(cur.stage || "")) break;   // (not moved on: saved below, and looked at again between units or in the next pass)
-        await put({ op: "cmdWorkPut", runId, cmdId: c.id, patch: Object.assign({}, nextWork, { state: "working", text: r.wait.text || "", type: c.type, firstAt }) }, key(c, "work|now|" + hops));
-        if (r.wait.text && r.wait.text !== c.step && Date.now() - stepAt > 2500) { await put(Object.assign({ op: "runCmdStep", runId, id: c.id, text: str(r.wait.text, 160) }, r.wait.pct == null ? {} : { pct: r.wait.pct }), key(c, "step|now|" + hops)); c.step = r.wait.text; stepAt = Date.now(); }   /* (CMDFAST: the words of a step, only as fast as a person reads them) */
-        cur = nextWork; hops++;
-        try { r = await ex({ ctx, cmd: c, a: c.args || {}, work: Object.assign({}, cur), now: Date.now() }); }
-        catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; if (e && e.overBudget) return { more: true, done: n }; r = null; break; }
-      }
-      if (r && r.done) { await answer(c, r.done.ok, r.done.text, r.done.freed); n++; continue; }
-      if (!r) continue;
-      work = Object.assign({}, cur, { firstAt });
-    }
     if (r && r.done) { await answer(c, r.done.ok, r.done.text, r.done.freed); n++; continue; }
     if (r && r.wait) {
       const w = Object.assign({}, r.wait.work || {}, { state: "working", text: r.wait.text || "", type: c.type, firstAt: num(work.firstAt) || now });
@@ -125,30 +105,35 @@ async function commands(ctx, held) {
   return { done: n };
 }
 
-/** CMDFAST: one person's request done now, by a process of its own, under the running pass's lease (its nonce, read here; every write fenced on it; a pass that ends is waited out and the next one's lease taken). Any
- *  older request of these kinds is done first, in order. → { done } | { skipped } | { again } (the pass goes on with it) */
+/** CMDFAST: one person's request done now, by a process of its own, under a lease of its own: its hold (Charm_Nest_Cmd_Hold/<id>), begun while the drive is on and the cloud carries the run, every write of its calls
+ *  fenced on it and on the run's carrier. It was the pass's lease: no pass running, or a pass that ended in the middle, and the person waited (23 Nov 2026). Any older request of these kinds is done first, in order.
+ *  → { done } | { skipped } | { again } (the pass goes on with it) */
 async function nowRun(o) {
-  const { db, Lib, runId, id, key, say } = o, ref = db.collection(HOLD).doc(String(id)), s0 = await ref.get(), h = s0.exists ? s0.data() || {} : {};
-  if (!h.key || h.key !== key || h.runId !== runId) return { skipped: "not this request's turn" };
-  const until = Date.now() + (o.maxMs || 80000), nap = ms => new Promise(r => setTimeout(r, ms)), worker = "now:" + String(key).slice(0, 8);
-  const back = why => ref.set({ kickedAt: 0 }, { merge: true }).catch(() => {}).then(() => ({ again: why }));
-  const lease = async ms => { for (const t = Date.now() + ms; ;) { const l = await db.collection("Charm_Nest_Drive").doc("lease").get(), L = l.exists ? l.data() || {} : {}; if (L.state === "running" && L.nonce) return L.nonce; if (Date.now() > t) return null; await nap(300); } };
-  for (let i = 0; Date.now() < until; i++) {
-    const nonce = await lease(i ? 12000 : 9000); if (!nonce) return back("no pass runs");
-    const fence = { path: "Charm_Nest_Drive/lease", nonce, runId }, fenced = t => Object.assign(new Error(t), { fenced: true });
-    const call = async (b, unit) => { const r = await Lib.call(b, { unit: String(unit || ""), fence }); if (r && (r.fenced || (r.status === 409 && r.notCarrier))) throw fenced(r.error); if (r && r.inFlight) throw new Error(String(r.error || "is being written already")); return r; };
-    const read = b => Lib.call(b, {});
-    try {
-      const [got, dv] = await Promise.all([read({ op: "runGet", runId }), db.collection("Charm_Nest_Open").doc("drive").get()]), run = got && got.run, drive = dv.exists ? dv.data() || {} : {};
-      if (!run || ["abandoned", "complete"].includes(run.status)) return back("the run is closed");
-      const runFresh = Object.assign({}, run, { runId });
-      await commandsUnit({ db, run: runFresh, runId, step: "pass:commands", cursor: {}, call, callNow: call, read, drive, cloudSteps: Array.isArray(drive.cloudSteps) ? drive.cloudSteps.map(String) : [], state: {}, fence, say: say || (() => {}), live() {}, worker, only: NOW_TYPES, unitKey: `${runId}|now|${id}`, budgetEnd: Date.now() + 90000, _runNow: { at: Date.now(), run: runFresh } });
-    } catch (e) { if (!(e && (e.fenced || e.yielded)) && say) say(`[cmd now] ${id}: ${str((e && e.message) || e, 200)}`); }
-    const c = (((await db.collection(CMDS).doc(runId).get()).data() || {}).cmds || {})[id];
-    if (!c || !["waiting", "running"].includes(c.state)) return { done: (c && c.state) || "gone" };
-    await nap(1200);
-  }
-  return back("not done in time");
+  const { db, Lib, runId, id, key, say } = o, t0 = Date.now(), ref = db.collection(HOLD).doc(String(id)), nap = ms => new Promise(r => setTimeout(r, ms)), worker = "now:" + String(key).slice(0, 8), back = why => ref.set({ kickedAt: 0, state: "" }, { merge: true }).catch(() => {}).then(() => ({ again: why }));
+  const began = await db.runTransaction(async tx => {
+    const s = await tx.get(ref), h = s.exists ? s.data() || {} : {}, dv = await tx.get(db.collection("Charm_Nest_Open").doc("drive")), d = dv.exists ? dv.data() || {} : {}, cs = await tx.get(db.collection("Charm_Nest_Run_Carrier").doc(String(runId))), c = cs.exists ? (cs.data() || {}).carrier : null;
+    if (!h.key || h.key !== key || h.runId !== runId) return { skipped: "not this request's turn" };
+    if ((d.mode !== "on" && d.mode !== "standby") || !c || c.dev !== CLOUD_DEV) return { no: "the cloud does not carry the run" };
+    tx.set(ref, { state: "running", nonce: key, beatAt: t0 }, { merge: true });
+    return { drive: d };
+  });
+  if (began.skipped) return began;
+  if (began.no) return back(began.no);
+  const fence = { path: HOLD + "/" + id, nonce: key, runId }, fenced = t => Object.assign(new Error(t), { fenced: true }), read = b => Lib.call(b, {}), cloudSteps = Array.isArray(began.drive.cloudSteps) ? began.drive.cloudSteps.map(String) : [];
+  const call = async (b, unit) => { const r = await Lib.call(b, { unit: String(unit || ""), fence }); if (r && (r.fenced || (r.status === 409 && r.notCarrier))) throw fenced(r.error); if (r && r.inFlight) throw new Error(String(r.error || "is being written already")); return r; };
+  try {
+    for (const until = t0 + (o.maxMs || 80000); Date.now() < until; await nap(500)) {
+      try {
+        const got = await read({ op: "runGet", runId }), run = got && got.run;
+        if (!run || ["abandoned", "complete"].includes(run.status)) return back("the run is closed");
+        const runFresh = Object.assign({}, run, { runId });
+        await commandsUnit({ db, run: runFresh, runId, step: "pass:commands", cursor: {}, call, callNow: call, read, drive: began.drive, cloudSteps, state: {}, fence, say: say || (() => {}), live() {}, worker, only: NOW_TYPES, unitKey: `${runId}|now|${id}`, budgetEnd: Date.now() + 90000, _runNow: { at: Date.now(), run: runFresh } });
+      } catch (e) { if (e && e.fenced) return back(str(e.message, 160)); if (say) say(`[cmd now] ${id}: ${str((e && e.message) || e, 200)}`); }
+      const c = (((await db.collection(CMDS).doc(runId).get()).data() || {}).cmds || {})[id];
+      if (!c || !["waiting", "running"].includes(c.state)) { if (say) say(`[cmd now] ${id}: ${((Date.now() - t0) / 1000).toFixed(1)} s`); return { done: (c && c.state) || "gone" }; }
+    }
+    return back("not done in time");
+  } finally { await ref.set({ state: "" }, { merge: true }).catch(() => {}); }
 }
 
 module.exports = { nowRun, NOW_TYPES, HOLD, units: { passItems: [{ name: "commands", lane: "cmd:*", order: 40, unit: commandsUnit }] }, commandsUnit };

@@ -30,10 +30,10 @@ const { busyRec, WORK } = require("./_charmNestCmdOps");
    rule: a piece not placed and not turned away, or a change since the last nest. */
 const owesNest = (rec, now) => !!(rec && require("./_charmNestNest").owedNest(rec, null, now || Date.now()).owed);
 
-const SHEETS = "Charm_Nest_Sheets", SETS = "Charm_Nest_Sets", POOL = "Charm_Pool", WORLD_LINES = "Charm_World_Lines", MASTER = "Charm_Master_Index", STOCK = "Charm_Nest_Rose_Stock", INTAKE = "Charm_Nest_Intake_Lines";
+const SHEETS = "Charm_Nest_Sheets", SETS = "Charm_Nest_Sets", POOL = "Charm_Pool", WORLD_LINES = "Charm_World_Lines", MASTER = "Charm_Master_Index", STOCK = "Charm_Nest_Rose_Stock";
 const SOLID = new Set(["gold10k", "gold14k"]); const FAST = new Set(["gold", "silver"]);   // (COMBINEDRAFTS: Gold Filled / Sterling Silver drafts are combined and emptied too)
 const OPEN_LINE = l => !!l && !["gone", "committed", "skipped"].includes(String(l.state || ""));
-const NEST_MS = 25 * 60000, PLACE_MS = 15 * 60000, WORLD_MS = 15 * 60000, REMADE_MS = 25 * 60000, FILES_MS = 20 * 60000, RELEASE_PLACE_MS = 20 * 60000;
+const NEST_MS = 25 * 60000, PLACE_MS = 15 * 60000, FILES_MS = 20 * 60000, RELEASE_PLACE_MS = 20 * 60000;
 const num = v => (Number.isFinite(+v) ? +v : 0);
 const str = (v, n) => String(v == null ? "" : v).slice(0, n || 200);
 const ms = v => (v && v.toMillis ? v.toMillis() : +v || 0);
@@ -81,7 +81,6 @@ async function pools(ctx, ids) {
   return out;
 }
 async function worldLine(ctx, key) { const s = await ctx.db.collection(WORLD_LINES).doc(String(key)).get(); if (!s.exists) return null; const d = s.data() || {}; if (d.gone) return { key, gone: true }; try { return Object.assign(JSON.parse(d.data || "{}"), { key, at: num(d.at) }); } catch (_) { return null; } }
-async function worldAt(ctx) { const s = await ctx.db.collection("Charm_World").doc("summary").get(); return s.exists ? ms((s.data() || {}).at) : 0; }
 const lines = ctx => (ctx.run && ctx.run.lines) || {};
 /** Where each piece is: the sheet whose record lists it (Placement's rule: the record decides). → Map poolId -> sheet */
 function listedBy(sheets) { const m = new Map(); for (const r of sheets) for (const id of r.poolIds || []) m.set(String(id), r); return m; }
@@ -368,161 +367,6 @@ async function settleNests(x, text, fin) {
   return fin(late);
 }
 
-/* INPLACE (REMAKELINE, KEEPREMOTE, REMAKESTALE, ANYWHERE): order lines made up again, each in the place its pieces had. The stages, one or more passes each:
-     world    a request that changes what a line reads as waits for the next reading of the orders (the world build after the request: summary.at), so the reading is the cloud's
-     pick     the lines (remakeline: the ones named; keepsync / remake: open lines of these SKUs whose pieces hold an older drawing or another SKU; skuonce: the one line)
-     vacate   each line's pieces leave their sheet, which keeps their place (cmdVacate); the line goes back to the intake (pulled, repoolChanged, vacated)
-     remade   the intake has made its pieces again (the line is pooled, its new pieces exist and stand on no sheet)
-     back     the new pieces go back on the sheet that kept their place (cmdPutBack), which owes a nest that seats them in its free room; with no place kept (the sheet was
-              cut or closed meanwhile) the line is placed as any line is
-     nest     the sheets settle. A sheet that is cut, behind a green line or in a committed set keeps its pieces as they are (said in the answer). */
-async function inplace(x, label) {
-  const ctx = x.ctx, w = x.work, now = Date.now();
-  if (!lane(ctx, "nest") || !lane(ctx, "pool")) return no(`${label} is not the cloud's yet (in this build pieces are made and placed by a computer): with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again`);
-  // (KEEPNOW, Paul 22 Nov 2026: "This is taking too long ... This type of update must happen in real-time": a save to the charm repository changes a drawing, never what an order reads as,
-  //  so its pieces are picked at once, not after the next reading of the orders, a minute or two)
-  if (!w.stage && x.noWorld) Object.assign(w, { stage: "pick", asked: num(x.cmd.at) || now, at: now });
-  if (!w.stage) return wait("Waiting for the next reading of the orders…", { stage: "world", asked: num(x.cmd.at) || now, at: now });
-  if (w.stage === "world") {
-    const at = await worldAt(ctx);
-    if (at > num(w.asked)) return wait("Reading the lines again…", Object.assign({}, w, { stage: "pick", worldAt: at }));
-    if (now - num(w.at) > WORLD_MS) return no("The orders were not read again in 15 minutes (the world build): nothing was made again. Ask again in a moment");
-    return wait("Waiting for the next reading of the orders…", w);
-  }
-  if (w.stage === "pick") {
-    const keys = await x.pick();
-    if (!keys.length) return ok(x.none || "Nothing to make again: every open piece already holds the drawing the library has now");
-    return wait("Taking the old pieces off…", Object.assign({}, w, { stage: "vacate", keys: keys.slice(0, 40), done: [], why: [], vac: {} }));
-  }
-  if (w.stage === "vacate") {
-    const L = lines(ctx), [sheets, sets] = await Promise.all([sheetsWith(ctx, w.keys.flatMap(k => (L[k] && L[k].poolIds) || [])), runSets(ctx)]), on = listedBy(sheets), vac = Object.assign({}, w.vac || {}), why = (w.why || []).slice(), patch = {};
-    let busy = 0;
-    for (const k of w.keys) {
-      if (vac[k]) continue; const l = L[k]; if (!l || !OPEN_LINE(l)) { vac[k] = { skip: true }; continue; }
-      /* VACATEONCE (Paul, 23 Nov 2026, the lemon 4236768670: "made again: 1 piece(s) on GF Sheet 1", and the sheet kept the kiwi): the pass whose lease the request ran under ended right after this step; the request
-         began the step again from its journal, found the line already without pieces, took it for a line of no sheet, so the new drawing was never put in. What the line says it left (vacated, this request's own) is it. */
-      if (!(l.poolIds || []).length && l.vacated && Array.isArray(l.vacated.sheetIds) && l.vacated.sheetIds.length && num(l.vacated.at) >= num(x.cmd.at) - 2000) { vac[k] = { sheets: l.vacated.sheetIds.map(String) }; continue; }
-      const bySheet = new Map(); for (const id of l.poolIds || []) { const s = on.get(String(id)); if (s) (bySheet.get(s) || bySheet.set(s, []).get(s)).push(String(id)); }
-      // (a line is made again whole or not at all: a sheet that keeps what it holds (cut, behind a green line, in a set sent to the station) keeps the whole line as it is)
-      const keeps = [...bySheet.keys()].find(s => cutRec(s) || lineDrawn(s) || committedSheet(s, sets));
-      if (keeps) { why.push(`${ridOf(k)}: ${nameOf(keeps)} ${cutRec(keeps) ? "was already cut" : lineDrawn(keeps) ? "is behind a green line" : "is in a set sent to the station"}: its pieces stay as they are`); vac[k] = { skip: true }; continue; }
-      if (!x.swap && [...bySheet.keys()].some(s => busyRec(s, now))) { await stopFor(x, [...bySheet.keys()], `${label} (a person's request goes first)`); busy++; continue; }   // (FIRSTNOW)
-      /* ORIGINHOME (Paul, 22 Nov 2026: order 4231992262's discs, made again on a draft, "should have gone back to the original sheet"): pieces that came onto a draft after being made
-         again from a sheet (their records' vacatedFrom, the Nov 18 set's sheet) keep that sheet as their home: taken off the draft, their records still name it, and once made again they
-         go back to it (cmdMovePieces lets a set's sheet take its own order back), not to the draft. */
-      const before = await pools(ctx, l.poolIds || []), vfs = new Set([...before.values()].map(r => String(r.vacatedFrom || "")));
-      const origin0 = vfs.size === 1 && !vfs.has("") ? [...vfs][0] : "", origin = origin0 && [...bySheet.keys()].every(s => s.id !== origin0 && s.draft && !s.setId) ? origin0 : "";
-      const left = [], kept = [];
-      for (const [s, ids] of bySheet) {
-        const r = await put(x, Object.assign({ op: "cmdVacate", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: s.id, poolIds: ids, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "", why: label }, origin ? { origin } : {}, x.swap ? { swap: true } : {}), `vacate|${k}|${s.id}|${num(s.contentRev)}`);
-        if (err(r)) { if (r.keep) { kept.push(...ids); why.push(`${ridOf(k)}: ${err(r)}`); } else busy++; continue; }
-        left.push(s.id);
-      }
-      if (busy && !left.length) continue;
-      if (kept.length && !left.length) { vac[k] = { skip: true }; continue; }
-      vac[k] = Object.assign({ sheets: left }, origin ? { origin } : {});
-      // (the line goes back to the intake whole: its pieces keep their ids (O.poolId), so a piece a sheet kept after all (cut a moment ago) is still listed there and is not placed twice)
-      patch[k] = Object.assign({ state: "pulled", poolIds: [], repoolChanged: true, wait: null, reason: null }, left.length ? { vacated: { sheetIds: left, at: now } } : {});
-    }
-    if (Object.keys(patch).length) { const r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: patch }, `inplace|pulled|${Object.keys(patch).sort().join(",").slice(0, 400)}`); if (err(r)) return no(`Not made again: ${err(r)}`); runChanged(ctx); }
-    const pending = w.keys.filter(k => !vac[k]);
-    if (pending.length && now - num(w.at) < NEST_MS) return wait("Taking the old pieces off… (a sheet is busy)", Object.assign({}, w, { vac, why }));
-    const todo = w.keys.filter(k => vac[k] && !vac[k].skip);
-    if (!todo.length) return no((why.join("; ") || "Nothing was made again").slice(0, 380));
-    return wait("Making the pieces again…", Object.assign({}, w, { stage: "remade", vac, why, todo, remadeAt: now }));
-  }
-  if (w.stage === "remade") {
-    /* NOWCMD (Paul 21 Nov 2026: a Change SKU sat 15 minutes at "Making the pieces again… 0 of 1 made": the line went back to the intake, whose gate opens only at the run's checkpoint or
-       when it rests, and the run waited at commit for the Etsy freshness gate). The request makes its own lines' pieces now, as a person's Send to Sheet does (CUSTOMSEND): the intake's
-       pool with only these lines, past the run-step gate, every other rule kept (a blocked SKU, a design missing, a size its design lacks: the line is held with its words) */
-    const fresh = await runNow(ctx);
-    if (fresh && fresh.lines) {
-      const pend = (w.todo || []).filter(k => { const l = fresh.lines[k]; return l && OPEN_LINE(l) && ["pulled", "pooled", "waiting", "contended"].includes(String(l.state)) && !(l.poolIds || []).length; });
-      if (pend.length) {
-        try { await require("./_charmNestIntake").pool({ db: ctx.db, run: Object.assign({}, fresh, { runId: ctx.runId }), runId: ctx.runId, call: ctx.call, read: ctx.read, drive: ctx.drive || {}, cloudSteps: ctx.cloudSteps || [], fence: ctx.fence, say: ctx.say || (() => {}), budgetEnd: num(ctx.budgetEnd) || Date.now() + 45000, settings: null, stockPreset: null }, { step: true, only: new Set(pend) }); }
-        catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; runChanged(ctx); if (ctx.say) ctx.say(`[cmd] ${label}: the pieces were not made now: ${str((e && e.message) || e, 200)}`); }
-      }
-    }
-    const run = await runNow(ctx), L = (run && run.lines) || lines(ctx), /* (CMDFAST: the intake keeps the lines it wrote in the run it was given) */ ready = [], waiting = [], why = (w.why || []).slice();
-    for (const k of w.todo) {
-      const l = L[k];
-      if (l && l.state === "pooled" && (l.poolIds || []).length) ready.push(k);
-      else if (l && ["held", "oversize", "unmatched", "noDesign"].includes(String(l.state)) && !(l.poolIds || []).length) why.push(`${ridOf(k)}: not made again: ${str(l.reason || (l.hold && l.hold.why) || l.state, 160)}`);   // (said exactly, never waited on)
-      else waiting.push(k);
-    }
-    if (waiting.length && now - num(w.remadeAt) < REMADE_MS) return wait(`Making the pieces again… ${ready.length} of ${w.todo.length} made`, w, Math.round(100 * ready.length / w.todo.length));
-    return wait("Putting the new pieces in place…", Object.assign({}, w, { stage: "back", ready, late: waiting, why }));
-  }
-  if (w.stage === "back") {
-    const run = await runNow(ctx), L = (run && run.lines) || lines(ctx), placedOn = new Map(), why = (w.why || []).slice(), unvac = {}, loose = [], swapped = new Set();
-    for (const k of w.ready || []) {
-      const l = L[k]; let home = ((w.vac[k] || {}).sheets || [])[0]; unvac[k] = { vacated: null };
-      if (!l) continue;
-      if (!home && x.swap && (l.poolIds || []).length) { const still = listedBy(await sheetsWith(ctx, l.poolIds)), s0 = (l.poolIds || []).map(id => still.get(String(id))).find(Boolean); if (s0 && !cutRec(s0) && !lineDrawn(s0)) home = s0.id; }   // (VACATEONCE: a sheet that still lists its pieces holds the old drawing of them: the new one goes in there)
-      // (NEWLINE, Paul 22 Nov 2026: Michelle's Change SKU SHEEP3-CO → SHEEP 3 made the 2 pieces and answered "made again: 0 piece(s)", failed: the order was new, on no sheet, so it had no
-      //  place to go back to and was skipped here, never placed. Such a line is placed now as any new piece is)
-      if (!home) { loose.push(k); continue; }
-      const jr = await ctx.db.collection(INTAKE).doc(k).get(), charms = jr.exists ? (jr.data() || {}).charms : null, s = await sheetRec(ctx, home);
-      let mine = Array.isArray(charms) ? charms.filter(c => c && (l.poolIds || []).map(String).includes(String(c.poolId)) && (!s || !c.metal || c.metal === s.metal)) : [];
-      // (FIXBACK, Paul 22 Nov 2026: order 4231992262's new discs went to a new draft, not back to the Nov 18 set sheet they came from: the intake's ledger never holds a line's pieces
-      //  once it is pooled, so they were never "described" and every put-back gave up. They are described now from their own records, as the placement describes a piece)
-      if (!mine.length && s) mine = (await describeLine(ctx, l.poolIds)).filter(c => (!c.metal || c.metal === s.metal));
-      if (!s || !mine.length) { why.push(`${ridOf(k)}: placed as a new piece (${!s ? "its sheet is gone" : "its new pieces are not described yet"})`); loose.push(k); continue; }
-      const r = await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: home, poolIds: mine.map(c => String(c.poolId)), charms: mine, keepBacks: !!x.keepBacks, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "", ...(x.swap ? { swap: true } : {}) }, `back|${k}|${home}|${num(s.contentRev)}`);
-      if (err(r) && r.busy && now - num(w.backAt || now) < FIRST_MS) { await stopFor(x, [s], `${label} (a person's request goes first)`); return wait(`Putting the new pieces back as soon as ${nameOf(s)} is still…`, Object.assign({}, w, { backAt: num(w.backAt) || now, why })); }   // (FIRSTNOW)
-      if (err(r)) { why.push(`${ridOf(k)}: ${err(r)}; it is placed as any piece is`); loose.push(k); continue; }
-      swapped.add(k); if ((r.backsDropped || []).length) {   // (SWAPNOW: the drawing changed: the engraving fitted to the old one is approved again on the new one, said on the order)
-        if (l.engrave && typeof l.engrave === "object") unvac[k].engrave = Object.assign({}, l.engrave, { invalidatedBy: "charm changed", approved: false, state: "reclassify" });
-        why.push(`${ridOf(k)}: its engraving is approved again on the new charm`);
-      }
-      if (!r.noop) placedOn.set(home, { id: home, layoutRev: num(r.layoutRev), at: now });
-      const origin = (w.vac[k] || {}).origin;   // (ORIGINHOME: then on to the sheet they first came from)
-      if (origin && origin !== home) {
-        const f = await sheetRec(ctx, home), t = await sheetRec(ctx, origin);
-        const m = f && t ? await put(x, { op: "cmdMovePieces", runId: ctx.runId, from: { sheetId: home, layoutBase: num(f.layoutRev), contentBase: num(f.contentRev) }, to: { sheetId: origin, layoutBase: num(t.layoutRev), contentBase: num(t.contentRev) },
-          poolIds: mine.map(c => String(c.poolId)), by: x.cmd.by || "", why: "back on the sheet it was first made on" }, `origin|${k}|${origin}|${num(t.contentRev)}`) : { status: 404, error: "its first sheet is gone" };
-        if (err(m) && /try again once it is done/.test(err(m)) && f && t && now - num(w.backAt || now) < FIRST_MS) { await stopFor(x, [f, t], `${label} (a person's request goes first)`); return wait(`Putting the new pieces back on ${nameOf(t)} as soon as it is still…`, Object.assign({}, w, { backAt: num(w.backAt) || now, why })); }   // (FIRSTNOW)
-        if (err(m)) why.push(`${ridOf(k)}: kept on ${nameOf(f || { id: home })} (${err(m)})`);
-        else { placedOn.delete(home); placedOn.set(origin, { id: origin, layoutRev: num(m.to && m.to.layoutRev), at: now }); }
-      }
-    }
-    if (x.swap) for (const k of w.todo || []) if (!swapped.has(k)) for (const sid of (w.vac[k] || {}).sheets || []) await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, sheetId: sid, release: true, swap: true, drop: true }, `drop|${k}|${sid}`);   // (SWAPNOW)
-    // every place still kept for these lines is let go (a line not put back is placed as any line), then the lines are placed by the cloud's placement as usual
-    for (const k of (w.ready || []).concat(w.late || [])) for (const sid of (w.vac[k] || {}).sheets || []) await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, sheetId: sid, release: true }, `release|${k}|${sid}`);
-    for (const k of w.late || []) { unvac[k] = { vacated: null }; why.push(`${ridOf(k)}: its pieces were not made again in time; the intake makes them and they are placed as new pieces`); }
-    if (Object.keys(unvac).length) await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: unvac }, `inplace|unvac|${Object.keys(unvac).sort().join(",").slice(0, 400)}`); if (loose.length) runChanged(ctx);
-    /* NOWCMD: a line that could not go back to its kept place is placed now by the placement unit's own rules (only these lines; SETSHUT and the rest kept), not at the run's next nest step,
-       and every sheet that took one is asked to nest now, so the request answers only once the new pieces are on a sheet */
-    if (loose.length) {
-      try {
-        const fr = await runNow(ctx);
-        if (fr && fr.lines) await require("./_charmNestPlaceUnit").placeAll(Object.assign({}, ctx, { run: Object.assign({}, fr, { runId: ctx.runId }), only: new Set(loose) }));
-        runChanged(ctx); const g3 = await runNow(ctx), L3 = (g3 && g3.lines) || {}, on = listedBy(await sheetsWith(ctx, loose.flatMap(k => (L3[k] && L3[k].poolIds) || [])));
-        for (const k of loose) for (const id of (L3[k] || {}).poolIds || []) { const s = on.get(String(id)); if (s && !placedOn.has(s.id) && (owesNest(s, now) || !seated(s, id))) placedOn.set(s.id, { id: s.id, layoutRev: num(s.layoutRev), at: now }); }
-      } catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; why.push(`the new pieces were not placed now: ${str((e && e.message) || e, 160)}`); }
-    }
-    for (const s of placedOn.values()) await startNest(x, s.id, false, `${label}, asked by ${x.cmd.by || "a person"}`);
-    /* SKUFAST (Paul, 22 Nov 2026: "updating SKUs … needs to be near instant and all the computers need to be updated near instantly"): the request is answered as soon as every new piece is on
-       its sheet (listed there, the sheet's nest asked): the nest and the sheet's files go on by themselves, as after any placement, and every computer sees them through the changes feed. It
-       no longer waits a minute or two more for that nest. A piece not on a sheet yet keeps the request at its nest step, which says how it ended. */
-    { const g = await runNow(ctx), L2 = (g && g.lines) || {}, on2 = listedBy(await sheetsWith(ctx, (w.ready || []).flatMap(k => (L2[k] && L2[k].poolIds) || []))), names = new Set(); let pieces = 0, listed = 0;
-      for (const k of w.ready || []) for (const id of (L2[k] || {}).poolIds || []) { pieces++; const sh = on2.get(String(id)); if (sh) { listed++; names.add(nameOf(sh)); } }
-      /* (VACATEONCE: never said done while the sheet's entry is still another charm than the piece: the new drawing is put in once more, then said) */
-      if (x.swap && (w.ready || []).length) { const all = (w.ready || []).flatMap(k => ((L2[k] || {}).poolIds || []).map(String)), rows2 = await pools(ctx, all), old = all.filter(id => { const sh = on2.get(id), r = rows2.get(id), c = sh && (sh.charms || []).find(y => y && String(y.poolId) === id); return c && r && r.charmHash && c.hash && String(c.hash) !== String(r.charmHash); });
-        if (old.length) { const t = num(w.again) + 1; if (t > 2) return no(`Not made again: ${and([...new Set(old.map(id => nameOf(on2.get(id))))])} still holds the old drawing of ${old.length} piece(s). Press it again`); return wait("Putting the new pieces in place…", Object.assign({}, w, { stage: "back", again: t, vac: Object.fromEntries(Object.entries(w.vac || {}).map(([k, v]) => [k, Object.assign({}, v, { sheets: [...new Set(((L2[k] || {}).poolIds || []).map(id => (on2.get(String(id)) || {}).id).filter(Boolean))] })])) })); } }
-      if ((w.ready || []).length && pieces && listed === pieces && !(w.late || []).length)
-        return ok(`${(w.ready || []).length} order line(s) made again: ${listed} piece(s) on ${and([...names])}, being nested${why.length ? " · " + why.join("; ") : ""}`); }
-    return wait("Seating the new pieces…", Object.assign({}, w, { stage: "nest", sheets: [...placedOn.values()], why }));
-  }
-  if (w.stage === "nest") {
-    return settleNests(x, "Seating the new pieces…", async () => {
-      const v = await placedNow(ctx, w.todo || []), made = (w.ready || []).length;
-      const text = `${made} order line(s) made again: ${v.placed} piece(s)${v.names.length ? " on " + and(v.names) : ""}${(w.why || []).length ? " · " + w.why.join("; ") : ""}`;
-      return made && (v.placed || !v.pieces) ? ok(text) : no(text);
-    });
-  }
-  return no("The request lost its place: ask again");
-}
 /** The open lines whose pieces hold an older drawing of these SKUs, or another SKU than the line reads as now (the world's line). */
 /* FASTPICK (Paul, 22 Nov 2026: a save to the charm repository on Michelle's computer stayed at "Reading the lines again…" and failed; the request after it waited behind it): this read every
    open line of the run one by one, two reads a line (its world reading, its pieces), about 1,400 lines: two minutes, past the unit's one-minute limit. The unit was cut off when it went to save
@@ -559,13 +403,88 @@ function redrawn(e, r) {
   const ed = e && e.edited, from = ed && ed.from != null ? String(ed.from) : "", now = String((ed && ed.to) || (e && e.charmHash) || "");
   return !!(from && from !== now && r && r.charmHash && String(r.charmHash).split("~")[0] === from);
 }
-/** FIXBACK: a line's live pieces as a sheet lists them, from their own records and the library's index (the placement's own description: charm-nest-place.js charmOfRow). */
-async function describeLine(ctx, ids) {
-  const PU = require("./_charmNestPlaceUnit"), Place = require("../../charm-nest-place.js"), rows = [...(await pools(ctx, ids || [])).values()].filter(r => r && r.poolId && !["abandoned", "superseded"].includes(String(r.state || "")));
-  const entries = new Map();
-  for (const sku of [...new Set(rows.map(r => String(r.sku || "").trim().toUpperCase()).filter(Boolean))]) { const d = await ctx.db.collection(MASTER).doc(sku).get(); if (d.exists) entries.set(sku, d.data()); }
-  const now = Date.now();
-  return rows.map(r => PU.customCharm(Place.charmOfRow(Object.assign({}, r, { material: r.material || r.metal }), PU.geometryOf(entries.get(String(r.sku || "").trim().toUpperCase()), r), now), r));
+/** Pieces as a sheet lists them, from their own rows and the library's index (the placement's own description: charm-nest-place.js charmOfRow). */
+async function describe(ctx, rows) {
+  const PU = require("./_charmNestPlaceUnit"), Place = require("../../charm-nest-place.js"), key = r => String(r.sku || "").trim().toUpperCase(), entries = new Map(), now = Date.now();
+  for (const s of await getMany(ctx, MASTER, [...new Set(rows.map(key).filter(Boolean))])) if (s.exists) entries.set(s.id, s.data());
+  return rows.map(r => PU.customCharm(Place.charmOfRow(Object.assign({}, r, { material: r.material || r.metal }), PU.geometryOf(entries.get(key(r)), r), now), r));
+}
+/* STRAIGHT (Paul, 23 Nov 2026: "Everything the user does is primary and must be immediate including the cloud ... no more waiting", "you've just been piling on rule after rule ... instead of fixing the problem"): the ONE way
+   a person's change makes order lines' pieces again (Change SKU, Just this order, Make it again, a saved link or drawing, Send to Sheet). In one go, in one process: the piece maker makes the new pieces, they are seated
+   where the old ones lay (or in the nearest free room of their sheet: _charmNestSeatNow.js), and their records, their entries and their places are written in ONE write (cmdSwapLine); then it is answered. Nothing is taken
+   off first, no place is kept, no step is written down between, nothing waits for a pass, a nest or a reading of the orders. A piece on no sheet yet is placed as any new piece. Paul's rules: a sheet cut, behind a green line
+   or in a set sent to the station keeps what it holds, and a line is made again whole or not at all; a line on hold is not made; what cannot be made leaves its sheet, so the old piece is never cut. */
+const NOT_MADE = new Set(["held", "oversize", "unmatched", "noDesign", "skipped"]);
+async function again(x, keys, label) {
+  const ctx = x.ctx, w = x.work, now = Date.now();
+  if (!lane(ctx, "nest") || !lane(ctx, "pool")) return no(`${label} is not the cloud's yet (in this build pieces are made and placed by a computer): with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again`);
+  const run = await runNow(ctx), L = (run && run.lines) || lines(ctx), why = (w.why || []).slice(), go = new Map(), names = new Set(w.names || []), patch = {};
+  let n = num(w.n), pieces = num(w.pieces), nests = num(w.nests);
+  const [sheets, sets] = await Promise.all([sheetsWith(ctx, keys.flatMap(k => (L[k] && L[k].poolIds) || [])), runSets(ctx)]), on = listedBy(sheets);
+  for (const k of keys) {
+    const l = L[k]; if (!l || !OPEN_LINE(l)) continue;
+    if (l.hold && !x.lift) { why.push(`${ridOf(k)}: on hold: its pieces are made when it is released`); continue; }
+    const homes = [...new Set((l.poolIds || []).map(id => on.get(String(id))).filter(Boolean))], keeps = homes.find(s => cutRec(s) || lineDrawn(s) || committedSheet(s, sets));
+    if (keeps) why.push(`${ridOf(k)}: ${nameOf(keeps)} ${cutRec(keeps) ? "was already cut" : lineDrawn(keeps) ? "is behind a green line" : "is in a set sent to the station"}: its pieces stay as they are`);
+    else go.set(k, homes);
+  }
+  if (!go.size) return n ? ok(`${n} order line(s) made again`) : no((why.join("; ") || "Nothing was made again").slice(0, 380));
+  const held = [...go.keys()].filter(k => L[k].hold || L[k].state === "held"); if (x.lift && held.length) { const free = { state: "pulled", hold: null, reason: null, wait: null }, r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: Object.fromEntries(held.map(k => [k, free])) }, `lift|${held.sort().join(",").slice(0, 400)}`); if (err(r)) return no(err(r)); for (const k of held) L[k] = Object.assign({}, L[k], free); }   // (Send to Sheet: the send is the release)
+  const swap = (k, s, b, key) => put(x, Object.assign({ op: "cmdSwapLine", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: s.id, by: x.cmd.by || "", keepBacks: !!x.keepBacks }, b), `swap|${k}|${s.id}|${key}`);
+  /** One line's new pieces onto the sheet that holds its old ones (a sheet that changed meanwhile is looked at again); a line of two sheets leaves the other one. */
+  const onto = async (k, rows, homes) => {
+    for (let t = 0; t < 4; t++) {
+      const s = t ? await sheetRec(ctx, homes[0].id) : homes[0]; if (!s) return { error: "its sheet is gone", status: 404 };
+      const charms = (await describe(ctx, rows)).filter(c => !c.metal || c.metal === s.metal); if (charms.length !== rows.length) return { error: "its metal changed", status: 409, gone: true };
+      const got = t === 3 ? {} : await require("./_charmNestSeatNow").seat({ db: ctx.db, rec: s, lineKey: k, charms, rows, say: ctx.say }).catch(e => { if (ctx.say) ctx.say(`[seat] ${k}: ${str((e && e.message) || e, 160)}`); return {}; });
+      const r = await swap(k, s, { pools: rows, charms, ...(got.poses ? { poses: got.poses, layoutBase: num(s.layoutRev) } : {}) }, `${num(s.layoutRev)}|${num(s.contentRev)}|${got.poses ? 1 : 0}|${t}`);
+      if (r && r.conflict) continue;   // (the sheet changed while it was seated: seated again on it as it is now)
+      if (err(r)) return r;
+      for (const o of homes.slice(1)) await swap(k, o, { pools: [], charms: [] }, `off|${num(o.contentRev)}`);
+      names.add(nameOf(s)); n++; pieces += rows.length; if (!r.seated) { nests++; await startNest(x, s.id, false, `${label}, asked by ${x.cmd.by || "a person"}`); }
+      const l = L[k]; if ((r.backsDropped || []).length) { if (l.engrave && typeof l.engrave === "object") patch[k] = { engrave: Object.assign({}, l.engrave, { invalidatedBy: "charm changed", approved: false, state: "reclassify" }) }; why.push(`${ridOf(k)}: its engraving is approved again on the new charm`); }
+      return r;
+    }
+  };
+  // the piece maker, with these lines as lines to make; the pieces of a line that lies on a sheet are written with their sheet, the others as any new piece
+  const loose = [], given = Object.assign({}, run, { runId: ctx.runId, lines: Object.assign({}, L, Object.fromEntries([...go.keys()].map(k => [k, Object.assign({}, L[k], { state: "pulled", poolIds: [], repoolChanged: true, wait: null, reason: null, hold: null })]))) });
+  const call = async (b, u) => {
+    if (b.op === "runLinesPatch") {   // (a line that reads as it did is not written again: every write of a line writes the run's whole list of lines)
+      const body = {}; for (const [k, v] of Object.entries(b.lines)) { const d = Object.fromEntries(Object.entries(v).filter(([f, z]) => JSON.stringify(z) !== JSON.stringify((L[k] || {})[f] === undefined ? null : L[k][f]))); if (Object.keys(d).length) body[k] = d; }
+      const r = Object.keys(body).length ? await ctx.call(Object.assign({}, b, { lines: body }), u) : { ok: true, status: 200, at: Date.now() }; return err(r) ? r : Object.assign({}, r, { applied: Object.keys(b.lines) });
+    }
+    if (b.op !== "poolPut") return ctx.call(b, u);
+    const byLine = new Map(), rest = [], out = { ok: true, status: 200, placed: [] }; for (const p of b.pools) { const k = String(p.poolId).replace(/_\d+$/, ""); (byLine.get(k) || byLine.set(k, []).get(k)).push(p); }
+    for (const [k, rows] of byLine) {
+      const homes = go.get(k) || []; if (!homes.length) { rest.push(...rows); loose.push(k); continue; }
+      const r = await onto(k, rows, homes);
+      if (err(r) && r.gone) { for (const s of homes) await swap(k, s, { pools: [], charms: [] }, `off|${num(s.contentRev)}`); rest.push(...rows); loose.push(k); }   // (its metal changed, or its sheet let it go: a new piece of its own)
+      else if (err(r)) { why.push(`${ridOf(k)}: ${err(r)}`); out.placed.push(...rows.map(p => ({ poolId: p.poolId, sheetId: homes[0].id, sheetName: homes[0].fileBase || null, state: "ready" }))); }
+    }
+    if (!rest.length) return out;
+    const r = await ctx.call({ op: "poolPut", pools: rest }, u); return err(r) ? r : Object.assign({}, r, { placed: (r.placed || []).concat(out.placed) });
+  };
+  await require("./_charmNestIntake").pool({ db: ctx.db, run: given, runId: ctx.runId, call, read: ctx.read, drive: ctx.drive || {}, cloudSteps: ctx.cloudSteps || [], fence: ctx.fence, say: ctx.say || (() => {}), budgetEnd: num(ctx.budgetEnd) || Date.now() + 45000, settings: null, stockPreset: null }, { step: true, only: new Set(go.keys()) });
+  runChanged(ctx);
+  const late = [];
+  for (const [k, homes] of go) {
+    const l = given.lines[k];
+    if ((l.poolIds || []).length) continue;
+    if (!NOT_MADE.has(String(l.state))) { late.push(k); continue; }
+    for (const s of homes) await swap(k, s, { pools: [], charms: [] }, `off|${num(s.contentRev)}`);
+    patch[k] = { poolIds: [] }; why.push(`${ridOf(k)}: not made again: ${str(l.reason || l.state, 160)}`);
+  }
+  if (Object.keys(patch).length) await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: patch }, `again|${Object.keys(patch).sort().join(",").slice(0, 400)}`);
+  if (loose.length) {
+    await require("./_charmNestPlaceUnit").placeAll(Object.assign({}, ctx, { run: given, only: new Set(loose) }));
+    const g = await runNow(ctx), L2 = (g && g.lines) || given.lines, ids = loose.flatMap(k => (L2[k] && L2[k].poolIds) || []), by = listedBy(await sheetsWith(ctx, ids));
+    for (const s of new Set(by.values())) { names.add(nameOf(s)); nests++; await startNest(x, s.id, false, `${label}, asked by ${x.cmd.by || "a person"}`); }
+    n += loose.length; pieces += ids.length;
+  }
+  if (late.length && now - (num(w.at) || now) < 5 * 60000) return wait(`Making the pieces again… ${n} of ${n + late.length} made`, { stage: "again", keys: late, at: num(w.at) || now, n, pieces, nests, names: [...names], why });
+  for (const k of late) why.push(`${ridOf(k)}: not made again: ${str((given.lines[k] || {}).reason || "its order could not be read", 160)}`);
+  const tail = why.length ? " · " + why.join("; ") : "";
+  return n ? ok(`${n} order line(s) made again: ${pieces} piece(s)${names.size ? " on " + and([...names]) : ""}${nests ? ", being nested" : ""}${tail}`) : no((why.join("; ") || "Nothing was made again").slice(0, 380));
 }
 /* BACKHOME (Paul, 22 Nov 2026: "that should've gone back to the original sheet"): an order line made again whose new pieces went onto another sheet goes back to the sheet its pieces were
    taken from (each piece's record names it: vacatedFrom), even a sheet of a set (it is its own order coming back: cmdMovePieces lets that sheet take it), into the room they left; that sheet
@@ -603,9 +522,7 @@ async function backhome(x) {
   await startNest(x, home, false, `${ridOf(key)}: back on the sheet it came from`);
   return wait("Nesting the order on its sheet…", { stage: "nest", sheets: [{ id: home, layoutRev: num(r.to && r.to.layoutRev), at: Date.now() }], ids: live.map(p => String(p.poolId)) });
 }
-/* SWAPNOW (Paul, 23 Nov 2026, order 4245035194: "It took over 3 min to update the SKU, this is completely unacceptable", "You have a budget of 30 sec", "Make this simple"): Change SKU waited for every open order to be
-   read again, stopped its sheet's nest, took the piece off, made a new one and put it back; and a piece the intake had already made right was taken off and made once more. Now: the lines asked for are read again at once
-   (_charmNestWorld.js readNow), a line whose pieces were already made as it reads is answered as it is, and the new piece takes the old one's entry on its own sheet in one write (cmdVacate / cmdPutBack { swap }). */
+/** The lines asked for read again at once, and only them (_charmNestWorld.js readNow): a Change SKU never waits for every open order to be read. null when they could not be. */
 async function readLinesNow(x, keys, extra) {
   try {
     const ops = {}; for (const op of ["masterList", "optionMapGet", "aliasGet", "noDesignGet", "customGet", "listingSkus", "customSheetGet"]) ops[op] = b => x.ctx.read(Object.assign({ op }, b || {}));
@@ -613,32 +530,12 @@ async function readLinesNow(x, keys, extra) {
     return got && got.size === keys.length ? got : null;
   } catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; if (x.ctx.say) x.ctx.say(`[cmd] the lines were not read again now: ${str((e && e.message) || e, 160)}`); return null; }
 }
-/** The lines of `keys` whose pieces were made, since the request, as the line reads now: nothing to make again. */
-async function madeSince(x, keys, read) {
-  const L = lines(x.ctx), asked = num(x.cmd.at) || 0, done = new Map();
-  for (const k of keys) {
-    const l = L[k], sp = read && read.get(k) && read.get(k).spec, want = String((sp && sp.designSku) || "").toUpperCase(); if (!l || !want || !(l.poolIds || []).length) continue;
-    const rows = [...(await pools(x.ctx, l.poolIds)).values()];
-    if (rows.length === l.poolIds.length && rows.every(r => !r.custom && !["abandoned", "superseded"].includes(String(r.state || "")) && String(r.sku || "").toUpperCase() === want && (!sp.material || !r.material || r.material === sp.material) && ms(r.createdAt) >= asked - 90000)) done.set(k, rows);
-  }
-  return done;
-}
 async function remakeline(x) {
-  x.keepBacks = true; x.swap = true;
-  const ask = [...new Set((x.a.ids || []).map(String))];
-  if (!x.work.stage) {
-    const open = ask.filter(k => OPEN_LINE(lines(x.ctx)[k])), read = open.length ? await readLinesNow(x, open) : null;
-    if (read) {
-      const done = await madeSince(x, open, read);
-      /* (VACATEONCE: a piece made right whose sheet still holds the old drawing of it is not done: the drawing is put in) */
-      if (done.size) { const on0 = listedBy(await sheetsWith(x.ctx, [...done.values()].flatMap(rows => rows.map(r => r.poolId)))); for (const [k, rows] of [...done]) if (rows.some(r => { const sh = on0.get(String(r.poolId)), c = sh && (sh.charms || []).find(y => y && String(y.poolId) === String(r.poolId)); return c && c.hash && r.charmHash && String(c.hash) !== String(r.charmHash); })) done.delete(k); }
-      if (open.length && done.size === open.length) { const on = listedBy(await sheetsWith(x.ctx, [...done.values()].flatMap(rows => rows.map(r => r.poolId)))), names = new Set(); let n = 0; for (const rows of done.values()) for (const r of rows) { n++; const sh = on.get(String(r.poolId)); if (sh) names.add(nameOf(sh)); } return ok(`Made as it reads now: ${plural(n, "piece")}${names.size ? " on " + and([...names]) : ", being placed"}`); }
-      x.skip = new Set(done.keys()); x.noWorld = true;
-    }
-  }
-  x.pick = async () => ask.filter(k => OPEN_LINE(lines(x.ctx)[k]) && !(x.skip && x.skip.has(k)));
-  x.none = "Those lines are not open lines of the run";
-  return inplace(x, "Making the order's pieces again");
+  x.keepBacks = true;
+  const ask = x.work.keys || [...new Set((x.a.ids || []).map(String))].filter(k => OPEN_LINE(lines(x.ctx)[k]));
+  if (!ask.length) return ok("Those lines are not open lines of the run");
+  if (!x.work.stage) await readLinesNow(x, ask);
+  return again(x, ask, "Making the order's pieces again");
 }
 /* LINKLATE (Paul, 23 Nov 2026, order 4236768670: "the items on the sheet and the thumbnails did not get updated again ... I need this properly fixed once and for all"): KEEPNOW picks a design's pieces at once, since a save to
    the repository "changes a drawing, never what an order reads as". A saved LINK does change it: "Wrong charm?", a charm picked in Review or the Charm Editor links a listing to the charm and asks this very request seconds
@@ -673,42 +570,33 @@ async function readListingsNow(x, lids) {
   } catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; return false; }
 }
 async function keepsync(x) {
-  if (!x.work.stage) {   // (LINKLATE: from the link's own time: the reading its save starts is the one waited for, not the one after it)
-    const asked = num(x.cmd.at) || Date.now(), lids = new Set(), at = await linkedLately(x.ctx, x.a.ids || [], asked - LINK_MS, asked, lids);
-    if (at && !(await readListingsNow(x, lids))) x.work = { stage: "world", asked: at, at: Date.now() };   // (CMDFAST: the linked listings' own lines are read again now; a line that cannot be told waits for the next reading, as before)
-  }
-  x.noWorld = true;   // (KEEPNOW)
-  x.pick = () => staleLines(x.ctx, x.a.ids || []);
-  return inplace(x, "Making the other orders again");
+  if (!x.work.stage) { const asked = num(x.cmd.at) || Date.now(), lids = new Set(); if (await linkedLately(x.ctx, x.a.ids || [], asked - LINK_MS, asked, lids)) await readListingsNow(x, lids); }   // (LINKLATE: the linked listings' own lines are read again now)
+  return remake(x);
 }
 async function remake(x) {
-  x.pick = () => staleLines(x.ctx, x.a.ids || []);
-  return inplace(x, "Making the pieces of the older drawing again");
+  const keys = x.work.keys || (await staleLines(x.ctx, x.a.ids || [])).slice(0, 40);
+  return keys.length ? again(x, keys, "Making the orders again") : ok("Nothing to make again: every open piece already holds the drawing the library has now");
 }
 async function skuonce(x) {
-  const ctx = x.ctx, key = String((x.a.ids || [])[0] || ""), sku = String(x.a.sku || "").trim().toUpperCase();
+  const ctx = x.ctx, key = String((x.a.ids || [])[0] || ""), sku = String(x.a.sku || "").trim().toUpperCase(), l = lines(ctx)[key], say = t => `${sku} for order ${ridOf(key)} only${t}`.slice(0, 380);
   if (!x.work.stage) {
-    const l = lines(ctx)[key]; if (!key || !sku) return no("not ready");
+    if (!key || !sku) return no("not ready");
     if (!l || !OPEN_LINE(l)) return no(`The piece ${key} is not in the run the cloud carries`);
     const e = await ctx.db.collection(MASTER).doc(sku).get(); if (!e.exists) return no(`${sku} is not in the charm repo`);
     if ((e.data() || {}).blocked || (e.data() || {}).block) return no(`${sku} is blocked in the master, so it cannot be cut`);
-    const was = String((l.skuOverride && l.skuOverride.sku) || l.sku || "");
-    /* ONCEMADE (Paul, 23 Nov 2026, order 4245537582: "the new charms did not get put onto a sheet"): the choice was saved on the line, the request began again (its process ended in the middle), and it answered "already" while both pieces
-       were still the old charm: the choice alone is never the answer, its pieces are. Saved already: nothing is written twice, the pieces are made. */
-    const saved = was.toUpperCase() === sku, rows0 = saved && (l.poolIds || []).length ? [...(await pools(ctx, l.poolIds)).values()] : [];
-    if (saved && rows0.length && rows0.length === (l.poolIds || []).length && rows0.every(r => String((r && r.sku) || "").toUpperCase() === sku)) return ok(`This piece is ${sku} already`);
-    if ((l.poolIds || []).length && (!lane(ctx, "nest") || !lane(ctx, "pool"))) return no("Changing a placed piece is not the cloud's yet (in this build pieces are made and placed by a computer): with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
-    const at = Date.now(), who = String(x.cmd.by || "").trim() || "a person", say = `Just this order: ${was || "no SKU"} → ${sku} (the listing and Etsy are not changed)`;
-    let r = saved ? null : await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: { [key]: { skuOverride: { sku, by: who, at, was }, repoolChanged: (l.poolIds || []).length > 0 } } }, `once|${key}|${sku}`); if (err(r)) return no(err(r));
-    if (!saved) r = await put(x, { op: "timelineAdd", events: [{ orderId: ridOf(key), type: "decided", id: `${key}.once.${at}`, at, by: who, station: "sorter", text: `Decided by ${who} · ${say}`.slice(0, 200), data: { sku, once: true, was: was || null } }] }, `once|tl|${key}|${sku}`);
-    if (!(l.poolIds || []).length) { await readLinesNow(x, [key], { [key]: Object.assign({}, l, { skuOverride: saved ? l.skuOverride : { sku, by: who, at, was } }) }); return ok(`${sku} for order ${ridOf(key)} only: its pieces are made at the next intake`); }
-    if (await readLinesNow(x, [key], { [key]: Object.assign({}, l, { skuOverride: saved ? l.skuOverride : { sku, by: who, at, was } }) })) x.work = { stage: "pick", asked: at, at, once: { key, sku } };   // (SWAPNOW: this order's line alone, read at once)
-    else { x.work = { stage: "world", asked: at, at, once: { key, sku } }; return wait(`${sku} for this order only… waiting for the order to be read again`, x.work); }
+    const was = String((l.skuOverride && l.skuOverride.sku) || l.sku || ""), saved = was.toUpperCase() === sku, rows = saved && (l.poolIds || []).length ? await pools(ctx, l.poolIds) : null, at = Date.now(), who = String(x.cmd.by || "").trim() || "a person", pick = saved && l.skuOverride ? l.skuOverride : { sku, by: who, at, was };
+    if (rows && rows.size === l.poolIds.length && [...rows.values()].every(r => String(r.sku || "").toUpperCase() === sku)) return ok(`This piece is ${sku} already`);
+    if (!saved) {   // (ONCEMADE: the choice written once; the pieces are made whether it was saved now or before)
+      const r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: { [key]: { skuOverride: pick, repoolChanged: (l.poolIds || []).length > 0 } } }, `once|${key}|${sku}`); if (err(r)) return no(err(r));
+      await put(x, { op: "timelineAdd", events: [{ orderId: ridOf(key), type: "decided", id: `${key}.once.${at}`, at, by: who, station: "sorter", text: `Decided by ${who} · Just this order: ${was || "no SKU"} → ${sku} (the listing and Etsy are not changed)`.slice(0, 200), data: { sku, once: true, was: was || null } }] }, `once|tl|${key}|${sku}`);
+      runChanged(ctx);
+    }
+    const read = await readLinesNow(x, [key], { [key]: Object.assign({}, l, { skuOverride: pick }) });
+    if (!(l.poolIds || []).length || l.hold) return ok(say(l.hold ? " is saved: its pieces are made when the order is released" : ": its pieces are made at the next intake"));
+    if (!read) return no(say(" is saved, but the order could not be read again: press it again"));
   }
-  x.swap = true;
-  x.pick = async () => [key].filter(k => OPEN_LINE(lines(ctx)[k]));
-  const res = await inplace(x, `${sku} for this order only`);
-  if (res.done && res.done.ok) res.done.text = `${sku} for order ${ridOf(key)} only · ${res.done.text}`.slice(0, 380);
+  const res = await again(x, [key], `${sku} for this order only`);
+  if (res.done && res.done.ok) res.done.text = say(" · " + res.done.text);
   return res;
 }
 async function release(x) {
@@ -975,11 +863,9 @@ async function hopRefile(x, ids) {
 }
 /* CUSTOMSEND (Paul, 21 Nov 2026: Send to Sheet and Monogram Approve on a staff computer in mode "on"): a card's sent designs made into pieces and placed BY THE CLOUD, the port of the
    carrier's applyRemote (charm-nest-bridge.js). The send is read from the cloud's own record (Charm_Custom_Sheet, phase "sent"); each of its open lines whose pieces are not these designs
-   yet has its old pieces taken off their sheet (cmdVacate: the pieces' records say superseded; the kept place is let go at once, cmdPutBack release) and goes back to the intake
-   (pulled, its hold lifted: the send IS the release), which makes its pieces from the card's designs (_charmNestCustomMake.js), and the placement unit puts them on a sheet. Answered
-   done once every new piece is listed on a sheet; refused in words when a sheet keeps what it holds (cut, behind a green line, in a set sent to the station) or a design cannot be made.
-   Asking twice changes nothing: a line whose pieces already are these designs is left as it is. */
-const CUSTOM_MS = 12 * 60000, TAKEN = new Set(["abandoned", "superseded"]);
+   yet is made again the one straight way (again, above): its hold lifted (the send IS the release), its new pieces in the old ones' place, or placed as new pieces. Refused in words when a sheet
+   keeps what it holds (cut, behind a green line, in a set sent to the station) or a design cannot be made. Asking twice changes nothing. */
+const TAKEN = new Set(["abandoned", "superseded"]);
 async function customsend(x) {
   const ctx = x.ctx, w = x.work, now = Date.now(), ck = str(x.a.ck, 200);
   if (!lane(ctx, "nest") || !lane(ctx, "pool")) return no("A card's sent designs are made and placed by the cloud's intake and placement, which are not on yet: with the cloud on Standby (Settings → Cloud), press Resume on a computer, then send it again");
@@ -993,51 +879,19 @@ async function customsend(x) {
     const open = keys.filter(k => OPEN_LINE(L[k]));
     if (!open.length) return no(`Order ${rid} is not in the run the cloud carries.`);
     const paths = new Set((rec.files || []).map(F => F && F.cloud && F.cloud.path).filter(Boolean));
-    const sheets = await runSheets(ctx), sets = await runSets(ctx), on = listedBy(sheets), patch = {};
-    let swapped = 0;
+    const todo = [];
     for (const k of open) {
-      const l = L[k], ids = (l.poolIds || []).map(String), rows = ids.length ? await pools(ctx, ids) : new Map();
+      const ids = (L[k].poolIds || []).map(String), rows = ids.length ? await pools(ctx, ids) : new Map();
       if (ids.length && ids.every(id => { const r = rows.get(id); return r && r.custom && !TAKEN.has(r.state) && paths.has(String(r.aiPath || "")); })) continue;   // (already these designs)
-      const bySheet = new Map(); for (const id of ids) { const s = on.get(id); if (s) (bySheet.get(s) || bySheet.set(s, []).get(s)).push(id); }
-      const keeps = [...bySheet.keys()].find(s => cutRec(s) || lineDrawn(s) || committedSheet(s, sets));
-      if (keeps) return no(`Order ${rid}: ${nameOf(keeps)} ${cutRec(keeps) ? "was already cut" : lineDrawn(keeps) ? "is behind a green line" : "is in a set sent to the station"}: its piece stays as it is and the new design was not placed`);
-      const busy = [...bySheet.keys()].find(s => busyRec(s, now));
-      if (busy) { if (now - (num(x.cmd.at) || now) > CUSTOM_MS) return no(`Order ${rid}: ${nameOf(busy)} ${busyRec(busy, now)}; nothing was changed`); return wait(`Waiting for ${nameOf(busy)} to be free…`, {}); }
-      for (const [s, part] of bySheet) {
-        const r = await put(x, { op: "cmdVacate", runId: ctx.runId, lineKey: k, rid, sheetId: s.id, poolIds: part, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev), by: x.cmd.by || "", why: "Send to Sheet: the sent design replaces it" }, `cs-vacate|${k}|${s.id}|${num(s.contentRev)}`);
-        if (err(r)) return no(`Order ${rid}: the old piece could not be taken off ${nameOf(s)}: ${err(r)}`);
-        await put(x, { op: "cmdPutBack", runId: ctx.runId, lineKey: k, sheetId: s.id, release: true }, `cs-release|${k}|${s.id}`);
-        swapped += part.length;
-      }
-      patch[k] = { state: "pulled", poolIds: [], repoolChanged: true, wait: null, reason: null, hold: null, vacated: null };
+      todo.push(k);
     }
-    if (Object.keys(patch).length) { const r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: patch }, `cs-lines|${Object.keys(patch).sort().join(",").slice(0, 400)}`); if (err(r)) return no(`Order ${rid}: not sent: ${err(r)}`); }
-    return wait("Making the new pieces from the sent designs…", { stage: "placing", keys: open, rid, swapped, at: now });
+    if (!todo.length) return ok("These designs are its pieces already");
+    x.work = { stage: "again", keys: todo, rid };
   }
-  if (w.stage === "placing") {
-    // (its own lines only, now: a person's send is not a new order waiting at the intake's gate (run mode, the run's step); the intake makes them from the card's designs and the placement puts them on a sheet)
-    const got = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), fresh = got && got.run;
-    if (fresh && fresh.lines) {
-      const only = new Set(w.keys || []), run = Object.assign({}, fresh, { runId: ctx.runId });
-      const Intake = require("./_charmNestIntake"), PlaceUnit = require("./_charmNestPlaceUnit");
-      await Intake.pool({ db: ctx.db, run, runId: ctx.runId, call: ctx.call, read: ctx.read, drive: ctx.drive || {}, cloudSteps: ctx.cloudSteps || [], fence: ctx.fence, say: ctx.say || (() => {}), budgetEnd: num(ctx.budgetEnd) || Date.now() + 45000, settings: null, stockPreset: null }, { step: true, only });
-      await PlaceUnit.placeAll(Object.assign({}, ctx, { run, only }));
-    }
-    const back = await ctx.read({ op: "runGet", runId: ctx.runId }).catch(() => null), L = (back && back.run && back.run.lines) || lines(ctx), on = listedBy(await runSheets(ctx));
-    let pieces = 0, listed = 0; const names = new Set(), stuck = [];
-    for (const k of w.keys || []) {
-      const l = L[k]; if (!l || !OPEN_LINE(l)) continue;
-      if (["held", "oversize", "unmatched", "noDesign"].includes(l.state) && !(l.poolIds || []).length) { stuck.push(String(l.reason || l.state)); continue; }
-      for (const id of l.poolIds || []) { pieces++; const s = on.get(String(id)); if (s) { listed++; names.add(nameOf(s)); } }
-      if (!(l.poolIds || []).length) pieces++;
-    }
-    const off = w.swapped ? ` (the old piece${w.swapped === 1 ? " was" : "s were"} taken off)` : "";
-    if (stuck.length) return no(`Order ${w.rid}: the new piece is not on a sheet: ${stuck[0]}`.slice(0, 380));
-    if (pieces && listed === pieces) return ok(`${pieces === 1 ? "its new piece is" : `its ${pieces} new pieces are`} on ${and([...names])}${off}`);
-    if (now - num(w.at) > CUSTOM_MS) return no(`Order ${w.rid}: ${listed} of ${pieces} new piece(s) on a sheet so far; the rest go on with the run's next placement`);
-    return wait(listed ? `Placing the new pieces… ${listed} of ${pieces} on a sheet` : "Making the new pieces from the sent designs…", w, pieces ? Math.round(100 * listed / pieces) : null);
-  }
-  return no("The request lost its place: send it again");
+  x.lift = true;
+  const res = await again(x, x.work.keys, "Send to Sheet"); if (res.wait) res.wait.work.rid = x.work.rid;
+  if (res.done && !res.done.ok) res.done.text = `Order ${x.work.rid}: ${res.done.text}`.slice(0, 380);
+  return res;
 }
 
 /* ═══ RGRESTORE (Paul, 22 Nov 2026) ═══ restorenest { sheetId, sourceId: the nest (Charm_Nest_Jobs id) whose layout goes back, fromId: the draft its pieces wait on now, targetId?: the sheet

@@ -6109,7 +6109,7 @@ async function op_runCmdPut(b) {
   return { ok: true, id, cmd };
 }
 /* CMDFAST: the kinds _charmNestCmdUnit.js NOW_TYPES; its process is started with the request's own key (Charm_Nest_Cmd_Hold/<id>); one that could not be started is the pass's, as before. Never while the drive is off; at most 0.9 s of the press */
-const NOW_CMDS = new Set(["skuonce", "remakeline", "keepsync", "remake", "backhome"]);
+const NOW_CMDS = new Set(["skuonce", "remakeline", "keepsync", "remake", "backhome", "customsend"]);
 async function cmdKick(runId, id) {
   try {
     if (driveModeOf(await driveDoc()) === "off") return false;
@@ -6171,7 +6171,7 @@ async function op_runCmdStep(b) {
   return { ok: true, state: got, running: got === "running" };
 }
 Object.assign(OPS, { runCmdPut: op_runCmdPut, runCmdList: op_runCmdList, runCmdDone: op_runCmdDone, runCmdCancel: op_runCmdCancel, runCmdStep: op_runCmdStep }); ["runCmdPut", "runCmdList", "runCmdDone", "runCmdCancel", "runCmdStep"].forEach(op => NO_GEN_BUMP.add(op));
-/* (CLOUDDRIVE build step 13, DORMANT: a person's requests done by the cloud, _charmNestCmdOps.js) runCmdClaim; the cloud's own cmdWorkPut, cmdMovePieces, cmdLeaveSet, cmdVacate, cmdPutBack */
+/* (CLOUDDRIVE build step 13, DORMANT: a person's requests done by the cloud, _charmNestCmdOps.js) runCmdClaim; the cloud's own cmdWorkPut, cmdMovePieces, cmdLeaveSet, cmdSwapLine */
 const CmdOps = require("./_charmNestCmdOps"); SANDBOXED.add(CmdOps.WORK);
 Object.assign(OPS, CmdOps({ db, FV, col, txGetAll, fenceTx, revTouch, feedOrders, stamp, remnantSync: Remnants.sync })); ["runCmdClaim", "cmdWorkPut"].forEach(op => NO_GEN_BUMP.add(op));
 /* (CLOUDTRAY, Paul 14 Nov 2026: "You must put all this in the cloud" -> "Yes, build it"): the Nest rail's dropped files, listed for every computer. trayPut { id: the file's hash, name, path, url, state: tray | assigned | removed, metal, dev, by };
@@ -7004,8 +7004,8 @@ function fencedBatch() {
 async function cloudBusy(tx, runId, now) {
   const BEAT = 5 * 60000, fresh = d => d && d.state === "running" && now - (num(d.beatAt) || num(d.startedAt) || 0) < BEAT;
   const lease = await tx.get(db.collection(DRIVE_LEASE[0]).doc(DRIVE_LEASE[1])), L = lease.exists ? lease.data() : null;
-  const jobs = await tx.get(db.collection(JOBS).where("runId", "==", runId)), fin = await tx.get(db.collection("Charm_Nest_Finish").where("runId", "==", runId));
-  const task = [...jobs.docs, ...fin.docs].map(d => d.data()).find(fresh);
+  const jobs = await tx.get(db.collection(JOBS).where("runId", "==", runId)), fin = await tx.get(db.collection("Charm_Nest_Finish").where("runId", "==", runId)), asked = await tx.get(db.collection("Charm_Nest_Cmd_Hold").where("runId", "==", runId));
+  const task = [...jobs.docs, ...fin.docs, ...asked.docs].map(d => d.data()).find(fresh);
   if (task) return `the cloud is finishing ${str(task.sheetName || task.fileBase || task.sheetId || "a sheet", 80)}`;
   { const eng = await tx.get(db.collection("Charm_Engrave_Files").where("runId", "==", runId).where("state", "==", "working")), t = eng.docs.map(d => d.data()).find(d => now - (num(d.beatAt) || 0) < BEAT);   // (build step 11: an approved engraving's file being written)
     if (t) return `the cloud is saving the engraving file of order ${str(String(t.lineKey || "").split("_")[0], 30)}`; }
@@ -7117,6 +7117,13 @@ OPS.driveGet = op_driveGet; OPS.runControl = op_runControl; ["driveGet", "runCon
 const NestLane = require("./_charmNestNest");
 OPS.nestStart = b => NestLane.start({ db, FV, PREFIX, MARKED, fenceTx: tx => (FENCE ? fenceTx(tx) : null), driveMode: async () => driveModeOf(await driveDoc()), revTouch: keys => revTouch(b, keys) }, b);
 NO_GEN_BUMP.add("nestStart");
+/* readMany { reads: [{ op, … }] } (PERSONFIRST, 23 Nov 2026; the cloud's own calls only): several reads in one call, side by side. A cloud process's calls go one at a time (call(), below), so the seven reads of one
+   line's reading were seven waits. Reads of the cloud's own list only, each with the same body rules as when it is sent alone. */
+OPS.readMany = async b => {
+  if (!MARKED) return { error: "only the cloud reads several things in one call", status: 403 };
+  return { answers: await Promise.all((Array.isArray(b.reads) ? b.reads : []).slice(0, 12).map(async r => { const op = r && r.op; if (op === "readMany" || !OpClass.READ.has(op) || !OpClass.isCloudOp(op) || !OPS[op]) return { error: "not a cloud read" }; const q = Object.assign({}, r); if (OpClass.CLOUD_BODY[op]) OpClass.CLOUD_BODY[op](q); delete q.sandbox; delete q.passcode; return OPS[op](q); })) };
+};
+NO_GEN_BUMP.add("readMany");
 /* placeOnSheet (CLOUDDRIVE §1.4, build step 5; P4, P5; CLOUD_ONLY: the handler refuses it on every page's request, in every mode): the cloud puts one line's pieces of one metal on ONE
    sheet record in ONE transaction, fenced on its lease (_charmNestPlaceOp.js: SETSHUT, a piece on exactly one sheet, the revisions it read, its own order's late pieces only on a closed sheet). */
 const PlaceOp = require("./_charmNestPlaceOp")({ db, col, FV, txGetAll, Placement, isPoolId, isId, orderOfKey, SHEETS, SETS, POOL, RUNS, SHEET_DOC_BYTES, BACK, Faces, sheetBack: x => sheetBack(x), recKeyOf: x => recKeyOf(x), fenceTx: tx => fenceTx(tx),

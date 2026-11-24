@@ -21,6 +21,7 @@ const READ = new Set(words(`activityGet aliasGet artDraftGet artGet artList artP
   partialPolicyGet partialSearchList partialStocks ping poolGet poolList releaseGet remnantList reviewMarkOpen roseGet roseList runCmdList runGet runList
   sandboxStatus sandboxStream sessionsList setGet setList shareGet sharedOrders sheetHistory sheetRevsGet shippedByUs timelineGet traceSrcGet trayList worldGet
   zodiacListingStatus takeOffGet`));
+READ.add("readMany");   // (PERSONFIRST: several reads in one call, the cloud's own only)
 READ.add("commitGet"); READ.add("setCommitCheck");   // (build step 12: the cloud's commit journal read, and a set's completion rules asked before a commit)
 
 const PRODUCTION = new Set(words(`runPut runArchive runLinesAdd runLinesRetire poolPut poolUpdate putSheet backPut backInvalidate setAllocate setUpdate sheetPdf
@@ -48,12 +49,12 @@ for (const op of words(`labelsAsk roseCutAsk`)) PRESS.add(op);
 for (const op of words(`assemblyGet labelsAskGet roseCutAskGet setReadiness`)) READ.add(op);
 /* build step 13 (a person's requests done by the cloud, _charmNestCmdOps.js): the claim is the carrier's work (a page claims only while it carries, never in mode "on");
    the request's journal and its sheet writes are the cloud's own */
-PRODUCTION.add("runCmdClaim"); for (const op of words(`cmdWorkPut cmdMovePieces cmdHopPieces cmdLeaveSet cmdVacate cmdPutBack`)) CLOUD_ONLY.add(op);   // (cmdHopPieces: ITEM 13, Paul 21 Nov 2026, a sheet hop from a viewer)
+PRODUCTION.add("runCmdClaim"); for (const op of words(`cmdWorkPut cmdMovePieces cmdHopPieces cmdLeaveSet cmdSwapLine`)) CLOUD_ONLY.add(op);   // (cmdHopPieces: ITEM 13, Paul 21 Nov 2026, a sheet hop from a viewer)
 
 /* The cloud's allowlist (section 1.4): the reads, then the writes, as they exist today. A new op joins in the build step that adds it. */
 const CLOUD_READS = words(`runGet runOpen worldGet getSheet getOrderPieces poolGet poolList cancelList cancelCheck shippedByUs masterList optionMapGet aliasGet
   noDesignGet customGet customSheetGet customReadGet shareGet etsyStopGet driveGet listingSkus listingPhotos runCmdList takeOffGet
-  partialPolicyGet`);   // (partialPolicyGet: Options → Partial Sheet, read by the placement unit, build step 5; takeOffGet: build step 9)
+  partialPolicyGet readMany`);   // (partialPolicyGet: Options → Partial Sheet, read by the placement unit, build step 5; takeOffGet: build step 9)
 const CLOUD_WRITES = words(`runPut runLinesAdd runLinesPatch runArchive runCmdStep runCmdDone runCarrier runOpen runControl poolPut poolUpdate putSheet sheetPdf
   putCalibration setAllocate setUpdate backPut archiveEmptySheet timelineAdd cancelFates sharePut arrivalRecord
   nestStart stopJob roseClaim
@@ -77,7 +78,7 @@ CLOUD_READS.push("engraveSyncGet"); CLOUD_WRITES.push("engraveSyncPut");
    (Claude only: its question is built from the line's records, never a picture, never Etsy); getAgent reads that reading back. startAgent itself stays DENIED. */
 CLOUD_WRITES.push("engraveIntentStart"); CLOUD_READS.push("getAgent");
 CLOUD_READS.push("commitGet", "setCommitCheck"); CLOUD_WRITES.push("commitJournal");   // (build step 12: sending finished sets to the Design Station)
-CLOUD_WRITES.push(...words(`runCmdClaim cmdWorkPut cmdMovePieces cmdHopPieces cmdLeaveSet cmdVacate cmdPutBack`));   // (build step 13)
+CLOUD_WRITES.push(...words(`runCmdClaim cmdWorkPut cmdMovePieces cmdHopPieces cmdLeaveSet cmdSwapLine`));   // (build step 13)
 /* RGRESTORE (Paul, 22 Nov 2026): a nest's verified layout put back on its sheet, the pieces a later write moved onto a draft brought back where that nest left them (_charmNestCmdOps.js
    cmdRestoreNest; the request "restorenest", _charmNestCmdExec.js). The cloud's own write only, never a page's; no Etsy call follows from it. */
 CLOUD_ONLY.add("cmdRestoreNest"); CLOUD_WRITES.push("cmdRestoreNest");

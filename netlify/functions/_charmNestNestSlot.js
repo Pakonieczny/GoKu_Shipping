@@ -349,6 +349,7 @@ async function finishCheck(ctx) {
     if (sd && sd.nestJob && sd.nestJob.id === ctx.job.id) tx.set(shref, { nestJob: Object.assign({}, sd.nestJob, { status: status === "done" ? "nested" : status, at: now }) }, { merge: true });
   });
   ctx.log(`[nest] ${ctx.jobId}: ${status}${result ? ` · ${result.placements.length}/${result.pieces} placed · ${result.endedBy} · ${n} slot(s)` : ""}${error ? " · " + error : ""}`);
+  if (status === "done" && ctx.job.runId) await require("./_charmNestFinishOps").startWriter(db, ctx.job.sheetId, { runId: ctx.job.runId, nestJobId: ctx.jobId, reason: "nest" });
   await Nest.kickDriver(db, "nest", { kick: ctx.kickDriver });
   return { status, placed: result ? result.placements.length : 0 };
 }

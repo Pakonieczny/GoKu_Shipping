@@ -258,6 +258,8 @@ async function start(L, b) {
     return { ok: true, jobId: pick.id, created: true, status: "queued", attempt: pick.attempt };
   });
   if (out && out.ok && L.revTouch) L.revTouch(["s:" + sheetId]);
+  // (a nest a person asked for, or their change left owing, starts here, beside an automatic one of its metal: it stood queued 2.5 minutes for 27 s of work, order 4245537582)
+  if (out && out.ok && !auto && !out.held && out.status === "queued") await ensureSlot(db, { id: out.jobId }, 0, { by: "person", kick: L.kickSlot }, { dispatched: [] }).catch(e => console.warn("[nest] not started at once:", out.jobId, e && e.message));
   return out;
 }
 

@@ -553,6 +553,12 @@ async function masterNow(db, index) {
   for (const s of parts) for (const d of s.docs) { docs++; const e = d.data(), r = e && e.sku ? Master.slimEntry(e) : null; if (r) out.push(r); }
   return docs === n ? out.sort((x, y) => x.sku.localeCompare(y.sku)) : null;
 }
+/* PERSONFIRST (Paul, 23 Nov 2026): a process that has just started read all 9,900 library records again (seconds of every person's request). The library as it was last read is kept as one file with its signature (the
+   records' count and newest change): the reading of all orders writes it when the library moved, and so does the first request that finds it older. A file of another signature is never used. */
+const MASTER_FILE = "charmnest/cache/master-slim.json.gz";
+const bucketOf = o => { if (o && o.bucket) return o.bucket; try { return require("./firebaseAdmin").storage().bucket(); } catch (_) { return null; } };
+async function masterKept(bucket, sig) { try { if (!bucket || !sig || sig === "null") return null; const [buf] = await bucket.file(MASTER_FILE).download(), d = JSON.parse(require("zlib").gunzipSync(buf).toString("utf8")); return d && d.v === 1 && d.sig === sig && Array.isArray(d.entries) && d.entries.length ? d.entries : null; } catch (_) { return null; } }
+async function keepMaster(bucket, sig, entries) { try { if (!bucket || !sig || sig === "null" || !(entries || []).length) return; await bucket.file(MASTER_FILE).save(require("zlib").gzipSync(Buffer.from(JSON.stringify({ v: 1, sig, entries }), "utf8")), { contentType: "application/gzip", resumable: false, metadata: { cacheControl: "no-store" } }); } catch (_) { /* read from the records next time */ } }
 async function readNow(o) {
   const { db, ops } = o, keys = [...new Set((o.keys || []).map(String))].slice(0, 80), runLines = o.lines || {}, now = Date.now(), out = new Map(); if (!keys.length) return out;
   const docs = new Map(); for (let i = 0; i < keys.length; i += 300) for (const d of await db.getAll(...keys.slice(i, i + 300).map(k => db.collection(LINES).doc(k)))) if (d.exists) docs.set(d.id, d.data() || {});
@@ -560,10 +566,14 @@ async function readNow(o) {
   if (!rows.length) return out;
   const lids = [...new Set(rows.map(r => String(r.row.line.listingId || "")).filter(Boolean))];
   // (CMDFAST: the library's signature alone first, then, only when it moved, the whole library side by side; it was read 500 records at a time, 20 reads one after another, seconds of every Change SKU)
-  const entriesNow = async () => { const sg = await ops.masterList({ limit: 1 }), sig = J(sg.index || null); if (CACHE.masterEntries && CACHE.masterSig === sig && sig !== "null") return CACHE.masterEntries;
-    const quick = await masterNow(db, sg.index).catch(() => null); if (quick) { CACHE.masterSig = sig; CACHE.masterEntries = quick; return quick; }
+  // (PERSONFIRST: every input in one call, read side by side (readMany): they were seven calls one after another; the custom records of these lines only, never all)
+  const rowKeys = rows.map(r => r.row.key), all = ops.many ? await ops.many([{ op: "masterList", limit: 1 }, { op: "optionMapGet" }, { op: "aliasGet" }, { op: "noDesignGet" }, { op: "customGet", keys: rowKeys }, { op: "listingSkus", listingIds: lids, cacheOnly: true }, { op: "customSheetGet", lineKeys: rowKeys }]).catch(() => null) : null;
+  const many = Array.isArray(all) && all.length === 7 && all.every(a => a && !a.error) ? all : null;
+  const entriesNow = async () => { const sg = many ? many[0] : await ops.masterList({ limit: 1 }), sig = J(sg.index || null); if (CACHE.masterEntries && CACHE.masterSig === sig && sig !== "null") return CACHE.masterEntries;
+    const bucket = bucketOf(o), kept = await masterKept(bucket, sig); if (kept) { CACHE.masterSig = sig; CACHE.masterEntries = kept; return kept; }
+    const quick = await masterNow(db, sg.index).catch(() => null); if (quick) { CACHE.masterSig = sig; CACHE.masterEntries = quick; keepMaster(bucket, sig, quick); return quick; }
     const first = await ops.masterList({ limit: 3000 }), list = (first.entries || []).slice(); let cursor = first.next; for (let i = 0; cursor && i < 20; i++) { const r = await ops.masterList({ limit: 3000, cursor }); list.push(...(r.entries || [])); cursor = r.next; } CACHE.masterSig = sig; CACHE.masterEntries = list; return list; };
-  const [entries, om, al, nd, cl, ls, cs, reads] = await Promise.all([entriesNow(), ops.optionMapGet({}), ops.aliasGet({}), ops.noDesignGet({}), ops.customGet({}), ops.listingSkus({ listingIds: lids, cacheOnly: true }), ops.customSheetGet({ lineKeys: rows.map(r => r.row.key) }), db.getAll(...rows.map(r => db.collection("Charm_Nest_CustomRead").doc(r.row.key)))]);
+  const [entries, om, al, nd, cl, ls, cs, reads] = await Promise.all([entriesNow(), many ? many[1] : ops.optionMapGet({}), many ? many[2] : ops.aliasGet({}), many ? many[3] : ops.noDesignGet({}), many ? many[4] : ops.customGet({}), many ? many[5] : ops.listingSkus({ listingIds: lids, cacheOnly: true }), many ? many[6] : ops.customSheetGet({ lineKeys: rowKeys }), db.getAll(...rows.map(r => db.collection("Charm_Nest_CustomRead").doc(r.row.key)))]);
   const M = CACHE.index && CACHE.indexOf === entries ? CACHE.index : (CACHE.indexOf = entries, CACHE.index = masterIndex(entries));
   const maps = { optionMaps: (om && om.maps) || {}, aliases: (al && al.aliases) || {}, noDesign: (nd && nd.list) || { patterns: [], skus: [], rows: [] } }; try { O.cleanMaps(maps.aliases, maps.noDesign); } catch (_) { /* as read */ }
   const customDone = {}; for (const [k, v] of Object.entries((cl && cl.records) || {})) if (v && v.kind !== "reviewMark" && v.state !== "open") customDone[k] = v;
