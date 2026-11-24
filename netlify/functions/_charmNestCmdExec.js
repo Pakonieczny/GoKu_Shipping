@@ -692,13 +692,17 @@ async function skuonce(x) {
     if (!l || !OPEN_LINE(l)) return no(`The piece ${key} is not in the run the cloud carries`);
     const e = await ctx.db.collection(MASTER).doc(sku).get(); if (!e.exists) return no(`${sku} is not in the charm repo`);
     if ((e.data() || {}).blocked || (e.data() || {}).block) return no(`${sku} is blocked in the master, so it cannot be cut`);
-    const was = String((l.skuOverride && l.skuOverride.sku) || l.sku || ""); if (was.toUpperCase() === sku) return ok(`This piece is ${sku} already`);
+    const was = String((l.skuOverride && l.skuOverride.sku) || l.sku || "");
+    /* ONCEMADE (Paul, 23 Nov 2026, order 4245537582: "the new charms did not get put onto a sheet"): the choice was saved on the line, the request began again (its process ended in the middle), and it answered "already" while both pieces
+       were still the old charm: the choice alone is never the answer, its pieces are. Saved already: nothing is written twice, the pieces are made. */
+    const saved = was.toUpperCase() === sku, rows0 = saved && (l.poolIds || []).length ? [...(await pools(ctx, l.poolIds)).values()] : [];
+    if (saved && rows0.length && rows0.length === (l.poolIds || []).length && rows0.every(r => String((r && r.sku) || "").toUpperCase() === sku)) return ok(`This piece is ${sku} already`);
     if ((l.poolIds || []).length && (!lane(ctx, "nest") || !lane(ctx, "pool"))) return no("Changing a placed piece is not the cloud's yet (in this build pieces are made and placed by a computer): with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again");
     const at = Date.now(), who = String(x.cmd.by || "").trim() || "a person", say = `Just this order: ${was || "no SKU"} → ${sku} (the listing and Etsy are not changed)`;
-    let r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: { [key]: { skuOverride: { sku, by: who, at, was }, repoolChanged: (l.poolIds || []).length > 0 } } }, `once|${key}|${sku}`); if (err(r)) return no(err(r));
-    r = await put(x, { op: "timelineAdd", events: [{ orderId: ridOf(key), type: "decided", id: `${key}.once.${at}`, at, by: who, station: "sorter", text: `Decided by ${who} · ${say}`.slice(0, 200), data: { sku, once: true, was: was || null } }] }, `once|tl|${key}|${sku}`);
-    if (!(l.poolIds || []).length) { await readLinesNow(x, [key], { [key]: Object.assign({}, l, { skuOverride: { sku, by: who, at, was } }) }); return ok(`${sku} for order ${ridOf(key)} only: its pieces are made at the next intake`); }
-    if (await readLinesNow(x, [key], { [key]: Object.assign({}, l, { skuOverride: { sku, by: who, at, was } }) })) x.work = { stage: "pick", asked: at, at, once: { key, sku } };   // (SWAPNOW: this order's line alone, read at once)
+    let r = saved ? null : await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: { [key]: { skuOverride: { sku, by: who, at, was }, repoolChanged: (l.poolIds || []).length > 0 } } }, `once|${key}|${sku}`); if (err(r)) return no(err(r));
+    if (!saved) r = await put(x, { op: "timelineAdd", events: [{ orderId: ridOf(key), type: "decided", id: `${key}.once.${at}`, at, by: who, station: "sorter", text: `Decided by ${who} · ${say}`.slice(0, 200), data: { sku, once: true, was: was || null } }] }, `once|tl|${key}|${sku}`);
+    if (!(l.poolIds || []).length) { await readLinesNow(x, [key], { [key]: Object.assign({}, l, { skuOverride: saved ? l.skuOverride : { sku, by: who, at, was } }) }); return ok(`${sku} for order ${ridOf(key)} only: its pieces are made at the next intake`); }
+    if (await readLinesNow(x, [key], { [key]: Object.assign({}, l, { skuOverride: saved ? l.skuOverride : { sku, by: who, at, was } }) })) x.work = { stage: "pick", asked: at, at, once: { key, sku } };   // (SWAPNOW: this order's line alone, read at once)
     else { x.work = { stage: "world", asked: at, at, once: { key, sku } }; return wait(`${sku} for this order only… waiting for the order to be read again`, x.work); }
   }
   x.swap = true;
