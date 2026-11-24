@@ -1729,6 +1729,40 @@ function metalToBadge(label){
       }
     }
 
+    /* ── Item description correction ─────────────────────────────────
+       Every description passes through here before it is shown, printed or sent to Chit Chats.
+         1. "Sterling Silver", "Sterling", "Silver"  →  "Silver filled"
+         2. "Solid" is removed
+       Already-correct text ("Silver Filled") comes back untouched, so running it twice changes nothing.
+       Only the description changes: metal detection, HS code and SKU still read the original order text. */
+    function correctItemDescription(raw){
+      const src = String(raw ?? "");
+      let s = src.replace(/(\b|_)solid(?![A-Za-z0-9])[\s_-]*/gi, "$1");
+      s = s.replace(
+        /(\b|_)((?:sterling|silver)(?:[\s_\/-]*(?:sterling|silver))*(?:[\s_-]*fill(?:ed)?)?)(?![A-Za-z0-9])/gi,
+        (m, pre, words) => /^silver[\s-]+filled$/i.test(words) ? m : pre + "Silver filled"
+      );
+      if (s === src) return src;
+      s = s
+        .replace(/\(\s*\)|\[\s*\]/g, "")
+        .replace(/\s{2,}/g, " ")
+        .replace(/\s+([,;)\]])/g, "$1")
+        .replace(/,(?:\s*,)+/g, ",")
+        .replace(/([(\[])[\s,]+/g, "$1")
+        .replace(/,\s*([)\]])/g, "$1")
+        .replace(/^[\s,;|-]+|[\s,;|-]+$/g, "");
+      return s || "Item";
+    }
+    window.correctItemDescription = correctItemDescription;
+
+    // A hand-typed description is corrected in the box as soon as it is left
+    document.addEventListener("change", (e) => {
+      const el = e.target;
+      if (!el?.classList?.contains("cc_item_description")) return;
+      const fixed = correctItemDescription(el.value);
+      if (fixed !== el.value) el.value = fixed;
+    });
+
     function buildEtsyDesc(it){
     const title = (it?.title || it?.listing_title || it?.name || "Item").toString();
     const props = it?.property_values || it?.variations || [];
@@ -1868,7 +1902,7 @@ function metalToBadge(label){
       const qVal  = $(".cc_item_value");
       const qHS   = $(".cc_item_hs_tariff_code"); // ← define before use
 
-      qDesc.value = g.desc || "Item";
+      qDesc.value = correctItemDescription(g.desc || "Item");
       qSku.value  = (g.sku || (g.raw ? extractSkuFromEtsy(g.raw) : "") || "") + "";
       qQty.value  = String(Math.max(1, Math.round(g.qty || 1)));
       qUnit.value = (Number(g.unit || 0)).toFixed(2);
@@ -1930,7 +1964,7 @@ function metalToBadge(label){
     nodes.forEach(node => {
       const $ = sel => node.querySelector(sel);
       const line = {
-        description: ($(".cc_item_description")?.value || "").trim(),
+        description: correctItemDescription(($(".cc_item_description")?.value || "").trim()),
         sku         : ($(".cc_item_sku")?.value || "").trim() || null,
         quantity    : Number($(".cc_item_qty")?.value || 1),
         unit_value  : Number($(".cc_item_unit_value")?.value || 0),
@@ -5400,6 +5434,30 @@ function metalToBadge(label){
         if (window.M?.toast) M.toast({ html: "ITEM & TAX INFORMATION prepared for printing with the label." });
       }
 
+      /* Last check before paying: the shipment actually stored at Chit Chats (it may be an imported
+         draft that was never rebuilt from Step 1) must carry corrected descriptions. If it does not,
+         replace it, and never buy a label that still has the old wording. Returns the id to buy. */
+      async function ensureCorrectedDescriptions(shipmentId){
+        const got    = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(shipmentId)}`);
+        const stored = got?.shipment || got || {};
+        const lines  = Array.isArray(stored.line_items) ? stored.line_items : [];
+        const label  = pickLabelFromShipment(stored);
+        if (label.zpl || label.pdf || label.png) return shipmentId;   // already bought: cannot be changed
+        if (!lines.some(li => correctItemDescription(li?.description) !== String(li?.description ?? ""))) return shipmentId;
+
+        const payload = buildShipmentPayload();
+        if (!payload.customs.line_items.length) {
+          payload.customs.line_items = lines.map(li => ({ ...li, description: correctItemDescription(li?.description) }));
+          if (stored.value != null)  payload.customs.value          = String(stored.value);
+          if (stored.value_currency) payload.customs.value_currency = String(stored.value_currency).toLowerCase();
+        }
+        const created = await replaceDraftShipment(shipmentId, payload);
+        const newId   = String(created?.id || created?.shipment?.id || "");
+        if (!newId) throw new Error("Item description could not be corrected, label not bought");
+        pushShipmentId(newId);
+        return newId;
+      }
+
       /* Main flow: buy → poll → print (no new tab) */      
       async function buyCcThenPrint() {      // station-fresh.js: no reload while a label is being bought and printed
         let freshRelease = null;
@@ -5487,6 +5545,9 @@ function metalToBadge(label){
             }
           }
            
+          // Item descriptions: verified on the stored shipment for every order, every country
+          shipmentId = await ensureCorrectedDescriptions(shipmentId);
+
            await callCc("PATCH", { action: "buy", shipment_id: shipmentId, postage_type: postageType });
           stLabel = { shipmentId, postageType };
 
@@ -6498,7 +6559,7 @@ async function refreshRates(){
 
     // (A) Description from Order Details → Title:
     const title = (typeof extractOrderTitle === "function") ? extractOrderTitle() : "";
-    if (title) set("cc_item_description", title.slice(0, 95));  // safe length for CC field
+    if (title) set("cc_item_description", correctItemDescription(title).slice(0, 95));  // safe length for CC field
 
     // (B) Static defaults (API prefers ISO codes where applicable)
     set("cc_item_origin_country",             "CA");            // Canada
