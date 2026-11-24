@@ -171,7 +171,6 @@ const assets = [
   "charm-nest-engrave-worker.js",
   "charm-nest-assets.js",
   "charm-nest-thumbs.js",
-  "charm-nest-master-cache.js",
   "charm-nest-ai-native.js",
   "charm-nest-ai-template.js",
   "charm-nest-ce-masters.js",
