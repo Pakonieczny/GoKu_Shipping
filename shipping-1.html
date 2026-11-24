@@ -1755,11 +1755,23 @@ function metalToBadge(label){
     }
     window.correctItemDescription = correctItemDescription;
 
-    // A hand-typed description is corrected in the box as soon as it is left
+    // SKU SS_187 is never used: it goes out as GF_187. Any other SKU is left as it is.
+    function correctItemSku(raw){
+      const s = String(raw ?? "");
+      return /^\s*SS[-_\s]?187\s*$/i.test(s) ? "GF_187" : s;
+    }
+    // Manufacturer postal code: no dash (L4Z1R5)
+    function correctManufacturerPostal(raw){ return String(raw ?? "").replace(/-/g, ""); }
+
+    // A hand-typed description, SKU or manufacturer postal code is corrected in its box as soon as it is left
     document.addEventListener("change", (e) => {
       const el = e.target;
-      if (!el?.classList?.contains("cc_item_description")) return;
-      const fixed = correctItemDescription(el.value);
+      const has = c => !!el?.classList?.contains(c);
+      const fix = has("cc_item_description")              ? correctItemDescription
+                : has("cc_item_sku")                      ? correctItemSku
+                : has("cc_item_manufacturer_postal_code") ? correctManufacturerPostal : null;
+      if (!fix) return;
+      const fixed = fix(el.value);
       if (fixed !== el.value) el.value = fixed;
     });
 
@@ -1832,7 +1844,7 @@ function metalToBadge(label){
     const c = canon.toLowerCase();
     // Silver family
     if (c === "silver" || c === "sterling silver") {
-      return { hs: "7113115000", sku: "SS_187" };
+      return { hs: "7113115000", sku: "GF_187" };
     }
     // Gold family (Gold, Rose Gold, 10K, 14K, Gold Filled)
     if (c === "gold" || c === "rose gold" || c === "10k" || c === "14k" || c === "gold filled" || c === "rose") {
@@ -1884,7 +1896,7 @@ function metalToBadge(label){
       m_street:  "450 Matheson Blvd, East",
       m_city:    "Mississauga",
       m_prov:    "ON",
-      m_postal:  "L4Z-1R5",
+      m_postal:  "L4Z1R5",
       m_phone:   "416-606-2476",
       m_email:   "michelle@custombrites.com"
     };
@@ -1903,7 +1915,7 @@ function metalToBadge(label){
       const qHS   = $(".cc_item_hs_tariff_code"); // ← define before use
 
       qDesc.value = correctItemDescription(g.desc || "Item");
-      qSku.value  = (g.sku || (g.raw ? extractSkuFromEtsy(g.raw) : "") || "") + "";
+      qSku.value  = correctItemSku((g.sku || (g.raw ? extractSkuFromEtsy(g.raw) : "") || "") + "");
       qQty.value  = String(Math.max(1, Math.round(g.qty || 1)));
       qUnit.value = (Number(g.unit || 0)).toFixed(2);
       qVal.value  = (Number(qQty.value) * Number(qUnit.value)).toFixed(2);
@@ -1916,7 +1928,7 @@ function metalToBadge(label){
         const mapped         = mapHsSkuForCanon(canon);
         if (mapped){
           qHS.value  = mapped.hs;     // 7113205000 for gold-family • 7113115000 for silver-family
-          qSku.value = mapped.sku;    // GF_187 for gold-family • SS_187 for silver-family
+          qSku.value = mapped.sku;    // GF_187 for every metal
         } else {
           // If nothing detected, keep existing SKU and ensure HS has a sane default
           if (!qHS.value) qHS.value = defaults.hs;
@@ -1965,7 +1977,7 @@ function metalToBadge(label){
       const $ = sel => node.querySelector(sel);
       const line = {
         description: correctItemDescription(($(".cc_item_description")?.value || "").trim()),
-        sku         : ($(".cc_item_sku")?.value || "").trim() || null,
+        sku         : correctItemSku(($(".cc_item_sku")?.value || "").trim()) || null,
         quantity    : Number($(".cc_item_qty")?.value || 1),
         unit_value  : Number($(".cc_item_unit_value")?.value || 0),
         // NEW: total item value from the UI field (falls back later if blank)
@@ -1977,7 +1989,7 @@ function metalToBadge(label){
         manufacturer_street        : ($(".cc_item_manufacturer_street")?.value || "").trim() || null,
         manufacturer_city          : ($(".cc_item_manufacturer_city")?.value || "").trim() || null,
         manufacturer_province_code : ($(".cc_item_manufacturer_province_code")?.value || "").trim() || null,
-        manufacturer_postal_code   : ($(".cc_item_manufacturer_postal_code")?.value || "").trim() || null,
+        manufacturer_postal_code   : correctManufacturerPostal(($(".cc_item_manufacturer_postal_code")?.value || "").trim()) || null,
         manufacturer_phone         : ($(".cc_item_manufacturer_phone")?.value || "").trim() || null,
         manufacturer_email         : ($(".cc_item_manufacturer_email")?.value || "").trim() || null
       };
@@ -4811,7 +4823,7 @@ function metalToBadge(label){
       set("cc_item_manufacturer_street",  "450 Matheson Blvd, East");
       set("cc_item_manufacturer_city",    "Mississauga");
       set("cc_item_manufacturer_province_code", "ON");   // API prefers code (ON)
-      set("cc_item_manufacturer_postal_code",   "L4Z-1R5");
+      set("cc_item_manufacturer_postal_code",   "L4Z1R5");
       set("cc_item_manufacturer_phone",         "416-606-2476");
       set("cc_item_manufacturer_email",         "michelle@custombrites.com");
     
@@ -5435,25 +5447,32 @@ function metalToBadge(label){
       }
 
       /* Last check before paying: the shipment actually stored at Chit Chats (it may be an imported
-         draft that was never rebuilt from Step 1) must carry corrected descriptions. If it does not,
-         replace it, and never buy a label that still has the old wording. Returns the id to buy. */
+         draft that was never rebuilt from Step 1) must carry corrected descriptions and SKUs. If it does not,
+         replace it, and never buy a label that still has the old ones. Returns the id to buy. */
       async function ensureCorrectedDescriptions(shipmentId){
         const got    = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(shipmentId)}`);
         const stored = got?.shipment || got || {};
         const lines  = Array.isArray(stored.line_items) ? stored.line_items : [];
         const label  = pickLabelFromShipment(stored);
         if (label.zpl || label.pdf || label.png) return shipmentId;   // already bought: cannot be changed
-        if (!lines.some(li => correctItemDescription(li?.description) !== String(li?.description ?? ""))) return shipmentId;
+        const stale  = li => correctItemDescription(li?.description) !== String(li?.description ?? "")
+                          || correctItemSku(li?.sku_code)            !== String(li?.sku_code ?? "");
+        if (!lines.some(stale)) return shipmentId;
 
         const payload = buildShipmentPayload();
         if (!payload.customs.line_items.length) {
-          payload.customs.line_items = lines.map(li => ({ ...li, description: correctItemDescription(li?.description) }));
+          payload.customs.line_items = lines.map(li => ({
+            ...li,
+            description: correctItemDescription(li?.description),
+            sku_code   : li?.sku_code ? correctItemSku(li.sku_code) : undefined,
+            manufacturer_postal_code: li?.manufacturer_postal_code ? correctManufacturerPostal(li.manufacturer_postal_code) : undefined
+          }));
           if (stored.value != null)  payload.customs.value          = String(stored.value);
           if (stored.value_currency) payload.customs.value_currency = String(stored.value_currency).toLowerCase();
         }
         const created = await replaceDraftShipment(shipmentId, payload);
         const newId   = String(created?.id || created?.shipment?.id || "");
-        if (!newId) throw new Error("Item description could not be corrected, label not bought");
+        if (!newId) throw new Error("Item description or SKU could not be corrected, label not bought");
         pushShipmentId(newId);
         return newId;
       }
@@ -5545,7 +5564,7 @@ function metalToBadge(label){
             }
           }
            
-          // Item descriptions: verified on the stored shipment for every order, every country
+          // Item descriptions and SKUs: verified on the stored shipment for every order, every country
           shipmentId = await ensureCorrectedDescriptions(shipmentId);
 
            await callCc("PATCH", { action: "buy", shipment_id: shipmentId, postage_type: postageType });
@@ -6569,7 +6588,7 @@ async function refreshRates(){
     set("cc_item_manufacturer_street",        "450 Matheson Blvd, East");
     set("cc_item_manufacturer_city",          "Mississauga");
     set("cc_item_manufacturer_province_code", "ON");            // Ontario
-    set("cc_item_manufacturer_postal_code",   "L4Z-1R5");
+    set("cc_item_manufacturer_postal_code",   "L4Z1R5");
     set("cc_item_manufacturer_phone",         "416-606-2476");
     set("cc_item_manufacturer_email",         "michelle@custombrites.com");
 
