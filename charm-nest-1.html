@@ -4015,7 +4015,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-nest-plan.js?v=20261120-np1-all1"></script><!-- charm-nest-nest-plan.js: the nest's pure helpers (buildJob, handLocks, feedTurn, orderRank, keepOrdersWhole, CHARM_SCALE, CAREFUL_ANGLES, the side-by-side searches and the KEEPSEARCH pick), one copy for this page and the cloud (cloud architecture v2, step 6) -->
 <script src="vendor/clipper-6.4.2.js?v=20261028-sw1"></script>
 <script src="charm-nest-vector.js?v=20261028-ops1-sw1"></script>
-<script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1-bd1-ovf1-ae1-im1-bm1-crn1-clp1-bb1-sf1-ts1-ts2-tw2"></script>
+<script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1-bd1-ovf1-ae1-im1-bm1-crn1-clp1-bb1-sf1-ts1-ts2-tw2-n25"></script>
 <script src="charm-nest-overlap-fix.js?v=20261025-ovf1-sb1"></script>
 <script src="charm-nest-finish-core.js?v=20261120-fc1-rm1-fl1-f70"></script><!-- charm-nest-finish-core.js: the pure parts of a sheet's finish and save (buildJob, sheetSpec, buildReport, layoutKey, the overlap planners, membershipOf, the record), shared with node (FINISHCORE, cloud plan step 7) -->
 <script src="charm-nest-dxf.js?v=20260927-custom-vi1"></script>
@@ -4084,7 +4084,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-ce-ai-panels.js?v=pfall-1116r"></script><!-- charm-nest-ce-ai-panels.js: the Charm Editor's right dock made as Adobe Illustrator's panel dock: Layers (eye, lock, layer colours as our roles, target, selection square), Properties, Transform, Align, Pathfinder, Stroke, Swatches, Character, Image Trace; tabs, icons, fly-outs (AIDOCK, Paul 28 Oct 2026) -->
 <script src="charm-nest-ce-ai-dialogs.js?v=20261028-aid1-ces1"></script><!-- charm-nest-ce-ai-dialogs.js: every dialog and modal of the Charm Editor drawn as Adobe Illustrator's (Mac, Medium Dark): the title bar, labels and fields with units, Preview at the bottom left, Cancel / OK with OK the default; nothing they do changes (AIDIALOGS, Paul 28 Oct 2026) -->
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
-<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1-sl1-pm1-zs1-dm1-nb1-ch1-ns1-lk1-nr1-au1-rlk2-rs1-en1-kp1-wo1-sb1-od1-nk2-rvd1-add1-szf1-szr1-mono1-monoui1-mono7-pin1-meg1-setfix1-hp1-rv1-br1-hsym1-bh1-num1-bl1-so1-fh1-co1-fd1-once1-skp1-oos1-bf1-tab1-bfw1-ltr1-fh3-fh4-fh5-fh2-bfh1-od1-fhd1-on1-l16-oc1-um1-rvl1-ah1-na1-fw1-n24"></script>
+<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1-sl1-pm1-zs1-dm1-nb1-ch1-ns1-lk1-nr1-au1-rlk2-rs1-en1-kp1-wo1-sb1-od1-nk2-rvd1-add1-szf1-szr1-mono1-monoui1-mono7-pin1-meg1-setfix1-hp1-rv1-br1-hsym1-bh1-num1-bl1-so1-fh1-co1-fd1-once1-skp1-oos1-bf1-tab1-bfw1-ltr1-fh3-fh4-fh5-fh2-bfh1-od1-fhd1-on1-l16-oc1-um1-rvl1-ah1-na1-fw1-n25"></script>
 <script src="charm-nest-engrave-said.js?v=merge-1115q"></script>
 <script src="charm-nest-engrave-read.js?v=20261013-sbc1-fh5-sk2"></script>
 <script src="charm-nest-engrave-classify.js?v=1120-classify1-eng1-eng2-fo1"></script>
@@ -7074,7 +7074,7 @@ async function previewPng(sh) {
   const memo = new Map();
   const r1 = v => Math.round((+v || 0) * 10) / 10;
   const sigOf = sh => JSON.stringify([
-    sh.sheetId, sh.metal, !!sh.dirty, sh.status || "", !!sh.draft, sh.setId || "", sh.persistedAt || sh.savedAt || sh.updatedAt || 0,
+    Object.keys(shippedOf(sh) || {}).length, sh.sheetId, sh.metal, !!sh.dirty, sh.status || "", !!sh.draft, sh.setId || "", sh.persistedAt || sh.savedAt || sh.updatedAt || 0,
     (sh.placements || []).map(p => [p.id, r1(p.xPt != null ? p.xPt : p.x), r1(p.yPt != null ? p.yPt : p.y), r1(p.angle), p.scale || 1]),
     (sh.charms || []).filter(c => c.excluded).length, (sh.charms || []).length,
     sh.roseStock ? [sh.roseStock.id, sh.roseStock.revision] : 0, sh.roseCutAt || 0, sh.rosePlanHash || "",
@@ -8029,6 +8029,8 @@ function customRing(ctx, c, tx, k) {
   ctx.save(); ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx);
   ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = Math.max(1.5, 1.6 * k); ctx.setLineDash([Math.max(3, 3 * k), Math.max(2, 2 * k)]); ctx.stroke(); ctx.restore();
 }
+/* SHIPPEDSTAYS (Paul, 24 Nov 2026): the sheet's shipped pieces, as the cloud's record of the sheet says them (the Library's row of it, else the sheet as it was read); null when none. */
+function shippedOf(sh) { const r = ((S.library && S.library.rows) || []).find(x => x && x.id === sh.sheetId); return (r && r.shippedOut) || sh.shippedOut || null; }
 function paintPreview(cv, sh, clean, R) {
   R = R || 0; const ctx = cv.getContext("2d"); const st = stockFor(sh.metal, sh);
   // on screen the sheet sits at true scale in its 100 × 50 mm frame; the files' pictures (clean) are the sheet alone
@@ -8071,6 +8073,7 @@ function paintPreview(cv, sh, clean, R) {
     ctx.fillText(sh.status === "nesting" ? (ai ? "its moves will land here one by one" : "the first charm lands here") : sh.status === "queued" ? "it starts on its own" : waitsForYou ? "waiting for you · tick Include in Options" : "press Nest to fill this sheet", FW / 2, FH / 2 + FW / 40);
     ctx.restore();
   }
+  const shipped = sh._forClaude ? null : shippedOf(sh);
   const held = !clean && sh._tourHide && sh._tourHide.size ? sh._tourHide : null;   // pieces a Send to Sheet flight has yet to land (NestFocus)
   // (Paul, 12 Nov 2026: "the actual sheet that is supposed to get cut as part of this set is now greyed out") a Rose Gold sheet whose green line is cut still shows ITS OWN pieces as they are
   // (only the cuts before it are grey); its pieces go grey only once the laser has cut them
@@ -8089,6 +8092,7 @@ function paintPreview(cv, sh, clean, R) {
     CharmNestPDF.drawCharm(ctx, c, tx, k);
     if (frontMap) cardBack().front(ctx, pieceOf(c, p, sh), frontMap, k);
     if (!clean && c.custom) customRing(ctx, c, tx, k);
+    if (shipped && c.poolId && shipped[c.poolId]) CharmNestPDF.shippedMark(ctx, c, tx, Math.max(2.2, 0.9 * k) / (p.scale || 1));   // (SHIPPEDSTAYS)
     if (sh._forClaude) { ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.6 * k); ctx.stroke(); }
     ctx.restore();
     if (!clean && c.pinned) { ctx.fillStyle = "#caa861"; ctx.beginPath(); ctx.arc(p.cxPt * k, p.cyPt * k, Math.max(3, 2 * k), 0, Math.PI * 2); ctx.fill(); }
@@ -9181,7 +9185,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26-now-inst1"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=1120-pair2-pmake1-apc1-place1-v14-dr1-dr2-sd1-sl1-or1-fa1-br1-sbc1-photo1-rm1-va1-it9-k14-it8-vi7-i16-cs1-g6-g9-s1-g4-s4-s3-s2-cd-now-nm1-lb1-lb2-se1-ia1-ts1-an1-rl1-ld1-ck1-src1-oa1-swh1-po1-lr1-rvl1-pf1-er1-sv1-ps1-ps2-mn1-ws1-la1-bp1-ub1-wc1-one1-an1-ac1-ah1-ia1-lc1-dp2-lbx1-ons1-inst1-ls1-dr1-dr2-fo1-nw1-na1-na2-lo1-ces1-ov1-tw2-tw3-n24"></script>
+<script src="charm-nest-bridge.js?v=1120-pair2-pmake1-apc1-place1-v14-dr1-dr2-sd1-sl1-or1-fa1-br1-sbc1-photo1-rm1-va1-it9-k14-it8-vi7-i16-cs1-g6-g9-s1-g4-s4-s3-s2-cd-now-nm1-lb1-lb2-se1-ia1-ts1-an1-rl1-ld1-ck1-src1-oa1-swh1-po1-lr1-rvl1-pf1-er1-sv1-ps1-ps2-mn1-ws1-la1-bp1-ub1-wc1-one1-an1-ac1-ah1-ia1-lc1-dp2-lbx1-ons1-inst1-ls1-dr1-dr2-fo1-nw1-na1-na2-lo1-ces1-ov1-tw2-tw3-n25"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1-sy1-sy2"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1-ob1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
@@ -9261,7 +9265,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=1117-c7a0840c-v14-all1-rm1-fl1-it1-qr6-i5-it4-g1-s5-now-bb1-src1-rgw1-er1-lo1-cb1-an1-ac1-ia1-dp2-in1-na1-lo1-ces1-tw2"></script>
+<script src="charm-nest-sheetwin.js?v=1117-c7a0840c-v14-all1-rm1-fl1-it1-qr6-i5-it4-g1-s5-now-bb1-src1-rgw1-er1-lo1-cb1-an1-ac1-ia1-dp2-in1-na1-lo1-ces1-tw2-n25"></script>
 <!-- 10K / 14K: a charm dragged onto the next or previous sheet of its metal, in the sheet window's Manual Control (SheetHop; Paul, 18 Oct 2026) -->
 <script src="charm-nest-sheet-hop.js?v=20261018-hop1-hp2-mv1-mc9-mi9b-gk1-fr1-ged1-hm1-b3-i13-g2-now-in1"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->

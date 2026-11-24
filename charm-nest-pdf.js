@@ -2260,6 +2260,15 @@
     ctx.beginPath(); pathToCanvas(ctx, c.outline, tx);
     ctx.strokeStyle = "#000"; ctx.lineWidth = Math.max(.6, (isCutSilhouetteFill(c, c.outline) ? CUT_HAIRLINE_PT : c.outline.lwPt || .25) * scale); ctx.stroke();
   }
+  /* SHIPPEDSTAYS (Paul, 24 Nov 2026: "grey them out" with red outlines): a shipped piece, over its own drawing: a grey wash and a red line along its cut edge. On screens and pictures only, never in a laser file. */
+  function shippedMark(ctx, c, tx, width) {
+    const bodies = [c.outline].concat(cutLinesOf(c));
+    ctx.save();
+    ctx.beginPath(); for (const m of bodies) pathToCanvas(ctx, m, tx);
+    ctx.fillStyle = "rgba(196,193,188,.74)"; ctx.fill("evenodd");
+    ctx.strokeStyle = "#d61f1f"; ctx.lineWidth = width; ctx.lineJoin = "round"; ctx.stroke();
+    ctx.restore();
+  }
   /* A master can draw a charm's cut silhouette as a black FILL with no stroke on its cut layer: text converted to outlines
      (every letter earring, LETTER_EARRING-0 …), an expanded shape (CELESTIAL15 - CRESCENT). The grouping rightly takes
      that fill as the charm's outline, but a fill is ink: drawn as one it reads as a solid black engraving on a charm that
@@ -3429,7 +3438,7 @@
     }
     return out;
   }
-  root.CharmNestPDF = { scaleSource, closeNearlyClosed, markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
+  root.CharmNestPDF = { scaleSource, closeNearlyClosed, markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, shippedMark, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
     takeSampleText, sampleTextOf, parseSkuLabel, READER_VERSION, LETTERS_READER_VERSION, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
   // the hoop finder, for the tests and the audit (kept off the long list above so a merge there never touches it)
   root.CharmNestPDF.findHoops = findHoops; root.CharmNestPDF.circleOf = circleOf;

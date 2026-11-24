@@ -1170,7 +1170,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (r.rev) { FOLLOW.id = id; FOLLOW.revs = { ["s:" + id]: r.rev }; }   // (LOCAL: the follow asks after the record at the revision drawn: one small read from its first beat)
       if (backFace()) W.backs = backsOf(rec, W.live, W.backsList);
       const same = !!(early && W.geom && early.sig === layoutSig(rec));
-      head(rec, false); if (same) { for (const x of W.pieces) x.eng = engOf(x); } else { if (early) W.geom = false; indexPieces(); if (MC.on && MC.id === id) mcReattach(); } if (fresh) W.opAsked = new Set(); readPieces(!!again); pruneFreed(); fitPlate(); renderStrip(); renderSheetPane(); renderFoot(); renderMenu(); unstill(); frontWordsReady();
+      head(rec, false); if (same) { for (const x of W.pieces) x.eng = engOf(x); if (rec.shippedOut) tryDo(paintBase); } else { if (early) W.geom = false; indexPieces(); if (MC.on && MC.id === id) mcReattach(); } if (fresh) W.opAsked = new Set(); readPieces(!!again); pruneFreed(); fitPlate(); renderStrip(); renderSheetPane(); renderFoot(); renderMenu(); unstill(); frontWordsReady();
       E.addBtn.hidden = !canAdd();
       if (!rec.outputs?.preview?.url && !W.live && !W.pvCard) E.pv.removeAttribute("src"); else if (rec.outputs?.preview?.url && !E.pv.getAttribute("src")) E.pv.src = cors(rec.outputs.preview.url);
       // the charm clicked is the one the window opens on, as soon as the sheet's pieces are known: the panel comes in
@@ -1516,7 +1516,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function recOfLive(sh) {
     return { id: sh.sheetId, metal: sh.metal, sheetIndex: sh.sheetIndex || null, page: sh.page, setId: sh.setId || null, setSeq: sh.seq || null, draft: !!sh.draft, runId: sh.runId || null, fileBase: sh.fileBase || "",
       charms: sh.charms.map(c => Object.assign(hopEntry(c), { layer: c.layer, side: c.side, bodyIndex: c.bodyIndex, groupKey: c.groupKey, groupSize: c.groupSize, mirror: c.mirror }, c.manual ? { manual: c.manual } : {}, c.frozen ? { frozen: c.frozen } : {})),   // (the entry a record holds for a charm, as a move writes it)
-      placements: sh.placements.map(p => Object.assign({}, p)), stock: stockFor(sh.metal, sh) };
+      placements: sh.placements.map(p => Object.assign({}, p)), stock: stockFor(sh.metal, sh), shippedOut: sh.shippedOut || null };
   }
   /** The sheet drawn now from what the page holds; null when it holds nothing to draw it from. -> { sig } once its plate is drawn. */
   function openEarly(id, tok) {
@@ -1812,8 +1812,19 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         // the front of the plate: this charm's FRONT words, as they lie on it (not turned over); a charm with no front engraving is drawn as it always was
         else if (x.c && x.eng && x.eng.faces && x.eng.faces.front) { const geo = engGeoOf(x, W.backs, "front"); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: backInk() })); }   // (FRONTBLUE)
         if (cu) { outlinePath(ctx, x); ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = 1.6 * W.dpr; ctx.setLineDash([4 * W.dpr, 3 * W.dpr]); ctx.stroke(); ctx.setLineDash([]); }
+        markShipped(ctx, x);
       });
     }
+  }
+  /* SHIPPEDSTAYS (Paul, 24 Nov 2026: "grey them out an ad read outlines so they're noticeable as different, but all the information about the harmony order should still remain and be accessible by clicking into the sheet"):
+     a piece whose order shipped stays on its sheet: grey with a red outline, and it opens as any other. The cloud's record of the sheet says which (shippedOut); a set marked completed is never changed. */
+  const shippedOn = x => { const r = W.rec, m = r && r.shippedOut; return (m && x && x.poolId && m[x.poolId]) || null; };
+  const dayOf = at => (+at > 0 ? new Date(+at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "");
+  function markShipped(ctx, x) {
+    if (!shippedOn(x)) return;
+    const width = 2 * W.dpr / (x.p.scale || 1);
+    if (x.c) { CharmNestPDF.shippedMark(ctx, x.c, tx0(x.c), width); return; }
+    outlinePath(ctx, x); ctx.fillStyle = "rgba(196,193,188,.74)"; ctx.fill(); ctx.strokeStyle = "#d61f1f"; ctx.lineWidth = width; ctx.stroke();
   }
   function focusSet() {
     // what the pointer or the selection is about: one charm, and the rest of its order on this sheet
@@ -1843,7 +1854,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         ctx.fillStyle = mate ? "rgba(202,168,97,.14)" : "rgba(74,107,120,.14)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
         if (x.c && !backFace()) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
         else { outlinePath(ctx, x); ctx.strokeStyle = "rgba(60,54,46,.5)"; ctx.lineWidth = W.dpr; ctx.stroke(); }
-        markBack(ctx, x); });
+        markBack(ctx, x); markShipped(ctx, x); });
         // one line round it, along its own outline (haloOf): gold for the rest of the order, slate for a search's finds
         layHalo(ctx, haloOf(x, k, W.dpr, backFace(), mate ? { w: 1.3 } : { w: 1.3, color: "#4a6b78" }), plateX(x.p.cxPt), R + x.p.cyPt * k, 1, .72 * u); }
       ctx.restore();
@@ -1906,7 +1917,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       ctx.fillStyle = "rgba(202,168,97,.42)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
       if (x.c && !backFace()) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), W.k);
       else { outlinePath(ctx, x); ctx.strokeStyle = "rgba(60,54,46,.55)"; ctx.lineWidth = W.dpr / s; ctx.stroke(); }
-      markBack(ctx, x);
+      markBack(ctx, x); markShipped(ctx, x);
     });
     // told apart by its own gold and this line along its outline (haloOf), never by dimming the sheet round it
     layHalo(ctx, haloOf(x, W.k, W.dpr, backFace(), { w: 1.9 }), plateX(x.p.cxPt), W.R + x.p.cyPt * W.k, s, 1);
@@ -2358,7 +2369,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // (engravings: a piece engraved on both faces counts each; the word is "back" until a piece of this order has a front)
       const lu = live.flatMap(unitsOf), need = lu.filter(needsEng).length, ok = lu.filter(u => u.kind === "approved").length, fr = lu.some(u => u.face === "front");
       const other = rid === "—" ? [] : otherSheets(rid);
-      const tags = (live.some(x => x.c && x.c.custom) ? `<span class="swTag cust" title="A custom order: its own designs, tinted plum on the sheet">Custom</span>` : "") +
+      const out = live.map(shippedOn).find(Boolean);
+      const tags = (out ? `<span class="swTag" style="--c:#d61f1f" title="Shipped${dayOf(out.at) ? " " + esc(dayOf(out.at)) : ""}${out.by ? " by " + esc(out.by) : ""}: it stays on this sheet"><i></i>Shipped</span>` : "") + (live.some(x => x.c && x.c.custom) ? `<span class="swTag cust" title="A custom order: its own designs, tinted plum on the sheet">Custom</span>` : "") +
         (need ? `<span class="swTag eng" title="${fr ? "Engraving" : "Back engraving"} still to approve">${need > 1 ? need + " " + engWord(need, fr) : fr ? "engraving" : "back"}</span>` : ok ? `<span class="swTag engOk" title="${fr ? "Engraving" : "Back engraving"} approved">${fr ? "engraving" : "back"}</span>` : "") +
         other.map(s => `<span class="swTag" style="--c:${colorOf(s.metal)}" title="Also on ${esc(s.name || "")}${esc(awayAt(rid, s.id))}"><i></i>${esc(CODE[s.metal] || "")} ${s.n}</span>`).join("");
       return `<li class="swOrd${q ? " orderMatch" : ""}${go && go.keep ? " going" + (go.how === "cancel" ? " cancel" : "") : ""}" data-rid="${esc(rid)}" data-mkey="o:${esc(rid)}"><span class="no">${rid === "—" ? "No order" : esc(window.CharmNestOrders && CharmNestOrders.orderShown ? CharmNestOrders.orderShown(rid, what) : rid)}</span><span class="what" title="${esc(what)}">${esc(what)}</span><span class="tags">${tags}</span>${rid === "—" ? "" : travelHtml(rid)}</li>`;
@@ -2668,7 +2680,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const words = (sp.personalization || []).filter(Boolean).join(" / ");
     const mm = mmOf(x);
     E.detail.innerHTML = `
-      <header class="swOrderHead"><span class="fLabel">Order</span><div class="swOrdTop"><span class="rid">${esc((x.rid && window.CharmNestOrders && CharmNestOrders.orderShown ? CharmNestOrders.orderShown(x.rid, x.name) : x.rid) || "No order")}</span>${x.rid && canView() ? `<button type="button" class="btn ghost xs swOpenOrd" data-r2="openOrd" title="Open order ${esc(x.rid)} in the order view">Open order${ICON.expand}</button>` : ""}</div><span class="who">${esc([buyer, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · ")) || "&nbsp;"}</span>${said ? `<div class="swSaid" title="From the buyer">${esc(said)}</div>` : ""}</header>
+      <header class="swOrderHead"><span class="fLabel">Order</span><div class="swOrdTop"><span class="rid">${esc((x.rid && window.CharmNestOrders && CharmNestOrders.orderShown ? CharmNestOrders.orderShown(x.rid, x.name) : x.rid) || "No order")}</span>${x.rid && canView() ? `<button type="button" class="btn ghost xs swOpenOrd" data-r2="openOrd" title="Open order ${esc(x.rid)} in the order view">Open order${ICON.expand}</button>` : ""}</div><span class="who">${esc([buyer, placed ? "ordered " + placed : "", shippedOn(x) ? "shipped " + (dayOf(shippedOn(x).at) || "") : ship].filter(Boolean).join(" · ")) || "&nbsp;"}</span>${said ? `<div class="swSaid" title="From the buyer">${esc(said)}</div>` : ""}</header>
       <div class="swPiece"><span class="swThumbBox" data-zp aria-label="Charm drawing"><canvas class="swThumb" width="184" height="184"></canvas></span><div class="facts"><b>${esc(x.sku || x.name)}</b><span data-r2="mm">${copyText(x)}${mm}</span><span>${esc(labelOf(W.rec.metal))}${sp.size ? " · size " + esc(sp.size) : ""}</span>${words ? `<em title="${esc(words)}">${esc(words)}</em>` : ""}</div></div>
       <section class="swSection" data-r2="eng"></section>
       <section class="swSection"><span class="fLabel" data-r2="trailHead">This order</span><div class="swPairNote" data-r2="pairNote" role="status" hidden></div><ul class="swTrail" data-r2="trail"></ul></section>

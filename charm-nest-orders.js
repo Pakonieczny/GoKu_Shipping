@@ -686,6 +686,16 @@
   const fontSpecOf = (fr, source) => Object.assign({ asked: fr.asked, id: fr.id || "", name: fr.name || "", source }, fr.align ? { align: fr.align } : {}, fr.listing ? { listing: true } : {});
   /** The engraving font of ONE piece of a line (a counted disc, a left ear, a single charm): { id, name, asked, mapped, source }. A piece's own font (spec.fontPieces[index],
    *  one per disc when a listing asks per disc) wins over the line's (spec.font); a font word the shop does not offer, or none, is Source Sans 3 with `asked` kept. */
+  /* FONTNOW (Paul, 24 Nov 2026: "Did you find the correct fonts and replace them throughout the application?"): what a saved reading or a saved engraving calls by the font that stood in for the shop's word before (Pristina:
+     Marck Script; Angelina: Mynerve) is engraved in the font the word is now. Only where the order asks for that very word; a font a person locked, and approved work, stay as they are. */
+  const FONT_WAS = { "marck-script": "charm", mynerve: "angelina" };
+  const fontNowId = (id, asked) => (FONT_WAS[id] && asked && fontOfPhrase(String(asked)) === FONT_WAS[id] ? FONT_WAS[id] : id);
+  /** The font an engraving not approved yet is set in again ("" when it stays in the one it has). */
+  function fontNow(job, spec, index) {
+    const to = job && FONT_WAS[job.fontKey]; if (!to || job.approvedAt || job.fontLocked || ["approved", "written"].includes(job.state)) return "";
+    const face = job.faceFontWord ? fontOfPhrase(String(job.faceFontWord)) : "", asks = face || pieceFont(spec, index, job.face === "front" ? "front" : "back").id;
+    return asks === to || (!face && job.fontAsked && fontOfPhrase(String(job.fontAsked)) === to) ? to : "";
+  }
   function pieceFont(spec, index, face) {
     const own = spec && Array.isArray(spec.fontPieces) && index != null ? spec.fontPieces[index] : null;
     // a FACE that names its own font word (front + back engraving: spec.engraving[face].fontWord, CONTRACT section 8) is read like a drop-down word; every other face uses the line's font (one font per purchase line)
@@ -695,7 +705,7 @@
     // usual one. An exact word or a spelling of one is the shop's font (mapped); a font that is not ours, or only a kind of font, is engraved in the nearest installed one and stays a request to look at.
     const ft = !fid && !askedOnly && spec && spec.fontText && spec.fontText.asked && !(f && f.id && !f.listing && !(FONT_MESSAGE_OVER_OPTION && spec.fontText.id)) ? spec.fontText : null;
     if (ft) f = { id: ft.id || "", asked: ft.asked, source: "message" };
-    const inst = (f && f.id && fontById(f.id)) || fontById(DEFAULT_FONT);
+    const inst = (f && f.id && fontById(fontNowId(f.id, f.asked))) || fontById(DEFAULT_FONT);   // (FONTNOW)
     const listing = !!(f && f.listing), asked = askedOnly || (f && f.asked ? String(f.asked) : "");
     // (a listing's usual font that stands in for a word the shop does not offer is still a request to look at: not "mapped")
     const out = { id: inst.id, name: inst.name, asked, mapped: !!(f && f.id && fontById(f.id)) && !(listing && asked) && !askedOnly, listing, caps: !!inst.caps, source: f && f.source ? f.source : "default" };
@@ -5433,7 +5443,7 @@
   }
   return { engraveLimitRead, engraveLimitCheck, limitLength, sizeFit, sizeMmOf, SIZE_PAD_PT, pairCountOf, questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, orderNote, orderNotes, orderShown, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, tidyOption, optionView, optionViews, shownText, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, PINNED_LISTING_DESIGNS, pinnedDesign, REVIEW_LISTINGS, reviewListing, reviewAsks, PINNED_HUGGIE_SETS, pinnedHuggieSet, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, nonDesignOption, staleShared, OPTION_ALL, optionPicksDesign, heldOnOption, oneSkuOf, designLike, colourOf, familyNumberSays, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, PIECE_LISTINGS, pieceListing, pieceValueRead, pieceOptionOf, pieceSlots, pieceExtra, profileDesignOf, pieceBodiesOf, piecesFixed, pieceFacesRead, pieceNouns, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, SET_RULES, SET_LAYOUT_OPT, setRuleOf, setLengthsOf, setEngravedOf, barLengthOf, setLayoutAskOf, setPiecesOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY, earringNeverBackEngraves, EAR_NEVER_WHY, letterDesignNeverEngraves, LETTER_NEVER_WHY,
-    ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
+    ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_WAS, fontNow, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,
     KNOWN_SKU_NAMES, knownName, namedSku, sameDesign, designFile, FORMS, formOfText, masterForm, lineForm, formClash, siblingsOf, formOfLine, lookalikeRead, entryBlock, blockKind, blockReleased, blockFor,
