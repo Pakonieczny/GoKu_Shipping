@@ -160,7 +160,7 @@
     const body = Array.isArray(orders) ? { op: "engraveSyncGet", orders: orders.slice(0, 600) } : { op: "engraveSyncGet", since: Math.max(0, st.lastAt - 5000) };
     let res; try { res = await api(body); } catch (e) { st.fails++; return 0; }
     const lines = (res && res.lines) || []; let n = 0;
-    for (const l of lines) { st.lastAt = Math.max(st.lastAt, l.at || 0); CLOUD.set(l.key, l); if (await take(l, why)) n++; }
+    const here = linesNow(); for (const l of lines) { st.lastAt = Math.max(st.lastAt, l.at || 0); CLOUD.set(l.key, l); if (await take(l, why, here)) n++; }
     if (Array.isArray(orders)) { const of = new Set(body.orders.map(String)); for (const [k, line] of linesNow()) if (of.has(String(safe(() => line.order.receiptId, "") || k.split("_")[0]))) KNOWN.add(k); }   // (WORDSFIRST: the cloud has none for the others of these orders)   // (KEEPREV: the line's revision is noted by take, once the page holds the record, never for one it turned away)
     if (n) { safe(() => E().render()); safe(() => O().render()); }
     return n;
@@ -194,10 +194,10 @@
     } catch (_) { ok = false; st.fails++; load.fails++; for (const k of keys) WANT.add(k); }
     load.timer = 0; if (WANT.size) wantSoon(ok ? 120 : backOff());
   }
-  async function take(l, why) { try { return await takeLine(l, why); } finally { if (l && l.key && !WAITING.has(l.key)) KNOWN.add(l.key); } }
+  async function take(l, why, here) { try { return await takeLine(l, why, here); } finally { if (l && l.key && !WAITING.has(l.key)) KNOWN.add(l.key); } }
   const WHY = new Map(); const said = (k, w) => { WHY.set(k, w + " " + new Date().toTimeString().slice(0, 8)); if (WHY.size > 400) WHY.delete(WHY.keys().next().value); return false; };
-  async function takeLine(l, why) {
-    const all = linesNow(), line = all.get(l.key); if (!l.rec) return said(l.key, "no record");
+  async function takeLine(l, why, here) {   // (here: the page's lines, listed once for a whole answer; a line that comes meanwhile waits, and is taken when it is here: WAITING)
+    const all = here || linesNow(), line = all.get(l.key); if (!l.rec) return said(l.key, "no record");
     if (!line) { WAITING.set(l.key, l); return said(l.key, "line not here"); }   // (NEWLINES, Paul 13 Nov 2026: "What about future orders?"): the line has not reached this computer yet: taken when it does (retryWaiting)
     const mine = l.dev && l.dev === dev(), localAt = LOCAL_AT.get(l.key) || 0;
     if (Date.now() - localAt < OWN_HOLD) return said(l.key, "own press");   // (a press made here a moment ago: it is sent, and wins)
@@ -310,9 +310,9 @@
       const onScreen = new Set(WANT); safe(() => { for (const c of root.document.querySelectorAll(".rvItem")) { const j = c._job; const r = j && j.row && (j.row.parentRow || j.row); if (r && r.key) onScreen.add(r.key); } });
       got.sort((a, b) => (onScreen.has(b.key) ? 1 : 0) - (onScreen.has(a.key) ? 1 : 0));
       const first = got.filter(l => onScreen.has(l.key)), rest = got.filter(l => !onScreen.has(l.key));
-      for (const l of first) await take(l, "start");
+      for (const l of first) await take(l, "start", lines);
       if (first.length) { safe(() => E().render()); safe(() => O().render()); }
-      let next = 0; await Promise.all(Array.from({ length: Math.min(6, rest.length) }, async () => { while (next < rest.length) { const l = rest[next++]; try { await take(l, "start"); } catch (_) {} } }));
+      let next = 0; await Promise.all(Array.from({ length: Math.min(6, rest.length) }, async () => { while (next < rest.length) { const l = rest[next++]; try { await take(l, "start", lines); } catch (_) {} } }));
       for (const k of lines.keys()) KNOWN.add(k); load.fails = 0;   // (WORDSFIRST: read; the cloud has none for the rest)
     } catch (e) { st.fails++; failed = true; load.fails = nth + 1; console.warn("[engrave-sync] the saved words were not read, they are read again", e); }
     load.reading = false;
@@ -327,7 +327,7 @@
     safe(() => S().schedule());
     safe(() => E().render()); safe(() => O().render());
     if (failed) { load.again = true; setTimeout(() => { readStart(nth + 1).catch(e => console.warn("[engrave-sync] start", e)); }, backOff()); }
-    setTimeout(() => fitMissing(() => setTimeout(prewarm, 1000)), 1500);   // (NOFALLBACK, Paul 13 Nov 2026: "Look at the thumbnails" / "remove these fallbacks, make it work"): every piece with words gets its piece and is fitted in the background, newest first, one at a time; then outlines are read; (LIGHTLOAD, Paul 13 Nov 2026: "THE GRID": the page froze for over 45 s at every load while every piece was refitted and every outline read at once): no bulk refit at start; outlines are read slowly in the background, one every 1.2 s
+    whenLooked(() => fitMissing(() => setTimeout(prewarm, 1000)));   // (NOFALLBACK, Paul 13 Nov 2026: "Look at the thumbnails" / "remove these fallbacks, make it work"): every piece with words gets its piece and is fitted in the background, newest first, one at a time; then outlines are read; (LIGHTLOAD, Paul 13 Nov 2026: "THE GRID": the page froze for over 45 s at every load while every piece was refitted and every outline read at once): no bulk refit at start; outlines are read slowly in the background, one every 1.2 s
   }
   /* (GRIDNOW, Paul 13 Nov 2026: "It still shows up without the grid for several seconds"): every piece waiting in Design & Engrave has its charm's outline read in the background, one at a time while the page is idle, so a card opened later draws its grid at once */
   /** The charm outline of a job's piece on this page (its sheet's charm, else its preview, read now when this page has neither). */
@@ -393,6 +393,8 @@
       (j.fit ? outline(j) : fitOne(j)).then(() => { if (sig() !== was) { TRIED.delete(j.key); safe(() => E().render()); } else TRIED.set(j.key, { at: Date.now(), n: Math.min(3, (t ? t.n : -1) + 1) }); }).catch(() => TRIED.set(j.key, { at: Date.now(), n: Math.min(3, (t ? t.n : -1) + 1) }));
     }); }, 600);
   }
+  /** FASTOPEN: the pieces are outlined and placed once Design & Engrave is looked at (a card opened anywhere is done at once: watchOpen), not at every load on every computer. */
+  function whenLooked(fn) { const look = () => (["engrave", "design", "review"].includes(safe(() => root.CN.S.mode, "")) && !root.document.hidden ? setTimeout(fn, 300) : setTimeout(look, 700)); look(); }
   /** Every other job with words and no fit, a few at a time while the page is idle */
   function fitMissing(done) {
     const rid = j => String((j.row && (j.row.parentRow || j.row) && (j.row.parentRow || j.row).order && (j.row.parentRow || j.row).order.receiptId) || "");

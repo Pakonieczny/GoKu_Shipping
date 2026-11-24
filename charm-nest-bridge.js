@@ -131,7 +131,7 @@ const ListMedia = window.ListMedia = (() => {   // (FRESHPHOTOS: also window.Lis
   const jobs=new WeakMap(), watched=new Set(), queue=[], photos=new Map(), pending=new Map(), wanted=new Set();
   // Firebase is the shared source; this small local index makes refresh instant.
   // Image bytes use the seven-day HTTP cache, not another Etsy metadata lookup.
-  const photoStorage='cn.listingPhotos.v1',photoAttempts=new Map(),photoChecks=new Map(),photoStates=new Map(),prepareQueue=new Set(),warming=new Set(),photoLoading=new Set();
+  const photoAttempts=new Map(),photoChecks=new Map(),photoStates=new Map(),prepareQueue=new Set(),warming=new Set(),photoLoading=new Set();
   // PHOTOPAUSE (Paul, 20 Nov 2026, "Yes, lift it": the pause lives only in the cloud, and the owner's Resume Etsy clears it; computers store
   // nothing of production): the photo lookup pause is only what the cloud's latest answer says (every listingPhotos answer carries it as
   // retryAt, 0 when lookups may run). Nothing is kept in this browser; the copy an older page kept (cn.listingPhotoPause.v2 and the one
@@ -139,12 +139,10 @@ const ListMedia = window.ListMedia = (() => {   // (FRESHPHOTOS: also window.Lis
   let photoPauseUntil=0;
   try{for(const k of ['cn.listingPhotoPause.v2','cn.listingPhotoPause'])localStorage.removeItem(k);
     for(let i=(localStorage.length||0)-1;i>=0;i--){const k=localStorage.key(i);if(k&&k.startsWith('cn.listingPhotoPause'))localStorage.removeItem(k);}}catch(_){}
-  try{for(const [id,url] of JSON.parse(localStorage.getItem(photoStorage)||'[]'))if(typeof url==='string'&&url)photos.set(id,url);}catch(_){}
   let preparing=null,photoTick=0;
   function remember(id,url){
     if(!url)return;photos.delete(id);photos.set(id,url);
     while(photos.size>1500)photos.delete(photos.keys().next().value);
-    try{localStorage.setItem(photoStorage,JSON.stringify([...photos].filter(([,u])=>!!u)));}catch(_){}
   }
   const photoUrl=url=>url?('/.netlify/functions/imageProxy?url='+encodeURIComponent(url)):null;
   async function warm(url){
@@ -1763,16 +1761,6 @@ const Orders = window.Orders = (() => {
   let mapsSig = "", mapsRead = [], mapsCut = "", customListAt = 0, customBase = null, mapsSeq = 0, mapsApplied = 0;
   const mapReply = {};   // the last whole answer of each learned map, with the signature it came with
   let mapAsk = 0;
-  /* COST (Oct 2026): a page just opened held none of them and read all three maps whole (about 3,000 + 2,000 + 300 documents) at EVERY load. The last answer of each is now kept on
-     this computer (charm-nest-master-cache.js: readMap / saveMap) and starts a page the way a read of the same visit does: it goes back to the cloud as ifSig / since, and the cloud
-     answers `unchanged` (a handful of reads) or only what was written after it; a removal, or anything it cannot vouch for, answers the whole map, as before. Production only (a
-     sandbox answer covers two collections). No IndexedDB, a copy that does not read back or any failure: the whole map is read, as it was. */
-  const mapHeld = {}, mapSaving = {};
-  const mapKept = () => { const MC = window.CharmNestMasterCache; return !WORKSPACE_SANDBOX && MC && typeof MC.readMap === "function" && typeof MC.saveMap === "function" ? MC : null; };
-  function keepMap(key) {
-    if (mapSaving[key]) return;
-    mapSaving[key] = setTimeout(() => { mapSaving[key] = 0; try { const MC = mapKept(), c = mapReply[key]; if (MC) { if (c && c.sig) MC.saveMap(key, { sig: c.sig, n: c.n, r: c.r }).catch(() => {}); else MC.forgetMap(key).catch(() => {}); } } catch (_) { /* the page does not depend on it */ } }, 3000);
-  }
   /* COST (Oct 2026): a map whose signature moved (a person's answer, by anyone, on any computer) was read whole again by every tab: about
      3,000 + 2,000 + 300 documents. The answer held is sent as `since` (its signature and how many documents it was read from), and the cloud
      answers with what was written since (`changes`, by key: null takes one away), which is put over a copy of the answer held, the same shape
@@ -1789,15 +1777,12 @@ const Orders = window.Orders = (() => {
     return Object.assign({}, had, { [field]: next });
   }
   async function readMap(key, op) {
-    // (the first read of a page asks what the copy kept on this computer held; one ask per map, every caller waits for it)
-    if (!mapReply[key] && !(key in mapHeld)) { const MC = mapKept(); mapHeld[key] = MC ? MC.readMap(key).then(h => { if (h && !mapReply[key]) mapReply[key] = { sig: h.sig, n: h.n, r: h.r, at: 0 }; }, () => {}) : null; }
-    if (mapHeld[key]) await mapHeld[key];
     const had = mapReply[key], at = ++mapAsk;
     const since = had && had.sig && Array.isArray(had.n) && !had.r.truncated ? { sig: had.sig, n: had.n } : null;
     const r = await api("charmNestLibrary", had && had.sig ? Object.assign({ op, ifSig: had.sig }, since ? { since } : {}) : { op });
     if (r && r.unchanged && had) return (mapReply[key] || had).r;   // (the newest whole answer held: one that came back meanwhile is newer)
-    if (r && r.since && since && r.sig && Array.isArray(r.n)) { const whole = Object.assign(withChanges(key, had.r, r.changes), { sig: r.sig, n: r.n }); if (!mapReply[key] || at > mapReply[key].at) { mapReply[key] = { sig: r.sig, n: r.n, r: whole, at }; keepMap(key); } return whole; }
-    if (r && r.sig) { if (!mapReply[key] || at > mapReply[key].at) { mapReply[key] = { sig: r.sig, n: Array.isArray(r.n) ? r.n : null, r, at }; keepMap(key); } } else { delete mapReply[key]; keepMap(key); }
+    if (r && r.since && since && r.sig && Array.isArray(r.n)) { const whole = Object.assign(withChanges(key, had.r, r.changes), { sig: r.sig, n: r.n }); if (!mapReply[key] || at > mapReply[key].at) { mapReply[key] = { sig: r.sig, n: r.n, r: whole, at }; } return whole; }
+    if (r && r.sig) { if (!mapReply[key] || at > mapReply[key].at) { mapReply[key] = { sig: r.sig, n: Array.isArray(r.n) ? r.n : null, r, at }; } } else { delete mapReply[key]; }
     return r;
   }
   if (!B.maps.customDone) B.maps.customDone = {};
@@ -3262,7 +3247,7 @@ const Orders = window.Orders = (() => {
   /** The counts left for an idle moment, made now; the Filters panel drawn with them when they differ from what it shows. */
   function actFlush() {
     const w = actWant; clearActIdle(); if (!w || !actArgs) return;
-    const was = JSON.stringify(actArgs.act), act = actCount(w.all);
+    const was = JSON.stringify(actArgs.act), PP = window.PiecePlacement, act = PP && PP.memoized ? PP.memoized(() => actCount(w.all)) : actCount(w.all);
     if (JSON.stringify(act) !== was) { actArgs = Object.assign({}, actArgs, { act }); try { renderFilters(w.v, actArgs); } catch (e) { console.warn("[orders] filters", e && e.message); } }
   }
   /** Update totals and filters without rebuilding the search field. */
@@ -3611,30 +3596,21 @@ const Master = window.Master = (() => {
     B.master.loading = (async () => {
       if (changed) render();
       try {
-        const sig = x => JSON.stringify(x || null), MC = window.CharmNestMasterCache;
-        // a page with nothing yet starts from the copy kept on this computer; it is believed only once the cloud's signatures say nothing changed
-        let held = null; if (MC && !B.master.index && !o.force) { try { held = await MC.read(); } catch (_) { held = null; } }
-        // (COST, Oct 2026: a foreground load that already holds the index checks its signature too, where it read all of it again; load(true) still does)
-        const base = held || (!o.force && B.master.index ? B.master : null);
-        const first = base ? await api("charmNestLibrary", base.filesSig ? { op: "masterListFiles", ifFilesSig: base.filesSig } : { op: "masterListFiles" }, held && !o.quiet ? { label: "Checking the charm library" } : quiet) : null;   // (the file records are sent again only when they changed)
-        const unchanged = !!(first && first.index && sig(first.index) === sig(base.index));
-        /* COST (Oct 2026): a signature that moved read all ~7,000 entries again on every tab. A copy that knows how many documents it stands
-           for (docs: its entries and shells, as read) asks only for what was written since its stamps (charmNestLibrary masterListSince);
-           a removal, or anything the cloud cannot vouch for, answers `full` and the index is read whole as before. */
+        const sig = x => JSON.stringify(x || null), base = !o.force && B.master.index ? B.master : null;   // (COST, Oct 2026: a load that already holds the index checks its signature first; load(true) reads all of it)
+        const first = base ? await api("charmNestLibrary", base.filesSig ? { op: "masterListFiles", ifFilesSig: base.filesSig } : { op: "masterListFiles" }, quiet) : null, unchanged = !!(first && first.index && sig(first.index) === sig(base.index));
+        /* COST (Oct 2026): a page that knows how many documents it stands for (docs: its entries and shells, as read) asks only for what was written since its stamps (charmNestLibrary masterListSince);
+           a removal, or anything the cloud cannot vouch for, answers `full` and the index is read whole. */
         const since = !unchanged && base && base.index && base.index.indexedAt != null && Number.isFinite(base.docs) ? { indexedAt: base.index.indexedAt, updatedAt: base.index.updatedAt, shape: base.index.shape, docs: base.docs } : null;
         const step = since ? await api("charmNestLibrary", { op: "masterList", since }, quiet).catch(() => null) : null, delta = step && step.since && step.index && Array.isArray(step.entries) ? step : null;
-        const [ix, fl] = await Promise.all([unchanged || delta ? null : api("charmNestLibrary", { op: "masterList", limit: 3000 }, Object.assign({ label: "Loading the charm library", all: ["entries", "shells"] }, quiet)), first || api("charmNestLibrary", { op: "masterListFiles" }, quiet)]);
-        // (REDRAW: the library as this page knew it before this read, or as the copy kept on this computer had it: an entry whose drawing this read changes re-makes the open pieces cut from the old one, Review.redrawNoted)
-        const before = B.master.entries && B.master.entries.size ? B.master.entries : held ? new Map(held.entries.map(e => [e.sku, e])) : null;
+        // (FASTOPEN, 23 Nov 2026: the SKU list is one answer, and the upload history, which only the Charm repository's tab shows, comes after it)
+        const ix = unchanged || delta ? null : await api("charmNestLibrary", { op: "masterList", limit: 3000, whole: true }, Object.assign({ label: "Loading the charm library", all: ["entries", "shells"] }, quiet));
+        const before = B.master.entries && B.master.entries.size ? B.master.entries : null;   // (REDRAW: an entry whose drawing this read changes re-makes the open pieces cut from the old one, Review.redrawNoted)
         if (ix) { B.master.entries = new Map((ix.entries || []).map(e => [e.sku, e])); B.master.index = ix.index || null; B.master.docs = ix.index && Array.isArray(ix.shells) ? (ix.entries || []).length + ix.shells.length : null; changed = true; }
-        else if (delta) { const m = new Map(base === held ? held.entries.map(e => [e.sku, e]) : B.master.entries); for (const e of delta.entries) m.set(e.sku, e); B.master.entries = m; B.master.index = delta.index; B.master.docs = delta.index.count; changed = true; }   // (the cloud counted no removal: the copy and what was written since are the index)
-        else if (held) { B.master.entries = new Map(held.entries.map(e => [e.sku, e])); B.master.index = held.index; B.master.docs = Number.isFinite(held.docs) ? held.docs : null; changed = true; }   // (the signatures agree: the copy is the index)
+        else if (delta) { const m = new Map(B.master.entries); for (const e of delta.entries) m.set(e.sku, e); B.master.entries = m; B.master.index = delta.index; B.master.docs = delta.index.count; changed = true; }   // (the cloud counted no removal: what this page holds and what was written since are the index)
         if (before && B.master.entries !== before) { try { window.Orders?.noteInputs?.(); } catch (_) {} try { if (window.Review && Review.redrawNoted) Review.redrawNoted(before, B.master.entries); } catch (e) { console.warn("[redraw] the library was not compared:", e && e.message); } }
-        if (fl.unchanged) fl.files = held ? held.files : B.master.files || [];
-        if (!changed && sig(fl.files) !== sig(B.master.files)) changed = true;
-        B.master.files = fl.files || []; B.master.filesSig = fl.filesSig || null; B.master.loadedAt = Date.now();
-        // what was read whole is kept (serialised now, written in the background); files that changed under an unchanged index replace the kept ones
-        if (MC) { try { if (ix) { if (ix.index) MC.save({ index: ix.index, entries: ix.entries || [], files: B.master.files, filesSig: B.master.filesSig, docs: B.master.docs }); else MC.forget(); } else if (delta) MC.save({ index: B.master.index, entries: [...B.master.entries.values()], files: B.master.files, filesSig: B.master.filesSig, docs: B.master.docs }); else if (!fl.unchanged) MC.saveFiles(B.master.files, B.master.filesSig); } catch (_) { /* the page does not depend on it */ } }
+        const files = fl => { if (!fl || fl.unchanged) return; if (sig(fl.files) !== sig(B.master.files)) changed = true; B.master.files = fl.files || []; B.master.filesSig = fl.filesSig || null; };
+        B.master.loadedAt = Date.now();
+        if (first) files(first); else if (o.force) files(await api("charmNestLibrary", { op: "masterListFiles" }, quiet)); else setTimeout(() => { api("charmNestLibrary", { op: "masterListFiles" }, { quiet: true }).then(fl => { files(fl); render(); }).catch(() => { /* read with the next look at the library */ }); }, 4000);
         if (B.master.error) changed = true;
         B.master.error = null;
       } catch (e) { if (B.master.error !== e.message) changed = true; B.master.error = e.message; throw e; }   // a failed load must not look like an empty library
@@ -5551,7 +5527,8 @@ const Pool = window.Pool = (() => {
     const fail = why => { heldFailed.set(poolId, Date.now()); heldWhyOf.set(poolId, String(why).slice(0, 40)); return null; };
     task = (async () => {
       // (the CLOUD's row first: a row this page kept from an earlier pass may name a file that was sent again since, or a piece that has since been taken off its sheet; the page's own is the fallback)
-      let p = null; const rid = String(poolId).split("_")[0];
+      let p = B.pool.rows.get(poolId) || null; const rid = String(poolId).split("_")[0];
+      if (p && !p.custom) { const c = p.sheetId && window.Recall && Recall.pieceCharm ? await Recall.pieceCharm(p.sheetId, poolId) : null; if (!c) return fail("nopiece"); previews.set(poolId, c); previewKeep.add(poolId); heldWhyOf.delete(poolId); return c; }   // (FASTOPEN: its sheet is not built on this page: the piece alone is)
       try { const r = await api("charmNestLibrary", { op: "getOrderPieces", orderId: rid }, { quiet: true }); p = (((r && r.orders && r.orders[rid] && r.orders[rid].pools) || []).find(x => x && x.poolId === poolId)) || null; } catch (_) { p = null; }
       if (!p || !p.aiPath) p = B.pool.rows.get(poolId) || p;
       if (!p) return fail("norow");
@@ -22883,7 +22860,7 @@ const Review = window.Review = (() => {
   }
   /* ── Custom Orders that ask nothing, and those completed ── */
   const infoItems = new Map();
-  const whenOf = t => { if (!t) return ""; const d = new Date(t), today = new Date(); return d.toDateString() === today.toDateString() ? fmtT(t) : d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + fmtT(t); };
+  const dayOf = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }), whenOf = t => { if (!t) return ""; const d = new Date(t), today = new Date(); return d.toDateString() === today.toDateString() ? fmtT(t) : dayOf.format(d) + " " + fmtT(t); };   // (FASTOPEN: one formatter; a new one for each card took 0.1 s of every pass)
   /** Display history is derived from an existing successful send; rendering never creates a new decision or stamp. */
   function sentRecord(row, decision) {
     const kept = B.maps.customDone?.[row.key] || B.maps.customKept?.[row.key] || {};
@@ -28848,7 +28825,7 @@ const Recall = window.Recall = (() => {
     if (!o.force && Date.now() - followAt < 600000) return false;
     followAt = Date.now();
     following = (async () => {
-      const ls = await api("charmNestLibrary", { op: "listSheets", limit: 200, runId }, { quiet: true, all: "sheets" });
+      const ls = await api("charmNestLibrary", { op: "listSheets", limit: 200, runId, whole: true }, { quiet: true, all: "sheets" });
       if (B.run || on() || ownWork()) return false;   // (a run was opened, or work begun, here while the list was on its way)
       const byName = new Map(), gone = new Set((window.CharmNestRunFollow && CharmNestRunFollow.state().retired) || []);   // (GONESHEET: a sheet the run let go of (deleted on the carrying computer) is not listed, though its record is archived only at the run's next checkpoint)
       for (const x of ls.sheets || []) { if (gone.has(String(x.id))) continue; const k = (x.setId || "") + "|" + (x.fileBase || x.id); /* (NAMECLASH: as above: a follower showed 3 of 4 sheets when two sets held one name) */ const had = byName.get(k); if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) byName.set(k, x); }
@@ -28899,7 +28876,7 @@ const Recall = window.Recall = (() => {
         prim.active = 0; prim.el = prim.cardEl; CN.showPage(m.key, show);
       }
       Object.assign(followState, { at: Date.now(), result: "cards built from the cloud", kept, rebuilt, renamed: 0 });
-      CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub();
+      CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub(); if (OrderWin.isOpen()) OrderWin.paint();   // (a window opened before the sheets were listed read "GF Sheet ?")
       agent({ run: runId }, "cloud", `${sheets.length} sheet(s) of the open run shown on the Nest cards as the cloud has them: nothing is nested on this computer`);
       if (reopen) setTimeout(() => { try { if (!OptionsStudio.isOpen(reopen)) { const prim = S.sheets[reopen], el = prim && (prim.cardEl || prim.el), btn = el && el.querySelector(".sheetOptionsBtn"); if (btn) btn.click(); } } catch (_) { /* the person opens it again */ } }, 700);
       liveLater(runId);
@@ -28910,24 +28887,26 @@ const Recall = window.Recall = (() => {
   /* (LIVEFOLLOW, Paul 15 Nov 2026: "Michelle's computer is now updated but I can't click on any of the sheets ... I also can't see the red dots that show the back engraving"): a sheet shown from its saved picture cannot
      be clicked and shows no piece. Each followed sheet is made a LIVE sheet here, built from its cloud record: every piece from the master files at the place its record gives it (charm-nest-cloud-sheets.js reload,
      which keeps the cloud's revision of its layout, so whatever is changed here later is checked against the cloud). Nothing is nested and nothing is written. The pieces of all the sheets are read together (300 a
-     call), the sheet on screen is built first, and the page is let answer between sheets. A sheet already cut stays its picture (it can no longer change). */
-  let livening = null, liveT = 0, liveTouch = 0;
-  if (typeof document !== "undefined") for (const type of ["pointerdown", "keydown", "wheel"]) document.addEventListener(type, () => { liveTouch = Date.now(); }, { capture: true, passive: true });   // (QUIETLIVE: when a hand last touched the page)
-  function liveLater(runId) { clearTimeout(liveT); liveT = setTimeout(() => { makeLive(runId).catch(e => console.warn("[follow sheets] live", e && e.message)); }, 400); }
+     call). A sheet already cut stays its picture (it can no longer change).
+     FASTOPEN (23 Nov 2026): only the sheet a person looks at is built, when it is looked at (the Nest tab's card of each metal; CN.showPage and the tab's opening ask). After every reload all 52 were built in the background, some
+     800 design files read again on every computer, minutes of work nobody had asked for; any other sheet is built when it is opened to be changed (charm-nest-cloud-sheets.js ensureLive). */
+  let livening = null, liveT = 0;
+  function liveLater(runId) { clearTimeout(liveT); liveT = setTimeout(() => { makeLive(runId).catch(e => console.warn("[follow sheets] live", e && e.message)); }, 30); }
+  const lookedAt = p => S.mode === "nest" && S.sheets[p.metal] && S.sheets[p.metal].pages[S.sheets[p.metal].active || 0] === p;
+  /** The sheets on screen built, when they are shown from their pictures (nothing to do on a computer that carries the run). */
+  const live = () => { const p = allSheets().find(x => x.followed && x.recalled && lookedAt(x)); if (p) liveLater(p.runId || null); };
   async function makeLive(runId) {
     if (livening) return livening;
     livening = (async () => {
       const CS = window.CharmNestCloudSheets; if (!CS || typeof CS.reload !== "function") return 0;
-      const todo = () => allSheets().filter(p => p.followed && p.recalled && !(p.charms || []).length && (p.runId || null) === runId && !p._liveFailed && !(+p.recalled.laserDoneAt > 0) && !p.recalled.roseCutAt);
+      const todo = () => allSheets().filter(p => p.followed && p.recalled && lookedAt(p) && !(p.charms || []).length && (p.runId || null) === runId && !p._liveFailed && !(+p.recalled.laserDoneAt > 0) && !p.recalled.roseCutAt);
       let pages = todo(); if (!pages.length) return 0;
       try { await Master.load(); } catch (_) {}
       let n = 0;
       for (;;) {
         if (B.run || on()) break;
         pages = todo(); if (!pages.length) break;
-        const shown = pages.find(p => { const prim = S.sheets[p.metal]; return prim && prim.pages[prim.active || 0] === p; }), pg = shown || pages[0];
-        const stockWas = pg.recalled && pg.recalled.roseStockId;
-        if (n) { for (const t0 = Date.now(); Date.now() - liveTouch < 1500 && Date.now() - t0 < 10000;) await new Promise(res => setTimeout(res, 400)); }   // (QUIETLIVE: the next sheet is built when nobody has touched the page for a moment, at most ten seconds' wait)
+        const pg = pages[0], stockWas = pg.recalled && pg.recalled.roseStockId;
         try { await CS.reload(pg, "this computer follows the run", { background: true }); pg.followed = true; n++; } catch (e) { pg._liveFailed = true; console.warn("[follow sheets] " + (pg.fileBase || pg.sheetId) + ": " + (e && e.message)); }
         // (FOLLOWSTOCK, Paul 15 Nov 2026: "I'm still seeing the rose gold sheet like this ... it sometimes updates and sometimes it doesn't": the sheet with none of its earlier cuts, and "room for about 60 more"): a sheet's metal (its
         //  physical sheet, the cuts already made on it, its own line) was read only while the sheet was still shown from its record; a sheet built here before that read had finished never read it at all. It is read as part
@@ -28936,7 +28915,6 @@ const Recall = window.Recall = (() => {
           try { const d = (await api("charmNestLibrary", { op: "getSheet", id: pg.sheetId }, { quiet: true })).sheet; if (d && d.roseStockId) { await RoseStock.restore(pg, d); try { CN.computeSaturation(pg); } catch (_) {} CN.renderCard(pg); if (CN.drawPreview) CN.drawPreview(pg); } }
           catch (e) { console.warn("[follow sheets] metal of " + (pg.fileBase || pg.sheetId) + ": " + (e && e.message)); }
         }
-        await new Promise(res => setTimeout(res, 350));
       }
       if (n) { try { CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub(); } catch (_) {} try { if (window.CharmNestMadeThumb && typeof CharmNestMadeThumb.refreshSoon === "function") CharmNestMadeThumb.refreshSoon(); } catch (_) {} agent({ run: runId }, "cloud", `${n} sheet(s) of the open run built on this computer from their cloud records: every piece where the cloud has it`); }
       return n;
@@ -28976,7 +28954,13 @@ const Recall = window.Recall = (() => {
   }
   /** The sheet drawn again, now, from the answer its card holds (a change pressed here shows at once: SKUNOW). */
   const redraw = pg => { if (!pg || !pg.answer || pg.laserDoneAt || pg.roseCutAt) return Promise.resolve(false); pg.recalled = pg.answer; return rebuild(pg, { background: true, now: true, answer: pg.answer }); };
-  return { open, rebuild, redraw, piecesOf, on, state: () => RC, follow, unfollow, repicture, followState: () => Object.assign({}, followState) };
+  /** One piece of a sheet that is not built on this page, made from the sheet's own answer (the engraving card's outline). null: not read. */
+  const answers = new Map();
+  async function pieceCharm(sheetId, poolId) {
+    let a = answers.get(sheetId); if (!a || Date.now() - a.at > 30000) { a = { at: Date.now(), p: sheetAnswer(sheetId) }; answers.set(sheetId, a); if (answers.size > 8) answers.delete(answers.keys().next().value); }
+    const d = await a.p, rc = d && (d.charms || []).find(c => c && c.poolId === poolId); return rc ? charmOfRecord(d, rc, (d.pools && d.pools[poolId]) || {}) : null;
+  }
+  return { open, live, pieceCharm, rebuild, redraw, piecesOf, on, state: () => RC, follow, unfollow, repicture, followState: () => Object.assign({}, followState) };
 })();
 
 

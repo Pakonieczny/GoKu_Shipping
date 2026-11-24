@@ -478,10 +478,14 @@
     }
     /* ── ENGNOTE: which line of the order a staff note's words are for (engPick, below make: the page's panel asks it too) ── */
     const jobsOfLine = r => { try { return (E.jobsOf ? E.jobsOf(r) : root && root.Engrave && typeof root.Engrave.jobsOf === "function" ? root.Engrave.jobsOf(r) : []) || []; } catch (_) { return []; } };
+    let byOrder = null;   // (FASTOPEN: order → its rows, listed once for a turn of the page; every line of 1,600 walked all 1,600)
     function orderRowsOf(line) {
-      let rs = null;
-      try { rs = E.orderRows ? E.orderRows(line) : root && root.Orders && typeof root.Orders.rows === "function" ? root.Orders.rows().filter(r => r && r.order && line.order && String(r.order.receiptId) === String(line.order.receiptId)) : null; } catch (_) { rs = null; }
-      return rs || [];
+      try {
+        if (E.orderRows) return E.orderRows(line) || [];
+        if (!line.order || !(root && root.Orders && typeof root.Orders.rows === "function")) return [];
+        if (!byOrder) { byOrder = new Map(); Promise.resolve().then(() => { byOrder = null; }); for (const r of root.Orders.rows()) if (r && r.order) { const k = String(r.order.receiptId); (byOrder.get(k) || byOrder.set(k, []).get(k)).push(r); } }
+        return (byOrder.get(String(line.order.receiptId)) || []).slice();
+      } catch (_) { return []; }
     }
     const pickHooks = () => ({ READER, jobsOf: jobsOfLine, neverEngraves, finished: E.finished, customSent: E.customSent });
     function engReading(row) { const line = lineRowOf(row); return line && line.spec ? engPick(line, Object.assign({ rows: orderRowsOf(line) }, pickHooks())) : null; }

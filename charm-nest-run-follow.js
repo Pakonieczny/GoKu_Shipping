@@ -74,7 +74,7 @@
       const lines = run.lines, inRun = new Set((run.orders || []).map(String)), O = root.Orders, B = root.B;
       if (!O || !B || !B.orders) return st;
       // (CLOUDWORLD stage B, Paul 20 Nov 2026: "Only the cloud can decide"): the lines come whole from the cloud world, never from the run record and this computer's own reading
-      const CW = root.CloudWorld;
+      const CW = root.CloudWorld; if (viewer() && CW && typeof CW.firstRead === "function") await CW.firstRead();   // (FASTOPEN: a computer that follows the cloud took every line from the run's record and read it itself, 0.6 s, a moment before the cloud's lines replaced them all)
       if (CW && typeof CW.drives === "function" && CW.drives()) {
         safe(() => CW.applyToRows("follow"));
         if (viewer()) runOnly(lines, O, B);

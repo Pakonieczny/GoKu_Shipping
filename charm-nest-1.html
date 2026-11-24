@@ -7,6 +7,17 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2220%22%20fill%3D%22%23221f1b%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2216%22%20width%3D%2230%22%20height%3D%2230%22%20rx%3D%226%22%20fill%3D%22%23c8a24e%22%2F%3E%3Crect%20x%3D%2254%22%20y%3D%2216%22%20width%3D%2230%22%20height%3D%2230%22%20rx%3D%226%22%20fill%3D%22%238d95a0%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2254%22%20width%3D%2230%22%20height%3D%2230%22%20rx%3D%226%22%20fill%3D%22%23c08578%22%2F%3E%3Ccircle%20cx%3D%2269%22%20cy%3D%2269%22%20r%3D%2214%22%20fill%3D%22none%22%20stroke%3D%22%23caa861%22%20stroke-width%3D%226%22%2F%3E%3C%2Fsvg%3E">
 <meta name="theme-color" content="#221f1b">
 <!-- first, so every timer and frame the page sets keeps full speed while the tab is out of view -->
+<script>/* NODISK (Paul, 23 Nov 2026: "The computer is not allowed to hold any information"): no copy of a sheet, a list, a design, a map or a picture is saved on this computer; what was saved before is deleted.
+   The lists kept in localStorage (finished and cancelled orders, stages, designs, photos, what was shared) live in this page only, and come from the cloud with the next one. */
+(function(){try{if(/"sandbox":"on"/.test(localStorage.getItem("cn.settings")||""))return;var F=IDBFactory.prototype,open=F.open,DB=["cn-local.production","cn-blobs","cn-master-list","cn-map-copy","cn-thumbs"];F.open=function(n){if(DB.indexOf(String(n))>=0)throw new Error("nothing is kept on this computer");return open.apply(this,arguments);};DB.forEach(function(n){indexedDB.deleteDatabase(n);});
+var M=new Map(),no=/^cn\.(completed|designs|listingPhotos|share\.seen|custom\.shared|flow|laserSheetLast|cancelIds|autoCancel|orderDays|arrivals)\b/,S=Storage.prototype,get=S.getItem,set=S.setItem,rm=S.removeItem,ls=localStorage,mem=function(o,k){return o===ls&&no.test(k);};for(var i=ls.length-1;i>=0;i--){var k=ls.key(i);if(no.test(k))rm.call(ls,k);}
+S.getItem=function(k){k=String(k);return mem(this,k)?(M.has(k)?M.get(k):null):get.call(this,k);};S.setItem=function(k,v){k=String(k);if(mem(this,k)){M.set(k,String(v));return;}return set.call(this,k,v);};S.removeItem=function(k){k=String(k);if(mem(this,k)){M.delete(k);return;}return rm.call(this,k);};}catch(_){}})();</script>
+<script>/* FASTOPEN (Paul, 23 Nov 2026: "nowhere in the application is the system allowed to make the user wait"): the reads the first screen needs leave with the page, side by side, before one script has loaded; the call that asks for one
+   (api, below) is handed it. They were asked one after the other: the order lines stood 4 s after a reload, the SKU list 9 s, the sheets 16 s. Nothing is kept: each is taken once, within 30 s. */
+(function(){try{if(/"sandbox":"on"/.test(localStorage.getItem("cn.settings")||""))return;var P={},ask=function(b){return P[JSON.stringify(b)]=fetch("/.netlify/functions/charmNestLibrary",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});};
+window.CNFirst=function(b){var k=JSON.stringify(b),p=P[k];if(!p||performance.now()>30000)return null;delete P[k];return p.then(function(r){return r.ok?r:null;},function(){return null;});};
+ask({op:"ping"});ask({op:"worldGet",lines:true,whole:true});ask({op:"masterList",limit:3000,whole:true});ask({op:"runList",limit:10});
+ask({op:"driveGet"}).then(function(r){return r.clone().json();}).then(function(d){var id=d&&d.state&&d.state.runId;if(id){ask({op:"runGet",runId:id});ask({op:"listSheets",limit:200,runId:id,whole:true});}}).catch(function(){});}catch(_){}})();</script>
 <script src="charm-nest-hangwatch.js?v=20261114-hw4"></script>
 <script src="charm-nest-clock.js?v=20260924-recover-hw2"></script>
 <!-- the service worker's switch (charm-nest-sw.js: the page's code and pictures kept on this computer, by version; Paul, 28 Oct 2026: "This must work like a native
@@ -4025,7 +4036,6 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-assets.js?v=20261007-imgcache-perf1-nv2"></script>
 <script src="charm-nest-thumbs.js?v=20261009-th1-pb1-bp1"></script>
 <script src="charm-nest-pic-busy.js?v=20261028-pb1"></script><!-- charm-nest-pic-busy.js: one quiet "Updating…" ring on every picture that is being drawn again (PICBUSY, Paul 28 Oct 2026) -->
-<script src="charm-nest-master-cache.js?v=20261009-mc1-cost18-mp1"></script>
 <script src="charm-nest-ce-masters.js?v=1117-8cfd9400"></script><!-- charm-nest-ce-masters.js: a charm DESIGNED in the Charm Editor, opened from the charm library or started from nothing, saved as a design version (DESIGN & ENGRAVE, Paul 28 Oct 2026) -->
 <script src="charm-nest-store.js?v=20261028-ls1-ob1-fd2"></script><!-- charm-nest-store.js: the records kept on this computer, one database per world, reads keyed by revision (LOCAL, Paul 28 Oct 2026) -->
 <script src="charm-nest-sync-worker.js?v=1120-world1"></script><script src="charm-nest-order-days.js?v=20261109-sal1"></script><!-- charm-nest-order-days.js: the Orders head's Today / Yesterday / Last 7 days, counted in Toronto days (SAL1, Paul 9 Nov 2026) --><!-- charm-nest-sync-worker.js: one changes feed per computer and world, asked by one tab, heard by all (FEED, Paul 28 Oct 2026) -->
@@ -4078,21 +4088,21 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1-sl1-pm1-zs1-dm1-nb1-ch1-ns1-lk1-nr1-au1-rlk2-rs1-en1-kp1-wo1-sb1-od1-nk2-rvd1-add1-szf1-szr1-mono1-monoui1-mono7-pin1-meg1-setfix1-hp1-rv1-br1-hsym1-bh1-num1-bl1-so1-fh1-co1-fd1-once1-skp1-oos1-bf1-tab1-bfw1-ltr1-fh3-fh4-fh5-fh2-bfh1-od1-fhd1-on1-l16-oc1-um1-rvl1-ah1"></script>
 <script src="charm-nest-engrave-said.js?v=merge-1115q"></script>
 <script src="charm-nest-engrave-read.js?v=20261013-sbc1-fh5-sk2"></script>
-<script src="charm-nest-engrave-classify.js?v=1120-classify1-eng1-eng2"></script>
+<script src="charm-nest-engrave-classify.js?v=1120-classify1-eng1-eng2-fo1"></script>
 <script src="charm-nest-engrave-asks.js?v=merge-1115q"></script>
 <script src="charm-nest-engrave-piece-words.js?v=20261016-pw1-br1-ms1-bh1"></script>
 <script src="charm-nest-engrave-preview.js?v=20261012-pv1-r2th1-th2-bg1-sb2-cb1-rf2-mg1-up1-es1-bb1-fa2"></script>
-<script src="charm-nest-run-follow.js?v=1120-world2-rlh1-v14-it2-s1"></script>
+<script src="charm-nest-run-follow.js?v=1120-world2-rlh1-v14-it2-s1-fo1"></script>
 <script src="charm-nest-drive.js?v=1120-drive1-on1"></script><!-- charm-nest-drive.js: the cloud drive on this page (CLOUDDRIVE build steps 8 and 15): Settings → Cloud, the hand-over to the cloud, taking a run back from the cloud on Resume; dormant while the drive is off -->
 <script src="charm-nest-instant.js?v=1123-in1"></script>   <!-- INSTANT (Paul 23 Nov 2026): a press shows at once; what it asks of the cloud is sent behind the screen, in order, and put back in red if refused -->
 <script src="charm-nest-cmd-now.js?v=1121-now"></script>   <!-- NOWCMD (Paul 21 Nov 2026): every press that asks the cloud is followed until the cloud answers: its step, its words, a failure in red with Try again -->
 <script src="charm-nest-viewer.js?v=1120-v14-on1-fl1-va2-ds1-it1-it8-g2-s4-s3-s2-s5-now-in1"></script>   <!-- CLOUDDRIVE build step 14: pages become viewers when the cloud carries every run (Charm_Nest_Open/drive mode "on"); dormant in every other mode -->
 <script src="charm-nest-cloud-sheets.js?v=1117-dfdd13cc-s4-inst1-dr2"></script>
-<script src="charm-nest-drift.js?v=1120-world14-all1"></script><script src="charm-nest-cloud-world.js?v=1120-world8-v14-it2-fp1-inst1"></script><!-- charm-nest-cloud-world.js: the cloud world on this page, in memory only; a computer that carries no run takes its order lines from it (CLOUDWORLD stage B, Paul 20 Nov 2026) -->
+<script src="charm-nest-drift.js?v=1120-world14-all1"></script><script src="charm-nest-cloud-world.js?v=1120-world8-v14-it2-fp1-inst1-fo1"></script><!-- charm-nest-cloud-world.js: the cloud world on this page, in memory only; a computer that carries no run takes its order lines from it (CLOUDWORLD stage B, Paul 20 Nov 2026) -->
 <script src="charm-nest-cloud-activity.js?v=20261113-ca1"></script>   <!-- CLOUDALL S4 (Paul 13 Nov 2026): every computer's activity log lines shared through the cloud -->   <!-- CLOUDALL (Paul 13 Nov 2026): every sheet is one cloud document, changed from any computer, followed by every computer -->   <!-- RUNFOLLOW (Paul 13 Nov 2026): a computer without the run follows the cloud run's lines (held, pooled, taken out) -->
 <script src="charm-nest-cloud-tray.js?v=20261114-ct1-cs1"></script>   <!-- (CLOUDTRAY, Paul 14 Nov 2026: "You must put all this in the cloud" -> "Yes, build it"): the Nest rail's dropped files shared by every computer through the cloud -->
 <script src="charm-nest-cloud-share.js?v=20261114-cs1-cs2"></script>   <!-- (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): what every computer keeps the same (Settings, the stock preset, set-aside notices, unsent drafts, the learned lists, Manual Control drafts), shared through the cloud and the changes feed -->
-<script src="charm-nest-engrave-sync.js?v=1120-world9-apc1-kr1-pf1-er1-ns2-ia1-dp2"></script>   <!-- ENGRSYNC (Paul 13 Nov 2026): every line's engraving work and every Charm Editor Save shared by every computer, live -->
+<script src="charm-nest-engrave-sync.js?v=1120-world9-apc1-kr1-pf1-er1-ns2-ia1-dp2-fo1"></script>   <!-- ENGRSYNC (Paul 13 Nov 2026): every line's engraving work and every Charm Editor Save shared by every computer, live -->
 <script src="charm-nest-engrave-cloud.js?v=1121-cloud11-va1-it9-an1-an2"></script>   <!-- the engrave lane (cloud plan v2 step 11, DORMANT while the drive is off): when the cloud carries the run, Approve is sent to it and this page writes no back file -->
 <script src="charm-nest-made-thumb.js?v=20261028-ts1-fb1-tb2-mv1-bx1-pb1-np1-gn1-bb1-fa1-fj1-fs1-fa2"></script><!-- charm-nest-made-thumb.js: every list box shows its pieces as they will be made (cut, art, Charm Editor changes, fitted words; front and back), live here and kept on the pool row for the other computers (THUMBSYNC, Paul 28 Oct 2026) -->
 <script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1-dm1-ko1-pv1"></script>
@@ -4364,6 +4374,7 @@ async function api(fn, body, opts = {}) {
   return apiOnce(fn, body, opts);
 }
 async function apiOnce(fn, body, opts) {
+  const early = fn === "charmNestLibrary" && window.CNFirst ? CNFirst(body || {}) : null;   // (FASTOPEN: asked by the page's first line)
   if (window.CNWipe.active && !opts.wipe && !READ_OP.test(String((body && body.op) || ""))) throw Object.assign(new Error("the sandbox is being reset: try again once the page has reloaded"), { transient: true, wiping: true });
   // (Paul, 26 Oct 2026: "information contamination where I'm not sure which set is old from a previous test-run and which is new current run") a sandbox tab whose side another
   // tab reset since it opened (it slept, was frozen, or missed the storage event and the channel) holds a run, sets and sheets that are gone: it never writes them back, it stands down and reloads (Session.stale)
@@ -4395,7 +4406,7 @@ async function apiOnce(fn, body, opts) {
     if (fn === "charmNestLibrary" && payload.op === "laserDone" && window.LaserSheetTime) { try { if (payload.done !== false) laserSent = payload.laserTime = window.LaserSheetTime.measure(payload.by); else window.LaserSheetTime.forget(payload.by); } catch (_) {} }
     // (OUTBOX: the page going away sends what its outbox still holds with keepalive, 64 KB at most: the next page sends it again and its mid makes that a no-op)
     const text = JSON.stringify(payload), keep = !!opts.keepalive && text.length < 60000;
-    const res = await fetch(`${FN}/${fn}`, { method: "POST", headers, body: text, keepalive: keep, signal: !keep && window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined });
+    const res = (early && await early) || await fetch(`${FN}/${fn}`, { method: "POST", headers, body: text, keepalive: keep, signal: !keep && window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined });
     const txt = await readBody(res, bar);
     // FEED (Paul, 28 Oct 2026: "everything immediate"): what this write named in the cloud (its answer's X-CN-Feed) is told to the other tabs of this computer now (charm-nest-sync-worker.js wrote)
     let fk = ""; try { fk = (res.headers && res.headers.get && res.headers.get("X-CN-Feed")) || ""; if (fk && window.CNSync && CNSync.wrote) CNSync.wrote(fk); } catch (_) {}
@@ -5195,6 +5206,7 @@ function showPage(metal, idx) {
   for (const pg of prim.pages) pg.el = null;
   prim.active = idx; const cur = prim.pages[idx]; cur.el = prim.cardEl;
   computeSaturation(cur); renderCard(cur);
+  if (window.Recall && Recall.live) Recall.live();
 }
 function removePage(pg) {
   const prim = S.sheets[pg.metal]; const i = prim.pages.indexOf(pg); if (i <= 0) return;
@@ -8726,7 +8738,7 @@ function setMode(mode) {
   S.mode = mode; renderNestFlow(); $$(".topbar button[data-mode]").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
   { const mm = $("#moreMenu"); if (mm) { const inMore = mm.querySelector(`button[data-mode="${mode}"]`); mm.classList.toggle("on", !!inMore); mm.querySelector("summary").title = inMore ? "Workspace · " + inMore.textContent.trim() : "Workspace tools and settings"; mm.open = false; } }
   // on a narrow window the tab strip scrolls: the tab you are on is always brought into view
-  $("#sheets").classList.toggle("hidden", mode !== "nest"); if (mode === "nest") requestAnimationFrame(() => METALS.forEach(m => drawPreview(activePage(m.key)))); $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
+  $("#sheets").classList.toggle("hidden", mode !== "nest"); if (mode === "nest") { if (window.Recall && Recall.live) Recall.live(); requestAnimationFrame(() => METALS.forEach(m => drawPreview(activePage(m.key)))); } $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
   for (const [m, id] of [["orders", "ordersView"], ["design", "designView"], ["master", "masterView"], ["efficiency", "efficiencyView"], ["engrave", "engraveView"], ["review", "reviewView"]]) $("#" + id).classList.toggle("hidden", mode !== m);
   { const t = $("#toasts"); if (t) t.classList.toggle("underRow", mode === "orders" || mode === "library" || mode === "design"); }   // (notices start under the first row of these tabs: .toasts.underRow)
   if (mode === "library") showLibrary(); if (mode === "charms") loadCharms();
@@ -9156,7 +9168,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26-now-inst1"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=1120-pair2-pmake1-apc1-place1-v14-dr1-dr2-sd1-sl1-or1-fa1-br1-sbc1-photo1-rm1-va1-it9-k14-it8-vi7-i16-cs1-g6-g9-s1-g4-s4-s3-s2-cd-now-nm1-lb1-lb2-se1-ia1-ts1-an1-rl1-ld1-ck1-src1-oa1-swh1-po1-lr1-rvl1-pf1-er1-sv1-ps1-ps2-mn1-ws1-la1-bp1-ub1-wc1-one1-an1-ac1-ah1-ia1-lc1-dp2-lbx1-ons1-inst1-ls1-dr1-dr2"></script>
+<script src="charm-nest-bridge.js?v=1120-pair2-pmake1-apc1-place1-v14-dr1-dr2-sd1-sl1-or1-fa1-br1-sbc1-photo1-rm1-va1-it9-k14-it8-vi7-i16-cs1-g6-g9-s1-g4-s4-s3-s2-cd-now-nm1-lb1-lb2-se1-ia1-ts1-an1-rl1-ld1-ck1-src1-oa1-swh1-po1-lr1-rvl1-pf1-er1-sv1-ps1-ps2-mn1-ws1-la1-bp1-ub1-wc1-one1-an1-ac1-ah1-ia1-lc1-dp2-lbx1-ons1-inst1-ls1-dr1-dr2-fo1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1-sy1-sy2"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1-ob1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>

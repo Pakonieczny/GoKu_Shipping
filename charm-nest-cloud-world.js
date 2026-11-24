@@ -30,7 +30,7 @@
     const since = whole ? 0 : W.at;
     const fresh = whole ? new Map() : null;
     do {
-      got = await api(Object.assign({ op: "worldGet", lines: true }, since ? { sinceAt: since } : {}, cursor ? { cursor } : {}));
+      got = await api(Object.assign({ op: "worldGet", lines: true }, whole && !cursor ? { whole: true } : {}, since ? { sinceAt: since } : {}, cursor ? { cursor } : {}));
       if (!got || got.error) throw new Error((got && got.error) || "no answer");
       if (whole) { for (const l of got.lines || []) if (l && l.key && !l.gone) fresh.set(l.key, l); } else take(got.lines);
       cursor = got.next || null; pages++;
@@ -59,7 +59,7 @@
     root.addEventListener("online", () => { if (!W.dead) refresh("online"); });
   }
   let booted = false;
-  function boot() { if (booted) return; booted = true; let n = 0; const go = () => { if (root.CN && typeof root.CN.api === "function" && safe(() => root.CN.S.cloud.ok, null) === true) return start(); if (++n < 240) setTimeout(go, 1000); else firstRes && firstRes(false); }; go(); }
+  function boot() { if (booted) return; booted = true; let n = 0; const go = () => { if (root.CN && typeof root.CN.api === "function" && safe(() => root.CN.S.cloud.ok, null) === true) return start(); if (++n < 4800) setTimeout(go, 50); else firstRes && firstRes(false); }; go(); }
 
   /* ── STAGE B (Paul, 20 Nov 2026): a computer that does not carry a run takes its order lines from the cloud, whole, and reads none itself ──
      drives(): the switch is on (Settings, shared by every computer: settings.cloudWorld, "on" unless a person turned it off) and this page holds no run of its own.
@@ -84,7 +84,7 @@
     // (the page's own start first: its restore empties the order lines of a computer the cloud drives, so the cloud's are put on after it, never before)
     // (ITEM 2, Paul 21 Nov 2026: no new orders on the staff computers since the cloud took every run): a viewer (mode "on") restores nothing and never listens, so Session.ready()
     //  stays false there for good and this waited every 800 ms for ever, putting none of the cloud's lines on. Its boot froze its workspace (CNViewer.boot): that is its start
-    if (root.Session && typeof root.Session.ready === "function" && !root.Session.ready() && !viewerStarted()) { clearTimeout(W.retry); W.retry = setTimeout(() => applyToRows(why), 800); return null; }
+    if (root.Session && typeof root.Session.ready === "function" && !root.Session.ready() && !viewerStarted()) { clearTimeout(W.retry); W.retry = setTimeout(() => applyToRows(why), 60); return null; }
     const O = root.Orders, B = root.B; if (!O || !B || !B.orders || !Array.isArray(B.orders.rows)) return null;
     applying = true;
     try {
