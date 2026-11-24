@@ -2108,7 +2108,7 @@ const Passcode = (() => {
       const imageRead=/\/etsyImages\b/.test(url);
       if(!imageRead)etsyRecord(url);
       // the outcome is counted too: a 429 is the strongest signal the watchdog can get
-      return orig.apply(this, arguments).then(resp => { if(imageRead && Number(resp.headers?.get?.('x-etsy-calls'))>0)etsyRecord(url); if (resp && resp.status === 429 && (!imageRead || Number(resp.headers?.get?.('x-etsy-calls'))>0)) { etsyMeter.status429++; etsyAlarm("Etsy answered 429 (rate limited)"); } else if (resp && resp.status >= 500) etsyMeter.errors++; return resp; }, err => { etsyMeter.errors++; throw err; });
+      return orig.apply(this, arguments).then(resp => { if(imageRead && Number(resp.headers?.get?.('x-etsy-calls'))>0)etsyRecord(url); if (resp && resp.status === 429 && (!imageRead || Number(resp.headers?.get?.('x-etsy-calls'))>0)) { if (resp.headers?.get?.("x-etsy-stopped") === "1") return resp; resp.clone().text().catch(() => "").then(t => { if (/etsy_stopped/.test(t)) return; etsyMeter.status429++; etsyAlarm("Etsy answered 429 (rate limited)"); }); } else if (resp && resp.status >= 500) etsyMeter.errors++; return resp; }, err => { etsyMeter.errors++; throw err; });
     }
     return orig.apply(this, arguments);
   };
@@ -2416,10 +2416,10 @@ function withTokenLock(fn) {
   return locks.request("etsy-token-refresh", opts, fn);
 }
 
-function retryRefreshLater() {
+function retryRefreshLater(fixedMs) {
   clearTimeout(__refreshRetry.t);
-  const ms = Math.min(300000, 15000 * 2 ** __refreshRetry.n);
-  __refreshRetry.n = Math.min(__refreshRetry.n + 1, 5);
+  const ms = fixedMs || Math.min(300000, 15000 * 2 ** __refreshRetry.n);
+  if (!fixedMs) __refreshRetry.n = Math.min(__refreshRetry.n + 1, 5);
   __refreshRetry.t = setTimeout(() => { __refreshRetry.t = null; refreshAccessToken({ now: true }).catch(() => {}); }, ms);
 }
 try {
@@ -2511,10 +2511,12 @@ async function refreshAccessToken({ force = false, now = false } = {}) {
         throw err;
       }
       // Not a sign-out: the network, a rate limit or the server. The tokens stay and the refresh is tried again.
+      // (TOKENLEASE, Paul 24 Nov 2026: while the shop's Etsy switch is on, the renewal is asked again every 20 s: it is answered by our own cloud, never by Etsy, and the login is back within 20 s of Resume Etsy)
+      const halted = /etsy_stopped/.test(String((err && err.message) || ""));
       console.warn("Etsy token refresh failed; retrying:", (err && err.message) || err);
       __refreshRetry.failedAt = Date.now();
-      setConn("warn", "Etsy: waiting for the network");
-      retryRefreshLater();
+      setConn("warn", halted ? "Etsy is stopped: press Resume Etsy in Brites Manager (Workspace, Settings)" : "Etsy: waiting for the network");
+      retryRefreshLater(halted ? 20000 : 0);
       throw new Error("Etsy token refresh failed (network): " + ((err && err.message) || err));
     } finally { __refreshPromise = null; }
   })();
