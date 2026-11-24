@@ -10,6 +10,7 @@
  *                        path: a segment adds an anchor, an anchor deletes it (Illustrator's Auto Add/Delete) · Esc or Enter ends the path · ⌘/Ctrl-click ends it and drops it
  *   Direct Selection (A) anchors and handles: click an anchor (Shift adds or takes away), drag on empty space to sweep a box round anchors, drag them; a handle of a smooth anchor
  *                        turns its partner with it (Alt breaks it, Shift: 45°); a segment dragged: a straight one moves its two anchors, a curve bends through the cursor;
+ *                        a part of several outlines (a hatch with a hole): the one clicked is taken alone (ONEOUTLINE: double-click: the whole of it; Delete: gone, a hole filled);
  *                        arrows nudge the anchors (0.05 mm, Shift 1 mm; a run of taps is one undo step); Delete takes the anchors out with their segments, as Illustrator does
  *   Add anchor (+)       a click on a segment: an anchor there, the shape unchanged (the curve split where it was clicked)
  *   Delete anchor (−)    a click on an anchor: gone, the path kept joined and as near its old shape as one curve can be (the two curves fitted as one)
@@ -711,6 +712,18 @@
     return ok;
   }
   const key = (ci, ai) => ci + ':' + ai;
+  /* ONEOUTLINE (Paul, 24 Nov 2026: "select the outlines of a hatching ... There's an outer outline and a inner outline and I need to be able to manipulate both and delete either one ... if I delete the inner one, it should
+     fill the hatching"): in a part of several outlines (a hatch with a hole) Direct Selection takes the ONE outline clicked: its own line and anchors are shown, its segments and anchors are dragged, a double-click picks the
+     whole of it (drag or arrows move it), Shift-click adds another, Delete takes it out (the inner one gone, the hatch is filled). Any other selection lets go of it. */
+  const conOf = (ctx, st, inf) => { const s = st.con && st.conSel === ctx.selection().join(',') ? st.con.get(inf.id) : null; if (!s) return null; const ok = new Set([...s].filter(ci => inf.cs[ci])); return ok.size && inf.cs.length > 1 ? ok : null; };
+  function takeOutline(ctx, inf, ci, add) {
+    const st = S(ctx);
+    if (!inf || inf.cs.length < 2) { st.con = null; return; }
+    const had = add && st.con ? st.con : new Map(), set = new Set(add && had.get(inf.id) || []); set.add(ci); had.set(inf.id, set);
+    st.con = had; st.conSel = ctx.selection().join(','); if (typeof ctx.redraw === 'function') ctx.redraw();
+  }
+  /** Every anchor of the outlines in hand, as selectAnchors takes them. */
+  function outlineAnchors(ctx, st) { const out = []; for (const inf of targets(ctx)) { const s = conOf(ctx, st, inf); if (s) for (const ci of s) inf.cs[ci].pts.forEach((a, ai) => out.push({ id: inf.id, ci, ai })); } return out; }
 
   /* ── finding things under the pointer (screen tolerances, as Illustrator's: the anchors 5 px, the segments 4 px) ── */
   function anchorHit(inf, p, tol, filter) {
@@ -817,7 +830,7 @@
     const st = S(ctx), V = viewOf(ctx), items = ctx.items();
     if (!treeNo.has(items)) treeNo.set(items, ++treeSeq);
     const g = st.g, memo = [tool, treeNo.get(items), V.join(','), ctx.selection().join(','), [...st.anc].map(([id, k]) => id + ':' + [...k].join(',')).join(';'), st.hovId,
-      st.pen ? [st.pen.id, st.pen.n, st.pen.out, st.pen.in0, st.pen.end].join(',') : '', st.hov && st.pen ? st.hov.x + ',' + st.hov.y : '', st.ring || '', g ? g.kind + (g.live ? 1 : 0) : '',
+      st.pen ? [st.pen.id, st.pen.n, st.pen.out, st.pen.in0, st.pen.end].join(',') : '', st.hov && st.pen ? st.hov.x + ',' + st.hov.y : '', st.con && st.conSel === ctx.selection().join(',') ? [...st.con].map(([id, k]) => id + '/' + [...k].join('.')).join(';') : '', st.ring || '', g ? g.kind + (g.live ? 1 : 0) : '',
       g && g.kind === 'marq' ? [g.x0, g.y0, g.x, g.y].join(',') : '', st.ink ? st.ink.length : 0].join('|');
     if (st.ovMemo === memo) return st.ovOut;
     st.ovMemo = memo; st.ovOut = overlayNow(ctx, tool, st, V);
@@ -830,10 +843,12 @@
     const allHandles = tool === 'anchorConvert';
     const draw = (inf, cls) => {
       const VW = mul(V, inf.W);
-      h += `<path class="${cls}" d="${CEM().dOf(inf.it.subpaths)}" transform="matrix(${VW.map(v => +v.toFixed(6)).join(' ')})" vector-effect="non-scaling-stroke"/>`;
+      const con = cls === 'cep-line' && tool === 'direct' ? conOf(ctx, st, inf) : null;   // (ONEOUTLINE)
+      h += `<path class="${cls}" d="${CEM().dOf(con ? toSubpaths(inf.cs.filter((c, ci) => con.has(ci))) : inf.it.subpaths)}" transform="matrix(${VW.map(v => +v.toFixed(6)).join(' ')})" vector-effect="non-scaling-stroke"/>`;
       if (tool === 'pencil') return;
       const s = picked(st, inf);
       inf.cs.forEach((c, ci) => c.pts.forEach((a, ai) => {
+        if (con && !con.has(ci) && !s.has(key(ci, ai))) return;
         const q = ap(VW, a.p); if (!inView(q)) return;
         const r = 3.5, sq = `M${f1(q[0] - r)} ${f1(q[1] - r)}h${2 * r}v${2 * r}h${-2 * r}Z`;
         if (s.has(key(ci, ai))) aOn += sq; else aOff += sq;
@@ -1125,6 +1140,7 @@
     const st = S(ctx), k = pxPerPt(ctx), tA = 5 / k;
     if (st.run) endRun(ctx);
     const ts = targets(ctx);
+    const t1 = Date.now(), dbl = !!st.down0 && t1 - st.down0.t < 420 && Math.hypot(p.x - st.down0.x, p.y - st.down0.y) * k < 6; st.down0 = { t: t1, x: p.x, y: p.y };   // (ONEOUTLINE: a second press at the same spot)
     // a handle or an anchor, whichever is nearer (a short handle sits within a few px of its own anchor: a press right on the anchor takes the anchor), then a segment,
     // the body of a part, or nothing: the sweep
     let h = handleHit(st, ts, p, tA, tool === 'anchorConvert');
@@ -1147,17 +1163,25 @@
         if (on) { st.anc.get(t.inf.id).delete(kk); if (typeof ctx.redraw === 'function') ctx.redraw(); st.g = { kind: 'none' }; return; }
         selectAnchors(ctx, [{ id: t.inf.id, ci: t.ci, ai: t.ai }], true);
       } else if (!on) selectAnchors(ctx, [{ id: t.inf.id, ci: t.ci, ai: t.ai }]);
+      if (tool === 'direct') takeOutline(ctx, t.inf, t.ci, ev.shiftKey || on);
       st.g = beginAnchorDrag(ctx, p, { lead: ap(t.inf.W, t.inf.cs[t.ci].pts[t.ai].p), leadId: t.inf.id });
       return;
+    }
+    if (t && t.kind === 'seg' && tool === 'direct' && (dbl || (conOf(ctx, st, t.inf) && conOf(ctx, st, t.inf).has(t.ci) && t.inf.cs[t.ci].pts.every((a, ai) => picked(st, t.inf).has(key(t.ci, ai))))) && t.inf.cs.length > 1) {   // (ONEOUTLINE: the whole outline, moved as one)
+      takeOutline(ctx, t.inf, t.ci, false);
+      selectAnchors(ctx, t.inf.cs[t.ci].pts.map((a, ai) => ({ id: t.inf.id, ci: t.ci, ai }))); st.conSel = ctx.selection().join(',');
+      st.g = beginAnchorDrag(ctx, p, { leadId: t.inf.id }); return;
     }
     if (t && t.kind === 'seg') {
       const s = segOf(t.inf.cs[t.ci], t.k);
       selectAnchors(ctx, ev.shiftKey ? [{ id: t.inf.id, ci: t.ci, ai: s.ka }, { id: t.inf.id, ci: t.ci, ai: s.kb }] : [], ev.shiftKey);
       if (!ev.shiftKey) { st.anc.delete(t.inf.id); if (!ctx.selection().includes(t.inf.id) || ctx.selection().length !== 1) ctx.select([t.inf.id]); }
+      if (tool === 'direct') takeOutline(ctx, t.inf, t.ci, ev.shiftKey);
       flatten(ctx, [t.inf.id]); const inf = infoOf(ctx, t.inf.id);
       st.g = { kind: 'seg', id: inf.id, ci: t.ci, k: t.k, t: t.t, x0: p.x, y0: p.y, Wi: inf.Wi, c0: inf.cs[t.ci], cs0: inf.cs, live: false };
       return;
     }
+    st.con = null;
     if (t && t.kind === 'body') {   // inside a filled part: the whole part (all its anchors), dragged as one
       const all = []; t.inf.cs.forEach((c, ci) => c.pts.forEach((a, ai) => all.push({ id: t.inf.id, ci, ai })));
       selectAnchors(ctx, all, ev.shiftKey);
@@ -1204,9 +1228,21 @@
   }
   /** Keys with anchors picked: the arrows move them (a run of taps is one undo step, as the editor's own nudge), Delete takes them out with their segments. False: not mine. */
   function directKeys(ctx, ev) {
-    const st = S(ctx), ts = targets(ctx), any = ts.some(t => picked(st, t).size);
-    if (!any) return false;
+    const st = S(ctx), ts = targets(ctx), any = ts.some(t => picked(st, t).size), con = ts.some(t => conOf(ctx, st, t));
+    if (!any && !con) return false;
     const k = ev.key;
+    // (ONEOUTLINE: an outline in hand with no anchor of it picked, or all of them: Delete takes the outline out, the arrows move it)
+    if (con && (k === 'Delete' || k === 'Backspace') && ts.every(t => { const c = conOf(ctx, st, t), s = picked(st, t); return !s.size || (c && [...c].every(ci => t.cs[ci].pts.every((a, ai) => s.has(key(ci, ai)))) && [...s].every(kk => c.has(+kk.split(':')[0]))); })) {
+      ev.preventDefault();
+      const gone = new Map(ts.map(t => [t.id, conOf(ctx, st, t)]).filter(x => x[1]));
+      flatten(ctx, [...gone.keys()]);
+      const map = new Map(); for (const [id, set] of gone) { const t = infoOf(ctx, id); if (t) map.set(id, t.cs.filter((c, ci) => !set.has(ci))); }
+      st.anc = new Map(); st.con = null; write(ctx, map);
+      if (typeof ctx.commit === 'function') ctx.commit('Delete outline');
+      return true;
+    }
+    if (con && !any && /^Arrow/.test(k) && !(ev.metaKey || ev.ctrlKey || ev.altKey)) { selectAnchors(ctx, outlineAnchors(ctx, st)); st.conSel = ctx.selection().join(','); return directKeys(ctx, ev); }
+    if (!any) { if (k === 'Escape') { st.con = null; if (typeof ctx.redraw === 'function') ctx.redraw(); } return false; }
     if (/^Arrow(Left|Right|Up|Down)$/.test(k) && !(ev.metaKey || ev.ctrlKey || ev.altKey)) {
       ev.preventDefault();
       const s = (ev.shiftKey ? NUDGE_BIG_MM : NUDGE_MM) * PT, d = [k === 'ArrowLeft' ? -s : k === 'ArrowRight' ? s : 0, k === 'ArrowUp' ? -s : k === 'ArrowDown' ? s : 0];
