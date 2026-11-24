@@ -7227,6 +7227,7 @@ exports.worldBump = async () => { PREFIX = ""; FEED_TOUCHED = new Set(); return 
 /* FASTOPEN (Paul, 23 Nov 2026: "nowhere in the application is the system allowed to make the user wait"): an answer of a megabyte or more goes out compressed by this function, so the lists a page opens with (the SKU list, the order
    lines, the run's sheets) are ONE answer (`whole`) and not parts read one after the other: the platform carries 6 MB, and 10 MB of SKU list is 1.6 MB compressed. A caller that takes no gzip has its parts, as before. */
 const pack = res => (!PACK || !res || typeof res.body !== "string" || res.body.length < 1000000 ? res : Object.assign({}, res, { headers: Object.assign({}, res.headers, { "Content-Encoding": "gzip", Vary: "Accept-Encoding" }), body: require("zlib").gzipSync(res.body, { level: 4 }).toString("base64"), isBase64Encoded: true }));
+const PAGE_READS = new Set("optionMapGet aliasGet noDesignGet customGet reviewSettledGet cancelList customSheetGet getOrderDays customPieceList driveGet runList runGet shareGet trayList activityGet sandboxStatus".split(" "));
 exports.handler = async event => { const res = await answer(event); return pack(res); };
 async function answer(event) {
   PACK = event[MARK] !== true && /\bgzip\b/.test(String((event.headers && (event.headers["accept-encoding"] || event.headers["Accept-Encoding"])) || ""));
@@ -7234,6 +7235,7 @@ async function answer(event) {
   // SAL1: Etsy's order.paid webhook (no passcode: Etsy signs it instead; _etsyOrderWebhook.js verifies the signature before anything is read or written)
   if ((event.queryStringParameters || {}).hook === "etsy-order") return require("./_etsyOrderWebhook").handle(event, { db, OrderDays, bump: async () => { PREFIX = ""; FEED_TOUCHED = new Set(); return feedBump(["d:orderdays"]); } });
   const body = event.httpMethod === "GET" ? Object.assign({}, event.queryStringParameters || {}) : parseBody(event);
+  if (event[MARK] !== true && (body.whole === true || body.op === "reads")) PACK = true;   // (the edge rewrites Accept-Encoding, so a browser's gzip was never seen here and the SKU list went out in four parts, 23 Nov 2026: `whole` and `reads` are asked by the pages only, which all take gzip)
   const denied = gate(event, body); if (denied) return denied;
   // (CLOUDDRIVE §1.3-1.4, C1/E5): the cloud's own call carries a private mark no HTTP request can carry; the name "cloud" is the cloud's alone (no page sends it), and the cloud may send
   //  only the ops of its list (none of them calls Etsy). Every other request goes on as before.
@@ -7250,6 +7252,17 @@ async function answer(event) {
   // token every upload / delete / modify of the repository needs. This is the HTTP door only: code that calls OPS in-process is not asked.
   const RepoAuth = require("./_charmNestRepoAuth");
   if (RepoAuth.owns(body.op)) return RepoAuth.handle(db, event, body);
+  /* reads { reads: [{ op, … }] } (FASTOPEN, 23 Nov 2026): the small reads a page asks for at the same moment, in one request, side by side: fifteen of them at a page's start each woke a function of its own, 4 s each.
+     Each is answered as if sent alone ({ status, body }); a read that is not on the list is refused alone. Reads only, never a write, never the cloud's own. */
+  if (body.op === "reads") {
+    const answers = await Promise.all((Array.isArray(body.reads) ? body.reads : []).slice(0, 24).map(async r => {
+      const op = r && typeof r.op === "string" ? r.op : "";
+      if (!PAGE_READS.has(op) || !Object.prototype.hasOwnProperty.call(OPS, op)) return { status: 400, body: { error: "not one of the reads", alone: true } };
+      const q = Object.assign({}, r); delete q.mid; if (PREFIX) q.sandbox = true; else delete q.sandbox;
+      try { const out = await OPS[op](q); return { status: out && out.error ? out.status || 400 : 200, body: out }; } catch (e) { return { status: 500, body: { error: (e && e.message) || String(e) } }; }
+    }));
+    return json(200, { answers });
+  }
   // (an op is an OWN name of OPS, a string: "constructor", "toString" or "__proto__" belong to the object, and used to answer 200 with the body or a 500)
   const fn = typeof body.op === "string" && Object.prototype.hasOwnProperty.call(OPS, body.op) ? OPS[body.op] : null;
   if (!fn) return json(400, { error: "unknown op", ops: Object.keys(OPS) });
