@@ -537,8 +537,7 @@
          record, honoured by the cloud's nest, shown on every computer; a move is placed by the cloud on a sheet of the new metal (its request is queued by the same press and
          followed here). Said in words either way: done, or refused with the reason, nothing changed.
      Mode off: neither is called (the page's own intake and charm window, unchanged). */
-  const HAND_FOLLOW_MS = 600000, M_LABEL = { gold: "Gold Filled", silver: "Sterling Silver", rose: "Rose Gold", gold10k: "10K Gold", gold14k: "14K Gold" };
-  const nap = ms => new Promise(r => setTimeout(r, ms));
+  const M_LABEL = { gold: "Gold Filled", silver: "Sterling Silver", rose: "Rose Gold", gold10k: "10K Gold", gold14k: "14K Gold" };
   const errOf = e => String((e && e.data && e.data.error) || (e && e.message) || e || "no answer").replace(/\.$/, "");
   const devOr = () => dev() || "dviewer";
   /** A person's request in the run's queue, followed until the cloud answers it. → { ok, text } | { ok: false, pending: true, text } (not answered in o.maxMs) */
@@ -546,23 +545,10 @@
     o = o || {};
     /* NOWCMD (Paul 21 Nov 2026): followed by the page's one follower (charm-nest-cmd-now.js) until the cloud answers: its live step, its words; a failure in red with a toast (and Try again
        when the caller can send it again: o.resend), and 5 minutes with no answer said plainly in red, still followed in the background (pending: true, later: its answer when it comes) */
-    const N = root.CNCmdNow;
-    if (N && typeof N.follow === "function") {
-      const f = await N.follow(runId, id, { api, onStep: t => safe(() => o.onStep && o.onStep(t)), gapMs: o.gapMs, maxMs: Math.min(+o.maxMs > 0 ? +o.maxMs : N.LATE_MS, N.LATE_MS), label: o.label, el: o.el, resend: o.resend, toast: o.toast });
-      if (f.ok) return { ok: true, text: String(f.text || "Placed by the cloud") };
-      if (f.late) return { ok: false, pending: true, text: f.text, later: f.later, retry: f.retry };
-      return { ok: false, text: `the cloud did not place it: ${String(f.text || "not done").replace(/\.$/, "")}`, retry: f.retry, shown: true };
-    }
-    const t0 = Date.now(), gap = +o.gapMs > 0 ? +o.gapMs : 2500, max = +o.maxMs > 0 ? +o.maxMs : HAND_FOLLOW_MS;
-    while (Date.now() - t0 < max) {
-      await nap(gap);
-      let list = null; try { list = await api({ op: "runCmdList", runId }); } catch (_) { continue; }
-      const c = ((list && list.cmds) || []).find(x => x && x.id === id); if (!c) continue;
-      if (c.state === "done") { safe(() => root.CharmNestRunFollow && root.CharmNestRunFollow.now("s3")); return { ok: true, text: String(c.text || "Placed by the cloud") }; }
-      if (c.state === "failed" || c.state === "cancelled") return { ok: false, text: `the cloud did not place it: ${String(c.text || c.state).replace(/\.$/, "")}` };
-      if (c.step) safe(() => o.onStep && o.onStep(`The cloud: ${c.step}`));
-    }
-    return { ok: false, pending: true, text: `the cloud has not answered in ${Math.round(max / 60000) || 1} minute(s); the request stays queued and is done when the cloud gets to it` };
+    const N = root.CNCmdNow, f = await N.follow(runId, id, { api, onStep: t => safe(() => o.onStep && o.onStep(t)), gapMs: o.gapMs, maxMs: Math.min(+o.maxMs > 0 ? +o.maxMs : N.LATE_MS, N.LATE_MS), label: o.label, el: o.el, resend: o.resend, toast: o.toast });
+    if (f.ok) return { ok: true, text: String(f.text || "Placed by the cloud") };
+    if (f.late) return { ok: false, pending: true, text: f.text, later: f.later, retry: f.retry };
+    return { ok: false, text: `the cloud did not place it: ${String(f.text || "not done").replace(/\.$/, "")}`, retry: f.retry, shown: true };
   }
   async function handArt(metal, charms, o) {
     o = o || {};

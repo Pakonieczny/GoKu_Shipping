@@ -360,46 +360,16 @@
   async function cloudSeat(m, a, sh, ids, answer) {
     const s = stOf(m), F = root.CharmNestRunFollow;
     const runId = (F && typeof F.state === 'function' && F.state().runId) || sh.runId || '', dev = (() => { try { return F.dev(); } catch (_) { return ''; } })(), by = (() => { try { return String((root.B && root.B.employee) || '').trim(); } catch (_) { return ''; } })();
-    const say = t => { if (s.ask === a) { a.text = t; paintView(m); } };
+    // (INSTANT, Paul 23 Nov 2026: the panel closes at the press; the cloud reserves the partial sheet and seats the pieces behind the screen, its answer in a note, a refusal in red with Try again)
     const fail = text => { if (s.ask === a) { s.ask = { phase: 'bad', seq: s.seq, text }; paintView(m); } root.CN && root.CN.toast && root.CN.toast('Partial sheet not used: ' + text, 'bad'); };
     if (!sh.sheetId) return fail('This sheet is not saved in the cloud yet. Wait a moment, then choose the partial sheet again.');
     if (!runId || !dev) return fail('There is no open run to send this to.');
-    const l0 = answer.links[0], label = `Move ${sheetWord(sh)}'s ${plural(answer.pieces, 'piece')} onto the partial sheet${l0 && l0.wMm && l0.hMm ? ' ' + mmWord(l0.wMm, l0.hMm) : ''}`;
-    a.phase = 'seating'; say('Sending the request to the cloud…');
-    let put = null; try { put = await cmdApi({ op: 'runCmdPut', runId, cmd: { metal: m, label, type: 'seat', sheetId: sh.sheetId, partialId: ids[0], partialIds: ids }, by, dev }); } catch (e) { return fail('Not sent: ' + ((e && e.message) || e)); }
-    if (!put || put.error || !put.id) return fail('Not sent: ' + ((put && put.error) || 'no answer'));
-    say('The cloud has it — it starts within seconds…');
-    /* NOWCMD (Paul 21 Nov 2026): the request is followed until the cloud answers; a failure stays in the panel in red and is said in a toast with Try again (the same seat asked again); 5 minutes
-       with no answer are said plainly in red, and the request is still followed in the background */
-    const N = root.CNCmdNow;
-    if (N && typeof N.follow === 'function') {
-      const cmd = { metal: m, label, type: 'seat', sheetId: sh.sheetId, partialId: ids[0], partialIds: ids };
-      const f = await N.follow(runId, put.id, { api: cmdApi, label: 'Partial sheet', onStep: t => say(t), toast: true, resend: () => N.put(cmd, { api: cmdApi, runId, dev, by }) });
-      if (f.ok) {
-        try { PS() && PS().changed && PS().changed(); } catch (_) {}
-        if (s.ask === a) { s.ask = null; s.chain = []; }
-        setOpen(m, false); Promise.resolve(closeOptions(m)).catch(() => {});
-        root.CN && root.CN.toast && root.CN.toast(f.text || `${plural(answer.pieces, 'piece')} seated on the partial sheet`, 'ok');
-        return;
-      }
-      if (s.ask === a) { s.ask = { phase: 'bad', seq: s.seq, text: f.late ? f.text : `Not done: ${f.text}` }; paintView(m); }   // (the toast with Try again is the follower's)
-      return;
-    }
-    for (const t0 = Date.now(); ;) {
-      await sleep(4000);
-      let c = null; try { const res = await cmdApi({ op: 'runCmdList', runId }); c = ((res && res.cmds) || []).find(x => x && x.id === put.id) || null; } catch (_) { /* looked at again in 4 s */ }
-      if (c && (c.state === 'done' || c.state === 'failed')) {
-        if (c.state === 'failed') return fail(c.text || 'The cloud could not do that.');
-        try { PS() && PS().changed && PS().changed(); } catch (_) {}
-        if (s.ask === a) { s.ask = null; s.chain = []; }
-        setOpen(m, false); Promise.resolve(closeOptions(m)).catch(() => {});
-        root.CN && root.CN.toast && root.CN.toast(c.text || `${plural(answer.pieces, 'piece')} seated on the partial sheet`, 'ok');
-        return;
-      }
-      if (c && c.state === 'cancelled') return fail('The request was cancelled. Nothing was done.');
-      if (Date.now() - t0 > 11 * 60000) return fail('The cloud did not answer. Look at the sheet again, then try once more.');
-      if (c && c.state === 'running') say(c.step ? `The cloud: ${c.step}` : 'The cloud is moving the pieces onto the partial sheet…');
-    }
+    const N = root.CNCmdNow, l0 = answer.links[0], cmd = { metal: m, label: `Move ${sheetWord(sh)}'s ${plural(answer.pieces, 'piece')} onto the partial sheet${l0 && l0.wMm && l0.hMm ? ' ' + mmWord(l0.wMm, l0.hMm) : ''}`, type: 'seat', sheetId: sh.sheetId, partialId: ids[0], partialIds: ids };
+    const opt = { api: cmdApi, runId, dev, by, label: 'Partial sheet', toast: true }; opt.resend = () => N.put(cmd, opt);
+    return root.CNInstant.press({ key: 'seat:' + sh.sheetId, what: 'Partial sheet not used',
+      show: () => { s.ask = null; s.chain = []; setOpen(m, false); Promise.resolve(closeOptions(m)).catch(() => {}); root.CN && root.CN.toast && root.CN.toast(`${plural(answer.pieces, 'piece')} on the way onto the partial sheet`, ''); },
+      send: async () => { const p = await N.put(cmd, opt); if (!p.id) throw new Error(p.error); const f = await N.follow(p.runId, p.id, opt); if (!f.ok) throw Object.assign(new Error(f.text), { told: true }); return f; },
+      done: f => { try { PS() && PS().changed && PS().changed(); } catch (_) {} root.CN && root.CN.toast && root.CN.toast(f.text || `${plural(answer.pieces, 'piece')} seated on the partial sheet`, 'ok'); } }).done;
   }
   async function commit(m) {
     const s = stOf(m), a = s.ask, sh = s.sh, E = ENG(); if (!a || a.phase !== 'answer' || !sh) return;

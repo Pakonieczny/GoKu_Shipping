@@ -382,7 +382,7 @@
   }
   /** A computer that does not carry the run: the release is done once the cloud has done it; the run's intake places the pieces, at the front of the queue. */
   async function cloudDone(rid, who, cloud, emit, out) {
-    await afterCloud(rid);
+    afterCloud(rid);   // (INSTANT, Paul 23 Nov 2026: what is read again after it never holds the press)
     const frontAt = +cloud.frontAt || Date.now(), RF = G.CharmNestRunFollow, runs = !!(RF && typeof RF.state === 'function' && RF.state().runId);
     const why = cloud.already ? 'not on hold in the cloud any more: it is shown as the cloud has it'
       : runs ? 'released in the cloud: the run places its pieces at the front of the queue' : 'released in the cloud: no run is open, so it waits at the front of the queue';

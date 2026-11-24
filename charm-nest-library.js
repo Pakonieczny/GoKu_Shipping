@@ -260,6 +260,8 @@
     if (!S.cloud.ok) { const message = `${done ? 'Not marked completed' : 'Not moved back'}: the cloud is offline. Nothing was changed; try again when it is back.`; toast(message, 'bad', 8000); throw new Error(message); }
     L.busy.add(key);
     const ids = kind === 'sheet' ? [id] : setSheets(id), name = o.name || nameOf(kind,id);
+    // (INSTANT, Paul 23 Nov 2026: every check of the press has passed: the press's own screen shows it now; the cloud records it behind it, and a refusal puts it back (the catch below says why))
+    if (typeof o.onSend === 'function') { try { o.onSend(); } catch (e) { console.warn('Library mark: shown', e); } }
     try {
       const via = o.via || (o.undo ? 'undo' : done ? 'Laser cutting' : 'Library Completed');
       // Nothing disappears or gains a seal until the server accepts the laser-stage check.
@@ -654,9 +656,16 @@
     if (window.LibraryDnd) window.LibraryDnd.decorate(root);   // the grip (drag, or Move to…) on each card: charm-nest-library-dnd.js
     if (window.LibraryEngraving) window.LibraryEngraving.decorate(root);   // the small show/hide of each sheet's back-engraving shelf: charm-nest-library-engraving.js
   }
+  /* INSTANT (Paul, 23 Nov 2026): the check turns to done (or back) at the press and the card says so; nothing turns, nothing is locked. The card travels once the cloud has the mark (its seal and its set's say are the
+     cloud's), and a mark it refuses turns the check back. */
   function act(kind, id, done, btn) {
-    if (btn) btn.classList.add('busy');
-    return mark(kind, id, done).catch(e => console.warn('Library: not marked', e)).finally(() => { if (btn && btn.isConnected) btn.classList.remove('busy'); });
+    const card = btn && btn.closest && btn.closest('.libCard, .setCard'), was = btn && { html: btn.innerHTML, done: btn.dataset.done, title: btn.title };
+    const put = on => { if (!btn || !btn.isConnected) return; btn.classList.toggle('ldNow', on); if (card) card.classList.toggle('ldNowCard', on);
+      if (on) { btn.dataset.done = done ? '1' : '0'; btn.innerHTML = (done ? ICON.undo : ICON.check) + (kind === 'set' ? `<span>${done ? 'Completed' : 'Reopened'}</span>` : ''); btn.title = done ? 'Marked completed' : 'Reopened'; }
+      else { btn.dataset.done = was.done; btn.innerHTML = was.html; btn.title = was.title; } };
+    let shown = false;
+    return mark(kind, id, done, { onSend: () => { shown = true; put(true); } }).then(r => { if (btn && btn.isConnected) { btn.classList.remove('ldNow'); if (card) card.classList.remove('ldNowCard'); } return r; },
+      e => { console.warn('Library: not marked', e); if (shown) put(false); });
   }
 
   /* ── counts on the tab ── */

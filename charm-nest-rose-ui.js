@@ -394,7 +394,7 @@
     if(!hasLine(sh)||!sh.el)return;
     let host=sh.el.querySelector('.roseHistory');if(!host){host=document.createElement('div');host.className='roseHistory';sh.el.querySelector('.shPreviewWrap').before(host);}
     const asking=!!(sh._roseAsk&&/^(asked|working)$/.test(sh._roseAsk.state));   // (ITEM 4: a press the cloud was asked for and has not answered yet)
-    const stock=sh.roseStock,history=before(sh.roseHistory||[],sh).sort((a,b)=>a.revision-b.revision),busy=!!(sh._rosePlanning||sh._roseLoading||sh._roseAction||asking);
+    const stock=sh.roseStock,history=before(sh.roseHistory||[],sh).sort((a,b)=>a.revision-b.revision),busy=!!(sh._rosePlanning||sh._roseLoading||(sh._roseAction&&!asking));   // (INSTANT, Paul 23 Nov 2026: a cut the cloud was asked for locks nothing and spins nothing: the card says it is cut, the line comes with the cloud's answer)
     const stockId=stock?.id||sh.recalled?.roseStockId;
     const ready=!sh.roseCutAt&&!sh.recalled&&sh.persistedDone&&sh.verification?.ok&&!sh.dirty&&sh.placements.length&&!['nesting','finishing','queued'].includes(sh.status);
     const included=!!sh.setId&&!sh.draft;
@@ -403,7 +403,7 @@
     const full=!!ready&&sheetFull(sh);
     // One action only. A full or nearly full sheet has no room for another
     // green line, so it offers nothing.
-    const cuttable=!sh.roseCutAt&&(ready?!full:!!(sh.recalled?.roseStockId&&sh.rosePlan&&!sh.rosePlan.full));
+    const cuttable=!sh.roseCutAt&&!asking&&(ready?!full:!!(sh.recalled?.roseStockId&&sh.rosePlan&&!sh.rosePlan.full));
     const marks=timeline(sh,history);
     host.hidden=!stockId&&!ready&&!asking;   // (ITEM 4: an ask the cloud has not answered is said even on a sheet that holds no physical sheet yet)
     host.classList.toggle('roseHasTimeline',!!marks);
@@ -419,7 +419,7 @@
     slot.innerHTML=cuttable?`<button class="btn ghost xs" data-rose="cut" ${busy?'disabled':''}>Cut Sheet</button>`:'';
     // (Paul, 27 Oct 2026: a 10K / 14K sheet's recorded green line cut set aside because its charms changed by hand, reopen: said here until its Cut Sheet press records it again)
     const reopened=sh.roseReopened&&sh.roseReopened.cut&&!sh.roseCutAt&&!sh.draft&&sh.setId&&!(+sh.laserDoneAt>0)?`<p class="roseError" role="note" data-rose-reopened>Its charms changed after its green line was approved${sh.roseReopened.cutAt&&when(+sh.roseReopened.cutAt)?` (${esc(when(+sh.roseReopened.cutAt))})`:''}: ${sh.roseRedraw&&sh.roseRedraw.line?'the line is drawn again for the charms as they now stand, then ':''}press Cut Sheet to approve its green line again.</p>`:'';
-    host.innerHTML=`${busy?`<div class="help" role="status"><i class="spin"></i> ${busyWord}</div>`:''}${sh._roseError?`<p class="roseError" role="alert">${esc(sh._roseError)}</p>`:''}${reopened}${marks}`;
+    host.innerHTML=`${busy||asking?`<div class="help" role="status">${busy?'<i class="spin"></i> ':''}${busyWord}</div>`:''}${sh._roseError?`<p class="roseError" role="alert">${esc(sh._roseError)}</p>`:''}${reopened}${marks}`;
     host.classList.toggle('roseEmpty',!host.innerHTML);
     // a failure is shown once, where it happened (the alert under the button); a pop-up used to repeat it
     const invoke=fn=>async()=>{if(sh._roseAction)return;sh._roseAction=true;sh._roseError=null;refresh(sh);try{await fn();}catch(e){sh._roseError=(e&&e.message)||String(e||'')||'Cut Sheet could not finish. Try again.';}finally{sh._roseAction=false;refresh(sh);C.flushManualIntake?.(sh.metal);}};   // (a refusal always leaves its one line under the button)

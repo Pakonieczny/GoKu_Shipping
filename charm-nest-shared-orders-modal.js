@@ -40,7 +40,7 @@
   if (window.SharedOrdersModal) return;
   const W = window, doc = document;
   const EASE = 'cubic-bezier(.2,.8,.2,1)';
-  const LIVE_EVERY = 1000, SLOW_EVERY = 3000, SLOW_AFTER = 20000, SETTLE_MAX = 8000, SHOWN_PIECES = 3;
+  const LIVE_EVERY = 1000, SLOW_EVERY = 3000, SHOWN_PIECES = 3;
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const warn = (what, e) => { try { console.warn('[shared orders] ' + what + ':', e && e.message || e); } catch (_) {} };
   const reduced = () => { try { return !!((W.Motion && Motion.reduced && Motion.reduced()) || matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (_) { return false; } };
@@ -161,8 +161,6 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
 .soBtn.gold{background:var(--gold,#a9823f);border-color:var(--gold,#a9823f);color:#2a2013}
 .soBtn.gold:hover{background:var(--gold,#a9823f);opacity:.9}
 .soBtn:disabled{opacity:.42;cursor:default;transform:none}
-.soBusy:focus{outline:none}
-.soBusy{position:absolute;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;gap:9px;padding:14px;text-align:center;background:color-mix(in srgb,var(--card,#fffefb) 88%,transparent);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);color:var(--ink70,#5b554c);font:600 12.5px/1.35 var(--sans,system-ui,sans-serif);border-radius:inherit;animation:soFade .2s ease both}
 .soSpin{width:14px;height:14px;flex:none;box-sizing:border-box;border:2px solid var(--line,#e4ddd0);border-top-color:var(--ink70,#5b554c);border-radius:50%;animation:soSpin .7s linear infinite}
 .soNote{margin:0;padding:10px 14px 12px;border-top:1px solid var(--line,#e4ddd0);background:var(--goldSoft,#f0e6cd);color:#5c4210;font-size:12px;line-height:1.4}
 .soNote.bad{background:var(--claySoft,#f4e3dc);color:#7a3321}
@@ -232,7 +230,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
 @media (pointer:coarse){.soOff,.soBtn,.soOpt span{min-height:36px}.soX{width:36px;height:36px}#orderWin .soBack{height:36px}}
 @media (prefers-reduced-motion:reduce){
   dialog.soDlg{transition:none!important}
-  .soCard,.soCard.arriving,.soSlot,.soAskSlot,.soAskSlot.open,.soCard:has(>.soAskSlot.open)>.soFootSlot,.soNote.enter,.soClear,.soBusy,.soErr,.soSkel i,#orderWin .soBack{animation:none!important;transition:none!important}
+  .soCard,.soCard.arriving,.soSlot,.soAskSlot,.soAskSlot.open,.soCard:has(>.soAskSlot.open)>.soFootSlot,.soNote.enter,.soClear,.soErr,.soSkel i,#orderWin .soBack{animation:none!important;transition:none!important}
   .soRing circle,.soRing path{animation:none!important;stroke-dashoffset:0}
   .soTitle,.soSub,.soCount{transition:none!important}
   .soSpin{animation-duration:1.6s}
@@ -465,8 +463,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
   function reconcile(M, next, why) {
     if (!live(M)) return;
     const prev = M.orders;
-    // an order being taken off stays on screen (spinner and all) until its own answer comes back
-    if (M.busyId && !next.some(o => o.orderId === M.busyId)) { const keep = prev.find(o => o.orderId === M.busyId); if (keep) next = next.concat([keep]); }
+    next = next.filter(o => !M.off.has(o.orderId));   // (INSTANT: taken off here at the press)
     if (signature(prev) === signature(next)) return;
     M.orders = next;
     const body = q(M, '.soBody'), animate = !reduced() && M.dlg.open && !M.away, grid = body.querySelector('.soGrid');
@@ -586,7 +583,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
 
   /* ── taking an order off ── */
   function askOff(M, card, o) {
-    if (M.busyId || card.dataset.state === 'ask') return;
+    if (card.dataset.state === 'ask') return;
     closeAsks(M);
     for (const old of card.querySelectorAll(':scope > .soAskSlot')) old.remove();
     card.dataset.state = 'ask';
@@ -637,12 +634,6 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     if (refocus) { const b = card.querySelector('[data-off]'); if (b) { try { b.focus({ preventScroll: true }); } catch (_) {} } }
   }
   function closeAsks(M, refocus) { let any = false; for (const c of M.dlg.querySelectorAll('.soCard[data-state=ask]')) { closeAsk(M, c, !!refocus); any = true; } return any; }
-  function setBusy(card, label) {
-    let b = card.querySelector(':scope > .soBusy');
-    if (!label) { if (b) b.remove(); card.removeAttribute('aria-busy'); return; }
-    if (!b) { b = doc.createElement('div'); b.className = 'soBusy'; b.setAttribute('role', 'status'); card.appendChild(b); }
-    card.setAttribute('aria-busy', 'true'); b.innerHTML = `<span class="soSpin" aria-hidden="true"></span><span>${esc(label)}</span>`;
-  }
   function setNote(card, kind, text, buttons) {
     let n = card.querySelector(':scope > .soNote');
     if (!text) { if (n) n.remove(); return; }
@@ -656,56 +647,22 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     const a = doc.activeElement, b = card.querySelector(':scope > .soNote button');
     if (b && (!a || a === doc.body || a === M.dlg || !a.isConnected || !M.dlg.contains(a) || card.contains(a))) { try { b.focus({ preventScroll: true }); } catch (_) {} }
   }
-  async function takeOff(M, card, o, mode) {
+  function takeOff(M, card, o, mode) {
     const S = W.SharedOrders && typeof SharedOrders.removeFromSheet === 'function' ? W.SharedOrders : null;
     setNote(card, '', '');
     if (!S) { card.dataset.state = ''; dropAsk(card); setNote(card, 'bad', 'This cannot be done from here right now. Open the order and use its Sheet tab.', [{ label: 'OK', fn: () => setNote(card, '', '') }]); return; }
-    M.busyId = o.orderId; card.dataset.state = 'busy';
-    for (const b of M.dlg.querySelectorAll('.soOff')) b.setAttribute('aria-disabled', 'true');
-    const label = mode === 'cancel' ? 'Cancelling the order…' : 'Taking it off its sheets…';
-    setBusy(card, label); say(M, label);
-    { const bz = card.querySelector(':scope > .soBusy'); if (bz && card.contains(doc.activeElement)) { bz.tabIndex = -1; try { bz.focus({ preventScroll: true }); } catch (_) {} } }   // (the focus stays on the card while it is busy)
-    const slow = setTimeout(() => { if (card.isConnected && card.dataset.state === 'busy') setBusy(card, label.replace('…', '') + '. This is taking a little longer than usual'); }, SLOW_AFTER);
-    let res;
-    try {
-      const sheetId = M.kind === 'sheet' ? M.id : (o.pieces.find(p => p.here && p.sheetId) || {}).sheetId || '';
-      res = await S.removeFromSheet({ orderId: o.orderId, sheetId, mode, by: who() || undefined });
-    } catch (e) { res = { ok: false, error: errText(e) }; }
-    clearTimeout(slow); M.busyId = null;
-    for (const b of M.dlg.querySelectorAll('.soOff')) b.removeAttribute('aria-disabled');
-    if (!live(M)) return;
-    res = res && typeof res === 'object' ? res : { ok: false, error: 'No answer came back.' };
-    // (the focus was on the busy card: it goes back to the card itself, so a card that now leaves hands it to its neighbour)
-    const had = card.contains(doc.activeElement);
-    card.dataset.state = ''; setBusy(card, ''); dropAsk(card);
-    if (had) { const b = card.querySelector('[data-open]'); if (b) { try { b.focus({ preventScroll: true }); } catch (_) {} } }
-    if (res.ok === false || res.error) {
-      const msg = `Not taken off. ${errText(res.error) || 'Nothing was changed.'}`.trim();
-      setNote(card, 'bad', msg, [{ label: 'Try again', fn: () => { setNote(card, '', ''); askOff(M, card, o); } }, { label: 'Keep it', fn: () => setNote(card, '', '') }]);
-      say(M, msg); noteFocus(M, card); return;
-    }
-    // done: ask again at once (the answer is the page's own state, which removeFromSheet has just changed)
-    await reread(M, 'removed');
-    if (!live(M)) return;
-    const still = M.orders.find(x => x.orderId === o.orderId), c2 = M.dlg.querySelector(`.soCard[data-order="${cssId(o.orderId)}"]`);
-    if (!still || !c2) return;
-    const stayed = arr(res.stayed);
-    if (stayed.length) {
-      const why = [...new Set(stayed.map(s => s && (s.why || s.reason)).filter(Boolean))].slice(0, 2).join('; ');
-      setNote(c2, '', `${stayed.length === 1 ? 'One piece stays' : stayed.length + ' pieces stay'}${why ? ': ' + why : ''}. That keeps this order here.`, [{ label: 'Got it', fn: () => setNote(c2, '', '') }]);
-      noteFocus(M, c2); return;
-    }
-    // listed still: the page has not caught up yet. A small labelled spinner, then the live reads finish it.
-    c2.dataset.state = 'busy'; setBusy(c2, 'Updating the sheets…');
-    const t0 = Date.now();
-    const wait = async () => {
-      if (!live(M) || !c2.isConnected) return;
-      await reread(M, 'removed');
-      if (!live(M) || !c2.isConnected || !M.orders.find(x => x.orderId === o.orderId)) return;
-      if (Date.now() - t0 > SETTLE_MAX) { c2.dataset.state = ''; setBusy(c2, ''); setNote(c2, '', 'Taken off. This list updates by itself.'); const n2 = c2.querySelector(':scope > .soNote'); setTimeout(() => { if (n2 && n2.isConnected) n2.remove(); }, 4500); return; }
-      setTimeout(wait, 450);
-    };
-    wait();
+    const sheetId = M.kind === 'sheet' ? M.id : (o.pieces.find(p => p.here && p.sheetId) || {}).sheetId || '', cardOf = () => M.dlg.querySelector(`.soCard[data-order="${cssId(o.orderId)}"]`);
+    const put = (kind, text, buttons) => { M.off.delete(o.orderId); if (!live(M)) return false; if (!M.orders.some(x => x.orderId === o.orderId)) reconcile(M, M.orders.concat([o]), 'removed'); const c = cardOf(); if (!c) return false; c.dataset.state = ''; setNote(c, kind, text, buttons); say(M, text); noteFocus(M, c); return true; };
+    // INSTANT (Paul, 23 Nov 2026): the card leaves at the press; the order is taken off behind the window; one that is refused, or keeps a piece here, is back with why
+    W.CNInstant.press({ key: 'off:' + o.orderId, quiet: true,
+      show: () => { card.dataset.state = ''; dropAsk(card); M.off.add(o.orderId); reconcile(M, M.orders.slice(), 'removed'); },
+      send: () => S.removeFromSheet({ orderId: o.orderId, sheetId, mode, by: who() || undefined }),
+      done: res => {
+        const stayed = arr(res.stayed), why = [...new Set(stayed.map(x => x && (x.why || x.reason)).filter(Boolean))].slice(0, 2).join('; ');
+        if (stayed.length) put('', `${stayed.length === 1 ? 'One piece stays' : stayed.length + ' pieces stay'}${why ? ': ' + why : ''}. That keeps this order here.`, [{ label: 'Got it', fn: () => setNote(cardOf(), '', '') }]);
+        else reread(M, 'removed');
+      },
+      back: (_, e) => { const msg = `Not taken off. ${errText((e.answer && e.answer.error) || e) || 'Nothing was changed.'}`.trim(); if (!put('bad', msg, [{ label: 'Try again', fn: () => { const c = cardOf(); setNote(c, '', ''); askOff(M, c, o); } }, { label: 'Keep it', fn: () => setNote(cardOf(), '', '') }]) && W.CN && CN.toast) CN.toast(msg, 'bad', 12000); } });
   }
 
   /* ── events ── */
@@ -713,7 +670,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     const dlg = M.dlg;
     dlg.addEventListener('pointerdown', e => { M.pressedInside = e.target !== dlg; }, true);
     dlg.addEventListener('click', e => {
-      if (e.target === dlg) { if (!M.pressedInside && !M.busyId && !dlg.querySelector('.soCard[data-state=ask]')) closeIt(M, 'backdrop'); return; }
+      if (e.target === dlg) { if (!M.pressedInside && !dlg.querySelector('.soCard[data-state=ask]')) closeIt(M, 'backdrop'); return; }
       const b = e.target.closest && e.target.closest('button'); if (!b || !dlg.contains(b)) return;
       const card = b.closest('.soCard');
       if (b.hasAttribute('data-x') || b.hasAttribute('data-close')) return void closeIt(M, 'close');
@@ -759,7 +716,6 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     });
     // Esc: an open choice goes first, then the window; nothing while an order is being taken off (it is seen through)
     dlg.addEventListener('cancel', e => {
-      if (M.busyId) { e.preventDefault(); return; }
       if (M.escHeld && Date.now() - M.escHeld < 400) { e.preventDefault(); return; }
       if (closeAsks(M, true)) e.preventDefault();
     });
@@ -796,7 +752,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
       const S = W.SharedOrders, canRead = !!(S && typeof S.between === 'function') || typeof opts.read === 'function';
       if (!Array.isArray(opts.orders) && !canRead) return null;
       if (typeof doc.createElement('dialog').showModal !== 'function') return null;
-      const M = { opts, kind, id, dlg: doc.createElement('dialog'), orders: [], offs: [], timer: 0, closed: false, closing: false, busyId: null, away: false, reading: null, slow: false, sheetLabel: '', setLabel: '', subject: '', words: '', loading: !Array.isArray(opts.orders) };
+      const M = { opts, kind, id, dlg: doc.createElement('dialog'), orders: [], offs: [], timer: 0, closed: false, closing: false, off: new Set(), away: false, reading: null, slow: false, sheetLabel: '', setLabel: '', subject: '', words: '', loading: !Array.isArray(opts.orders) };
       M.orders = normalize(arr(opts.orders), { kind, id, sheetLabel: opts.sheetLabel || '' });
       derive(M);
       const dlg = M.dlg; dlg.className = 'soDlg'; dlg.dataset.sharedOrders = ''; dlg.dataset.state = M.loading ? 'loading' : M.orders.length ? 'list' : 'clear';

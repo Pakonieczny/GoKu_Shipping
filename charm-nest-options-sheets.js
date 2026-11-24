@@ -138,7 +138,12 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     }
     paint(M); decorate(M);
   }
-  const rowsOf = M => { try { return G().sheetsOf(M.m); } catch (_) { return []; } };
+  // (INSTANT, Paul 23 Nov 2026: the order dropped and the empty sheet deleted are shown at the press (S.order, S.gone), until the cloud has answered; refused, they go back)
+  const rowsOf = M => {
+    let l; try { l = G().sheetsOf(M.m); } catch (_) { return []; }
+    const S = M.sheetsUI || {}, at = new Map((S.order || []).map((id, i) => [id, i])), n = r => (at.has(r.id) ? at.get(r.id) : 1e6);
+    return S.order || S.gone ? l.filter(r => r.id !== S.gone).sort((a, b) => (S.order ? n(a) - n(b) : 0)) : l;
+  };
   const relayed = M => { const r = rowsOf(M); return !!(r.length && r[0].relay); };
 
   function pictures(S, rows) {
@@ -221,7 +226,8 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
 
   /* ── the computer that only follows the run: the gesture is sent to the one that carries it ── */
   function stopRel(S) { if (S.poll) { clearInterval(S.poll); S.poll = 0; } if (S.sub) { try { S.sub.stop(); } catch (_) {} S.sub = null; } }
-  const endRel = (M, rel) => { const S = M.sheetsUI; stopRel(S); S.rel = rel; paint(M, true); if (rel && rel.keep) return; setTimeout(() => { if (S.rel === rel) { S.rel = null; paint(M, true); } }, 90000); };   // (NOWCMD: a cloud failure stays, red, with its Try again)
+  const unshow = (M, bad) => { const S = M.sheetsUI, o = S.order, g = S.gone, off = () => { if (S.order === o && S.gone === g) { S.order = S.gone = null; paint(M, true); } }; if (bad) off(); else setTimeout(off, 10000); };
+  const endRel = (M, rel) => { const S = M.sheetsUI; stopRel(S); S.rel = rel; unshow(M, !!(rel && rel.bad)); paint(M, true); const q = S.next && S.next.shift(); if (q) { send(M, ...q); return; } if (rel && rel.keep) return; setTimeout(() => { if (S.rel === rel) { S.rel = null; paint(M, true); } }, 90000); };   // (NOWCMD: a cloud failure stays, red, with its Try again)
   /** NOWCMD · Try again: the same request sent again (one still waiting is cancelled first, so it is never done twice). */
   async function retryRel(M, rel) {
     const S = M.sheetsUI; if (!S || !rel || !rel.cmd) return false;
@@ -266,7 +272,7 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
   }
   async function send(M, cmd, label, mv) {
     const S = M.sheetsUI; if (!S) return false;
-    if (S.rel && S.rel.spin) { S.rel.warn = 'Cancel it first (or wait for it to finish) before asking for something else'; paint(M, true); return false; }
+    if (S.rel && S.rel.spin) { (S.next || (S.next = [])).push([cmd, label, mv]); return true; }   // (INSTANT: asked after the one in hand, never refused)
     const rows = rowsOf(M), runId = (rows[0] && rows[0].runId) || (RF() && RF().state().runId), dev = devId();
     if (!runId || !dev) { S.rel = { text: 'There is no open run to send this to.', bad: true, spin: false }; paint(M, true); return false; }
     const onMode = !!(root.CNViewer && root.CNViewer.on());
@@ -286,7 +292,7 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
 
   /* ── the gestures: the Gate here, or a command sent to the computer that carries the run ── */
   async function doReorder(M, ids, id, label) {
-    if (relayed(M)) return void send(M, { type: 'reorder', ids }, label || 'Change the order of the sheets');
+    if (relayed(M)) { M.sheetsUI.order = ids.slice(); paint(M, true); if (!(await send(M, { type: 'reorder', ids }, label || 'Change the order of the sheets'))) unshow(M, true); return; }
     const r = G().reorder(M.m, ids); if (r && r.ok === false) fail(M, id, r.why); else paint(M, true);
   }
   async function doCombine(M, srcId, tgtId, label) {
@@ -302,7 +308,7 @@ html.osShDrag,html.osShDrag *{cursor:grabbing!important;user-select:none!importa
     finishMove(M, mv, { text: (r && (r.text || r.why)) || 'Done', bad: !!(r && r.ok === false) });
   }
   async function doDelete(M, id, label) {
-    if (relayed(M)) return void send(M, { type: 'delete', sheetId: id }, label);
+    if (relayed(M)) { M.sheetsUI.gone = id; paint(M, true); if (!(await send(M, { type: 'delete', sheetId: id }, label))) unshow(M, true); return; }
     const r = await G().deleteEmpty(id); if (r && r.ok === false) fail(M, id, r.why); paint(M, true);
   }
   const nameOfRow = (M, id) => { const r = rowsOf(M).find(x => x.id === id); return r ? r.name : 'a sheet'; };

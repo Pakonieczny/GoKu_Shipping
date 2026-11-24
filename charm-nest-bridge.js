@@ -2008,6 +2008,7 @@ const Orders = window.Orders = (() => {
       if (row.materialOverride) { row.spec.material = row.materialOverride; row.problems = row.problems.filter(p => p.kind !== "needsMaterial"); } if (row.sizeOverride) { row.spec.size = row.sizeOverride; row.problems = row.problems.filter(p => p.kind !== "missingSize"); } row.material = row.spec.material;
       // (RELEASE, Paul 19 Oct 2026: a person's Release Hold on a line that still asks something sets those questions aside for this line, row.releaseAnyway = { at, by, kinds }: they are not asked again, and a line with nothing to place is "noDesign", makePool)
       if (row.releaseAnyway && Array.isArray(row.releaseAnyway.kinds) && row.problems.length) row.problems = row.problems.filter(p => !row.releaseAnyway.kinds.includes(p.kind));
+      if (libLoading()) row.problems = row.problems.filter(p => !LIB_ASKS.has(p.kind));   // (LIBREADY: for 15 s after a reload every order read "In Review": a question the charm library answers is asked of no one until the library is read)
     }
     // what a line was read as is kept for the lines on the list: it used to keep one for every line the session read
     if (readSaid.size > rowsOf().length) { const live = new Set(rowsOf().map(r => r.key)); for (const k of readSaid.keys()) if (!live.has(k)) readSaid.delete(k); }

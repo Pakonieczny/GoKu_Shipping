@@ -335,33 +335,15 @@
   /* CESEND (21 Nov 2026): on a staff computer in mode "on" the rows are written (Pool.addCustomPiece, cloudPlace) and the cloud is asked to place them: ONE request, runCmdPut placewaiting
      { ids: the pool ids, and "off:<pool id>" for the piece "Replace on the order…" replaces }, followed until the cloud answers (its steps shown through o.onStep). → the cloud's words when
      it placed the piece; throws its words when it did not (the pop-up then stays open and says them). */
-  const CLOUD_FOLLOW_MS = 600000;
   async function cloudPlace(res, poolIds, by, o) {
-    const CNx = root.CN, F = root.CharmNestRunFollow, runId = res.runId, dev = (() => { try { return F.dev() || ''; } catch (_) { return ''; } })();
-    const step = t => { try { if (typeof o.onStep === 'function') o.onStep(t); } catch (_) {} };
-    const ids = poolIds.concat(o.replaces ? ['off:' + String(o.replaces)] : []);
-    let put = null; try { put = await CNx.api('charmNestLibrary', { op: 'runCmdPut', runId, dev, by, cmd: { type: 'placewaiting', ids, label: `Place the custom piece ${poolIds[0] || ''}`.slice(0, 150) } }, { quiet: true, timeoutMs: 15000 }); } catch (e) { put = { error: (e && e.message) || String(e) }; }
-    if (!put || put.error || !put.id) throw new Error(`the piece is recorded (${poolIds[0]}) but the cloud was not asked to place it: ${(put && put.error) || 'no answer'}`);
-    step('The cloud has it — it starts within seconds…');
-    /* NOWCMD (Paul 21 Nov 2026): followed until the cloud answers; a failure (thrown: the pop-up stays open and says it) is said in a toast too, with Try again (the same request); 5 minutes with
-       no answer are said plainly in red, and the request is still followed in the background */
-    const N = root.CNCmdNow;
-    if (N && typeof N.follow === 'function') {
-      const napi = b => CNx.api('charmNestLibrary', b, { quiet: true, timeoutMs: 15000 }), cmd = { type: 'placewaiting', ids, label: `Place the custom piece ${poolIds[0] || ''}`.slice(0, 150) };
-      const f = await N.follow(runId, put.id, { api: napi, label: `Custom piece ${poolIds[0] || ''}`.trim(), onStep: t => step(t), gapMs: o.followMs, resend: () => N.put(cmd, { api: napi, runId, dev, by }) });
-      if (f.ok) { try { F.now && F.now('cesend'); } catch (_) {} return String(f.text || 'Placed by the cloud'); }
-      throw new Error(f.late ? f.text : `the cloud did not place it: ${String(f.text || 'not done').replace(/\.$/, '')}`);
-    }
-    const nap = ms => new Promise(r => setTimeout(r, ms)), t0 = Date.now(), gap = o.followMs || 2500;
-    while (Date.now() - t0 < CLOUD_FOLLOW_MS) {
-      await nap(gap);
-      let list = null; try { list = await CNx.api('charmNestLibrary', { op: 'runCmdList', runId }, { quiet: true }); } catch (_) { continue; }
-      const c = ((list && list.cmds) || []).find(x => x && x.id === put.id); if (!c) continue;
-      if (c.state === 'done') { try { F.now && F.now('cesend'); } catch (_) {} return String(c.text || 'Placed by the cloud'); }
-      if (c.state === 'failed' || c.state === 'cancelled') throw new Error(`the cloud did not place it: ${String(c.text || c.state).replace(/\.$/, '')}`);
-      if (c.step) step(`The cloud: ${c.step}`);
-    }
-    throw new Error('the cloud has not answered in 10 minutes; the request stays queued and is done when the cloud gets to it');
+    const N = root.CNCmdNow, F = root.CharmNestRunFollow, id = poolIds[0] || '', ids = poolIds.concat(o.replaces ? ['off:' + String(o.replaces)] : []);
+    const cmd = { type: 'placewaiting', ids, label: `Place the custom piece ${id}`.slice(0, 150) };
+    const opt = { api: b => root.CN.api('charmNestLibrary', b, { quiet: true, timeoutMs: 15000 }), runId: res.runId, dev: F && F.dev && F.dev(), by, label: `Custom piece ${id}`.trim(), gapMs: o.followMs, onStep: o.onStep };
+    opt.resend = () => N.put(cmd, opt);
+    const put = await N.put(cmd, opt); if (!put.id) throw new Error(`the piece is recorded (${id}) but the cloud was not asked to place it: ${put.error}`);
+    const f = await N.follow(put.runId, put.id, opt);
+    if (f.ok) { if (F && F.now) F.now('cesend'); return String(f.text || 'Placed by the cloud'); }
+    throw Object.assign(new Error(f.late ? f.text : `the cloud did not place it: ${String(f.text || 'not done').replace(/\.$/, '')}`), { told: true });   // (the follower said it, in red, with Try again)
   }
 
   /* ═══ 7 · the pop-up ═══ */
@@ -608,19 +590,18 @@
     }
     function sync() {
       const why = st.err || whyNot(), b = q('[data-cp-send]'), w = q('[data-cp-why]'), g = st.metal ? st.goes || (st.goes = goesNow()) : null;
-      w.textContent = st.busy ? '' : why; w.classList.toggle('bad', !!st.err);
-      b.setAttribute('aria-disabled', String(!!whyNot() || st.busy)); b.disabled = st.busy;
-      const vw = viewerOn();   // (CESEND: on a viewer the cloud chooses the sheet: the button never names this page's guess, and while sending it shows the cloud's own steps)
-      if (st.busy && vw && st.step) w.textContent = st.step;
-      b.innerHTML = st.busy ? `<span class="cpSpin"></span>${vw ? 'The cloud places it…' : 'Sending…'}` : updating() ? esc(`Keep on order ${st.ctx.rid}'s piece`) : vw ? esc(`Send ${st.qty > 1 ? st.qty + ' ' : ''}to the cloud to place`) : esc(`Send ${st.qty > 1 ? st.qty + ' ' : ''}to ${g ? g.name : 'sheet'}`);
+      w.textContent = why; w.classList.toggle('bad', !!st.err);
+      b.setAttribute('aria-disabled', String(!!whyNot()));
+      const vw = viewerOn();   // (CESEND: on a viewer the cloud chooses the sheet: the button never names this page's guess)
+      b.innerHTML = updating() ? esc(`Keep on order ${st.ctx.rid}'s piece`) : vw ? esc(`Send ${st.qty > 1 ? st.qty + ' ' : ''}to the cloud to place`) : esc(`Send ${st.qty > 1 ? st.qty + ' ' : ''}to ${g ? g.name : 'sheet'}`);
       q('[data-cp-n]').textContent = String(st.qty);
-      for (const x of dlg.querySelectorAll('[data-cp-qty]')) x.disabled = st.busy || (+x.dataset.cpQty < 0 ? st.qty <= 1 : st.qty >= 99);
+      for (const x of dlg.querySelectorAll('[data-cp-qty]')) x.disabled = +x.dataset.cpQty < 0 ? st.qty <= 1 : st.qty >= 99;
       const by = who(); q('[data-cp-who]').innerHTML = updating() ? (by ? `Saved by <b>${esc(by)}</b> · on the order's own piece` : '') : by ? `Sent by <b>${esc(by)}</b> · handmade custom` : 'You sign in when you send';
     }
     const all = () => { paintAttach(); paintMetal(); sync(); };
 
     /* ── what a press does ── */
-    function setAttach(k) { if (st.busy || !k || (k === 'this' && !st.ctx)) return; st.attach = k; st.err = ''; all(); const f = k === 'other' ? q('[data-cp-q]') : k === 'none' ? q('[data-cp-name]') : null; if (f && !f.hidden) requestAnimationFrame(() => { try { f.focus(); } catch (_) {} }); }
+    function setAttach(k) { if (!k || (k === 'this' && !st.ctx)) return; st.attach = k; st.err = ''; all(); const f = k === 'other' ? q('[data-cp-q]') : k === 'none' ? q('[data-cp-name]') : null; if (f && !f.hidden) requestAnimationFrame(() => { try { f.focus(); } catch (_) {} }); }
     function pickOther(h) { if (!h) return; st.other = h; st.q = ''; st.hits = []; st.hitAt = -1; q('[data-cp-q]').value = ''; st.err = ''; all(); }
     function pickFix(h) { if (!h) return; st.fix = { rid: h.rid, buyer: h.buyer || '', poolId: null, lineKey: null, label: '' }; st.fq = ''; st.fhits = []; st.fhitAt = -1; q('[data-cp-fq]').value = ''; st.err = ''; loadCause(); all(); }
     function loadCause() {
@@ -636,25 +617,23 @@
     }
     async function press() {
       const why = whyNot();
-      if (why || st.busy) { const w = q('[data-cp-why]'); w.textContent = why; w.classList.remove('cpNudge'); void w.offsetWidth; w.classList.add('cpNudge'); if (why === 'Add an identifying note') { const n = q('[data-cp-name]'); n.classList.remove('cpShake'); void n.offsetWidth; n.classList.add('cpShake'); n.focus(); } return; }
+      if (why) { const w = q('[data-cp-why]'); w.textContent = why; w.classList.remove('cpNudge'); void w.offsetWidth; w.classList.add('cpNudge'); if (why === 'Add an identifying note') { const n = q('[data-cp-name]'); n.classList.remove('cpShake'); void n.offsetWidth; n.classList.add('cpShake'); n.focus(); } return; }
       const by = who() || await askWho('Kept with this custom piece: who sent it, and when.', 'send this piece to a sheet');
       if (!by || !M || M.st !== st) return;
       // (THISORDER: the Save already put the drawing on this order's own piece (its artwork record, the pool id it has or will have): nothing is sent, no piece is added)
       if (updating()) { const pc = st.piece; say(`Order ${st.ctx.rid}: the drawing is on its own ${pc.sku} (no piece added)`, 'ok', 6000); done({ poolIds: [pc.poolId], orderId: st.ctx.rid, sendId: null, updated: true }); return; }
-      st.busy = true; st.err = ''; st.step = ''; sync();
       const g = st.goes = goesNow(), orderId = orderNow(), none = st.attach === 'none', vw = viewerOn();
-      try {
-        const out = await send({ designId: st.designId, version: st.version, design: st.design, metal: st.metal, quantity: st.qty, orderId, customName: none ? st.name.trim() : '', reason: none ? st.reason || null : null,
-          fixes: none && st.reason === 'fix' && st.fix ? { orderId: st.fix.rid, poolId: st.fix.poolId, lineKey: st.fix.lineKey, causedBy: st.causedBy.trim(), suggested: st.cause ? st.cause.suggested : '' } : null, by, sheet: vw ? '' : g.name,
-          ...(vw ? { replaces: st.attach === 'this' ? st.replaces : null, onStep: t => { if (M && M.st === st) { st.step = t; sync(); } } } : {}) });
-        // (the custom order this was designed for: its line is released from Review once its piece is on, as the card's own Release Hold does it: CustomPrint, its record, its seal, its step
-        //  on the timeline; custompool's piece is an extra piece of the order and settles nothing by itself)
-        const rel = q('[data-cp-release]');
-        if (st.attach === 'this' && st.ctx && st.ctx.item && rel && rel.checked) release(st.ctx.item).then(v => { out.released = v; });
-        if (out.cloud) { say(`${orderId ? `Order ${orderId}` : out.orderId ? out.orderId : `“${st.name.trim()}”`}: ${out.cloudText}`, 'ok', 9000); done(out); return; }   // (CESEND: the cloud's own words)
-        say(`${plural(st.qty, 'handmade custom piece')} → ${g.name}${orderId ? ` · order ${orderId}` : out.orderId ? ` · ${out.orderId}` : ` · “${st.name.trim()}”`}`, 'ok', 6000);
-        done(out);
-      } catch (e) { if (!M || M.st !== st) return; st.busy = false; st.err = `Not sent: ${String((e && e.message) || e).slice(0, 160)}`; sync(); }
+      const job = { designId: st.designId, version: st.version, design: st.design, metal: st.metal, quantity: st.qty, orderId, customName: none ? st.name.trim() : '', reason: none ? st.reason || null : null,
+        fixes: none && st.reason === 'fix' && st.fix ? { orderId: st.fix.rid, poolId: st.fix.poolId, lineKey: st.fix.lineKey, causedBy: st.causedBy.trim(), suggested: st.cause ? st.cause.suggested : '' } : null, by, sheet: vw ? '' : g.name };
+      // (the custom order this was designed for: its line is released from Review once its piece is on, as the card's own Release Hold does it: CustomPrint, its record, its seal, its step
+      //  on the timeline; custompool's piece is an extra piece of the order and settles nothing by itself)
+      const rel = q('[data-cp-release]'), item = st.attach === 'this' && st.ctx && st.ctx.item && rel && rel.checked ? st.ctx.item : null;
+      // (INSTANT, Paul 23 Nov 2026: the pop-up closes at the press; the piece is recorded and placed behind the screen, its words said in a note, a refusal in red)
+      const what = orderId ? `Order ${orderId}` : `“${st.name.trim()}”`, n = st.qty, replaces = vw && st.attach === 'this' ? st.replaces : null;
+      const sent = root.CNInstant.press({ key: 'custom:' + (orderId || st.designId), what: `${what}: the custom piece was not sent`, again: false,
+        show: () => say(`${plural(n, 'handmade custom piece')} → ${vw ? 'the cloud' : g.name}${orderId ? ` · order ${orderId}` : ` · ${what}`}`, 'ok', 6000),
+        send: () => send(Object.assign(job, { replaces })), done: out => { if (item) release(item); if (out.cloud) say(`${out.orderId || what}: ${out.cloudText}`, 'ok', 9000); } });
+      done({ poolIds: [], orderId, sendId: null, pending: sent.done });
     }
     function step(k, d) {   // the arrows in a list of orders found
       const list = k === 'fix' ? st.fhits : st.hits; if (!list.length) return;
@@ -679,9 +658,8 @@
     dlg.addEventListener('click', e => {
       const t = e.target, c = s => t.closest(s);
       if (e.target === dlg) { const r = dlg.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) done(null); return; }   // (a press on the shade outside it)
-      if (c('[data-cp-close]')) { if (!st.busy) done(null); return; }
+      if (c('[data-cp-close]')) { done(null); return; }
       if (c('[data-cp-send]')) { press(); return; }
-      if (st.busy) return;
       const a = c('[data-cp-attach]'); if (a) { setAttach(a.dataset.cpAttach); return; }
       const h = c('[data-cp-hit]'); if (h) { const fx = !!h.closest('[data-cp-fhits]'), list = fx ? st.fhits : st.hits; (fx ? pickFix : pickOther)(list[+h.dataset.cpHit]); return; }
       const u = c('[data-cp-unpick]'); if (u) { if (u.dataset.cpUnpick === 'fix') { st.fix = null; st.cause = null; st.causedBy = ''; st.causeEdited = false; } else st.other = null; all(); const f = q(u.dataset.cpUnpick === 'fix' ? '[data-cp-fq]' : '[data-cp-q]'); requestAnimationFrame(() => { try { f.focus(); } catch (_) {} }); return; }

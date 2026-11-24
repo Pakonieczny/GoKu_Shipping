@@ -100,7 +100,7 @@
       n.classList.toggle("cnBusy", on);
       const b = n.querySelector(".cnCancelBtn"); if (!b) continue;
       b.disabled = on;
-      b.innerHTML = on ? `<span class="spin"></span>Cancelling` : LABEL;
+      b.textContent = on ? "Cancelled" : LABEL;
       // (Release hold waits while the cancel is kept: one change to an order at a time)
       const rel = n.querySelector(RELSEL);
       if (rel) { if (on && !rel.disabled) { rel.disabled = true; rel.dataset.cnOff = "1"; } else if (!on && rel.dataset.cnOff) { rel.disabled = false; delete rel.dataset.cnOff; } }
@@ -276,10 +276,15 @@
     const at = Date.now(), seal = { how: "cancel", at, by: who, id: `cancel:${rid}:${at}` };
     const ctx = { rid, who, rows: rows2.slice(), mks, seal, snap: snapshot(rid, rows2, who), state: "working", started: false, landed: false, plainDone: false, held: null };
     flights.set(rid, ctx); paintBusy(rid); expectLeave(ctx);
-    let res;
-    try { res = await root.SheetWin.takeOffOrder({ orderId: rid, mode: "cancel", scope: "order", by: who, note: "" }); }
-    catch (e) { res = { ok: false, error: (e && e.message) || String(e) }; }
+    let res, dropped = false;
+    try {
+      const asked = root.SheetWin.takeOffOrder({ orderId: rid, mode: "cancel", scope: "order", by: who, note: "" });
+      // (INSTANT, Paul 23 Nov 2026: on a computer that follows the cloud the order leaves every list now, stamped and flown; the cloud keeps the cancel behind the screen, and one it refuses brings the order back)
+      if (root.CNViewer && CNViewer.on() && SheetWin.dropOrder) { dropped = true; SheetWin.dropOrder(rid); }
+      res = await asked;
+    } catch (e) { res = { ok: false, error: (e && e.message) || String(e) }; }
     if (!res || !res.ok) {
+      if (dropped) { revive(ctx.snap); try { Orders.renderNow(); Review.render(); } catch (_) { /* drawn at the next pass */ } }
       ctx.state = "failed"; forgetLeave(ctx); flights.delete(rid); paintBusy(rid); sweep(ctx);
       say(rid, plainError(res)); return res || { ok: false, error: "failed" };
     }
@@ -330,12 +335,6 @@
     if (root.Session && Session.schedule) Session.schedule();
     return n;
   }
-  function waitNote(text) {
-    const m = M(); if (!m) return null;
-    const n = m.note(() => chipEl("cancelled"), { text, ms: 45000 });
-    if (n) { const s = doc.createElement("span"); s.className = "cnNoteSpin"; n.querySelector(".mNoteT").prepend(s); }
-    return n;
-  }
   function showCancelled(rid) { try { if (root.Orders && Orders.showCancelled) Orders.showCancelled(rid); } catch (e) { console.warn("cancel show", e); } }
   /** Adds Cancel Order beside the card's Release Hold on the Review card of an order on hold (CANCELREVIEW, Paul 20 Oct 2026: "only visible as part of the orders that are on Hold inside the Review
    *  list order view": Review draws the card, decides the order is on hold, then calls this with the order number, or one of its lines). One per card; the same .btn sm as Release Hold, plain, right after
@@ -355,7 +354,7 @@
       node.dataset.rid = node.dataset.rid || rid;
       // (CANCELHELD: a card drawn again while its cancel is kept is not in the page yet (Review builds the card, then puts it in): paintBusy finds only the cards on the page, so this
       //  card's own button says so itself, or it read "Cancel Order", pressable, while the cancel went on, and a second press did nothing)
-      if (flights.has(rid)) { node.classList.add("cnBusy"); b.disabled = true; b.innerHTML = `<span class="spin"></span>Cancelling`; const r0 = node.querySelector(RELSEL); if (r0 && !r0.disabled) { r0.disabled = true; r0.dataset.cnOff = "1"; } paintBusy(rid); }
+      if (flights.has(rid)) { node.classList.add("cnBusy"); b.disabled = true; b.textContent = "Cancelled"; const r0 = node.querySelector(RELSEL); if (r0 && !r0.disabled) { r0.disabled = true; r0.dataset.cnOff = "1"; } paintBusy(rid); }
       drawMsg(node, rid);
     } catch (e) { console.warn("cancel button", e); }
   }  // (NOHOLDPILE, Paul 20 Oct 2026: Orders › On hold is gone, "it competes with the existing Review tab": a held order is shown in Review)
@@ -366,18 +365,15 @@
     rid = String(rid);
     css();
     const snap = undoable.get(rid); if (!snap) { toastIf(`Order ${rid} can be restored from Orders > Cancelled.`, "", 6000); return { ok: false, error: "nothing to undo" }; }
-    if (snap.busy) return { ok: false, error: "busy" }; snap.busy = true;
     for (const k of snap.rows.map(keyOf).concat(snap.mks || [])) if (M() && M().expect) M().expect(k, { ttl: 1 });   // (a cancel's flight that was never played must not meet the order's next move)
-    const m = M(), wait = waitNote(`Putting order ${rid} back on hold…`);
-    try {
-      if (!root.Cancelled || typeof Cancelled.restore !== "function") throw new Error("Restoring is not ready on this page yet");
-      await Cancelled.restore(rid, snap.who || nameNow());
-    } catch (e) {
-      snap.busy = false; if (wait && wait.close) wait.close();
+    const m = M();
+    if (!root.Cancelled || typeof Cancelled.restore !== "function") { toastIf("Restoring is not ready on this page yet", "bad", 6000); return { ok: false, error: "not ready" }; }
+    // (INSTANT, Paul 23 Nov 2026: the order is back at the press; a restore the cloud refuses takes it out again and says why)
+    Cancelled.restore(rid, snap.who || nameNow()).catch(e => {
+      undoable.set(rid, snap);
       const msg = plainError(e).replace(/^Not cancelled:/, "Not put back:").replace(/The order is still on hold; try again\.?/, "The order is still under Cancelled; try again.").replace(/so nothing was cancelled\. The order is still on hold;/, "so nothing was restored. The order is still under Cancelled;");
       if (m) m.note(() => chipEl("cancelled"), { text: msg, ms: 15000, actions: [{ label: "Try again", fn: () => { undo(rid).catch(e => console.warn("cancel undo", e)); } }, { label: "Show", fn: () => showCancelled(rid) }] }); else toastIf(msg, "bad", 8000);
-      return { ok: false, error: e && e.message };
-    }
+    });
     // the record is gone from Cancelled (kept in its history, and the timeline says it was restored): the lines are back
     if (m && m.expectIn) for (const r of snap.rows) m.expectIn(keyOf(r), { from: () => chipEl("cancelled"), ttl: 30000, ms: FLY_MS });
     if (m && m.expectIn) for (const k of snap.mks || []) m.expectIn(k, { from: () => chipEl("cancelled"), ttl: 30000, ms: FLY_MS });   // (CANCELREVIEW: its Review card flies back out of the Orders tab)
@@ -386,7 +382,6 @@
     try { if (reviewCards(rid).length || (snap.mks || []).length) { const v = root.Review && Review.view && Review.view(); if (v) v.back = { keys: snap.rows.map(r => r.key), until: Date.now() + 8000 }; } } catch (_) {}
     let n = 0;
     try { n = revive(snap); } catch (e) { console.warn("cancel undo", e); }
-    if (wait && wait.close) wait.close();
     try { Orders.renderNow(); } catch (_) { try { Orders.render(); } catch (__) {} }
     try { if (root.Review && Review.render) Review.render(); } catch (_) {}   // (CANCELREVIEW: its card is back in Review)
     tickChip(-1);

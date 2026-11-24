@@ -1345,20 +1345,22 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   async function markDone(done) {
     // LASERWIN (Paul, 11 Nov 2026): the Library's rule here too: a sheet whose set is not in Laser cutting is not marked; the same words as the header
     if (done && W.rec && tryDo(() => LaserReview.sheet(W.rec).ready) && setHolds(W.rec)) { toast(SET_WAIT, "bad", 6000); tryDo(() => laserState(W.rec)); return; }
-    const b = W.el.done, id = W.id; b.disabled = true; const was = b.textContent; b.innerHTML = `<span class="spin"></span>${done ? "Completing…" : "Reopening…"}`;
+    // (INSTANT, Paul 23 Nov 2026: the header says Completed (or back in Laser cutting) at the press, once the press's own checks passed (LibraryDone.mark: onSend); the cloud records it behind the screen, its seal is
+    //  drawn when its answer brings it, and a mark it refuses puts the header back and is said in red)
+    const id = W.id, rec0 = W.rec, was = rec0 && rec0.laserDoneAt; let shown = false;
+    const show = () => { if (shown || W.id !== id || !W.rec) return; shown = true; W.rec.laserDoneAt = done ? Date.now() : null; head(W.rec, false); const st = W.el.state, t = st && st.querySelector("span"); if (t && !done) { st.className = "swState ready"; t.textContent = "Ready for laser"; W.el.done.textContent = "Mark completed"; W.el.done.onclick = () => markDone(true); } };
     try {
-      const result = await LibraryDone.mark("sheet", id, done, { via: "Sheet window" });
-      if (W.id !== id) return;
-      W.rec.laserDoneAt = done ? result?.at || Date.now() : null;
+      const result = await LibraryDone.mark("sheet", id, done, { via: "Sheet window", onSend: show });
+      if (!result || W.id !== id || !W.rec) return;   // (null: the same press is in hand already)
+      W.rec.laserDoneAt = done ? result.at || Date.now() : null;
       // (the sheet's record as the server wrote it: who marked it and its seal, so the header draws that seal and not a guess)
-      for (const p of result?.process || []) if (p && p.kind === "sheet" && p.id === id && p.patch) Object.assign(W.rec, p.patch);
+      for (const p of result.process || []) if (p && p.kind === "sheet" && p.id === id && p.patch) Object.assign(W.rec, p.patch);
       head(W.rec, false);
       // where the sheet went, said slowly where the eye already is (Paul, 27 Sep): the state pops, and a note under it
       // names the Library tab that holds the sheet now, with Undo
       animate(W.el.state, [{ transform: "scale(.8)", opacity: .4 }, { transform: "scale(1.1)", opacity: 1, offset: .45 }, { transform: "none", opacity: 1 }], 700, { fill: "none" });
-      swNote(W.el.state, { text: done ? (result?.setId && !result.setDone ? "Completed · stays with its unfinished set" : "Moved to Library › Completed") : "Back in Library › Current", actions: [{ label: "Undo", title: done ? "Move it back to Current" : "Mark it completed again", fn: () => { if (W.id === id && W.dlg.open && W.rec) markDone(!done); } }] });
-    } catch (e) { toast("Could not mark the sheet: " + e.message, "bad", 6000); b.textContent = was; }
-    finally { b.disabled = false; }
+      swNote(W.el.state, { text: done ? (result.setId && !result.setDone ? "Completed · stays with its unfinished set" : "Moved to Library › Completed") : "Back in Library › Current", actions: [{ label: "Undo", title: done ? "Move it back to Current" : "Mark it completed again", fn: () => { if (W.id === id && W.dlg.open && W.rec) markDone(!done); } }] });
+    } catch (e) { toast("Could not mark the sheet: " + e.message, "bad", 6000); if (shown && W.id === id && W.rec) { W.rec.laserDoneAt = was || null; head(W.rec, false); } }
   }
 
   /* ── the set's sheets, as tabs ── */
@@ -1460,9 +1462,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     animate(W.el.plate, [{ opacity: .15, transform: `translateX(${-d * 36}px)` }, { opacity: 1, transform: "none" }], 300);
   }
 
+  /* INSTANT (Paul, 23 Nov 2026: "nowhere in the application is the system allowed to make the user wait"): what a press on a viewer has already changed on this screen while the cloud does it.
+     OFFNOW: the pieces taken off (id → { sheet, until }): drawn gone at the press, whatever the older record still says, until the sheet's record no longer lists them or the cloud refused (3 min at the most).
+     BACKNOW: the orders whose hold was released here (order → until): out of the On hold list at the press. */
+  const OFFNOW = new Map(), BACKNOW = new Map(), NOW_MS = 180000;
+  const offNow = (ids, sheet, on) => { for (const id of ids) { if (on) OFFNOW.set(id, { sheet, until: Date.now() + NOW_MS }); else OFFNOW.delete(id); const y = W.byPool.get(id); if (y) y.gone = on; } if (W.dlg && W.dlg.open && W.rec) paintBase(); };
+  const alive = (m, k) => { const x = m.get(k); if (!x) return false; if ((x.until || x) > Date.now()) return true; m.delete(k); return false; };
   /* ── the record's pieces ── */
   function indexPieces() {
     const pieces = piecesOf(W.rec);
+    if (OFFNOW.size) { const here = new Set(pieces.map(x => x.poolId).filter(Boolean)); for (const x of pieces) if (x.poolId && alive(OFFNOW, x.poolId)) x.gone = true; for (const [k, x] of [...OFFNOW]) if (x.sheet === W.id && !here.has(k)) OFFNOW.delete(k); }
     W.pieces = pieces; W.byId = new Map(pieces.map(x => [x.id, x])); W.byPool = new Map(pieces.filter(x => x.poolId).map(x => [x.poolId, x]));
     W.orders = new Map(); for (const x of pieces) { const k = x.rid || "—"; if (!W.orders.has(k)) W.orders.set(k, []); W.orders.get(k).push(x); }
     for (const x of pieces) x.eng = engOf(x);
@@ -2444,7 +2453,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
   }
   /** The press on a viewer: asked, then the cloud's answer. → { done } | { asked } (still working: followed on, said when answered); throws the cloud's words when it refused. */
-  async function cloudLabel(plan, rec, sh) {
+  async function cloudLabel(plan, rec, sh, ms) {
     const id = plan.id, name = (rec && rec.id ? tryDo(() => nameOf(rec)) : null) || (sh ? tryDo(() => sheetName(sh)) : null) || "This sheet", by = whoAmI();
     if (!by) throw new Error("sign in first: the cloud is asked in your name");
     let r = null;
@@ -2453,14 +2462,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!r || r.error || !r.ask) throw new Error(`the cloud was not asked (${String((r && r.error) || "no answer").replace(/\.$/, "")})`);
     const seq = r.ask.seq; W.qrAsk = { id, at: Date.now(), seq };
     toast(`${name}: asked — the cloud makes its QR label`, "ok", 5000);
-    const said = a => { if (W.qrAsk && W.qrAsk.id === id) W.qrAsk = null; if (a.state === "refused") { W.qrWhy = { id, why: String(a.why || "the cloud did not make it").replace(/\.$/, ""), at: Date.now() }; toast(`${name}: no QR label made: ${W.qrWhy.why}`, "bad", 9000); } else toast(`${name}: done — the cloud made its QR label`, "ok", 5000); };
-    const a = await askAnswer(id, seq, 90000 * spinScale());
-    if (a && a.state === "refused") { if (W.qrAsk && W.qrAsk.id === id) W.qrAsk = null; throw new Error(String(a.why || "the cloud did not make it")); }
-    if (a) { said(a); return { done: true }; }
-    // (not answered in 90 s: the cloud keeps its ask; followed on for ten minutes more, said when it is answered, and the window drawn again if it still shows this sheet)
-    askAnswer(id, seq, 600000 * spinScale()).then(b => { if (!b) { if (W.qrAsk && W.qrAsk.id === id) W.qrAsk = null; toast(`${name}: the cloud has not answered its QR label in ten minutes; its ask is kept and the cloud keeps at it`, "bad", 9000); return; }
-      said(b); if (W.id === id && W.dlg && W.dlg.open && !W.flow) open2(id); }).catch(() => {});
-    return { asked: true };
+    const a = await askAnswer(id, seq, (ms || 90000) * spinScale());
+    if (a || ms) { if (W.qrAsk && W.qrAsk.id === id) W.qrAsk = null; }
+    if (!a) { if (ms) toast(`${name}: the cloud has not answered its QR label in ten minutes; its ask is kept and the cloud keeps at it`, "bad", 9000); return { asked: true }; }
+    if (a.state === "refused") throw new Error(String(a.why || "the cloud did not make it").replace(/\.$/, ""));
+    toast(`${name}: done — the cloud made its QR label`, "ok", 5000); return { done: true };
   }
   /** OUTBOX: a field patch of a sheet's record, kept in this computer's outbox (charm-nest-store.js mutate) with what it saw in those fields (base: the later change wins, and says whom it
       overwrote) and sent from there with its mutation id; → the cloud's answer (rejects with the refusal in the cloud's words). Without the outbox, the plain write. */
@@ -2476,6 +2482,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   async function makeLabel(btn) {
     const plan = labelPlan(), id = W.id, rec = W.rec; if (!plan) return;
     const sh = allSheets().find(p => p.sheetId === id), run = window.B && B.run;
+    // (INSTANT, Paul 23 Nov 2026: on a viewer the cloud is asked and the window goes on; its answer, or why not, is said when it comes)
+    if (plan.cloud) return void CNInstant.press({ key: "qr:" + id, what: "No QR label made", again: false, show: () => { const t = W.el.foot.querySelector("[data-r2=qrText]"); if (t) t.textContent = "Asked — the cloud is making its QR label"; },
+      send: () => cloudLabel(plan, rec, sh, 600000), done: () => { if (W.id === id && W.dlg.open && !W.flow) open2(id); }, back: (_, e) => { if (W.qrAsk && W.qrAsk.id === id) W.qrAsk = null; W.qrWhy = { id, why: e.message, at: Date.now() }; if (W.id === id && W.dlg.open && !W.flow) open2(id); } });
     let sheets = [sh];
     if (plan.kind === "include" && sh && Gate.splitWith) {
       const split = Gate.splitWith(sh, true);
@@ -3432,7 +3441,18 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       //  scope "order" with only: the pieces chosen ("Only this charm" or "The whole order") come off wherever they are, and the rest of the order stays)
       const onSheet = list.filter(o => o.sh && o.sh.sheetId), here = !(opt && opt.headless) && W.id && onSheet.some(o => String(o.sh.sheetId) === String(W.id)) ? String(W.id) : "";
       const sheetId = here || (onSheet[0] ? String(onSheet[0].sh.sheetId) : "");
-      await CNViewer.takeOff({ orderId: plan.rid, mode: cx ? "cancel" : "hold", note: (opt && opt.note) || "", by: who, only: list.map(o => o.id), scope: "order", ...(sheetId ? { sheetId } : {}), ...(cx ? { cancelRec: cancelRecOf(plan.rid, { who, note: (opt && opt.note) || "", sheets: listWhere(list.filter(o => o.sh)), at: Date.now() }) } : {}) });   // (it says what happened, in words)
+/* INSTANT (Paul, 23 Nov 2026): the pieces leave the plate and the order's row goes at the press (On hold, or folded away for a cancel), as on the computer that carries a run; the cloud takes them off
+         behind the screen and says how it ended. Refused: they are back where they lay, the row with them, and the cloud's words are said in red (CNViewer.takeOff says them). */
+      const ids = list.map(o => String(o.id)), ui = !(opt && opt.headless) && !!(W.dlg && W.dlg.open && W.el.plate), at = W.id;
+      const skus = [...new Set(list.map(o => o.sku).filter(Boolean))], cue = !ui ? null : offCue(plan.rid, cx ? "cancel" : "hold", plan.whole || !skus.length ? `Order ${plan.rid} is on hold` : `Order ${plan.rid} · ${skus.join(", ")} is on hold`);
+      const draw = () => { if (!ui || W.id !== at || !W.dlg.open) return; if (W.view === "piece") showSheetPane(); else { renderStrip(); renderSheetPane(); } paintBase(); };
+      const set = gone => { for (const o of list) offNow([String(o.id)], o.sh ? String(o.sh.sheetId) : "", gone); };
+      const p = CNInstant.press({ key: "off:" + plan.rid, quiet: true,
+        show: () => { set(true); if (ui) { W.hover = null; tip(null); W.el.plate.classList.remove("onCharm"); W.ghost = null; } draw(); if (cue) cue.go(); },
+        send: () => CNViewer.takeOff({ orderId: plan.rid, mode: cx ? "cancel" : "hold", note: (opt && opt.note) || "", by: who, only: list.map(o => o.id), scope: "order", ...(sheetId ? { sheetId } : {}), ...(cx ? { cancelRec: cancelRecOf(plan.rid, { who, note: (opt && opt.note) || "", sheets: listWhere(list.filter(o => o.sh)), at: Date.now() }) } : {}) }),
+        done: () => { if (cue) { cue.done(); setTimeout(() => cue.end(), 20000); } },
+        back: () => { set(false); if (cue) cue.fail(); draw(); } });   // (it says what happened, in words)
+      if (opt && opt.headless) await p.done;   // (the shared-orders window and Hold ask for its answer)
       return;
     }
     const pressedAt = Date.now();   // (a cancel's moment on its timeline: when it was pressed, not when the record was kept)
@@ -3758,14 +3778,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const tell = () => { try { if (window.Orders && Orders.cancelArrived) Orders.cancelArrived(rids.map(rid => { const c = recordOf(rid) || { orderId: rid }; return { orderId: rid, etsy: isEtsy(c), by: c.by || "" }; })); } catch (e) { console.warn("cancelled orders: arrival", e); } };
       if (rids.every(recordOf)) tell(); else history().then(tell, tell);
     }
+    // (INSTANT, Paul 23 Nov 2026: cancelled, or not any more, on this screen at the press; the cloud keeps it behind the screen, and one it refuses is put back as it was)
     async function put(rec) {
-      const rid = String(rec.orderId); mineAt.set(rid, Date.now());
-      const r = await api("charmNestLibrary", Object.assign({ op: "cancelPut" }, rec), { quiet: true }); ids.add(rid); learned.set(rid, Date.now());
+      const rid = String(rec.orderId), had = ids.has(rid), now = !had && !!(window.CNViewer && CNViewer.on()); mineAt.set(rid, Date.now()); if (now) { ids.add(rid); learned.set(rid, Date.now()); }
+      let r; try { r = await api("charmNestLibrary", Object.assign({ op: "cancelPut" }, rec), { quiet: true }); } catch (e) { if (now) { ids.delete(rid); learned.delete(rid); } throw e; }
+      ids.add(rid); learned.set(rid, Date.now());
       // the record as kept goes at the top of what was read; the next reading confirms it
       if (list) { list = list.filter(c => String(c.orderId) !== rid); list.unshift((r && r.record) || Object.assign({ orderId: rid, by: rec.by, why: rec.why, at: Date.now() }, rec.record || {})); listAt = 0; }
       return r;
     }
-    async function restore(rid, by) { await api("charmNestLibrary", { op: "cancelRestore", orderId: String(rid), by: String(by || whoAmI() || "") }, { quiet: true }); restored.set(String(rid), Date.now()); window.AutoCancel?.forget?.(rid); try { window.CharmNestReviewMark?.uncancel?.(rid, { by: String(by || whoAmI() || "") })?.then?.(r => { if (r && !r.ok) console.warn("Cancel Order seal: undo not kept in the cloud", rid, r.error); }); } catch (_) {}   /* (SEALCANCEL, Paul 20 Oct 2026: undone, the ORDER CANCELLED seal is marked undone and no longer shows; its other seals stay) */ ids.delete(String(rid)); learned.delete(String(rid)); extra.delete(String(rid)); if (list) list = list.filter(c => String(c.orderId) !== String(rid)); revive(String(rid)); }
+    async function restore(rid, by) { const had = ids.has(String(rid)); ids.delete(String(rid)); restored.set(String(rid), Date.now()); try { await api("charmNestLibrary", { op: "cancelRestore", orderId: String(rid), by: String(by || whoAmI() || "") }, { quiet: true }); } catch (e) { restored.delete(String(rid)); if (had) ids.add(String(rid)); Orders.render(); throw e; } window.AutoCancel?.forget?.(rid); try { window.CharmNestReviewMark?.uncancel?.(rid, { by: String(by || whoAmI() || "") })?.then?.(r => { if (r && !r.ok) console.warn("Cancel Order seal: undo not kept in the cloud", rid, r.error); }); } catch (_) {}   /* (SEALCANCEL, Paul 20 Oct 2026: undone, the ORDER CANCELLED seal is marked undone and no longer shows; its other seals stay) */ ids.delete(String(rid)); learned.delete(String(rid)); extra.delete(String(rid)); if (list) list = list.filter(c => String(c.orderId) !== String(rid)); revive(String(rid)); }
     /** The order's lines AutoCancel kept marked gone (a piece stayed on a cut or released sheet) are in play again: the
      *  arrivals' merge keeps a row it already has and the orders check skips gone ones, so they stayed gone for good. A
      *  line whose pieces are all on sheets goes back to where they are (Pool.settle); the rest wait in line, and the next
@@ -3957,9 +3979,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     async function doRestore(row, c, b, back, who) {
       const rid = String(c.orderId), w = want;
-      b.disabled = true; b.innerHTML = `<span class="spin"></span>Restoring`; row.querySelector("[data-cx=no]")?.remove();
+      const kept = restore(rid, who);   // (INSTANT: the row goes now; a restore the cloud refuses brings it back)
+      kept.catch(e => { toast("Not restored: " + e.message, "bad", 7000); paint(); });
       try {
-        await restore(rid, who);
         nodes.delete(rid);
         agent({ bridge: true }, "DS", `Order ${rid} restored by ${whoAmI() || "someone"}: it comes back with the next orders check if it is still open on Etsy`);
         // where it goes, seen going (Paul, 27 Sep): a copy lifts off toward Open Orders, slowly enough to follow (~700 ms), the
@@ -4446,14 +4468,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
          and marks its take-off job's notice seen. The notice leaves this page once the cloud says so; a refusal is said and the notice stays. */
       if (window.CNViewer && CNViewer.on()) {
         st = read(); const n = st.notices.find(x => x.rid === rid); if (!n) return RunCtl.renderBanner();
-        const b = node && node.querySelector && node.querySelector("[data-cxack]"); if (b) { if (b.disabled) return; b.disabled = true; }
-        return CNViewer.ack(rid, n.at, { by: whoAmI() || "" }).then(r => {
-          if (b) b.disabled = false;
-          if (!r || !r.ok) return r;
-          st = read(); st.notices = st.notices.filter(x => !(x.rid === rid && (+x.at || 0) === (+n.at || 0))); save();
-          for (const m of document.querySelectorAll(".mNote")) if (m.close && /^Order \d+ (was|is) cancelled/.test(m.textContent) && m.textContent.includes(rid)) m.close();
-          RunCtl.renderBanner(); return r;
-        });
+        // (INSTANT, Paul 23 Nov 2026: the notice leaves this page at the press; one the cloud refuses comes back, and the cloud's words are said in red by CNViewer.ack)
+        const same = x => x.rid === rid && (+x.at || 0) === (+n.at || 0);
+        return CNInstant.press({ key: "aside:" + rid, quiet: true,
+          show: () => { st = read(); st.notices = st.notices.filter(x => !same(x)); save(); for (const m of document.querySelectorAll(".mNote")) if (m.close && /^Order \d+ (was|is) cancelled/.test(m.textContent) && m.textContent.includes(rid)) m.close(); RunCtl.renderBanner(); },
+          send: () => CNViewer.ack(rid, n.at, { by: whoAmI() || "" }),
+          back: () => { st = read(); if (!st.notices.some(same)) { st.notices.push(n); save(); } RunCtl.renderBanner(); } }).done.then(x => x.answer || x);
       }
       const go = () => {
         st = read(); const n = st.notices.find(x => x.rid === rid); if (!n) return RunCtl.renderBanner();
@@ -4975,7 +4995,6 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      the cloud's cmdHopPieces): the pieces go into the freed room exactly where this window planned them (pinned there), every other charm of every sheet stays where it is, the sheets owe
      their files, and nothing is nested again. Nothing is saved, nested or written on this page. Said in words: asked (the steps panel), then the cloud's answer (moved, or why not).
      groups: [{ k, spots: [{ c, src, cxPt, cyPt, angle }] }], one per order; at most four sheets they come from and 60 pieces in one request (more go as further requests). Mode "off": never called. */
-  const FILL_ASKED = new Set();
   async function fillCloud(groups, target, who) {
     groups = (groups || []).filter(g => g && g.k && Array.isArray(g.spots) && g.spots.length);
     const rids = [...new Set(groups.map(g => String(g.k.rid)))], tName = sheetWord(target.sheetId, target.fileBase, target);
@@ -4985,7 +5004,6 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!CNViewer.lane("cmd:hop")) throw lost(`the cloud does not fill the freed room yet (the owner turns on “cmd:hop” in Settings, Cloud carries)`);
     if (groups.some(g => g.spots.some(s => !s.c || !s.c.poolId || !s.src || !s.src.sheetId))) throw lost(`a piece of ${what} is not on a saved sheet yet`);
     const touched = [...new Set([target.sheetId].concat(groups.flatMap(g => g.spots.map(s => s.src.sheetId))))];
-    if (touched.some(id => FILL_ASKED.has(id))) throw lost("the cloud is still making the last move on one of these sheets; press again once it says so");
     // the requests: four sheets they come from and 60 pieces each at most, whole orders only
     const chunks = [];
     for (const g of groups) {
@@ -4998,71 +5016,21 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     const F = window.CharmNestRunFollow, runId = target.runId || tryDo(() => F.state().runId), dev = tryDo(() => F.dev()) || "";
     if (!runId) throw lost("the run the cloud carries is not known on this computer yet");
-    const n = groups.reduce((m, g) => m + g.spots.length, 0);
-    const ask = stepOf(`Sending ${what} to the cloud`, "now"), cloud = stepOf(`The cloud puts ${n === 1 ? "the charm" : n + " pieces"} into the freed room on ${tName}`);
-    const work = beginFlow({ state: "working", title: `Asking the cloud: ${what} to ${tName}`, steps: [ask, cloud], note: "" });
-    if (!work) { for (const r of rids) unland(r); return false; }
-    W.fill = null; tryDo(renderFill); tryDo(renderWork);
-    const paint = () => { if (W.dlg && W.dlg.open && W.work === work) tryDo(renderWork); };
-    const sent = [];
-    for (let i = 0; i < chunks.length; i++) {
-      const c = chunks[i], from = [...c.from];
-      const poses = c.spots.map(s => ({ poolId: String(s.c.poolId), cxPt: +s.cxPt, cyPt: +s.cyPt, angle: +s.angle || 0 }));
-      const cmd = { type: "hop", fill: true, sourceId: from[0], ...(from.length > 1 ? { sourceIds: from } : {}), targetId: target.sheetId, ids: poses.map(p => p.poolId), poses, metal: target.metal,
-        label: `Fill the freed room on ${tName}: order${c.rids.length > 1 ? "s" : ""} ${c.rids.join(", ")}`, ...(i === 0 && target.layoutRev != null && Number.isFinite(+target.layoutRev) ? { layoutBase: +target.layoutRev } : {}) };
-      let r = null; try { r = await api("charmNestLibrary", { op: "runCmdPut", runId, dev, by: who, cmd }, { quiet: true, timeoutMs: 15000 }); } catch (e) { r = { error: (e && e.message) || String(e) }; }
-      if (!r || r.error || !r.id) {
-        const why = String((r && r.error) || "the cloud did not answer").replace(/\.$/, "");
-        if (!sent.length) { ask.state = "bad"; ask.detail = why; work.state = "failed"; work.title = `${what.charAt(0).toUpperCase() + what.slice(1)} not moved`; work.note = esc(`${why}. ${stay}.`); endFlow(work); paint(); throw lost(why); }
-        for (const rr of c.rids) unland(rr);
-        tryDo(() => toast(`Order${c.rids.length > 1 ? "s" : ""} ${c.rids.join(", ")} not sent to the cloud: ${why}. ${c.rids.length > 1 ? "They stay" : "It stays"} where ${c.rids.length > 1 ? "they are" : "it is"}.`, "bad", 9000));
-        continue;
-      }
-      sent.push({ id: r.id, rids: c.rids, spots: c.spots, cmd });
-    }
-    for (const id of touched) FILL_ASKED.add(id);
-    ask.state = "ok"; ask.detail = sent.length > 1 ? `${sent.length} requests` : "asked"; cloud.state = "now"; cloud.detail = "every other charm stays where it is; nothing is nested again";
-    work.note = esc(`Asked by ${who}. The cloud places ${n === 1 ? "it" : "them"} where shown; its answer shows here and in a note.`);
-    endFlow(work);   // (the window is free for the next change while the cloud works: this panel still follows the answer)
-    paint();
-    const finish = answers => {
-      for (const id of touched) FILL_ASKED.delete(id);
-      const good = answers.filter(a => a.ok), late = answers.filter(a => a.late), bad = answers.filter(a => !a.ok && !a.late);
-      if (good.length) {   // (the room the pieces took is no longer free)
-        const landed = good.flatMap(a => a.x.spots);
-        setFreed(target.sheetId, (FREED.get(target.sheetId) || []).filter(g => !landed.some(s => Math.hypot(s.cxPt - g.x.p.cxPt, s.cyPt - g.x.p.cyPt) < Math.max(g.x.p.wPt || 20, g.x.p.hPt || 20) / 2)));
-      }
-      for (const r of rids) unland(r);
-      const said = a => (a.ok ? a.text : `Order${a.x.rids.length > 1 ? "s" : ""} ${a.x.rids.join(", ")} ${a.late ? "not moved yet" : "not moved"}: ${String(a.text || "the cloud refused it").replace(/\.$/, "")}.${a.late ? "" : ` ${a.x.rids.length > 1 ? "They stay" : "It stays"} where ${a.x.rids.length > 1 ? "they are" : "it is"}; no sheet was nested again.`}`);
-      cloud.state = bad.length || late.length ? (good.length ? "ok" : "bad") : "ok";
-      cloud.detail = good.length && (bad.length || late.length) ? `${good.length} of ${answers.length} requests done` : good.length ? "done" : late.length ? "no answer yet" : "refused";
-      work.state = good.length ? "done" : "failed";
-      work.title = good.length ? `${what.charAt(0).toUpperCase() + what.slice(1)} moved to ${tName} by the cloud${bad.length || late.length ? " · not all" : ""}` : `${what.charAt(0).toUpperCase() + what.slice(1)} not moved`;
-      work.note = answers.map(a => esc(said(a))).join("<br>");
-      paint();
-      tryDo(() => F.now("fill"));
-      tryDo(() => toast(answers.map(said).join(" "), bad.length || late.length ? (good.length ? "warn" : "bad") : "ok", 10000));
-      if (W.dlg && W.dlg.open && touched.includes(W.id) && !W.flow) tryDo(() => open(W.id, { keepWork: true, keepSet: false, ...(good.length ? { glow: good.flatMap(a => a.x.spots.map(s => String(s.c.poolId))) } : {}) }));
-    };
-    (async () => {
-      const left = new Map(sent.map(x => [x.id, x])), answers = [];
-      for (const t0 = Date.now(); left.size && Date.now() - t0 < 300000;) {   // (NOWCMD: 5 minutes, then said plainly)
-        await pause(Date.now() - t0 < 60000 ? 2500 : 6000);
-        let list = null; try { list = await api("charmNestLibrary", { op: "runCmdList", runId }, { quiet: true }); } catch (_) { continue; }
-        for (const c of (list && list.cmds) || []) {
-          const x = c && left.get(c.id); if (!x || !["done", "failed", "cancelled"].includes(c.state)) continue;
-          left.delete(c.id); answers.push({ x, ok: c.state === "done", text: String(c.text || "") });
-        }
-      }
-      for (const x of left.values()) answers.push({ x, ok: false, late: true, text: "the cloud has not done it yet — it is still queued; check again or press Try again" });
-      finish(answers);
-      // (NOWCMD: a refusal or a late answer is also said by the page's one follower, in red, with Try again (the same request asked again); a late one is still followed in the background)
-      const N = window.CNCmdNow, napi = b => api("charmNestLibrary", b, { quiet: true });
-      if (N) for (const a of answers.filter(a => !a.ok)) {
-        const label = `Fill the freed room on ${tName}: order${a.x.rids.length > 1 ? "s" : ""} ${a.x.rids.join(", ")}`, o = { api: napi, label, resend: () => N.put(a.x.cmd, { api: napi, runId, dev, by: who }) };
-        if (a.late) { tryDo(() => N.watch(runId, a.x.id, o)); } else tryDo(() => N.shout({ runId, id: a.x.id, failed: true, text: a.text }, o));
-      }
-    })().catch(e => { console.warn("sheet window: fill (cloud) answer", e); for (const id of touched) FILL_ASKED.delete(id); });
+    // INSTANT (Paul, 23 Nov 2026): the pieces are drawn where they land at the press and the window is free; the cloud moves them behind the screen, one request after another; a refusal is said in red and they are drawn back
+    W.fill = null; tryDo(renderFill);
+    const N = window.CNCmdNow;
+    chunks.forEach((c, i) => {
+      const from = [...c.from], poses = c.spots.map(s => ({ poolId: String(s.c.poolId), cxPt: +s.cxPt, cyPt: +s.cyPt, angle: +s.angle || 0 })), os = `order${c.rids.length > 1 ? "s" : ""} ${c.rids.join(", ")}`;
+      const cmd = { type: "hop", fill: true, sourceId: from[0], ...(from.length > 1 ? { sourceIds: from } : {}), targetId: target.sheetId, ids: poses.map(p => p.poolId), poses, metal: target.metal, label: `Fill the freed room on ${tName}: ${os}`,
+        ...(i === 0 && !CNInstant.pending("hop") && target.layoutRev != null && Number.isFinite(+target.layoutRev) ? { layoutBase: +target.layoutRev } : {}) };
+      const opt = { api: b => api("charmNestLibrary", b, { quiet: true }), runId, dev, by: who, label: cmd.label }; opt.resend = () => N.put(cmd, opt);
+      const end = () => { for (const r of c.rids) unland(r); tryDo(() => F.now("fill")); };
+      CNInstant.press({ key: "hop", what: `${os.charAt(0).toUpperCase() + os.slice(1)} not moved to ${tName}`, again: false,
+        send: async () => { const p = await N.put(cmd, opt); if (!p.id) throw new Error(`${p.error || "the cloud did not answer"}. ${stay}`); const f = await N.follow(p.runId, p.id, opt); if (!f.ok) throw Object.assign(new Error(f.text), { told: true }); return f; },
+        done: f => { setFreed(target.sheetId, (FREED.get(target.sheetId) || []).filter(g => !c.spots.some(s => Math.hypot(s.cxPt - g.x.p.cxPt, s.cyPt - g.x.p.cyPt) < Math.max(g.x.p.wPt || 20, g.x.p.hPt || 20) / 2)));   // (the room they took is no longer free)
+          end(); tryDo(() => toast(f.text, "ok", 10000)); if (W.dlg && W.dlg.open && touched.includes(W.id) && !W.flow) tryDo(() => open(W.id, { keepWork: true, keepSet: false, glow: poses.map(p => p.poolId) })); },
+        back: end });
+    });
     return true;
   }
   // o.free: the nest itself picks the spots (spots are only proof that there is room); otherwise each piece is pinned
@@ -5515,6 +5483,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     for (const r of window.Orders ? Orders.rows() : []) {
       if (!r.hold || r.state === "gone") continue;
       const rid = String(r.order.receiptId); if ((W.going.get(rid) || {}).how === "cancel") continue;   // (being cancelled: its row has folded away)
+      if (alive(BACKNOW, rid)) continue;   // (INSTANT: released here at the press)
       if (!by.has(rid)) by.set(rid, []); by.get(rid).push(r);
     }
     return [...by].map(([rid, rows]) => ({ rid, rows, at: Math.max(0, ...rows.map(r => +r.heldAt || 0)) }))
@@ -5537,27 +5506,28 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }).join(""));
     E.orders.querySelectorAll(".swHeld").forEach(li => {
       const rid = li.dataset.rid, rows = () => rowsOfOrder(rid).filter(r => r.hold);
-      li.querySelector("[data-h=back]").onclick = async ev => {
-        const b = ev.currentTarget; b.disabled = true; b.innerHTML = `<span class="spin"></span>Releasing`;
-        let went = false;
+      li.querySelector("[data-h=back]").onclick = () => {
         // (SEALGREEN, Paul 28 Oct 2026: "change the colour of the 'Order Released' seal to be green ... throughout the entire application everywhere these seals are used": this release is an ORDER RELEASED
         //  seal too, as a Release Hold press is: its step carries the seal (who, when) and the release is kept as the Review card's is, ReviewRelease.keep, so the cards and the order window draw it; was a
         //  plain "released" step the timeline drew as a red HOLD RELEASED. How it releases is unchanged.)
         const at = Date.now(), who = whoAmI(), seal = { how: "releaseHold", at, by: who, id: `releaseHold:${rid}:${at}` };
-        try {
+        /* INSTANT: the row goes at the press (Put back, its film); the cloud releases it behind the screen, and a release it refuses brings the row back and says why, in red. The seal and the log are kept
+           only once it is really released (RELNOSEAL). */
+        const release = async () => {
           /* CLOUDBACK (Paul, 23 Nov 2026, orders 4235923653 and 4230787700: "Order ... is back in line" was said and both stayed on hold): on a computer that follows the cloud the release is the cloud's (CNViewer.release:
-             releaseAsk), never this page's own copy, and it is said only once the cloud released it. */
+             releaseAsk), never this page's own copy, and it is kept only once the cloud released it. */
           const cloud = !!(window.CNViewer && CNViewer.on && CNViewer.on());
           if (cloud) { const a = await CNViewer.release(rid, { name: who, seal }); if (!a || !a.ok) throw new Error((a && a.error) || "the cloud did not release it"); }
           else { for (const r of rows()) { r.heldAt = null; await Review.repool(r); } if (window.RunCtl) RunCtl.poke(); }
           agent({ bridge: true }, "DS", `Order ${rid} put back in line by ${who || "someone"}`);
           if (!cloud) window.SheetEvents?.order({ type: "released", orderId: rid, id: `sw-release-${at}`, by: who, at, text: "Hold released in the sheet window · back in line", data: { seal: "releaseHold", sealAt: at, sealId: seal.id, from: "sheetWindow" } });
           if (who && window.ReviewRelease && ReviewRelease.keep) ReviewRelease.keep([rid], seal, "sheetWindow").catch(e => console.warn("sheet window: release seal", e));
-          went = true;
-        } catch (e) { toast("Hold not released: " + e.message, "bad", 7000); }
-        b.disabled = false;
-        if (went && li.isConnected) backInLine(li, rid); else if (went) toast(`Order ${rid} is back in line`, "ok", 5000);   // (its row flies to All, before the list is drawn again)
-        if (W.dlg.open && W.rec) renderSheetPane();
+          return { ok: true };
+        };
+        const redraw = () => { if (W.dlg.open && W.rec) renderSheetPane(); };
+        CNInstant.press({ key: "hold:" + rid, what: `Order ${rid}: hold not released`, again: false,
+          show: () => { BACKNOW.set(rid, Date.now() + NOW_MS); if (li.isConnected) backInLine(li, rid); else redraw(); },
+          send: release, done: redraw, back: () => { BACKNOW.delete(rid); redraw(); } });
       };
       // (NOHOLDPILE, Paul 20 Oct 2026: Orders › On hold is gone, "it competes with the existing Review tab": the held order is shown in Review)
       li.querySelector("[data-h=orders]").onclick = () => { close().then(() => { if (window.Review && Review.showHeld) Review.showHeld(rid); else setMode("review"); }); };
@@ -8030,14 +8000,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   // (LOCAL: and the sheets opened last on this computer, with their designs, are read into memory: the next of them opened is drawn with no wait for the disk)
   try { (window.requestIdleCallback || (f => setTimeout(f, 1500)))(() => { try { build(); } catch (_) {} try { if (window.OrderPieces && OrderPieces.of && (S.library.rows || []).length) OrderPieces.of("0"); } catch (_) {}
     try { const St = window.CharmNestStore; if (St && St.warm && window.Pool && Pool.warmKept) St.ready().then(() => St.warm("sheetFull", 8)).then(recs => { for (const r of recs) for (const s0 of r.sources || []) if (s0 && s0.pool && s0.path && s0.hash) Pool.warmKept(s0.path, s0.hash); }).catch(() => {}); } catch (_) {} }, { timeout: 5000 }); } catch (_) {}
-  window.SheetWin = { writeFromRecord, remakeLabel, joinSet, joinInfo, takeOffOrder, dropTakenOff, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, pieceBase, _W: W };
+  window.SheetWin = { writeFromRecord, remakeLabel, joinSet, joinInfo, takeOffOrder, dropOrder, dropTakenOff, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, pieceBase, _W: W };
   /* ── the sheet hop (charm-nest-sheet-hop.js; Paul, 18 Oct 2026: on 10K and 14K sheets a person drags a charm onto the next or previous sheet
      of its metal): this window's own pieces for it, nothing new. The move itself is moveIn (o.hop: pinned where it was put, the hop's own
      guards), the room is the window's collision grid (plateGrid / variantOf: real outlines and the run's clearance). W.hop, set while a charm
      is held, keeps the window's follow from reading the sheet again under the hand. (Set after the export: tests that slice the module up to
      it run without it.) ── */
   window.SheetWin.hopKit = {
-    W, open: (id, o) => open(id, o), switchSheet, plateGrid, variantOf, toPlate, hitPt, whoAmI, needName, note: swNote, paintFx, tip,
+    W, offNow, open: (id, o) => open(id, o), switchSheet, plateGrid, variantOf, toPlate, hitPt, whoAmI, needName, note: swNote, paintFx, tip,
     moveIn: (k, spots, target, who, o) => moveIn(k, spots, target, who, Object.assign({}, o || {}, { hop: true })),
     // (MANUALHOP: the move made at once on the live sheets, its save in the background; hopState() for the tests)
     moveNow: (k, spots, target, who, o) => moveNow(k, spots, target, who, o || {}), hopState: () => ({ pending: HOP.pending, saving: HOP.pending > 0, owed: MC.on ? [...MC.owed].map(sh => sh.sheetId) : [], writing: HOP.writing.size }),   // (writing: MOVEINSTANT, the sheets written as they stand in the background)
