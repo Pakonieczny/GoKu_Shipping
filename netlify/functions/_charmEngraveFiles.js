@@ -203,7 +203,7 @@ async function fitUnit(ctx) {
     for (const l of got) { newest = Math.max(newest, num(l.at)); if (lines[l.key]) keys.add(l.key); }
     if (got.length >= 500) more = true;
     if (num(cur.oneCount) < 1) for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.engrave && !l.engrave.approved) keys.add(k);   // (ONECOUNT: the lines whose copy said "waits" before this rule, looked at once)
-    if (num(cur.fontNow) < 1) for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.engrave && !l.engrave.approved) keys.add(k);   // (FONTNOW: the engravings that wait for approval, looked at once)
+    if (num(cur.fontNow) < 2) for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.engrave && !l.engrave.approved) keys.add(k);   // (FONTNOW: the engravings that wait for approval, looked at once)
     if (num(cur.artLook) < 1) for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.engrave && /"state":"approved"/.test(JSON.stringify(l.engrave))) keys.add(k);   // (ARTAPPROVED: the lines approved before this rule, whose file was never written, looked at once)
   }
   const all = [...keys], pending = {};
@@ -249,7 +249,7 @@ async function fitUnit(ctx) {
     }
   }
   const pend = Object.keys(pending).slice(0, 1500);
-  await ctx.db.runTransaction(async tx => { await fenceTx(ctx, tx); tx.set(cref, { runId: ctx.runId, artLook: 1, oneCount: 1, fontNow: 1, since: newest, pending: Object.fromEntries(pend.map(k => [k, true])), at: Date.now() }); });
+  await ctx.db.runTransaction(async tx => { await fenceTx(ctx, tx); tx.set(cref, { runId: ctx.runId, artLook: 1, oneCount: 1, fontNow: 2, since: newest, pending: Object.fromEntries(pend.map(k => [k, true])), at: Date.now() }); });
   return more ? { more: true } : undefined;
 }
 
