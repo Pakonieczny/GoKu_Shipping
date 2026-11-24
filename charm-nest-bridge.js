@@ -21233,9 +21233,9 @@ const Review = window.Review = (() => {
     //  the old charm leaves stays full (PICKFULL is not applied: the new charm goes into the old spot when it fits, else onto the next sheet of its colour))
     try { const M = window.CharmNestReviewMark; if (M && M.isMarked && M.resolve) await Promise.all([...new Set(rows.map(x => String(x.order.receiptId)))].filter(rid => M.isMarked(rid)).map(rid => Promise.resolve(M.resolve(rid, { by: who, how: "pick", sku })).catch(() => {}))); } catch (_) { /* answered by the sweep as before */ }
     for (const rr of rows) rr._editSku = sku;
-    const title = `Edit SKU · listing ${off.lid}: ${off.from || "no SKU"} → ${sku}`, sub = `Listing ${off.lid} only: its Etsy listing, the charm it is cut as, every open order of it and its sheets, and every view. Other listings with the same SKU are not changed.`;
+    const title = `Edit SKU · listing ${off.lid}: ${off.from || "no SKU"} → ${sku}`, sub = `Listing ${off.lid} only: the charm it is cut as, every open order of it and its sheets, and every view. Other listings with the same SKU are not changed, and Etsy is never changed.`;
     let etsy = null, done = null;
-    const etsyGo = flow => { etsy = editSkuEtsy(flow, off, sku, who); };
+    const etsyGo = () => { etsy = Promise.resolve({ ok: false, skipped: true, never: true }); };   // (NOETSY, Paul 23 Nov 2026, listing 4494149020: "it's never supposed to update Etsy. This should not be recorded as a failure": a Change SKU asks nothing of Etsy, and says nothing of it)
     // (the panel's end: the sheets saved, every view updated, then the Etsy answer; the lines keep their marks until then, so a sweep that waited for a busy sheet is still an SKU edit)
     const end = async (flow, all, linked) => {
       await Promise.resolve(all).catch(() => null);
@@ -21245,8 +21245,7 @@ const Review = window.Review = (() => {
         liveSku(); try { flow.line("views", "Updated everywhere: Orders, Review, the order window, the sheets, Library, Design & Engrave and the run banner (other screens at once)", "done"); } catch (_) { /* a word only */ }
       }
       const er = await Promise.resolve(etsy).catch(() => null), ls = flow.panel ? flow.panel.lines() : [];
-      const ew = er && er.ok ? "Etsy updated" : er && er.skipped ? "Etsy not changed" : "Etsy NOT updated";
-      try { if (flow.panel) flow.panel.finish(linked ? `${sku} for listing ${off.lid} · ${ew}` : `Not saved in the app · ${ew}`, ls.some(x => x.state === "failed") ? "bad" : ls.some(x => x.state === "warn") ? "warn" : "ok"); } catch (_) { /* a word only */ }
+      try { if (flow.panel) flow.panel.finish(linked ? `${sku} for listing ${off.lid}` : `Not saved in the app`, ls.some(x => x.state === "failed") ? "bad" : ls.some(x => x.state === "warn") ? "warn" : "ok"); } catch (_) { /* a word only */ }
       return { etsy: er };
     };
     const later = (flow, all, linked) => (done = end(flow, all, linked).finally(() => { for (const rr of rows) delete rr._editSku; }));
@@ -25401,7 +25400,7 @@ const OrderWin = window.OrderWin = (() => {
     byId("owSkuFrom").textContent = off.from || "(no SKU)";
     // what it changes, as chips (each says the rest when pointed at)
     const sc = tryDo(() => Review.editSkuScope(r)) || { orders: 0, sheets: [], cut: [] }, chip = (ic, txt, tip, cls) => `<span class="seChip${cls ? " " + cls : ""}" title="${esc(tip)}">${ic}<span>${esc(txt)}</span></span>`;
-    scope.innerHTML = chip(SKI.tag, `Etsy ${off.lid}`, off.from ? `Etsy listing ${off.lid}: only its products with the SKU “${off.from}” take the new one; other listings are not changed` : "The piece has no Etsy SKU: Etsy is not changed", off.from ? "" : "off")
+    scope.innerHTML = chip(SKI.tag, `Listing ${off.lid}`, `The charm listing ${off.lid} is cut as, now and for its next orders. Etsy is never changed, and other listings are not changed`)
       + chip(SKI.box, `${sc.orders} order${sc.orders === 1 ? "" : "s"}`, `Every open order of listing ${off.lid} with this SKU, and its next orders`)
       + (sc.sheets.length ? chip(SKI.sheet, `${sc.sheets.length} sheet${sc.sheets.length === 1 ? "" : "s"}`, `${sc.sheets.join(", ")}: the new charm goes in the old one's spot when it fits, else on the next sheet of its colour; no sheet is held`) : "")
       + (sc.cut.length ? chip(SKI.cut, `${sc.cut.length} cut · kept`, `${sc.cut.join(", ")}: already cut, so its piece stays as it is`, "warn") : "");
@@ -25480,14 +25479,27 @@ const OrderWin = window.OrderWin = (() => {
       }
       // (SIGNIN, Paul 27 Oct 2026: nobody signed in, the sign-in is asked under Save and the change goes on once signed in; put away, the window's own line says why: needSignIn, the one helper)
       if (!employeeName()) { needSignIn(one ? "use this charm for this order" : "change this SKU", () => { if (d.open && d.dataset.busy !== "1" && !save.disabled && employeeName()) save.click(); }, { near: save, say: t => say("bad", esc(t)), note: "Not changed: nobody is signed in. Sign in to change this SKU." }); return; }
-      if (one) {   // (ONESKU: this order only; the window closes when it is done, nothing else to follow)
-        d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Changing…"; input.disabled = true; once.disabled = true;
-        let res = null; try { res = await Review.editSkuOnce(rowOf(W.key) || r, k, { onStep: t => say("", esc(String(t || ""))) }); } catch (e) { res = { ok: false, why: (e && e.message) || String(e) }; }   // (NOWCMD: the cloud's live step in the window while it works; its failure stays here in red)
-        d.dataset.busy = "";
-        if (!res || !res.ok) { back(); if (res && res.why) say("bad", esc(res.why)); return; }
-        try { d.close(); } catch (_) { d.removeAttribute("open"); }
+      if (one) {   // (ONESKU: this order only)
+        /* ONCESEEN (Paul, 23 Nov 2026, order 4245537582: "I didn't get any feedback inside the modal and then several seconds later the modal just closed by itself"): this order's change has the same panel as the listing's, step by step,
+           and the window stays until it is closed. It is done when the PIECES are the new charm, never when an answer only says so. */
+        d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Changing…"; input.disabled = true; once.disabled = true; cancel.textContent = "Close";
+        form.hidden = true; prog.hidden = false; prog.innerHTML = "";
+        let P = null; try { P = window.CNRelinkFlow ? CNRelinkFlow.open({ title: `Just this order · ${rid}: ${off.cur || off.from || "no SKU"} → ${k}`, sub: "This order only: its piece is made again as this charm and put on its sheet. The listing is not changed.", host: prog }) : null; } catch (_) { P = null; }
+        const ln = (id, t, s, why) => { try { if (P) P.line(id, t, s, why); else say(s === "failed" ? "bad" : "", esc(t)); } catch (_) { /* a word only */ } };
+        ln("ask", `Asking the cloud to make order ${rid}'s piece as ${k}…`, "work");
+        let res = null; try { res = await Review.editSkuOnce(rowOf(W.key) || r, k, { onStep: t => { if (t) ln("ask", String(t).slice(0, 220), "work"); } }); } catch (e) { res = { ok: false, why: (e && e.message) || String(e) }; }   // (NOWCMD: the cloud's live step in the window while it works; its failure stays here in red)
+        const pcs = ((rowOf(W.key) || r).poolIds || []).map(id => B.pool.rows.get(id)).filter(x => x && !["abandoned", "superseded"].includes(x.state)), not = pcs.filter(x => { const u = String(x.sku || "").toUpperCase(); return u !== k && !tryDo(() => O.sameDesign(u, k, z => Master.entryFor(z))); });
+        const done = !!(res && res.ok && !res.queued && pcs.length && !not.length), where = [...new Set(pcs.map(x => (x.sheetId && tryDo(() => { const sh = allSheets().find(z => z.sheetId === x.sheetId); return sh ? sh.fileBase || "" : ""; })) || x.sheetName || "").filter(Boolean))];
+        if (done) { ln("ask", `The cloud: ${String(res.text || `${k} for order ${rid} only`).slice(0, 220)}`, "done"); ln("where", pcs.some(x => !x.sheetId) ? `${pcs.length} piece${pcs.length === 1 ? "" : "s"} made as ${k}: waiting for a sheet` : `${pcs.length} piece${pcs.length === 1 ? "" : "s"} made as ${k}${where.length ? `, on ${where.join(", ")}` : ""}`, pcs.some(x => !x.sheetId) ? "warn" : "done"); ln("views", "Updated everywhere: Orders, Review, the order window, the sheets, Library, Design & Engrave", "done"); }
+        else if (res && res.ok && res.queued) ln("ask", String(res.text || "asked of the cloud: it does it at its next pass").slice(0, 220), "warn");
+        else if (res && res.ok) ln("ask", `Not changed: the piece is still ${[...new Set(not.map(x => x.sku))].join(" + ") || "not made"}${res.text ? ` (the cloud said: ${String(res.text).slice(0, 120)})` : ""}`, "failed");
+        else ln("ask", String((res && res.why) || "Not changed").slice(0, 260), "failed");
+        if (!done && !(res && res.queued)) try { if (P && P.act) P.act("ask", "Try again", () => { back(); setTimeout(() => { if (!save.disabled) save.click(); }, 60); }); } catch (_) { /* the form is back with Close */ }
+        try { if (P) P.finish(done ? `${k} for order ${rid} only` : res && res.queued ? "Asked of the cloud" : "Not changed", done ? "ok" : res && res.queued ? "warn" : "bad"); } catch (_) { /* a word only */ }
+        d.dataset.busy = ""; save.hidden = true; saveLbl.textContent = "Use for this order"; cancel.textContent = "Close";
+        if (!P) { back(); if (!done) say("bad", esc(String((res && (res.why || res.text)) || "Not changed"))); }
         if (W.dlg && W.dlg.open && rowOf(W.key)) tryDo(paint);
-        toast(res.queued ? (window.CNViewer && CNViewer.on && CNViewer.on() ? `Order ${rid}: ${k} for this order is asked of the cloud · ${res.text || "the cloud does it at its next pass"}` : `Order ${rid}: ${k} for this order is asked of the run's computer · ${res.text || "it is done as soon as that computer is free"}`) :`Order ${rid}: ${k} for this order only · the listing and Etsy are not changed`, "ok", res.queued ? 10000 : 7000);
+        if (!d.open) toast(done ? `Order ${rid}: ${k} for this order only` : res && res.queued ? `Order ${rid}: ${k} is asked of the cloud` : `Order ${rid}: not changed · ${String((res && (res.why || res.text)) || "no answer").slice(0, 140)}`, done ? "ok" : res && res.queued ? "info" : "bad", 8000);
         return;
       }
       d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Changing…"; input.disabled = true; once.disabled = true; cancel.textContent = "Close";
@@ -25498,7 +25510,7 @@ const OrderWin = window.OrderWin = (() => {
       const fin = await Promise.resolve(res.done).catch(() => null), e = fin && fin.etsy;
       d.dataset.busy = ""; save.hidden = true; saveLbl.textContent = "Change SKU"; cancel.textContent = "Close";
       if (W.dlg && W.dlg.open && rowOf(W.key)) tryDo(paint);
-      if (!d.open) toast(`Change SKU ${k}: ${res.ok ? "finished" : "not saved in the app"} · ${e && e.ok ? "Etsy updated" : e && e.skipped ? "Etsy not changed" : "Etsy NOT updated"}`, res.ok && (!e || e.ok || e.skipped) ? "ok" : "bad", 7000);
+      if (!d.open) toast(`Change SKU ${k}: ${res.ok ? "finished" : "not saved in the app"}`, res.ok ? "ok" : "bad", 7000);
     };
     try { d.showModal(); } catch (_) { d.setAttribute("open", ""); }
     setTimeout(() => { try { (prefill && !save.disabled ? save : input).focus(); } catch (_) {} }, 0);
@@ -26445,7 +26457,7 @@ const OrderWin = window.OrderWin = (() => {
         return null;
       }
       // (LINKBOX, 4239999491: a saved link's "Changed: Now ..." is asked while its change waits or its card is in Review; made up as the new charm, it is not; anything this page cannot tell, the record stands)
-      if (kind === "orderChanged") { if (x.changePending || (tryDo(() => Review.items()) || []).some(i => i && i.key === "chg:" + x.key)) return true; return tryDo(() => Review.linkMade(x)) === true ? false : null; }
+      if (kind === "orderChanged") { if (x.changePending || (tryDo(() => Review.items()) || []).some(i => i && i.key === "chg:" + x.key)) return true; if (tryDo(() => Review.linkMade(x)) === true) return false; return (x.poolIds || []).some(id => !B.pool.rows.get(id)) ? false : null; }   // (a page that has just loaded has not read its pieces yet: the old box is not shown meanwhile)
       const kinds = new Set([].concat(x.spec.problems, x.problems || []).map(p => p && p.kind));
       if (x.materialOverride) kinds.delete("needsMaterial");
       if (x.sizeOverride) kinds.delete("missingSize");
