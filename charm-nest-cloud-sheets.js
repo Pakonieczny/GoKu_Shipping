@@ -97,7 +97,7 @@
     p.outputs = null; p.verification = rec.verification || null; p.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
     p.backPool = Array.isArray(rec.backPool) ? rec.backPool : p.backPool;
     // (a sheet is drawn whole from this answer or not at all: until then, and when a design cannot be read, the cloud's own saved picture stands)
-    try { await root.Recall.rebuild(p, Object.assign({ answer: rec }, o && o.background ? { background: true } : {})); }
+    try { await root.Recall.rebuild(p, Object.assign({ answer: rec }, o && o.background ? { background: true } : {}, o && o.cutOk ? { cutOk: true } : {})); }
     catch (e) { p.charms = (p.charms || []).filter(c => !c.poolId); p.placements = []; safe(() => root.CN.renderCard(p)); throw e; }
     p.layoutRev = +rec.layoutRev || 0; p.persistedDone = true; p.persisted = Promise.resolve(); p.dirty = false; p.problem = null; delete p.saveOwed;
     st.reloads++; st.last = { at: Date.now(), id: p.sheetId, why: why || "" };
@@ -123,7 +123,7 @@
         ...(+rec.joinedAt ? { joinedAt: +rec.joinedAt } : {}), ...(rec.joinedBy ? { joinedBy: rec.joinedBy } : {}), ...(rec.leftSet ? { leftSet: rec.leftSet } : {}),   // (CLOUDMARKS, Paul 14 Nov 2026: "You must put all this in the cloud")
         charms: [], placements: [], rejects: [], dirty: false, problem: null });
     }
-    await reload(p, "opened here to be changed");
+    await reload(p, "opened here to be changed", { cutOk: true });   // (a recorded green line cut does not keep its pieces: only the laser's mark does)
     st.live++;
     return p;
   }

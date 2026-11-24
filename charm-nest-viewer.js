@@ -23,7 +23,7 @@
                     filesLane(sh) · filesGate(sh, o) · filesAsk(sh, o)   (build step 7b: the files lane on a page, below)
                     handArt(metal, charms, o) · charmPress(sh, c, change, o) · cmdFollow(runId, id, o)   (S3: artwork added by hand, a hand piece's Exclude / Include / Move)
                     keepSaves() · keepResumes()   (item 15, Paul 21 Nov 2026: the design saves begun on this computer, checked against the cloud, said once)
-                    acceptChange(o) · settledPut(d) · settledPull() · settledApply() · settledState()   (S2, Paul 21 Nov 2026: Review's Accept the new order and Resolved, below)                                                                 */
+                    settledPut(d) · settledPull() · settledApply() · settledState()   (S2, Paul 21 Nov 2026: Review's Resolved, below)                                                                 */
 (function (root) {
   "use strict";
   const CV = "cloud14-20261120";
@@ -610,25 +610,10 @@
     return { ok: true, r, follow: f };
   }
   /* ── S2 (Paul 21 Nov 2026: "staff keep FULL use of every input, saved in the cloud, seen on every computer"): REVIEW ON A VIEWER ──
-     1 · "Accept the new order" (an Order changed card, chg:<line>): the page's acceptChange made the line up again here (repool); on a viewer that is the cloud's work. It is now a
-         person's press the cloud acts on: takeOffAsk { kind: changed, lineKeys } (the take-off lane, _charmNestTakeOff.js: the line's old pieces come off and it is made up again as the
-         order reads now, or, when what it is made of did not change, it only stops waiting). Refused in words while the cloud's take-off lane is not on; nothing is done here.
+     1 · "Accept the new order" (an Order changed card, chg:<line>) is made again by the cloud the straight way, in its pieces' own place (bridge acceptChange: remakeline).
      2 · Resolved: the decisions a person answered (Review.settled) came back from this browser's workspace, which a viewer does not keep. Each answer given here is sent to the cloud
          (reviewSettledPut), and the list Resolved draws is the cloud's (reviewSettledGet: at the start, when the feed names g:review-settled, when the tab is shown again, every
          ten minutes as a net), with the answers given here that the cloud has not confirmed yet. Mode "off": nothing here runs. */
-  async function acceptChange(o) {
-    o = o || {};
-    const rid = String(o.rid || "").replace(/\D/g, ""), keys = [...new Set((Array.isArray(o.lineKeys) ? o.lineKeys : []).map(String).filter(k => rid && k.startsWith(rid + "_")))].slice(0, 50);
-    const no = m => { toast(m, "bad", 9000); return { ok: false, error: m }; };
-    if (!rid) return no("Which order? Nothing was changed");
-    if (!lane("takeoff")) return no(`Order ${rid}: Accept the new order is not in the cloud yet (the cloud does not take pieces off in this build). Nothing was changed`);
-    const name = String(o.name || who() || "").trim(); if (!name) return no("Sign in first: the answer is saved under your name. Nothing was changed");
-    let r = null; try { r = await api({ op: "takeOffAsk", orderId: rid, kind: "changed", lineKeys: keys, note: "Accept the new order", by: name, dev: dev() }); } catch (e) { r = { error: (e && e.data && e.data.error) || (e && e.message) || String(e) }; }
-    if (!r || r.error || !r.ok) return no(`Order ${rid}: not accepted — ${String((r && r.error) || "the cloud did not answer").replace(/\.$/, "")}. Nothing was changed`);
-    toast(`Order ${rid}: accepted — the cloud makes ${keys.length > 1 ? "its pieces" : "the piece"} again as the order reads now`, "ok", 6000);
-    safe(() => root.CharmNestRunFollow && root.CharmNestRunFollow.now("changed"));
-    return { ok: true, queued: true, rid, askId: r.askId, via: "cloud" };
-  }
   const SETTLED_NAME = "review-settled", SETTLED_FEED = "g:" + SETTLED_NAME, SETTLED_SHOWN = 200, SETTLED_TRIES = 4;
   const ST = { list: [], at: 0, reads: 0, puts: 0, fails: 0, pending: new Map(), started: false, reading: null, again: false, error: null };
   const sidOf = d => `${d && d.key}\u0001${d && d.t}`;
@@ -748,7 +733,7 @@
      roseCutAsk, charm-nest-rose-ui.js record; a set's QR label and files made again: labelsAsk, charm-nest-flow.js) ask window.CharmNestCloudLanes(name, sheet or step), which this page
      build was to define and never did: on a viewer they ran here and the cloud refused them. It answers as lane() does, for the sheet's own run (the followed run when it names none). */
   root.CharmNestCloudLanes = (name, x) => safe(() => lane(String(name), (x && (x.runId || (x.sheet && x.sheet.runId))) || followedRun() || undefined), false);
-  root.CNViewer = { mode, on, known, ready: () => readyP, boot, holdNew, draining: () => S.draining, cv: () => CV, lane, carrierOf, wait, pill, control, startRun, nest, release, hold, asViewer, holdPlan, takeOff, filesAsk, filesLane, filesGate, idleNow, read, keepSaves, keepResumes, handArt, charmPress, cmdFollow, acceptChange, settledPut, settledPull, settledApply, settledState: () => ({ size: ST.list.length, at: ST.at, reads: ST.reads, puts: ST.puts, fails: ST.fails, pending: ST.pending.size, error: ST.error }),
+  root.CNViewer = { mode, on, known, ready: () => readyP, boot, holdNew, draining: () => S.draining, cv: () => CV, lane, carrierOf, wait, pill, control, startRun, nest, release, hold, asViewer, holdPlan, takeOff, filesAsk, filesLane, filesGate, idleNow, read, keepSaves, keepResumes, handArt, charmPress, cmdFollow, settledPut, settledPull, settledApply, settledState: () => ({ size: ST.list.length, at: ST.at, reads: ST.reads, puts: ST.puts, fails: ST.fails, pending: ST.pending.size, error: ST.error }),
     nestOf, stopNest, sawSheet, nests: () => [...NESTS].map(([id, n]) => Object.assign({ sheetId: id }, n)),   // (S4)
     retry, ack, lastAct: () => S.lastAct || null,   // (S5: Try again on a take-off the cloud held or gave up on; Set aside on a cancelled order's notice)
     state: () => ({ known: S.known, assumed: S.assumed, mode: S.mode, at: S.at, fails: S.fails, draining: S.draining, idleAt: S.idleAt, idleWhy: S.idleWhy || "", cloudSteps: steps(), pending: (S.drive && S.drive.pending) || null }) };

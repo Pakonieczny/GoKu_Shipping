@@ -72,7 +72,7 @@
   const lastLineAt = sh => { const st = sh.rosePlan && sh.rosePlan.stages; const l = st && st[st.length - 1]; return l && Number.isFinite(+l.at) ? +l.at : null; };
   function cutOf(x) {
     if (x.roseCutAt || +x.laserDoneAt > 0) return true;
-    try { return !!(W.CharmNestReadiness && W.CharmNestReadiness.completedBefore && W.CharmNestReadiness.completedBefore(x)); } catch (_) { return false; }
+    try { const R = W.CharmNestReadiness, f = R && (R.cutBefore || R.completedBefore); return !!(f && f(x)); } catch (_) { return false; }   // (OVERRIDE: a sheet approved by override is not cut: its green line can still be drawn)
   }
   // charms of a live sheet outside every green line it has (the rule RoseStock.unlined applies)
   function unlinedLocal(sh) {

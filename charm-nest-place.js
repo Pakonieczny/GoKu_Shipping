@@ -559,7 +559,8 @@
        on it (its own order's later pieces still may: orderHome / reopensHome). A person's move is not refused: closedRec, which placeOnSheet and finishOverflow check, is unchanged. */
     // (FULLAFTER5, Paul 21 Nov 2026: "the same rule for all percentage sheets": no room counts as full only after 5 different orders in a row had no room on the sheet, at any fill)
     const noRoom = r => !!r && (r.placements || []).length > 0 && (Array.isArray(r.noRoomRun) ? r.noRoomRun.length : 0) >= 5;
-    const closedV = v => !!v && (v._shut || (!v._new && (closedRec(v._rec, sets, run, now) || noRoom(v._rec))));
+    const notOn = o.notOn || new Set();   // (sheets whose own piece had no room there any more: the line goes on another one)
+    const closedV = v => !!v && (v._shut || notOn.has(v.sheetId) || (!v._new && (closedRec(v._rec, sets, run, now) || noRoom(v._rec))));
     function nextPage(m) { const mine = all().filter(v => v.metal === m); return Math.max(mine.length, ...mine.map(v => num(v.page))) + 1; }
     function newDraft(m) {
       const unused = fresh.find(v => v.metal === m && !v.charms.length && !v.greenLeftover); if (unused) return unused;
@@ -599,7 +600,7 @@
       return pg;
     }
     const host = {
-      sheets: () => all(), pagesOf, closed: closedV, holding: () => false, fixedSet: v => !v._new && fixedSetOf(v, sets), setTakes: id => setTakesIn(id, sets, all()),
+      sheets: () => all(), pagesOf, closed: closedV, holding: () => false, fixedSet: v => !v._new && (notOn.has(v.sheetId) || fixedSetOf(v, sets)), setTakes: id => setTakesIn(id, sets, all()),
       rows: () => Object.entries(run.lines || {}).filter(([, l]) => l && typeof l === "object").map(([key, l]) => ({ key, order: { receiptId: l.orderId }, spec: { material: l.material }, state: l.state, poolIds: l.poolIds || [] })),
       run: () => run, settings: () => settings, r16On: () => settings.nospread !== "off", fast: m => FAST.includes(m), cuts: m => CUT_METALS.includes(m),
       addPage, fillingPage: m => fillingPage(m), greenPage: (m) => greenPage(m), reopenHome: (v, rid) => { v._home = String(rid).split("/")[0]; return true; },

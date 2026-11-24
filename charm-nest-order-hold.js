@@ -14,7 +14,7 @@
      OrderHold.pending()                   the runs a reload left unfinished (run(rid) again carries on where they stopped)
 
    Plan = { rid, label, customer, shipBy (ms, 0 when unknown), canHold, blockedWhy, estimate,
-            pieces: [{ poolId, lineKey, label, metal, state: onSheet | onCutSheet | inCommittedSet | notOnSheet | completed,
+            pieces: [{ poolId, lineKey, label, metal, state: onSheet | onCutSheet | notOnSheet | completed,
                        sheetId, sheetLabel, setId, setLabel }],
             sheets: [{ sheetId, label, setLabel, metal, removes, qrRemade }],
             fills:  [{ sheetId, sheetLabel, spots, source: waiting | newerSheet | none, fromSheetId, fromSheetLabel, orders, rids, why? }],
@@ -30,9 +30,8 @@
    A sheet's own steps come in this order; sheets that share a line of the order (its copies are on both) are lifted together and
    filled one after another. rects are in sheet points ({x,y,w,h} with the centre cx, cy and the angle), `sheet` is { wPt, hPt }.
 
-   Safety (kept from the sheet window): a sheet that is cut, recalled, or whose set was sent is never filled or taken from; a piece
-   on a cut sheet stays (plan.stays); a piece inside a committed set blocks Hold ("Undo the set first"); a Rose Gold sheet gives
-   its pieces up as before but is never re-arranged or filled; an order alone on a sheet cannot leave it empty (blocked, plainly);
+   Safety (kept from the sheet window): a piece on a sheet marked laser cut stays (plan.stays), nothing else keeps one; a sheet that is
+   cut, recalled, or whose set was sent is never filled; a Rose Gold sheet gives its pieces up but is never re-arranged or filled; an order alone on a sheet cannot leave it empty (blocked, plainly);
    one change at a time; nothing is deleted; a failed fill never undoes the hold. Sandbox and production keep separate journals. */
 (() => {
   "use strict";
@@ -100,13 +99,13 @@
 
   /* ── the plan, from a snapshot of the sorter (pure: the same snapshot gives the same plan) ──
      snapshot = { rid, label, customer, shipBy, missing?, cancelled, held, rowsLeft,
-                  pieces: [{ poolId, lineKey, label, metal, status: off | none | cut | together | sent | unloaded | last | completed,
+                  pieces: [{ poolId, lineKey, label, metal, status: off | none | cut | together | unloaded | last | completed,
                              why, sheetId, sheetLabel, setId, setLabel, placed }],
                   sheets: { [sheetId]: { label, setLabel, metal, rose, removes, spots, fillable, why } },
                   candidates?: [{ rid, source, fromSheetId, fromSheetLabel, metal, spots }]   (fixtures: stand-ins for the room search) } */
   function planFrom(snap) {
     const P = { rid: String(snap.rid), label: snap.label || "", customer: snap.customer || "", shipBy: msOf(snap.shipBy), canHold: true, blockedWhy: null, estimate: true, pieces: [], sheets: [], fills: [], stays: [], effects: [] };
-    const STATE = { off: "onSheet", none: "notOnSheet", cut: "onCutSheet", together: "onCutSheet", sent: "inCommittedSet", unloaded: "onSheet", last: "onSheet", completed: "completed" };
+    const STATE = { off: "onSheet", none: "notOnSheet", cut: "onCutSheet", together: "onCutSheet", unloaded: "onSheet", last: "onSheet", completed: "completed" };
     for (const p of snap.pieces || []) P.pieces.push(Object.assign({ poolId: p.poolId, lineKey: p.lineKey || "", label: p.label || "", metal: p.metal || "", state: STATE[p.status] || "onSheet", sheetId: p.sheetId || null, sheetLabel: p.sheetLabel || "", setId: p.setId || null, setLabel: p.setLabel || "" },
       // (a piece of a pair: its side (L or R), its group (receipt:transaction) and its form; a piece with none of them is exactly as before)
       p.side ? { side: p.side } : null, p.groupKey ? { groupKey: p.groupKey } : null, p.form ? { form: p.form } : null));
@@ -124,7 +123,6 @@
     else if (snap.cancelled) block("This order is cancelled. Restore it under Orders > Cancelled first.");
     else if (!snap.rowsLeft) block("This order is not in the sorter any more.");
     else if (snap.held) block("This order is already on hold.");
-    else if (by("sent").length) block(`Undo the set first: ${labels(by("sent"))} ${uniq(by("sent").map(p => p.sheetLabel)).length === 1 ? "is" : "are"} in a set that was already sent to the station.`);
     else if (by("unloaded").length) block(`${labels(by("unloaded"))} ${uniq(by("unloaded").map(p => p.sheetLabel)).length === 1 ? "is" : "are"} not open in this sorter, and a piece of this order is there. Reload the sorter and try again.`);
     else if (by("last").length) block(`This order is the only one on ${labels(by("last"))}, and a sheet is never left empty. Let another order fill that sheet first, or delete the sheet from its menu.`);
     else if (!off.length && !none.length && stays.length) {
@@ -185,7 +183,7 @@
         status, why: o.why || "", sheetId: (sh && sh.sheetId) || (pr && pr.sheetId) || null, sheetLabel: o.where && o.where !== "not on a sheet yet" ? o.where : (sh ? K.word(sh) : ""), setId: set.id, setLabel: set.label,
         placed: !!(c && sh.placements.some(p => p.id === c.id)) });
     };
-    for (const o of off.ok) piece(o, o.sh ? "off" : "none");
+    for (const o of off.ok) piece(o, o.where !== "not on a sheet yet" ? "off" : "none");
     for (const o of off.stay) piece(o, o.kind || "cut");
     // each sheet it comes off: what it holds besides this order, and whether the freed room can be filled
     for (const p of snap.pieces.filter(p => p.status === "off")) {

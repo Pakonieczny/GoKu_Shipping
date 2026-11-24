@@ -38,7 +38,7 @@
     flying: { sheets: 0, sets: 0 },   // marked, still on their way to the Completed tab: its count takes them as they land
     coming: new Map(),      // Completed row key → { from, until }: a row an Undo brings back, flying in from that tab
     flew: new Map(),        // "sheet:<id>" | "set:<id>" → when it was seen fly back in (the Undo's note is then not needed)
-    pendingSeals: new Set(), presses: new Set()
+    pendingSeals: new Set(), presses: new Set(), refused: new Set()
   };
 
   /* ── which tab ── */
@@ -647,10 +647,14 @@
       for(const old of card.querySelectorAll(':scope > .sh > .setProcessSeals, :scope > .sh > .processSealRow'))old.remove();   // (a set shows no seal: its sheets do)
       let b=head.querySelector(':scope > .ldMarkSet');
       const done=isDone(st),allowed=st?.setId && !st.standalone && !st.working && (done || canComplete('set',st.setId,at));
-      if(!allowed){if(b)b.remove();continue;}
+      if(!allowed){if(b)b.remove();head.querySelector(':scope > .ovSet')?.remove();continue;}
       if(!b){b=doc.createElement('button');b.type='button';b.className='ldMark ldMarkSet';(head.querySelector('.nm') || head.firstChild).after(b);}
       b.dataset.ld='set:'+st.setId;b.dataset.done=done?'1':'0';
       b.innerHTML=(done?ICON.undo:ICON.check)+`<span>${done?'Reopen set':'Mark set completed'}</span>`;
+      // (OVERRIDE, Paul 23 Nov 2026: "I tried to mark this sheet as 'Mark set completed' but it would not let me": the cloud refused it: the owner's override stands beside it: charm-nest-set-override.js)
+      { const refused=!done && L.refused.has(String(st.setId)) && !!window.CharmNestSetOverride;let o=head.querySelector(':scope > .ovSet');
+        if(!refused){if(o)o.remove();}
+        else if(!o){o=doc.createElement('span');o.className='ovSet';o.dataset.nodrag='';o.innerHTML=window.CharmNestSetOverride.button();b.after(o);o.onclick=e=>{e.stopPropagation();if(e.target.closest('[data-override]'))window.CharmNestSetOverride.press({setId:st.setId,name:nameOf('set',st.setId)}).then(done=>{if(done)L.refused.delete(String(st.setId));});};}}
       b.title=done?'Reopen set · back to Laser cutting (its orders stay as they are)':'Confirm laser cutting is finished for every remaining sheet';   // (LASERWORDS, Paul, 11 Nov 2026: Reopen, as on the sheet check; its orders are not reopened, unlike the set menu's Undo set)
     }
     if (window.LibraryDnd) window.LibraryDnd.decorate(root);   // the grip (drag, or Move to…) on each card: charm-nest-library-dnd.js
@@ -665,7 +669,7 @@
       else { btn.dataset.done = was.done; btn.innerHTML = was.html; btn.title = was.title; } };
     let shown = false;
     return mark(kind, id, done, { onSend: () => { shown = true; put(true); } }).then(r => { if (btn && btn.isConnected) { btn.classList.remove('ldNow'); if (card) card.classList.remove('ldNowCard'); } return r; },
-      e => { console.warn('Library: not marked', e); if (shown) put(false); });
+      e => { console.warn('Library: not marked', e); if (shown) put(false); if (kind === 'set' && done && e && +e.status === 409) { L.refused.add(String(id)); cards(byId('libBody'), 'current'); } });
   }
 
   /* ── counts on the tab ── */

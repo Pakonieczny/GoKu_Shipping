@@ -321,8 +321,8 @@
     return { where, join: f.last.length ? f.last : f.sets[0] || [], wait: f.wait, later: f.last.length ? f.sets : f.sets.slice(1), valid: f.valid, closed: where === 'last' ? false : f.closed };
   }
 
-  /** A set committed to the Design Station, completed or replaced was made under the older rules: the principle never blocks it afterwards. */
-  const exempt = set => !!set && (+set.committedAt > 0 || +set.laserDoneAt > 0 || /^complete|superseded/.test(str(set.status)));
+  /** A set committed to the Design Station, completed or replaced was made under the older rules (and one approved by override is approved as it stands): the principle never blocks it afterwards. */
+  const exempt = set => !!set && (+set.committedAt > 0 || +set.laserDoneAt > 0 || /^complete|superseded/.test(str(set.status)) || !!(set.laserOverride && +set.laserOverride.at > 0));   // (OVERRIDE, Paul 23 Nov 2026: a set the owner approved with his password is never judged afterwards)
 
   // The readiness read of the principle (gate) can be switched off by an OFFLINE SUITE whose subject is something else (approval mechanics, completion messages) and whose
   // fixture sets predate the principle. Nothing in the app calls this; a page, the server and every release run with it on.

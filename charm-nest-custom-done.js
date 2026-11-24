@@ -73,13 +73,11 @@
     for (const sh of sheetsNow()) { const ids = (sh.charms || []).filter(c => c && want.has(String(c.poolId))).map(c => String(c.poolId)); if (ids.length) out.push({ sh, ids }); }
     return out;
   }
-  const committed = sh => tryDo(() => (root.Sets && root.Sets.ofRun ? root.Sets.ofRun(sh.runId) : []).some(s => s && s.committedAt && (s.sheetIds || []).includes(sh.sheetId)), false);
+  const lasered = sh => num(sh.laserDoneAt) > 0 || tryDo(() => (root.Sets && root.Sets.ofRun ? root.Sets.ofRun(sh.runId) : []).some(s => s && num(s.laserDoneAt) > 0 && (s.sheetIds || []).includes(sh.sheetId)), false);
   /** Why a piece cannot come off this sheet now ('' when it can). */
   function blockOf(sh) {
     if (!sh) return '';
-    if (num(sh.laserDoneAt) > 0 || num(sh.roseCutAt) > 0) return 'it is already cut on the laser';
-    if (sh.recalled || committed(sh)) return 'its set was already sent to the station';
-    if (num(sh.releasedAt) > 0 || num(sh.approvedAt) > 0 || num(sh.laserReadyAt) > 0 || sh.status === 'released') return 'it is already approved for laser cutting';
+    if (lasered(sh)) return 'it is already cut on the laser';   // (Paul, 23 Nov 2026: only the laser's mark keeps a piece on its sheet)
     if (['nesting', 'finishing', 'queued'].includes(sh.status)) return 'it is being nested right now: try again in a moment';
     if (sh.persisted && !sh.persistedDone) return 'it is being saved right now: try again in a moment';
     return '';

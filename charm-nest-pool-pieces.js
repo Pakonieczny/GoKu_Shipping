@@ -210,6 +210,11 @@
     for (const c of rec && Array.isArray(rec.charms) ? rec.charms : []) { const s = c && c.sourceId != null && !have.has(String(c.sourceId)) ? sourceOfCharm(c) : null; if (s) { have.add(s.id); list.push(s); } }
     return list;
   }
+  /** A custom piece's own file among the record's: by id, else by name unless the piece's record names another file (CESAVE: a design sent again keeps its name: it was drawn from the old file). */
+  function ownSource(rec, c, pool) {
+    const list = ((rec && rec.sources) || []).filter(Boolean), file = String((pool && pool.aiPath) || (c && c.aiPath) || "").replace(/#fit-.*$/, "");
+    return list.find(s => s.id === c.sourceId) || list.find(s => s.name === c.sourceName && (!file || !s.path || String(s.path) === file)) || null;
+  }
   const sourcesLiteOf = list => list.slice(0, 500).filter(x => x && typeof x === "object").map(x => Object.assign(x.name == null ? {} : { name: String(x.name).slice(0, 300) }, { hash: x.hash ? String(x.hash).slice(0, 80) : null }));
   function carrySources(target, moving, froms) {
     const was = target && Array.isArray(target.sources) ? target.sources : [], have = new Set(was.filter(s => s && typeof s === "object").map(s => String(s.id))), add = [];
@@ -224,5 +229,5 @@
     return { sources, sourcesLite: sourcesLiteOf(sources) };
   }
 
-  return { FIELDS, MAX_PIECES, parsePoolId, groupKeyOf, cleanFields, cleanGroupFields, cleanBody, fieldsOf, sheetCharmFields, metaOf, groupsOf, legacyGlued, placedCharms, uniqueIds, sourceOfCharm, sourceOf, sourcesOf, carrySources };
+  return { FIELDS, MAX_PIECES, parsePoolId, groupKeyOf, cleanFields, cleanGroupFields, cleanBody, fieldsOf, sheetCharmFields, metaOf, groupsOf, legacyGlued, placedCharms, uniqueIds, sourceOfCharm, sourceOf, sourcesOf, ownSource, carrySources };
 });

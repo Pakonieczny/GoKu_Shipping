@@ -26,7 +26,7 @@
  *   item = { orderId, label, customer, thumb, total, ids:[poolIds], here:'GF Sheet 1', there:['SS Sheet 1'], hereIds, thereIds,
  *            pieces:[{key,index,label,sku,sheetId,sheetLabel,setId,thumb}], locked:[{sheetId,sheetLabel,why}] }
  *   (here: the sheet or sheets being moved that hold the order; there: the sheets that would stay on the other side;
- *    locked: sheets among them that cannot give the order's pieces up at all: cut, or in a set sent to the station) */
+ *    locked: sheets among them that cannot give the order's pieces up at all: marked laser cut) */
 (function (root, factory) { const api = factory(root); if (typeof module === 'object' && module.exports) module.exports = api; else { root.SharedOrders = api; root.CharmNestSharedOrders = api.core; } })(typeof self !== 'undefined' ? self : this, function (root) {
   'use strict';
   const CODE = { gold: 'GF', silver: 'SS', rose: 'RG', gold10k: '10K', gold14k: '14K' };
@@ -253,7 +253,7 @@
       pieces.sort((a, b) => a.index - b.index || (a.sheetLabel < b.sheetLabel ? -1 : 1));
       out.push({ orderId: oid, label: `Order ${oid}`, customer: '', thumb: null, total: all.length, ids: pieces.map(p => p.key),
         here: here.map(id => byId.get(id).label).join(' + '), there: there.map(id => byId.get(id).label), hereIds: here, thereIds: there,
-        pieces, locked: involved.filter(id => byId.get(id).fixed).map(id => ({ sheetId: id, sheetLabel: byId.get(id).label, why: byId.get(id).fixed })) });
+        pieces, locked: involved.filter(id => byId.get(id).laserDone || byId.get(id).lasered).map(id => ({ sheetId: id, sheetLabel: byId.get(id).label, why: 'it is marked laser cut' })) });
     }
     return describe(out, o.meta);
   }
@@ -457,7 +457,7 @@
       }
     }
     if (!extra.size) return list;
-    for (const s of extra.values()) { s.fixed = fixedWhy(s.cutAll ? { laserDoneAt: 1 } : {}, s.setId ? setDoc(s.setId, null) : null); delete s.cutAll; }
+    for (const s of extra.values()) { s.fixed = fixedWhy(s.cutAll ? { laserDoneAt: 1 } : {}, s.setId ? setDoc(s.setId, null) : null); if (s.cutAll) s.lasered = true; delete s.cutAll; }
     return list.concat([...extra.values()]);
   }
   /** between(idOrSetId, targetSetIdOrNull, {kind?, together?}) from what the page holds. Sync, pure, no network. */
@@ -492,7 +492,7 @@
    *   scope 'order' (default)  the order's pieces come off every sheet that can give them up, and it waits On hold (or is cancelled)
    *   scope 'sheet'            only the pieces on `sheetId` come off, their lines wait On hold (a cancel is always the whole order). A line comes off WHOLE:
    *                            the other ear of a pair, or the other discs, on another sheet come off with it (SheetWin.offPlan, PairRemove); `removed` then also lists them, with `side` and `group`
-   * A piece on a cut sheet, or in a set sent to the station, stays (answered in `stayed`, with the plain reason).
+   * A piece on a sheet marked laser cut stays (answered in `stayed`, with the plain reason).
    */
   async function removeFromSheet(a, b, c) {
     const o = a && typeof a === 'object' ? { ...a } : { ...(c || {}), orderId: a, sheetId: b };

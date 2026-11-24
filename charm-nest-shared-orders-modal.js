@@ -281,7 +281,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
       }
       pieces.sort((a, b) => (b.here - a.here) || (a.index - b.index));
       const customer = String(o.customer || o.buyer || o.name || '').trim(), thumb = typeof o.thumb === 'string' ? o.thumb : null;
-      // a sheet that cannot give its piece up (already cut, completed, its set committed): said on the card before anything is pressed
+      // a sheet that cannot give its piece up (marked laser cut): said on the card before anything is pressed
       const locked = arr(o.locked).filter(l => l && typeof l === 'object' && (l.sheetLabel || l.why)).map(l => ({ sheetId: String(l.sheetId || ''), sheetLabel: String(l.sheetLabel || ''), why: String(l.why || '').trim().replace(/[.\s]+$/, '') }));
       out.push({ orderId, label: String(o.label || ''), customer, thumb, pieces, locked, sig: JSON.stringify([orderId, customer, thumb ? 1 : 0, pieces.map(p => [p.index, p.sheetId, p.sheetLabel, p.here ? 1 : 0, p.thumb ? 1 : 0, p.side]), locked.map(l => [l.sheetId, l.why])]) });
     }

@@ -63,9 +63,8 @@
     title: 'Charm repository',
     order: 'Update this charm in the repository with the drawing as it is here. The order\'s engraving is not part of it.',
     repository: 'Save this drawing as the repository\'s charm. Save (the blue button) keeps a separate design and never changes the repository.',
-    remake: 'Make the open pieces again with the new drawing',
-    keep: 'Leave pieces already made as they are',
-    cut: 'A piece on a sheet that is already cut never changes.',
+    remake: 'Every open order of this charm is made again with it, each piece in its own place on its own sheet.',
+    cut: 'A piece on a sheet marked laser cut never changes.',
     go: 'Update repository charm'
   };
 
@@ -91,8 +90,6 @@
 .ce-repo__cap{ font-size:10.5px; color:var(--ai-text-dim,#c4c4c4); text-align:center; margin-top:3px; }
 .ce-repo__arrow{ text-align:center; color:var(--ai-text-dim,#c4c4c4); font-size:15px; }
 .ce-repo__say{ margin:6px 0; }
-.ce-repo__opt{ display:flex; gap:7px; align-items:flex-start; margin:4px 0; cursor:pointer; }
-.ce-repo__opt input{ margin:2px 0 0; accent-color:var(--ai-accent,#378ef0); }
 .ce-repo__note{ font-size:11px; color:var(--ai-text-dim,#c4c4c4); margin:6px 0 0; }
 .ce-repo__why{ margin:8px 0 0; padding:8px 9px; border-radius:4px; background:rgba(224,165,43,.14); border:1px solid rgba(224,165,43,.5); }
 .ce-repo__bad{ margin:8px 0 0; padding:8px 9px; border-radius:4px; background:rgba(222,84,84,.16); border:1px solid rgba(222,84,84,.6); }
@@ -160,7 +157,7 @@
     const lib = head.querySelector('[data-xpanel="library"]'), hist = head.querySelector('.ce-hist');
     if (lib) lib.insertAdjacentElement('afterend', wrap); else if (hist) head.insertBefore(wrap, hist); else head.appendChild(wrap);
     const btn = wrap.querySelector('.ce-repo__b');
-    const st = { id, open: false, busy: false, keep: false, made: null, err: '', done: null, steps: [] };
+    const st = { id, open: false, busy: false, made: null, err: '', done: null, steps: [] };
     wrap._cnRepo = st;
     let card = null;
     const close = () => { st.open = false; btn.setAttribute('aria-expanded', 'false'); if (card) { card.remove(); card = null; } };
@@ -175,14 +172,13 @@
       h += `<div class="ce-repo__cmp"><div><div class="ce-repo__pic">${picOf(thumbNow)}</div><div class="ce-repo__cap">In the repository${sizeWords(geom)}</div></div><div class="ce-repo__arrow">→</div>`
         + `<div><div class="ce-repo__pic" data-new>${st.made ? picOf(st.made.thumb) : st.err ? '<span>—</span>' : '<span>Reading your drawing…</span>'}</div><div class="ce-repo__cap">Your drawing${st.made ? sizeWords(st.made) : ''}</div></div></div>`;
       if (st.done) {
-        h += `<div class="ce-repo__ok"><b>${st.done.same ? 'Nothing to update' : 'Repository updated'}</b><br>${esc(st.done.text)}</div>`;
+        h += `<div class="ce-repo__ok"><b>${st.done.same ? 'Nothing to update' : 'Repository updated'}</b><br>${esc(st.done.text)}${st.done.same ? '' : `<br>${esc(st.orders != null ? st.orders : st.steps[st.steps.length - 1] || '')}`}</div>`;
         if (st.done.closeOffer) h += `<button type="button" class="ce-repo__go" data-go="close">Close the editor</button><button type="button" class="ce-repo__go ce-repo__go--plain" data-go="stay">Keep editing</button>`;
         card.innerHTML = h; wire(); return;
       }
       h += `<div class="ce-repo__say">${esc(st.id.kind === 'order' ? WORDS.order : WORDS.repository)}</div>`;
       const n = piecesOf(st.id);
-      h += `<label class="ce-repo__opt"><input type="radio" name="ce-repo-keep" value="0"${st.keep ? '' : ' checked'}${st.busy ? ' disabled' : ''}><span>${esc(WORDS.remake)}${n ? ` (${n} in the run now)` : ''}</span></label>`
-        + `<label class="ce-repo__opt"><input type="radio" name="ce-repo-keep" value="1"${st.keep ? ' checked' : ''}${st.busy ? ' disabled' : ''}><span>${esc(WORDS.keep)}</span></label><div class="ce-repo__note">${esc(WORDS.cut)}</div>`;
+      h += `<div class="ce-repo__note">${esc(WORDS.remake)}${n ? ` (${n} pieces now)` : ''} ${esc(WORDS.cut)}</div>`;
       if (st.err) h += `<div class="ce-repo__bad">${esc(st.err)}</div>`;
       if (st.busy) h += `<ul class="ce-repo__steps">${st.steps.slice(-4).map(t => `<li>${esc(t)}</li>`).join('')}</ul><div class="ce-repo__bar"><i style="width:${Math.min(96, 12 + st.steps.length * 16)}%"></i></div>`;
       const who = whoNow();
@@ -191,7 +187,6 @@
       card.innerHTML = h; wire();
     }
     function wire() {
-      for (const r of card.querySelectorAll('input[name="ce-repo-keep"]')) r.addEventListener('change', () => { st.keep = r.value === '1' && r.checked ? true : r.value === '0' && r.checked ? false : st.keep; });
       const go = card.querySelector('[data-go="update"]'); if (go) go.addEventListener('click', () => { update(); });
       const cl = card.querySelector('[data-go="close"]'); if (cl) cl.addEventListener('click', () => { close(); closeEditor(rootEl); });
       const stay = card.querySelector('[data-go="stay"]'); if (stay) stay.addEventListener('click', () => { st.done = null; close(); });
@@ -215,7 +210,7 @@
         // the drawing as it stands this moment (a change made while the card was open is in it)
         const cur = root.CharmEditor && root.CharmEditor.current; if (!cur) throw new Error('the editor is closed');
         st.made = await drawingNow(cur, st.id);
-        r = await Ms.replaceDrawing({ sku: st.id.sku, size: st.id.size || '', expect: st.id.charmHash, charm: st.made.charm, parsed: st.made.parsed, by: whoNow(), keepPlaced: st.keep, piece: st.id.piece, order: st.id.order }, { say });
+        r = await Ms.replaceDrawing({ sku: st.id.sku, size: st.id.size || '', expect: st.id.charmHash, charm: st.made.charm, parsed: st.made.parsed, by: whoNow(), piece: st.id.piece, order: st.id.order }, { say, orders: a => { st.orders = a ? (a.ok ? a.text : `The open orders: ${a.text || 'the cloud did not answer'}`) : ''; st.ordersBad = !!(a && !a.ok); if (a && !a.ok) { try { root.toast(`${st.id.sku}: its open orders were not all made again · ${a.text || 'no answer'}`, 'bad', 12000); } catch (_) { /* the card says it */ } } paint(); } });
       } catch (e) { r = { ok: false, reason: 'error', text: String((e && e.message) || e) }; }
       st.busy = false;
       if (!r || !r.ok) { st.err = `Not updated · ${(r && r.text) || 'the repository did not answer'}`; log('repoUpdateRefused', { sku: st.id.sku, size: st.id.size || null, reason: r && r.reason, by: whoNow() }); paint(); return; }
@@ -227,19 +222,17 @@
       let lf = null;
       if (st.id.kind === 'order' && st.id.order && typeof root.CNListingFollow === 'function') {
         st.busy = true; paint();
-        try { lf = await root.CNListingFollow({ order: st.id.order, piece: st.id.piece, sku: st.id.sku, by: whoNow(), remake: !st.keep, say }); } catch (e) { lf = { ok: false, why: String((e && e.message) || e) }; }
+        try { lf = await root.CNListingFollow({ order: st.id.order, piece: st.id.piece, sku: st.id.sku, by: whoNow(), say }); } catch (e) { lf = { ok: false, why: String((e && e.message) || e) }; }
         st.busy = false;
         log('repoListing', { sku: st.id.sku, order: st.id.order, ok: !!(lf && lf.ok), lid: lf && lf.lid, from: lf && lf.from, n: lf && lf.n, why: lf && !lf.ok ? lf.why : null });
       }
       wrap.dataset.dirty = '0'; wrap.dataset.done = '1'; base = sigOf();
-      const order = st.id.kind === 'order' && !st.keep && !r.same;
+      const order = st.id.kind === 'order' && !r.same;
       st.done = { same: !!r.same, closeOffer: order,
         text: r.same ? `${st.id.sku} already draws exactly this in the repository.`
-          : `${st.id.sku}${st.id.size ? ' · ' + st.id.size : ''} now draws this on every computer.${st.keep ? ' Pieces already made keep the drawing they were made from.' : ' Open pieces that are not cut are being made again with it, each back in its own place.'}${order ? ' This order\'s piece is one of them: its work is in the repository now, so the editor can close.' : ''}` };
+          : `${st.id.sku}${st.id.size ? ' · ' + st.id.size : ''} now draws this on every computer. Every open order of it is being made again, each piece in its own place.${order ? ' This order\'s piece is one of them: its work is in the repository now, so the editor can close.' : ''}` };
       if (lf) st.done.text += lf.ok ? ` ${lf.text || ''}`.replace(/\s+$/, '') + '.' : ` The listing was not changed: ${lf.why}.`;
-      // (SYNCNOW: the card says "updated" only once this page has read what the cloud made: every line of the charm, its pieces and the sheets)
-      if (!r.same && typeof root.CNFreshNow === 'function') { st.busy = true; say('Reading what the cloud made: the orders, their pieces and the sheets…'); try { await root.CNFreshNow({ sku: st.id.sku }); } catch (_) { /* the feed brings it */ } st.busy = false; }
-      log('repoUpdate', { sku: st.id.sku, size: st.id.size || null, by: whoNow(), from: r.was || null, to: (r.entry && r.entry.edited && r.entry.edited.to) || null, kind: st.id.kind, order: st.id.order || null, keepPlaced: !!st.keep, same: !!r.same });
+      log('repoUpdate', { sku: st.id.sku, size: st.id.size || null, by: whoNow(), from: r.was || null, to: (r.entry && r.entry.edited && r.entry.edited.to) || null, kind: st.id.kind, order: st.id.order || null, same: !!r.same });
       try { if (typeof root.toast === 'function') root.toast(r.same ? `${st.id.sku}: nothing to update` : `${st.id.sku} updated in the charm repository`, 'good', 5000); } catch (_) { /* the card says it */ }
       paint();
     }

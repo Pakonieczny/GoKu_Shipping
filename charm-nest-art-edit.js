@@ -202,7 +202,7 @@
 
   /* ── the piece's master (the charm with its own edits taken off) ── */
   // what an edit replaces on the piece's charm; the master's are kept under `artFrom` (references, never copies: the checkpoint keeps one of each)
-  const BASE_KEYS = ["members", "outline", "extras", "dropIndices", "topIndices", "bbox", "hash", "thumb", "bits", "w", "h", "scale", "bboxOuter", "areaPt2", "open", "widthPt", "heightPt", "centerPt", "strokePt"];
+  const BASE_KEYS = ["members", "outline", "extras", "dropIndices", "topIndices", "bbox", "hash", "thumb", "bits", "w", "h", "scale", "bboxOuter", "areaPt2", "open", "widthPt", "heightPt", "drawnPt", "centerPt", "strokePt"];
   const pick = (o, keys) => { const out = {}; for (const k of keys) if (o[k] !== undefined) out[k] = o[k]; return out; };
   // (and the keys the master does NOT have, so an edit's own — a dropped group, a trace — never stays on a piece taken back to the master)
   const masterOf = base => { const m = pick(base, BASE_KEYS), absent = BASE_KEYS.filter(k => base[k] === undefined); if (absent.length) m.absent = absent; return m; };
@@ -322,7 +322,13 @@
     out.outline = copyOf.get(base.outline) || base.outline;
     if (Array.isArray(base.extras)) out.extras = base.extras.map(x => copyOf.get(x)).filter(Boolean);
     out.dropIndices = new Set([...(base.dropIndices || []), ...dropTops]);
-    if (cutTouched) { out.artTrace = true; note.cut = true; }   // a new shape: its silhouette is traced again (ready) before it is nested
+    // a new shape: its silhouette is traced again (ready) before it is nested, in a box as big as it is now (CESAVE: it was traced in the master's box, so an outline made bigger was cut off there: the sheet's check
+    // measured it too small). The box grows about the master's centre, the point its place on a sheet is kept by: what did not change stays where it lies
+    if (cutTouched) {
+      out.artTrace = true; note.cut = true;
+      const b = base.bbox, c = b && [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2], reach = (ms, k) => Math.max(0, ...ms.filter(m => m && Array.isArray(m.bbox)).map(m => Math.max(c[k] - m.bbox[k], m.bbox[k + 2] - c[k])));
+      if (b) { const [dx, dy] = [0, 1].map(k => reach(list, k) - reach(members, k)); out.bbox = [b[0] - dx, b[1] - dy, b[2] + dx, b[3] + dy]; }
+    }
     out.artThumb = true;                                       // its picture is drawn again (ready)
     return finish(out, base);
   }
@@ -515,8 +521,8 @@
       rec.added.push(e);
     }
     rec.cut = rec.cutIds.length > 0 || Object.values(rec.changed).some(e => e.role === "cut") || rec.added.some(e => e.role === "cut");
-    // (SHAREDSHAPE, Paul 29 Oct 2026: a piece already on a sheet changes its cut line too: "Don't block the person". Its sheet is checked again before it is written: the cloud marks it (cutCheck),
-    //  the page checks the new shape where the piece stands and writes the sheet only when it still fits)
+    // (SHAREDSHAPE, Paul 29 Oct 2026: a piece already on a sheet changes its cut line too: "Don't block the person". Its sheet is checked again before it is written: the cloud marks it (cutCheck)
+    //  and seats the new shape before it writes the sheet)
     if (refused.length) throw Object.assign(new Error(refused.length === 1 ? `Not saved: ${refused[0].why}` : `Not saved: ${refused.length} parts cannot be kept as asked (${refused[0].why})`), { refused, artEdit: true });
     return rec;
   }
@@ -547,6 +553,7 @@
   /* ── the page: cloud records, the pieces made again, a save ── */
   let host = {};
   const cache = new Map();   // recKey → { rec | null }
+  const saving = new Set(); let sends = Promise.resolve();   // the pieces whose save the cloud has not answered yet; one save is sent at a time
 
   /* ── (TQ1, Paul 9 Nov 2026: "When I vectorize an image, it looks really good in a preview, but then when it gets applied to the actual charm, it looks like crap and it loses all
      its fidelity") A traced photograph at the detail its preview shows is far more path than one record holds (charmNestLibrary.js ART_MAX: 200 KB a path, 600 KB the edit; a cat at
@@ -674,7 +681,7 @@
     if (o && ((Array.isArray(o.orders) && o.orders.length) || o.all) && host.freshRows) { try { const want = new Set((o.orders || []).map(String)), ids = [...new Set((host.liveCharms() || []).map(c => c && c.poolId).filter(id => id && (o.all || want.has(String(id).split("_")[0]))))].slice(0, 900); if (ids.length) await host.freshRows(ids); } catch (_) { /* the look is made with the rows this page has */ } }
     const todo = new Map();
     for (const c of host.liveCharms() || []) {
-      if (!c || !c.poolId || todo.has(c.poolId)) continue;
+      if (!c || !c.poolId || todo.has(c.poolId) || FACES.some(f => saving.has(recKey(c.poolId, f)))) continue;
       const row = host.rowOf ? host.rowOf(c.poolId) : null, fl = flagsOf(row);
       if (FACES.some(f => (fl[f] || 0) !== ((c.artEdit && c.artEdit[f] && +c.artEdit[f].at) || 0) && (fl[f] || said(row, f)))) todo.set(c.poolId, { c, row });
     }
@@ -713,22 +720,28 @@
     // (the edit this page last saw of that face: the cloud refuses the save when another computer saved one since; a page that never read it expects what the piece's own charm or pool row says)
     const had = cache.get(recKey(poolId, face)), row = host.rowOf ? host.rowOf(poolId) : null;
     const expectedAt = ctx.expectedAt != null ? +ctx.expectedAt || 0 : had ? (had.rec ? +had.rec.at || 0 : 0) : (charm && charm.artEdit && charm.artEdit[face] && +charm.artEdit[face].at) || (row ? flagsOf(row)[face] : preFlags(await prepoolMap(true), poolId)[face]) || 0;   // (PREPOOLLIST: no row yet: the cloud's list, read fresh)
+    // (CESAVE: the piece is drawn with its change at the press, on every sheet and picture of this page; a save the cloud does not keep puts it back)
+    let shown = charm;
+    const show = async rec => { let c = charm ? apply(charm, rec, face) : null; if (c) c = await ready(c, host.parsedOf ? host.parsedOf(charm) : null); if (c && host.swap) host.swap(poolId, c, shown, rec, face); if (c) shown = c; return c; };
+    saving.add(recKey(poolId, face));
+    try {
+    await show(art ? Object.assign({}, art, { by, at: Date.now() }) : null);
     let res;
     const pk = await pack(art);   // (TQ1: a picture's big paths beside the record, gzipped)
-    try { res = await host.api("charmNestLibrary", Object.assign({ op: "artPut", poolId, face, by, expectedAt }, art ? { art: pk.art } : { clear: true }, pk.blob ? { blob: pk.blob } : {})); }
+    try { res = await (sends = sends.catch(() => null).then(() => host.api("charmNestLibrary", Object.assign({ op: "artPut", poolId, face, by, expectedAt }, art ? { art: pk.art } : { clear: true }, pk.blob ? { blob: pk.blob } : {})))); }
     catch (e) { const d = (e && e.data) || {}; throw Object.assign(new Error(d.error || (e && e.message) || "the artwork edit was not saved"), { conflict: !!d.conflict, cutRefused: !!d.cutRefused, ...(d.cutRefused ? { refused: [{ id: "cut", why: d.error }] } : {}) }); }
     if (!res || !res.ok) { const d = res || {}; throw Object.assign(new Error(d.error || "the artwork edit was not saved"), { conflict: !!d.conflict, cutRefused: !!d.cutRefused }); }
     const rec = await unpack(res.art || null, pk.ds.length ? pk.ds : null);
     remember(poolId, face, rec);
     if (!row && prepool) { const k = recKey(poolId, face); if (rec && rec.at) prepool[k] = +rec.at; else delete prepool[k]; }   // (PREPOOLLIST: this page's copy of the list follows its own save)
     if (host.flag) host.flag(poolId, face, rec ? rec.at : null);
-    let applied = charm ? apply(charm, rec, face) : null;
-    if (applied) applied = await ready(applied, host.parsedOf ? host.parsedOf(charm) : null);
-    if (applied && host.swap) host.swap(poolId, applied, charm, rec, face);
+    const applied = await show(rec);
     // (cut: a cut line changed, now or in the edit this one replaces: the piece's other face stands on that cut too)
-    const info = { charm: applied, record: rec, sheetId: res.sheetId || null, filesOwed: res.filesOwed || null, cut: !!(rec && rec.cut) || !!(charm && charm.artEdit && charm.artEdit.front && charm.artEdit.front.cut) };
+    const info = { charm: applied, record: rec, sheetId: res.sheetId || null, filesOwed: res.filesOwed || null, cutChanged: !!res.cutChanged, cut: !!(rec && rec.cut) || !!(charm && charm.artEdit && charm.artEdit.front && charm.artEdit.front.cut) };
     if (host.changed) await host.changed(poolId, face, info);
     return info;
+    } catch (e) { if (shown !== charm && host.swap && (cache.get(recKey(poolId, face)) || {}).rec === (had || {}).rec) host.swap(poolId, charm, shown, had ? had.rec : null, face); throw e; }
+    finally { saving.delete(recKey(poolId, face)); }
   }
   /** The page's own ways (charm-nest-bridge.js sets them): api, rowOf, charmOf, placed, who, flag, swap, changed, parsedOf, liveCharms, note. */
   function setHost(h) { host = Object.assign({}, h || {}); return host; }

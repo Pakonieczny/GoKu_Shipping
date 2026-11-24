@@ -3085,10 +3085,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      A cancelled or changed order comes off in real time. Its pieces leave every sheet this sorter holds; the other
      charms stay exactly where they are (never arranged again), each sheet is rewritten, verified and saved under its
      own name, and its QR label is remade (Sets.onSheetSaved). The order is held in Orders so the run does not place it
-     again; releasing it there nests it again. A piece stays where it is when its sheet was cut, its set was sent to
-     the station, or its sheet is not held by this sorter. A Rose Gold sheet not cut yet gives its pieces up inside a green
-     line or outside every line: the lines with nothing left inside them go with the pieces, the ones that keep a piece
-     stay as saved (RoseStock.takeOff, on the server). */
+     again; releasing it there nests it again. Paul, 23 Nov 2026: "Unless a sheet is marked as laser cut including RG 10k, 14k the user should be able to update/remove/cancel a given charm ... nothing should prevent
+     that": a piece stays where it is only when its sheet (or its set) is marked laser cut. A green line stays as it is drawn or cut round the hole (RoseStock.takeOff, on the server). */
   const BUSY = ["nesting", "finishing", "queued"];
   const busy = sh => BUSY.includes(sh.status) || !!sh._operationStarting || !!(sh.persisted && !sh.persistedDone && !sh.problem);
   // A sheet "queued" only because the run is stopped (stage "Waits for Resume") is doing nothing: a change here need not wait for it
@@ -3169,32 +3167,25 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (window.PairRemove) { try { for (const id of PairRemove.expand(ids, pairSrc()).added) ids.add(id); } catch (e) { console.warn("sheet window: pair expand", e); } }
     const holder = new Map(); for (const sh of allSheets()) for (const c of sh.charms) if (ids.has(c.poolId)) holder.set(c.poolId, sh);
     const ok = [], stay = [];
-    /* LINEOFF (Paul, 23 Nov 2026, order 4235923653: "that sheet was already cut" on a Rose Gold sheet with its cut line recorded and not cut on the laser; "Not cut: take it off"): the cloud takes the piece off it, only that
-       piece: the line, the leftover and every other piece stay. A sheet cut on the laser, or whose set went to the station, keeps its pieces as before. */
-    const viewing = !!(window.CNViewer && CNViewer.on && CNViewer.on()), lineOnly = s => { if (!viewing || cancelling || !s) return false; const r = s.recalled && typeof s.recalled === "object" ? s.recalled : s; return +(s.roseCutAt || r.roseCutAt || 0) > 0 && !(+s.laserDoneAt > 0) && !(+r.laserDoneAt > 0) && !s.roseProtected && !s.roseProtectedJson && !r.roseProtectedJson; };
+    // (a computer that follows the cloud: the cloud takes the pieces off, whether this page holds the sheet or not)
+    const viewing = !!(window.CNViewer && CNViewer.on && CNViewer.on()), lasered = s => !!s && (+s.laserDoneAt > 0 || +(s.recalled && s.recalled.laserDoneAt) > 0 || !!(window.Sets && Sets.ofRun(s.runId).some(z => +z.laserDoneAt > 0 && (z.sheetIds || []).includes(s.sheetId)))), LASER = "that sheet is marked laser cut";
     for (const id of ids) {
       const sh = holder.get(id), pr = poolRowOf(id, rid), mine = W.byPool.get(id);
       const sku = mine?.sku || pr?.sku || "";
       if (!sh) {
         if (pr && pr.sheetId && !["abandoned", "superseded"].includes(pr.state)) {
-          const card = allSheets().find(p => p.sheetId === pr.sheetId), cutCard = card && (card.roseCutAt || (card.recalled && card.recalled.roseCutAt)), doneCard = card && (+card.laserDoneAt > 0 || (card.recalled && +card.recalled.laserDoneAt > 0));
-          if (cutCard && !doneCard && pr.state !== "committed" && lineOnly(card)) ok.push({ id, sku, sh: null, where: sheetWord(pr.sheetId, pr.sheetName) });   // (LINEOFF)
-          else if (cutCard || doneCard) stay.push({ id, sku, where: sheetWord(pr.sheetId, pr.sheetName), kind: "cut", why: cutCard ? "that sheet was already cut" : "that sheet was marked completed" });   // (CUTSHEETPLAN: the same words the live sheet gives)
-          else stay.push({ id, sku, where: sheetWord(pr.sheetId, pr.sheetName), kind: pr.state === "committed" ? "sent" : "unloaded", why: pr.state === "committed" ? "its set was already sent to the station" : "its sheet is not open in this sorter" });
+          const card = allSheets().find(p => p.sheetId === pr.sheetId), where = sheetWord(pr.sheetId, pr.sheetName);
+          if (lasered(card)) stay.push({ id, sku, where, kind: "cut", why: LASER });
+          else if (viewing) ok.push({ id, sku, sh: null, where });
+          else stay.push({ id, sku, where, kind: "unloaded", why: "its sheet is not open in this sorter" });
         }
         else if (mine) stay.push({ id, sku, where: sheetWord(W.id, W.rec?.fileBase), kind: "unloaded", why: "this sheet is not open in this sorter" });
         else ok.push({ id, sku, sh: null, where: "not on a sheet yet" });
         continue;
       }
       const where = sheetWord(sh.sheetId, sh.fileBase, sh);
-      if (sh.roseCutAt && lineOnly(sh) && !(pr && pr.state === "committed") && !sentToStation(sh)) ok.push({ id, sku, sh, where });   // (LINEOFF)
-      else if (sh.roseCutAt) stay.push({ id, sku, where, kind: "cut", why: "that sheet was already cut" });
-      else if (sh.laserDoneAt) stay.push({ id, sku, where, kind: "cut", why: "that sheet was marked completed" });
-      else if (sh.recalled) stay.push({ id, sku, where, kind: "cut", why: "that sheet was recalled" });
-      else if (sentToStation(sh)) stay.push({ id, sku, where, kind: "sent", why: "its set was already sent to the station" });
-      // (a Rose Gold sheet not cut yet gives its pieces up too, inside a green line or outside every line: the lines with
-      //  nothing left inside them go with the pieces, the ones that keep a piece stay as saved. Paul, 29 Sep: a cancelled
-      //  order's lions stayed on the sheet for good, "inside the saved Rose Gold cut line")
+      if (lasered(sh)) stay.push({ id, sku, where, kind: "cut", why: LASER });
+      else if (!viewing && (sh.roseCutAt || sh.recalled)) stay.push({ id, sku, where, kind: "cut", why: "that sheet is changed by the cloud only" });
       else ok.push({ id, sku, sh, where });
     }
     // (EMPTYOK, Paul 14 Nov 2026: an order alone on its sheet can be taken off: the sheet left empty leaves its set and goes, Gate.dropEmpty, instead of being written again)
@@ -3248,7 +3239,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const CS = window.CharmNestCloudSheets, here = W.id ? allSheets().find(p => p.sheetId === W.id) : null;
     if (CS && W.id && (!here || here.recalled) && !x._cloudReady) {
       host.innerHTML = `<div class="swOff" role="group" aria-label="Take off the sheet"><h4>Take off the sheet</h4><div class="note">Opening this sheet from the cloud so it can be changed here…</div></div>`;
-      CS.ensureLive(W.id).then(() => { x._cloudReady = true; if (x.rid) W.pools.delete(String(x.rid)); if (host.isConnected) renderOff(x); }, e => { if (/already cut/i.test(String((e && e.message) || e))) { x._cloudReady = true; if (host.isConnected) renderOff(x); return; }   /* (CUTSHEETPLAN, Paul 18 Nov 2026, Ana's computer, order 4231640384 on a cut Rose Gold sheet: "it's not even showing her all the proper options"): a cut layout is never opened for change, on any computer; what can come off it is planned from its record, as on the computer that carries the run */ if (host.isConnected) host.innerHTML = `<div class="swOff" role="group" aria-label="Take off the sheet"><h4>Take off the sheet</h4><div class="note">This sheet could not be opened from the cloud: ${esc((e && e.message) || String(e))}. Nothing was changed.</div></div>`; });
+      CS.ensureLive(W.id).then(() => { x._cloudReady = true; if (x.rid) W.pools.delete(String(x.rid)); if (host.isConnected) renderOff(x); }, e => { if ((window.CNViewer && CNViewer.on && CNViewer.on()) || /already cut/i.test(String((e && e.message) || e))) { x._cloudReady = true; if (host.isConnected) renderOff(x); return; }   /* (CUTSHEETPLAN, Paul 18 Nov 2026, Ana's computer, order 4231640384 on a cut Rose Gold sheet: "it's not even showing her all the proper options"): a cut layout is never opened for change, on any computer; what can come off it is planned from its record, as on the computer that carries the run */ if (host.isConnected) host.innerHTML = `<div class="swOff" role="group" aria-label="Take off the sheet"><h4>Take off the sheet</h4><div class="note">This sheet could not be opened from the cloud: ${esc((e && e.message) || String(e))}. Nothing was changed.</div></div>`; });
       return;
     }
     const mates0 = x.rid ? offPlan(x, true) : null, one0 = offPlan(x, false);
@@ -6277,11 +6268,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (CLOUDDRIVE build step 7b, P9 / P1: while the cloud writes this sheet's run's files (mode "on", or its carrier is the cloud and "files" is one of the drive's lanes) the cloud's sheet writer
     //  writes them: finishSheet is sent, the person is told in words, and nothing is written here. With the drive off this is never asked: the sheet is written here as today)
     if (window.CNViewer && typeof CNViewer.filesGate === "function" && CNViewer.mode() !== "off") {
-      const g = await CNViewer.filesGate(sh, { reason: sh._standWord ? String(sh._standWord).slice(0, 100) : "written again from its saved record" });
+      const g = await CNViewer.filesGate(sh, { reason: "written again from its saved record" });
       if (g !== null) { st.state = g ? "ok" : "bad"; st.detail = g ? "the cloud writes its files" : "the cloud did not take them: see the message"; paint(); return g; }
     }
     st.state = "now"; st.detail = "written from its saved record (its run is not open on this screen)"; paint();
-    const Pd = window.CharmNestPDF, rec = (!sh._standWord && W.rec && W.rec.id === sh.sheetId ? W.rec : null) || sh._rec || {}, outs = rec.outputs || {};
+    const Pd = window.CharmNestPDF, rec = (W.rec && W.rec.id === sh.sheetId ? W.rec : null) || sh._rec || {}, outs = rec.outputs || {};
     if (!Pd || typeof Pd.buildSheet !== "function" || typeof Pd.parseSource !== "function" || typeof uploadBytes !== "function") throw new Error("the sheet writer is not loaded in this page; reload it");
     const stock = (typeof stockFor === "function" ? tryDo(() => stockFor(sh.metal, sh)) : null) || stockOf(rec), byId = new Map(sh.charms.map(c => [c.id, c]));
     const sources = new Map(), spec = [], pageSrc = id => (typeof sourceOf === "function" ? tryDo(() => sourceOf(id)) : null) || null;
@@ -6337,28 +6328,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (outs.pdf) await api("charmNestLibrary", { op: "sheetPdf", id: sh.sheetId }, { quiet: true }).catch(e => console.warn("sheet window: .pdf", e));
     // a set the sheet was released in (out of draft) says it changed, as Review.inPlaceRefile says it for a sheet of the run on screen
     if (sh.setId && !sh.draft) {
-      const set = `Set ${rec.setSeq || ""}`.trim(), word = `${set} changed after it was released: ${sheetWord(sh.sheetId, sh.fileBase, sh)}${sh._standWord ? ": " + sh._standWord : "'s charms were moved by hand"} — its files are written again`;
+      const set = `Set ${rec.setSeq || ""}`.trim(), word = `${set} changed after it was released: ${sheetWord(sh.sheetId, sh.fileBase, sh)}'s charms were moved by hand — its files are written again`;
       await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releasedChange: { setId: sh.setId, set, at: Date.now(), by: whoAmI() || null, orders: [], word } } }, { quiet: true }).catch(e => console.warn("sheet window: released mark", e));
     }
     st.state = "ok"; st.detail = sh.verification.ok ? "written and checked" : hand ? `${hand} charms overlap: the sheet stays flagged until they are moved clear` : "written; its check flagged it, see its report"; paint();
     return true;
-  }
-  /** ARTUNCUT (Paul, 16 Nov 2026; charm-nest-bridge.js artUncutWrite): a sheet written again from its saved record with the charms a caller made for it (each where the record places it), by the
-   *  writer above. Its stock and green line are read first, as for Manual Control on such a sheet (mcStandPrep), so the check measures against the metal that is really there. → true */
-  async function writeFromRecord(rec, charms, placements, o) {
-    if (!rec || !rec.id || !Array.isArray(charms) || !Array.isArray(placements) || !placements.length) throw new Error("the sheet's record or its pieces are missing");
-    if (+rec.laserDoneAt > 0) throw new Error("the laser has cut this sheet: it is not written again");
-    const byId = new Map(charms.map(c => [c.id, c]));
-    const pls = placements.map(p => { const c = byId.get(p.id) || {}; return Object.assign({}, p, { cxPt: +p.cxPt, cyPt: +p.cyPt, angle: +p.angle || 0, scale: +p.scale || 1, wPt: +p.wPt || c.widthPt || 10, hPt: +p.hPt || c.heightPt || 10 }); });
-    const sh = { sheetId: rec.id, metal: rec.metal, runId: rec.runId || null, fileBase: rec.fileBase || rec.folder || rec.id, page: rec.page || 1, sheetIndex: rec.sheetIndex || null, setId: rec.setId || null, seq: rec.setSeq || null, setDay: rec.day || null,
-      draft: !!rec.draft, releaseFull: !!rec.releaseFull, processReady: !!rec.processReady, laserSetPending: !!rec.laserSetPending, laserDoneAt: +rec.laserDoneAt || null, label: rec.label || null,
-      charms: charms.slice(), placements: pls, rejects: [], backPool: [], log: [], status: "complete", persistedDone: true, persisted: Promise.resolve(), dirty: false, problem: null, verification: rec.verification || null,
-      keptStock: stockOf(rec), roseCutAt: rec.roseCutAt || null, rosePlanHash: rec.rosePlanHash || null, roseRevision: rec.roseRevision || 0,
-      _standalone: true, _rec: rec, _srcOf: new Map(), _standWord: (o && o.word) || "" };
-    const R = window.RoseStock;
-    if (rec.roseStockId && R && typeof R.restore === "function") await within(R.restore(sh, rec), 20000, "the cloud did not answer in 20 seconds");
-    else { const parse = s0 => (s0 ? JSON.parse(s0) : null); sh.rosePlan = parse(rec.rosePlanJson); sh.roseProtected = parse(rec.roseProtectedJson); }
-    return mcWriteStandalone(sh, { state: "", detail: "" }, () => {});
   }
   async function mcToggle(o0) {
     if (MC.claiming && !MC.on) return;   // (MOVEINSTANT 2: on, the toggle always ends it, even while a carried-to sheet is still being claimed)
@@ -8001,7 +7975,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   // (LOCAL: and the sheets opened last on this computer, with their designs, are read into memory: the next of them opened is drawn with no wait for the disk)
   try { (window.requestIdleCallback || (f => setTimeout(f, 1500)))(() => { try { build(); } catch (_) {} try { if (window.OrderPieces && OrderPieces.of && (S.library.rows || []).length) OrderPieces.of("0"); } catch (_) {}
     try { const St = window.CharmNestStore; if (St && St.warm && window.Pool && Pool.warmKept) St.ready().then(() => St.warm("sheetFull", 8)).then(recs => { for (const r of recs) for (const s0 of r.sources || []) if (s0 && s0.pool && s0.path && s0.hash) Pool.warmKept(s0.path, s0.hash); }).catch(() => {}); } catch (_) {} }, { timeout: 5000 }); } catch (_) {}
-  window.SheetWin = { writeFromRecord, remakeLabel, joinSet, joinInfo, takeOffOrder, dropOrder, dropTakenOff, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, pieceBase, _W: W };
+  window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, dropOrder, dropTakenOff, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, pieceBase, _W: W };
   /* ── the sheet hop (charm-nest-sheet-hop.js; Paul, 18 Oct 2026: on 10K and 14K sheets a person drags a charm onto the next or previous sheet
      of its metal): this window's own pieces for it, nothing new. The move itself is moveIn (o.hop: pinned where it was put, the hop's own
      guards), the room is the window's collision grid (plateGrid / variantOf: real outlines and the run's clearance). W.hop, set while a charm

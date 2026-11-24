@@ -50,6 +50,8 @@
   const isHand=c=>!!c && typeof c==='object' && c.state!=='open' && c.how!=='sheet';
   // (NESTASK, Paul 23 Nov 2026: a piece a person skipped at Release Hold, state "skipped" with no hold: no charm is made for it, so it needs no sheet and holds nothing back, as one completed by hand)
   const handOf=l=>{const c=l && !(Array.isArray(l.poolIds) && l.poolIds.length) && (l.state==='skipped' && !l.hold ? {state:'completed',how:'skip',completedAt:+l.releasedAt || 0,completedBy:l.releasedBy || ''} : l.handDone || l.spec?.customDone);return isHand(c)?c:null;};
+  /* ONECOUNT (Paul, 23 Nov 2026: Set-5 · 2026-11-12 said 5 / 5 and 8 / 8 on screen and stood in Laser cutting, and "Mark set completed" was refused: the cloud counted 4 more engravings to approve): a line the
+     cloud read as having NOTHING to engrave was written { needed: false, state: 'none', approved: false } by its own summary (46 lines that day), and was counted as waiting. Nothing to engrave waits on nobody. */
   function decisions(rows){
     const out={};
     // (a line whose record lost its pool ids is read by the ids the pool gives its copies, "<line key>_<n>", as orderReports reads them)
@@ -60,7 +62,7 @@
       // A line with no personalization, message or note has nothing to engrave, before its engraving check has run too.
       // The page reads that from the row's reading, the server from the run's line record.
       const candidate=row.spec ? row.spec.engraveCandidate : row.engraveCandidate;
-      out[id]=row.state==='gone' && !e?.approved ? {needed:false,state:'none',approved:true} : e ? {needed:!!e.needed,state:e.state,approved:!!e.approved,...(e.faces?{faces:e.faces}:{})} : candidate===false ? {needed:false,state:'none',approved:true} : {needed:true,state:'unknown',approved:false};
+      out[id]=row.state==='gone' && !e?.approved ? {needed:false,state:'none',approved:true} : e ? {needed:!!e.needed,state:e.state,approved:!!e.approved || (!e.needed && ['none','skipped'].includes(e.state)),...(e.faces?{faces:e.faces}:{})} : candidate===false ? {needed:false,state:'none',approved:true} : {needed:true,state:'unknown',approved:false};
     }
     return out;
   }
@@ -126,12 +128,17 @@
     //  GF + SS rule (R1 / R2) is not asked of it; each sheet's own readiness decides. Diagnostic, 26 Oct 2026: an approved loose GF sheet stayed In progress)
     const rules=s && s.setId ? setRules(s,unique) : noRules;
     const faces=reports.some(r=>r.faces) ? Object.fromEntries(['required','approved','waiting','saved'].map(k=>[k,reports.reduce((n,r)=>n+engCounts(r)[k],0)])) : null;
-    return {...Object.fromEntries(['total','required','approved','waiting','saved','plain','saving'].map(k=>[k,reports.reduce((n,r)=>n+r[k],0)])),stages,included:complete && reports.every(r=>r.included),ready:complete && reports.every(r=>r.ready) && rules.ok,rules,sheets:unique.length,...(faces?{faces}:{})};
+    return {...Object.fromEntries(['total','required','approved','waiting','saved','plain','saving'].map(k=>[k,reports.reduce((n,r)=>n+r[k],0)])),stages,included:complete && reports.every(r=>r.included),ready:complete && reports.every((r,i)=>r.ready || (r.included && overridden(unique[i]))) && rules.ok,rules,sheets:unique.length,...(faces?{faces}:{})};
   }
   // Completion is proof that this saved sheet already passed through Laser cutting.
   // Reopening clears its current completion flag, not that approval. Blue readiness seals
   // alone never grant this return path; first-time sheets still pass every intake check.
-  const completedBefore=s=>+s.laserDoneAt>0 || (s.processSeals || []).some(x=>x.how==='laserDone' && +x.at>0);
+  /* OVERRIDE (Paul, 23 Nov 2026: "I need the ability to overwrite and approve for laser cutting any given set even though it may contain sheets that are not ready or have orders that are held"): a set the owner approved
+   * with his password carries laserOverride, and each of its sheets, for that set (_charmNestSetOverride.js). Such a sheet is read as one that already passed: only a place in its set is still asked. A sheet held back
+   * after it, or moved to another set, is read as any other. */
+  const overridden=s=>!!(s && s.laserOverride && +s.laserOverride.at>0 && (!s.laserOverride.setId || s.laserOverride.setId===s.setId) && !(held(s) && +s.laserHold.at>=+s.laserOverride.at));
+  const cutBefore=s=>+s.laserDoneAt>0 || (s.processSeals || []).some(x=>x.how==='laserDone' && +x.at>0);
+  const completedBefore=s=>cutBefore(s) || overridden(s);
   function laserSheet(s){
     const report=sheet(s);
     return {...report,ready:report.included && (completedBefore(s) || report.ready)};
@@ -496,6 +503,8 @@
       return out;
     });
   }
+  /** The pieces of a sheet whose engraving is not approved (the count a card says, piece by piece: what an override lists). */
+  const waitingPieces=s=>copies(s).filter(c=>!c.plain && !c.accepted).map(c=>c.id);
   // one sheet's own three gated steps: ok[k] (the gate's stage), hard[k] (a problem, not only waiting), items[k], detail[k], short[k]
   function sheetSteps(s,N){
     const id=s.id || s.sheetId,label=sheetLabel(s),r=sheet(s),again=completedBefore(s),cs=copies(s),st=r.stages;
@@ -510,7 +519,7 @@
     if(again){
       // cut once before: reopening keeps that approval (laserSheet), only a place in a set is still asked
       for(const k of GATED)ok[k]=k==='nesting'?r.included:true;
-      for(const k of GATED){hard[k]=k==='nesting' && !r.included && !s.draft;detail[k]=ok[k]?'Passed before Laser cutting; it stays on record.':items.nesting[0]?.why || 'Not in a set.';short[k]=lower(items.nesting[0]?.why || 'it is not in a set');}
+      for(const k of GATED){hard[k]=k==='nesting' && !r.included && !s.draft;detail[k]=ok[k]?overridden(s)?`Approved for laser cutting by override${s.laserOverride.by?` (${s.laserOverride.by})`:''}.`:'Passed before Laser cutting; it stays on record.':items.nesting[0]?.why || 'Not in a set.';short[k]=lower(items.nesting[0]?.why || 'it is not in a set');}
       return {id,label,r,again,ok,hard,items,detail,short};
     }
     if(r.total===0)own('nesting','No charms are placed on it yet');
@@ -839,5 +848,5 @@
     if(!done && rules.applies && !rules.ok){e.nextText=sentence(rules.line);e.rules=rules;}
     return e;
   }
-  return {idsOf,orderIds,decisions,held,isHand,handOf,setRules,sheet,set,completedBefore,laserSheet,laserGroup,setGate,approveBlock,softGap,softNote,setOf,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,blockText,reviewReport,reviewHolds,filed,processStamps,STEP_LOG,STEPS_FROM,stepFacts,stepStamps,stepsRecord,stepTimes,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),stepKey,sheetLabel};
+  return {idsOf,orderIds,decisions,held,overridden,waitingPieces,lineMissing,isHand,handOf,setRules,sheet,set,cutBefore,completedBefore,laserSheet,laserGroup,setGate,approveBlock,softGap,softNote,setOf,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,blockText,reviewReport,reviewHolds,filed,processStamps,STEP_LOG,STEPS_FROM,stepFacts,stepStamps,stepsRecord,stepTimes,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),stepKey,sheetLabel};
 });

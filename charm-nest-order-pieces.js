@@ -54,7 +54,7 @@
   const labelOf = s => SNm() ? SNm().name(s) : `${CODE[s.metal] || ''} Sheet ${sheetNo(s)}`.trim();
   const tailNo = k => { const m = /_(\d+)$/.exec(String(k || '')); return m ? +m[1] : 0; };
   const cleanSku = x => String(x || '').replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
-  const cut = s => !!(s && (+s.laserDoneAt > 0 || +s.roseCutAt > 0));
+  const cut = s => !!(s && +s.laserDoneAt > 0);   // (the laser's mark alone, as the cloud's own reading: _charmNestPlacement.js)
   const num = v => (Number.isFinite(+v) ? +v : 0);
   /** A pool row a person's HOLD took off its sheet, as the cloud keeps it (the Hold press writes it in the same commit that edits the sheet records: C3, _charmNestPlacement.takenOff):
    *  abandoned, on no sheet, with the hold's own mark (heldAt / heldBy) and no cancel mark (removedAt / removedBy), and not made live again since (repooledAt: the Release stamp).
