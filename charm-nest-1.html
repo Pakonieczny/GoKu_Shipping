@@ -4373,6 +4373,19 @@ async function api(fn, body, opts = {}) {
   if (window.CharmNestStore && CharmNestStore.shared && READ_OP.test(String((body && body.op) || "")) && !opts.wipe) return CharmNestStore.shared(fn + "\u0000" + JSON.stringify(body || {}), () => apiOnce(fn, body, opts));
   return apiOnce(fn, body, opts);
 }
+/* FASTOPEN (23 Nov 2026): the small reads asked at the same moment go as one request (charmNestLibrary `reads`); one alone, one the cloud does not answer together, or a request that failed goes by itself as before (null). */
+const PAGE_READS = new Set("optionMapGet aliasGet noDesignGet customGet reviewSettledGet cancelList customSheetGet getOrderDays customPieceList driveGet runList runGet shareGet trayList activityGet sandboxStatus".split(" "));
+let readsWait = null;
+function readsTogether(payload, headers) {
+  return new Promise(done => {
+    if (!readsWait) { const list = readsWait = []; setTimeout(async () => {
+      readsWait = null; if (list.length < 2) return list.forEach(x => x.done(null));
+      let a = null; try { const r = await fetch(`${FN}/charmNestLibrary`, { method: "POST", headers, body: JSON.stringify(Object.assign({ op: "reads", reads: list.map(x => x.payload) }, WORKSPACE_SANDBOX ? { sandbox: true } : {})), signal: window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(60000) : undefined }); a = r.ok ? await r.json() : null; } catch (_) { a = null; }
+      list.forEach((x, i) => { const z = a && a.answers && a.answers[i]; x.done(z && z.status === 200 ? new Response(JSON.stringify(z.body), { status: 200, headers: { "Content-Type": "application/json" } }) : null); });
+    }, 12); }
+    readsWait.push({ payload, done });
+  });
+}
 async function apiOnce(fn, body, opts) {
   const early = fn === "charmNestLibrary" && window.CNFirst ? CNFirst(body || {}) : null;   // (FASTOPEN: asked by the page's first line)
   if (window.CNWipe.active && !opts.wipe && !READ_OP.test(String((body && body.op) || ""))) throw Object.assign(new Error("the sandbox is being reset: try again once the page has reloaded"), { transient: true, wiping: true });
@@ -4406,7 +4419,7 @@ async function apiOnce(fn, body, opts) {
     if (fn === "charmNestLibrary" && payload.op === "laserDone" && window.LaserSheetTime) { try { if (payload.done !== false) laserSent = payload.laserTime = window.LaserSheetTime.measure(payload.by); else window.LaserSheetTime.forget(payload.by); } catch (_) {} }
     // (OUTBOX: the page going away sends what its outbox still holds with keepalive, 64 KB at most: the next page sends it again and its mid makes that a no-op)
     const text = JSON.stringify(payload), keep = !!opts.keepalive && text.length < 60000;
-    const res = (early && await early) || await fetch(`${FN}/${fn}`, { method: "POST", headers, body: text, keepalive: keep, signal: !keep && window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined });
+    const res = (early && await early) || (fn === "charmNestLibrary" && !keep && PAGE_READS.has(payload.op) && await readsTogether(payload, headers)) || await fetch(`${FN}/${fn}`, { method: "POST", headers, body: text, keepalive: keep, signal: !keep && window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined });
     const txt = await readBody(res, bar);
     // FEED (Paul, 28 Oct 2026: "everything immediate"): what this write named in the cloud (its answer's X-CN-Feed) is told to the other tabs of this computer now (charm-nest-sync-worker.js wrote)
     let fk = ""; try { fk = (res.headers && res.headers.get && res.headers.get("X-CN-Feed")) || ""; if (fk && window.CNSync && CNSync.wrote) CNSync.wrote(fk); } catch (_) {}
