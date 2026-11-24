@@ -11652,7 +11652,8 @@ const Engrave = window.Engrave = (() => {
   /** The words job `j` has fitted, as the editor's text on its face (`view`: the face's view in the editor, the job's own or nothing is handed in: the words stand in the job's view). null: no
    *  words fitted (a face waiting for words, a face the editor's parts engrave alone), or the font engine cannot draw them yet. */
   /** Two views of a face that draw it in the same frame (the same turn and the same place): a piece opened from its order is made from its master again, a view of its own as the card's. */
-  const charmEditSameView = (a, b) => !!(a && b) && (a === b || (Array.isArray(a.M) && Array.isArray(b.M) && JSON.stringify([a.M, a.R || null]) === JSON.stringify([b.M, b.R || null])));
+  const nearNums = (x, y) => (x == null && y == null) || (Array.isArray(x) && Array.isArray(y) && x.length === y.length && x.every((v, i) => Math.abs(v - y[i]) < 1e-6));   // (TYPEWORDS 2: the same turn worked out two ways differs in its last digit (90.148 and 90.14800000000002): the Editor's place and size were thrown away for it)
+  const charmEditSameView = (a, b) => !!(a && b) && (a === b || (Array.isArray(a.M) && Array.isArray(b.M) && nearNums(a.M, b.M) && nearNums(a.R, b.R)));
   function charmEditWords(j, view, face) {
     const f = j && j.fit, Mx = window.CharmEditor && window.CharmEditor.model, eng = window.CharmNestCeText ? window.CharmNestCeText.textToPaths : charmEditText;
     if (!f || f.artOnly || !Array.isArray(f.glyphs) || !f.glyphs.length || !Array.isArray(f.centre) || !(+f.size > 0) || !Mx || !view || !charmEditSameView(j.view, view)) return null;   // (TYPEWORDS: the same frame, not only the same object)
