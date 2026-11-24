@@ -29058,6 +29058,7 @@ const Session = window.Session = (() => {
   /** At start, every best-layout record whose sheet is not one cut short in the restored workspace is left from a sheet
       saved, released or cleared long ago, or from a workspace that was not restored: it is deleted (keep: sheet ids). */
   async function sweepBest(keep) {
+    if (noDisk()) return;
     try {
       const db = await open(), prefix = key() + ":best:";
       const keys = await new Promise((resolve, reject) => { const store = db.transaction("workspaces", "readonly").objectStore("workspaces"); if (typeof store.getAllKeys !== "function") return resolve([]); const req = store.getAllKeys(); req.onsuccess = () => resolve(req.result || []); req.onerror = () => reject(req.error); });
@@ -29103,7 +29104,11 @@ const Session = window.Session = (() => {
       tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || new Error("Workspace save interrupted"));
     });
   }
+  /* NODISK (Paul, 23 Nov 2026: "The computer is not allowed to hold any information"): outside the sandbox no workspace is saved or read on this computer. His held 134 MB, one part of it from 14 Nov, and every load of the
+     page stood still for 14 s reading it. */
+  const noDisk = () => !WORKSPACE_SANDBOX;
   async function io(value, scope = key()) {
+    if (noDisk()) return undefined;
     const db = await open(); if (value !== undefined) return put(db, value, scope);
     return new Promise((resolve, reject) => {
       const tx = db.transaction("workspaces", "readonly"), req = tx.objectStore("workspaces").get(scope);
@@ -29111,6 +29116,7 @@ const Session = window.Session = (() => {
     });
   }
   async function remove(scope) {
+    if (noDisk()) return;
     const db = await open(); return new Promise((resolve, reject) => {
       const tx = db.transaction("workspaces", "readwrite"), store = tx.objectStore("workspaces");
       if (typeof store.delete !== "function") return resolve();
@@ -29231,11 +29237,11 @@ const Session = window.Session = (() => {
     return failures ? Math.max(rest, lastEnd + Math.min(300000, 15000 * 2 ** (failures - 1))) : t;
   }
   function arm(delay) {
-    if (frozen || !ready || timer || idleId || saving || rev === savedRev) return;
+    if (noDisk() || frozen || !ready || timer || idleId || saving || rev === savedRev) return;
     timer = setTimeout(() => { timer = 0; idleId = -1; const id = whenIdle(() => { idleId = 0; flush(); }); if (idleId) idleId = id; }, Math.max(delay, due() - Date.now(), 0));
   }
   async function pass() {
-    if (frozen) return;
+    if (frozen || noDisk()) return;
     const scope = key(); lastStart = Date.now();
     try {
       await window.CharmNestInteraction?.idle();
