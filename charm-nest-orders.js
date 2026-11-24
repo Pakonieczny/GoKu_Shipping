@@ -4182,6 +4182,15 @@
     if (NOT_BAR.test(title)) return false;
     return BAR_SKU.test(sku) || BAR_TITLE.test(title);
   }
+  /* FORMWORDS (Paul, 24 Nov 2026, order 4241959899: "1. Engraving: Mazie / 2. Location: Center" was engraved as written): a listing's numbered form (1. the engraving, 2. where on the bar) is answered in the
+     personalisation box with its numbers, with or without its labels. The engraving is answer 1 without its number and its "Engraving:"; answer 2 goes only when it is a place and nothing else. Any other text stays as written. */
+  const FORM_PLACE = /^(?:location\s*[:=\-–—]?\s*)?(?:(?:in|on)\s+)?(?:the\s+)?(?:cent(?:er|re)(?:e?d)?|middle|left|right)(?:\s+(?:hand|side|location|position|aligned|alignment|justified|please|thanks|of\s+(?:the\s+)?bar))*\s*[.!]?$/i;
+  function formWords(text) {
+    const t = String(text == null ? "" : text).replace(/\r/g, ""), m = /^\s*1\s*[.)]\s*([\s\S]+?)(?:\s*\n\s*|\s+)2\s*[.)]\s*([\s\S]+?)\s*$/.exec(t), bare = x => x.replace(/^\s*engraving\s*[:=\-–—]\s*/i, "").trim();
+    if (m && !/(?:^|\s)\d+\s*[.)]\s/.test(m[1]) && FORM_PLACE.test(m[2].replace(/\s+/g, " ").trim()) && !FORM_PLACE.test(m[1].trim())) return bare(m[1]) || t;
+    const one = /^\s*1\s*[.)]\s*engraving\s*[:=\-–—]\s*([^\n]+?)\s*$/i.exec(t); if (one && !/(?:^|\s)2\s*[.)]/.test(one[1])) return one[1];
+    return t;
+  }
   /** (FRONTDEFAULT) The default-face reading of a line of a LISTING_FACES listing whose order names no face (spec.engraving absent), or null. (BARFRONT: and of a bar necklace of any listing: its front) */
   function listingFaceOf(line, spec) {
     const listed = LISTING_FACES[pieceListingId(line)], face = listed || (!pieceListing(line) && barNecklace(line, spec) ? "front" : null);
@@ -4193,6 +4202,7 @@
       && ![].concat(spec.personalization || [], spec.buyerMessage || "", spec.staffNote || "").some(t => /\b(?:front|back|sides?|reverse)\b/i.test(decodeEntities(String(t)).replace(/\b(?:and|&|n)\s+back\b/gi, " ")));
     if (spec.engraving && !idiomBack(spec.engraving)) return null;
     let pers = (spec.personalization || []).map(x => visible(x).replace(/\r/g, "").trim()).filter(Boolean);
+    { const all = pers.join("\n"), fw = formWords(all); if (fw !== all) pers = fw.split("\n").map(x => x.trim()).filter(Boolean); }   // (FORMWORDS)
     try { const fr = fontReadText(pers.join("\n"), { cueOnly: true }); if (fr.changed) pers = fr.lines.map(x => String(x).trim()).filter(Boolean); } catch (_) { /* the words stay as written */ }   // ("Typewriter font" is spec.fontText, no words)
     let notes = [];
     try { const ER = engraveReadModule(), rd = ER && ER.readPersonalisation && pers.length ? ER.readPersonalisation(pers.join("\n")) : null; if (rd && !rd.unsure && !rd.labelled && rd.lines && rd.lines.length && (rd.dropped || []).length) { notes = rd.dropped.map(d => String(d.text || "").trim()).filter(Boolean); pers = rd.lines.map(x => String(x).trim()).filter(Boolean); } } catch (_) { notes = []; }
@@ -4277,7 +4287,7 @@
       }
       return true;
     }).join("\n"), { keepFaceLines: true }).text;
-    const persText = stripFont(pers.join("\n"));
+    const persText = formWords(stripFont(pers.join("\n")));   // (FORMWORDS)
     const pools = [["staffNote", staff], ["personalization", persText], ["buyerMessage", buyer], ["messages", msgs.join("\n")]].map(([k, t]) => ({ k, text: k === "personalization" ? t : stripFont(t) })).filter(p => p.text.trim());
     const readPool = p => {
       const cut = slots.length > 1 && p.k === "personalization" ? pieceSegments(p.text, slots) : null;
