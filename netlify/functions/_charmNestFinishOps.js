@@ -51,8 +51,9 @@ function install(L) {
       const ts = await tx.get(tref), t = ts.exists ? ts.data() || {} : {};
       const can = await cloudWrites(tx, drive, mode, s.runId);
       if (!can.ok) return { error: can.why, status: 409, notCloud: true };
-      const owed = b.again === true || !(num(s.filesOwed) > 0) ? now : num(s.filesOwed);
-      const want = { reason, nestJobId: nestJobId || (t.want && t.want.nestJobId && !(t.lastDone && t.lastDone.nestJobId === t.want.nestJobId) ? t.want.nestJobId : null), at: now, by, owedAt: owed };
+      const picture = marked() && b.picture === true && !nestJobId;   // (SHIPPEDSTAYS: its picture alone: no file is asked for)
+      const owed = picture ? num(s.filesOwed) : b.again === true || !(num(s.filesOwed) > 0) ? now : num(s.filesOwed);
+      const want = { reason, ...(picture ? { picture: num(s.pictureOwed) || now } : {}), nestJobId: picture ? null : nestJobId || (t.want && t.want.nestJobId && !(t.lastDone && t.lastDone.nestJobId === t.want.nestJobId) ? t.want.nestJobId : null), at: now, by, owedAt: owed };
       const requests = (Array.isArray(t.requests) ? t.requests : []).concat([{ at: now, by, reason, ...(nestJobId ? { nestJobId } : {}), cloud: !!marked() }]).slice(-20);
       if (owed !== num(s.filesOwed)) tx.set(sref, { filesOwed: owed, updatedAt: FV.serverTimestamp() }, { merge: true });
       tx.set(tref, { sheetId: id, runId: s.runId || null, sheetName: str(s.fileBase, 120) || null, metal: s.metal || null, want, requests, wantAt: now }, { merge: true });

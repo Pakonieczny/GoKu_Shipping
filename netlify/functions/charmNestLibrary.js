@@ -167,7 +167,7 @@ function slim(d) {
     verification: d.verification ? { ok: !!d.verification.ok } : null,
     preview: d.outputs && d.outputs.preview ? d.outputs.preview.url : null,
     // when the picture itself was last saved (op_putSheet): the page keeps a picture by it, so a seal or a step on the record no longer makes every open page load the picture again
-    ...(d.previewAt ? { previewAt: num(d.previewAt) } : {}),
+    ...(d.previewAt ? { previewAt: num(d.previewAt) } : {}), ...(d.shippedOut ? { shippedOut: d.shippedOut } : {}),   // (SHIPPEDSTAYS)
     // (PICTUREREV, Paul 17 Nov 2026: "what I see in the previews is not what opens when I open the detailed view of the sheet"): the layout's revision the picture was drawn for, and the layout's revision now: a picture behind its layout is drawn again by the computer that carries the run
     ...(d.layoutRev != null ? { layoutRev: num(d.layoutRev) } : {}), ...(d.previewRev != null ? { previewRev: num(d.previewRev) } : {}),
     // the four files a recalled card offers, so recalling a set is one read of this list and nothing more
@@ -191,7 +191,7 @@ function slim(d) {
 /* The fields of a sheet record that its list entry (slim) and its laser readiness (Readiness.sheet) read, and the lists
    filter on. A list reads only these: the rest of a record (its charms with their outlines, its placements) is most of
    its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
-const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit", "releasedChange", "filesOwed", "cutCheck", "draftOrder", "_w", "layoutRev", "previewRev", "laserOverride"];   // (releasedChange: a set changed after it was released or approved for laser cutting, said on its Library card, Paul 27 Oct 2026)
+const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit", "releasedChange", "filesOwed", "cutCheck", "draftOrder", "_w", "layoutRev", "previewRev", "laserOverride", "shippedOut"];   // (releasedChange: a set changed after it was released or approved for laser cutting, said on its Library card, Paul 27 Oct 2026)
 /** What the Library's live read (op_laserStatus) reads of a sheet: SLIM_SHEET, and the sheet's own number (readiness labels a sheet that is in no set by it). */
 const LASER_SHEET = SLIM_SHEET.filter(f => f !== "sources").concat(["seq", "sourcesLite"]);
 /** What decides whether a sheet is on the Library's Current list (op_listSheets with excludeDone): archived, completed, its set (filingRecords), the filters and the order. */
@@ -1097,6 +1097,7 @@ function sameLayout(a, b) {
   const at = new Map(a.filter(p => p && p.id != null).map(p => [String(p.id), p]));
   return b.every(p => { const q = p && at.get(String(p.id)); return !!q && Math.abs(num(p.cxPt) - num(q.cxPt)) < 0.01 && Math.abs(num(p.cyPt) - num(q.cyPt)) < 0.01 && Math.abs(num(p.angle) - num(q.angle)) < 0.01; });
 }
+const DONE_LOCKED = ["placements", "charms", "poolIds", "orders", "pieceSides", "rejects", "feedWait", "names", "sources", "sourcesLite", "stock", "listings", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "usablePt2", "backPool", "shippedOut", "layoutRev", "contentRev"];   // (DONELOCKED)
 async function op_putSheet(b) {
   { const s0 = b.sheet || {}, dev0 = str(b.dev, 60);
     if (dev0 && Array.isArray(s0.placements) && !(typeof b.layoutBase === "number" && Number.isFinite(b.layoutBase)) && isId(s0.runId)) {
@@ -1292,6 +1293,9 @@ async function op_putSheet(b) {
       overwrote = Mutations.overlap(cur, want, b.base, old._w);
       if (fields.length) doc._w = Mutations.stampFields(old._w, fields, b.by, b.mid, Date.now());
     }
+    /* DONELOCKED (Paul, 24 Nov 2026: "once a set of sheet is completed and then nothing changes on any of the parts or sheets"): a sheet marked cut keeps its pieces, their places, its orders and its engravings exactly as they
+       were when it was marked, whatever a save of it carries; it owes nothing either. Taking the mark off (Library) opens it again. */
+    if (ex.exists && num(old.laserDoneAt) > 0) { for (const k of DONE_LOCKED) delete doc[k]; for (const k of ["filesOwed", "artOwed", "pictureOwed", "nestOwed"]) if (doc[k]) delete doc[k]; layoutRevOut = num(old.layoutRev) || 0; }
     tx.set(ref, doc, {merge:true});
     return null;
   });

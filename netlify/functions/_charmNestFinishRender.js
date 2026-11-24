@@ -189,6 +189,7 @@ function previewPng(sh, st, hist) {
       ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate((+p.angle || 0) * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale);
       const cx = c.centerPt[0], cy = c.centerPt[1], tx = (x, y) => [(x - cx) * k, (cy - y) * k];
       P.drawCharm(ctx, c, tx, k);
+      if (sh.shippedOut && c.poolId && sh.shippedOut[c.poolId]) P.shippedMark(ctx, c, tx, Math.max(2.2, 0.9 * k) / (p.scale || 1));   // (SHIPPEDSTAYS)
       ctx.restore();
     }
     if (hist) { try { ctx.setTransform(1, 0, 0, 1, 0, 0); roseLines(ctx, sh, hist, k); } catch (e) { /* drawn without its lines */ } }   // (RGHISTORY)

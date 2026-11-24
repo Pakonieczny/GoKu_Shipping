@@ -151,7 +151,7 @@ async function endJob(X, kind, why) {
      and asked for it again after every such job (the Nov 22 Rose Gold sheet: owed, nest, owed, nest, 26 jobs), each ask marking the sheet owed. forNest: what this job was for (a nest, or the sheet's owed files) */
   const mine = job.nestJobId || wantNest, was = X.task.lastDone && X.task.lastDone.nestJobId ? String(X.task.lastDone.nestJobId) : null;
   const lastDone = { jobId: job.jobId || null, nestJobId: mine ? (kind === "waiting" ? null : mine) : was, forNest: !!mine, outcome: kind, why: String(why || "").slice(0, 400), at: now,
-    base: job.base || (seen.layoutRev != null ? { layoutRev: seen.layoutRev, contentRev: seen.contentRev } : null), owedAt: num(job.owedAt) || num(seen.owedAt), wantAt: num(job.wantAt) || num(X.task.want && X.task.want.at),
+    base: job.base || (seen.layoutRev != null ? { layoutRev: seen.layoutRev, contentRev: seen.contentRev } : null), owedAt: num(job.owedAt) || num(seen.owedAt), wantAt: num(job.wantAt) || num(X.task.want && X.task.want.at), picture: num(X.task.want && X.task.want.picture),
     written: job.written || null, key: job.key || null, membership: job.membership || null, notes: (X.notes || []).slice(-12) };
   await X.saveTask({ job: null, lastDone, step: kind, outcome: kind, why: lastDone.why });
 }
@@ -166,6 +166,7 @@ STEP.S0 = async X => {
   if (rec) X.seen = { layoutRev: num(rec.layoutRev), contentRev: num(rec.contentRev), owedAt: num(rec.filesOwed) };
   if (!rec || rec.archived) throw new Stop("skipped", "The sheet is no longer in the Library: no files were written");
   if (num(rec.laserDoneAt) > 0) throw new Stop("skipped", `${rec.fileBase || "This sheet"} has been cut on the laser: its files are not written again`);
+  if (num(want.picture) > 0 && !(num(rec.filesOwed) > 0)) { await pictureOnly(X, rec); throw new Stop("skipped", "its picture was drawn again: its shipped pieces are marked; its files were not touched"); }   // (SHIPPEDSTAYS)
   // (a Rose Gold, 10K or 14K sheet whose green-line cut is recorded is never laid out by a nest: what it owes is its files as the record has its pieces now (one was taken off, one was made again in its place), every
   //  other piece where it lies; its line, its physical sheet and its leftover are not touched)
   // what the sheet's own files show, against its layout now (NOREWRITE, FILESCURRENT below); a piece whose own drawing changed in the Charm Editor (CESAVE: artOwed) is a change of it
@@ -252,6 +253,31 @@ STEP.S0 = async X => {
 /* CESAVE (Paul, 23 Nov 2026: "those changes should be reflective on the original charm on the original sheet, and the only reason a charm would be removed and not placed back on original sheet, as if the update to the charm
    made the charm not fit in the original place on the sheet"): the pieces whose cut line a person changed in the Charm Editor (the sheet's cutCheck), seated before the sheet is written by the one seat search every change of a
    piece has (_charmNestSeatNow.js); a line that fits nowhere on the sheet goes whole to the next draft of its colour. Nothing else moves and nothing is nested here. → the record as it is then */
+/* (SHIPPEDSTAYS, Paul 24 Nov 2026) The sheet's picture drawn again from its record, alone: the pieces made again from the library lie where the record has them; its .ai, proof, report and layout are not written. */
+async function pictureOnly(X, rec) {
+  const owedAt = num(rec.pictureOwed), path = rec.outputs && rec.outputs.preview && rec.outputs.preview.path;
+  if (!path || !(rec.placements || []).length) { await X.call({ op: "putSheet", sheet: { id: X.sheetId, pictureOwed: null } }, `picture-none|${owedAt}`); return; }
+  X.Host = X.Host || require("./_charmNestFinishHost"); X.Render = X.Render || require("./_charmNestFinishRender"); require("./_charmNestPdf").withCanvas({ backend: process.env.CHARM_NEST_CANVAS || "auto" });
+  X.rec = rec; X.S = X.S || await X.Host.settings(X.db);
+  const pace = (() => { let at = Date.now(); return async () => { await new Promise(r => setImmediate(r)); if (Date.now() - at > 5000) { X.live(); at = Date.now(); } }; })();
+  const made = await X.Host.makePieces({ db: X.db, bucket: X.bucket, rec, S: X.S, read: X.read, log: X.log, pace }), have = new Set(made.charms.map(c => String(c.id)));
+  const lost = (rec.placements || []).filter(p => p && !have.has(String(p.id))).length;
+  if (made.missing.length || lost) throw new Stop("failed", `${rec.fileBase || rec.id}: ${made.missing.length || lost} piece(s) could not be made again: its picture stays as it was`);
+  const sh = sheetOf(X, made.charms), st = (X.st = X.Host.stockFor(rec.metal, sh, X.S));
+  const png = X.Render.previewPng(Object.assign({}, sh, { id: rec.id, placements: rec.placements, rosePlanJson: rec.rosePlanJson || null, shippedOut: rec.shippedOut || null }), st, await stockHistory(X, rec));
+  if (!png) throw new Stop("failed", `${rec.fileBase || rec.id}: its picture could not be drawn`);
+  const now = await readSheet(X.db, X.sheetId);
+  if (!now || now.archived || num(now.laserDoneAt) > 0 || num(now.layoutRev) !== num(rec.layoutRev)) throw new Stop("superseded", "the sheet changed while its picture was drawn: it is drawn again");
+  await X.nonceHeld();
+  await X.bucket.file(path).save(png, { resumable: false, contentType: "image/png", metadata: { cacheControl: "public, max-age=31536000", metadata: { firebaseStorageDownloadTokens: (await existingToken(X.bucket.file(path))) || newToken(), uploadedBy: "charmNestSheet-background" } } });
+  // (one more piece shipped while it was drawn: it stays owed, and is drawn again)
+  await X.call({ op: "putSheet", sheet: Object.assign({ id: X.sheetId, outputs: now.outputs }, num(now.pictureOwed) === owedAt ? { pictureOwed: null } : {}) }, `picture|${owedAt}|${num(rec.layoutRev)}`);
+}
+/** (RGHISTORY) The physical sheet of a Rose Gold / 10K / 14K sheet: its record and its last cuts; null for a sheet of none. */
+async function stockHistory(X, rec) {
+  if (!rec || !rec.roseStockId) return null;
+  try { const ref = X.db.collection("Charm_Nest_Rose_Stock").doc(String(rec.roseStockId)), st0 = await ref.get(); if (!st0.exists) return null; const cq = await ref.collection("cuts").orderBy("revision", "desc").limit(8).get(); return { stock: st0.data() || {}, cuts: cq.docs.map(d => d.data() || {}) }; } catch (e) { return null; }
+}
 async function seatChanged(X, rec) {
   for (let t = 0; t < 4 && rec && Object.keys(rec.cutCheck || {}).length; t++) {
     const Seat = require("./_charmNestSeatNow"), P = require("./_charmNestPlacement"), checked = Object.fromEntries(Object.entries(rec.cutCheck).map(([k, v]) => [k, num(v && v.at)])), lineOf = c => String((c && c.poolId) || "").replace(/_\d+$/, ""), same = (p, q) => p.cxPt === +q.cxPt && p.cyPt === +q.cyPt && p.angle === (+q.angle || 0) && num(p.scale) === num(q.scale);
@@ -399,9 +425,8 @@ STEP.S6 = async X => {
   const items = sh.charms.filter(c => !c.excluded);
   const report = FC.buildReport(sh, W.result, items, { stockFor: (m, s) => X.Host.stockFor(m, s, X.S), labelOf: m => X.Host.labelOf(m), shapeSignature: its => X.Host.shapeSignature(its, X.S), now: () => Date.now() });
   // (RGHISTORY: a sheet on a Rose Gold / 10K / 14K stock is drawn on that stock's history: its record and its last cuts, read as the page's roseGet reads them)
-  let hist = null;
-  if (X.rec && X.rec.roseStockId) { try { const ref = X.db.collection("Charm_Nest_Rose_Stock").doc(String(X.rec.roseStockId)), st0 = await ref.get(); if (st0.exists) { const cq = await ref.collection("cuts").orderBy("revision", "desc").limit(8).get(); hist = { stock: st0.data() || {}, cuts: cq.docs.map(d => d.data() || {}) }; } } catch (e) { hist = null; } }
-  const png = X.Render.previewPng(Object.assign({}, sh, { id: X.rec ? X.rec.id : sh.id, roseCutAt: X.rec ? X.rec.roseCutAt : sh.roseCutAt, laserDoneAt: X.rec ? X.rec.laserDoneAt : sh.laserDoneAt, rosePlanJson: X.rec ? X.rec.rosePlanJson : null }), X.st, hist);
+  const hist = await stockHistory(X, X.rec);
+  const png = X.Render.previewPng(Object.assign({}, sh, { id: X.rec ? X.rec.id : sh.id, roseCutAt: X.rec ? X.rec.roseCutAt : sh.roseCutAt, laserDoneAt: X.rec ? X.rec.laserDoneAt : sh.laserDoneAt, rosePlanJson: X.rec ? X.rec.rosePlanJson : null, shippedOut: X.rec ? X.rec.shippedOut : null }), X.st, hist);
   await X.nonceHeld();
   await putWork(X.bucket, X.dir + "/report.json", JSON.stringify(report, null, 1), "application/json");
   if (png) await putWork(X.bucket, X.dir + "/preview.png", png, "image/png");

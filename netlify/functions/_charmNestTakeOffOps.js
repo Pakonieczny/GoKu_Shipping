@@ -108,13 +108,24 @@ module.exports = function (d) {
         out.label = Placement.labelOf(s) || ""; out.setId = s.draft ? null : s.setId || null; out.metal = s.metal || null;
         // the laser's mark (the sheet's, or its set's) alone keeps a piece on its sheet (Placement.editable). An order shipped or completed, found by the cloud itself, also leaves what a recorded cut or a set sent to the station holds
         const auto = kind === "shipped" || kind === "completed";
-        let keptWhy = !Placement.editable(s) || s.recalled || (auto && num(s.roseCutAt) > 0) ? "already cut" : "";
-        if (!keptWhy) { const sets = (await tx.get(col(N.SETS).where("sheetIds", "array-contains", sheetId))).docs.map(x => x.data() || {}); if (sets.some(x => num(x.laserDoneAt) > 0)) keptWhy = "already cut"; else if (auto && sets.some(x => d.setEdit().committedSet(x))) keptWhy = "sent to the station"; }
+        let keptWhy = !Placement.editable(s) || s.recalled || (auto && num(s.roseCutAt) > 0) ? "already cut" : "", done = !Placement.editable(s) || !!s.recalled, inSet = !s.draft && !!s.setId;
+        if (!keptWhy || (kind === "shipped" && !done)) { const sets = (await tx.get(col(N.SETS).where("sheetIds", "array-contains", sheetId))).docs.map(x => x.data() || {}); if (sets.length && !s.draft) inSet = true; if (sets.some(x => num(x.laserDoneAt) > 0)) { keptWhy = "already cut"; done = true; } else if (!keptWhy && auto && sets.some(x => d.setEdit().committedSet(x))) keptWhy = "sent to the station"; }
+        /* SHIPPEDSTAYS (Paul, 24 Nov 2026: "nothing should be removed from that set even when the pieces are being shipped, they need to remain on the sheets for historical purposes"; "Yes, keep them" (sheets not marked
+           completed yet too); "instead of just removing them, make them outlines noticeable grey them out an ad read outlines ... all the information about the harmony order should still remain"; "once a set of sheet is
+           completed and then nothing changes on any of the parts or sheets"). A shipped piece of a sheet that is in a set stays where it lies: its layout, its files and its order stay as they are; the sheet's record says
+           which pieces shipped (shippedOut), which every screen draws grey with a red outline, and its picture is drawn again (pictureOwed; its laser files are never touched). A sheet or set marked cut is not written at
+           all. A draft's shipped piece still comes off: a draft is cut later, and it would be made twice. */
+        if (!keptWhy && kind === "shipped" && inSet) keptWhy = "shipped: it stays on its sheet";
         // a sheet another run still carries is that run's to change
         const fr = d.fenceRun ? d.fenceRun() : null;
         if (!keptWhy && s.runId && fr && s.runId !== fr) { const rs = await tx.get(col(N.RUNS).doc(String(s.runId))), r = rs.exists ? rs.data() || {} : null; if (r && !["complete", "abandoned", "archived"].includes(String(r.status || "")) && !r.retiredInto) return { error: `${out.label} belongs to run ${s.runId}, which is still open: its pieces come off with that run`, status: 409, waiting: true, otherRun: s.runId }; }
         const listed = (s.poolIds || []).map(String), mine = listed.filter(id => want.has(id));
-        if (keptWhy) { Object.assign(out, { kept: mine, keptWhy }); return out; }
+        if (keptWhy) {
+          Object.assign(out, { kept: mine, keptWhy });
+          const had = s.shippedOut && typeof s.shippedOut === "object" ? s.shippedOut : {}, fresh = kind === "shipped" && !done && !s.draft ? mine.filter(id => !had[id]) : [];
+          if (fresh.length) { tx.update(sref, { shippedOut: Object.assign({}, had, Object.fromEntries(fresh.map(id => [id, { at: num(b.at) || now, by: str(b.who, 80) || "Shipping" }]))), pictureOwed: now, updatedAt: at }); out.marked = fresh; }
+          return out;
+        }
         if (autoOnly && mine.length && listed.every(id => ridOfPiece(id) === rid)) { Object.assign(out, { kept: mine, keptWhy: "the only order on it", only: true }); return out; }
         const busy = busyWhy(Object.assign({ manualStaleMs: MANUAL_STALE_MS }, s), now);
         if (busy && mine.length) return { error: busy, status: 409, waiting: true };
@@ -174,6 +185,7 @@ module.exports = function (d) {
     });
     if (!res || res.error) return res;
     const before = res.before; delete res.before;
+    if (res.marked) { d.revTouch(b, ["s:" + sheetId]); d.feedOrders(b, [[rid], res.marked]); }   // (SHIPPEDSTAYS)
     if (res.wrote) {
       d.revTouch(b, sheetId ? ["s:" + sheetId] : []); d.feedOrders(b, [[rid], res.removed]);
       const all = res.removed.slice(), who = { by: patch.removedBy || patch.heldBy || "Cloud", device: "cloud", signedIn: true };

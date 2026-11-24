@@ -40,8 +40,15 @@ async function driveUnit(ctx) {
     const t = tasks.get(s.id) || null;
     if (t && Lease.held(t, now)) continue;   // (its writer is at work, or was just started)
     const nest = await finishedNest(db, s, t), owed = num(s.filesOwed) > 0, going = midway(t);
-    if (!owed && !nest && !going) continue;
-    const ld = t && t.lastDone;
+    const ld = t && t.lastDone, picture = !owed && !nest && !going && num(s.pictureOwed) > 0;
+    if (!owed && !nest && !going && !picture) continue;
+    /* (SHIPPEDSTAYS: the sheet's picture alone is drawn again, its shipped pieces grey with a red outline; its files are not touched. One that could not be drawn is asked again after half an hour) */
+    if (picture) {
+      if (ld && num(ld.picture) === num(s.pictureOwed) && now - num(ld.at) < REASK_MS) continue;
+      const r = await ctx.call({ op: "finishSheet", id: s.id, start: true, reason: "picture", picture: true }, ["picture", runId, s.id, num(s.pictureOwed), num(s.layoutRev), t ? t.nonce || "" : "", Math.floor(now / REASK_MS)].join("|"));
+      if (r && r.status < 400 && r.ok) { started++; asked.push(s.id); } else if (r && r.status >= 400) say(`[drive] picture: ${s.fileBase || s.id}: ${r.error || r.status}`);
+      continue;
+    }
     // (a job that ended failed, skipped or waiting for its nest on exactly this sheet as it is now is not asked again until the sheet, its owed mark or its nest changes: no loop)
     if (!nest && !going && ld && ["failed", "skipped", "waiting"].includes(ld.outcome) && ld.base && num(ld.base.layoutRev) === num(s.layoutRev) && num(ld.base.contentRev) === num(s.contentRev) && num(ld.owedAt) === num(s.filesOwed)) {
       /* FILESCURRENT (Paul, 21 Nov 2026: "implement all of the updates"): the writer skipped because the sheet's files already show its layout exactly (NOREWRITE: no piece added,

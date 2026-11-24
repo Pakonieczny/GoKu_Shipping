@@ -203,6 +203,7 @@ async function fitUnit(ctx) {
     for (const l of got) { newest = Math.max(newest, num(l.at)); if (lines[l.key]) keys.add(l.key); }
     if (got.length >= 500) more = true;
     if (num(cur.oneCount) < 1) for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.engrave && !l.engrave.approved) keys.add(k);   // (ONECOUNT: the lines whose copy said "waits" before this rule, looked at once)
+    if (num(cur.fontNow) < 1) for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.engrave && !l.engrave.approved) keys.add(k);   // (FONTNOW: the engravings that wait for approval, looked at once)
     if (num(cur.artLook) < 1) for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.engrave && /"state":"approved"/.test(JSON.stringify(l.engrave))) keys.add(k);   // (ARTAPPROVED: the lines approved before this rule, whose file was never written, looked at once)
   }
   const all = [...keys], pending = {};
@@ -212,10 +213,10 @@ async function fitUnit(ctx) {
   for (const [key, l] of recs) {
     const rec = l.rec; if (!rec || !Array.isArray(rec.jobs)) continue;
     const lineState = (lines[key] || {}).state; if (O.FINISHED_LINE.has(lineState)) continue;
-    const need = rec.jobs.filter(j => needsFit(j, l)), resume = rec.jobs.filter(j => needsResume(j, l));
-    if (Date.now() > ctx.budgetEnd) { if (need.length || resume.length || ((lines[key] || {}).engrave || {}).approved === false) { more = true; pending[key] = true; } continue; }
+    const need = rec.jobs.filter(j => needsFit(j, l)), resume = rec.jobs.filter(j => needsResume(j, l)), again = rec.jobs.filter(refontable);
+    if (Date.now() > ctx.budgetEnd) { if (need.length || resume.length || again.length || ((lines[key] || {}).engrave || {}).approved === false) { more = true; pending[key] = true; } continue; }
     if (!need.length) { try { await followRecord(ctx, E, key, l); } catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; ctx.say && ctx.say(`[engrave] ${key}: the run's line was not brought up to its record (${String((e && e.message) || e).slice(0, 160)})`); } }   // (ONECOUNT)
-    if (!need.length && !resume.length) continue;
+    if (!need.length && !resume.length && !again.length) continue;
     const lc = await lineContext(ctx, E, key); if (!lc) continue;
     if (lc.spec && lc.spec.engraveNever) continue;   // (NO EARRING IS EVER ENGRAVED: the reading puts its jobs away, never the fit)
     let changed = false;
@@ -233,6 +234,12 @@ async function fitUnit(ctx) {
       if (r && r.wait) { pending[key] = true; continue; }
       if (r && r.patch) { for (const [k, v] of Object.entries(r.patch)) { if (v === undefined) delete j[k]; else j[k] = v; } changed = true; }
     }
+    for (const j of again) {   // (FONTNOW)
+      if (Date.now() > ctx.budgetEnd - 10000) { more = true; pending[key] = true; break; }
+      await turn(); if (ctx.live) ctx.live();
+      try { const r = await refont(ctx, E, lc, j); if (r && r.wait) { pending[key] = true; continue; } if (r && r.patch) { for (const [k, v] of Object.entries(r.patch)) { if (v === undefined) delete j[k]; else j[k] = v; } changed = true; ctx.say && ctx.say(`[engrave] ${key}: set again in ${j.fontName}`); } }
+      catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; ctx.say && ctx.say(`[engrave] ${key}: it keeps the font it was prepared in (${String((e && e.message) || e).slice(0, 160)})`); }
+    }
     for (const j of resume) { try { const made = await resumeTask(ctx, E, lc, l, j); if (made === "wait") pending[key] = true; } catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; ctx.say && ctx.say(`[engrave] ${key}: ${e.message}`); } }
     if (changed) {
       rec.engrave = lineSummary(E, lc, rec) || rec.engrave;
@@ -242,8 +249,19 @@ async function fitUnit(ctx) {
     }
   }
   const pend = Object.keys(pending).slice(0, 1500);
-  await ctx.db.runTransaction(async tx => { await fenceTx(ctx, tx); tx.set(cref, { runId: ctx.runId, artLook: 1, oneCount: 1, since: newest, pending: Object.fromEntries(pend.map(k => [k, true])), at: Date.now() }); });
+  await ctx.db.runTransaction(async tx => { await fenceTx(ctx, tx); tx.set(cref, { runId: ctx.runId, artLook: 1, oneCount: 1, fontNow: 1, since: newest, pending: Object.fromEntries(pend.map(k => [k, true])), at: Date.now() }); });
   return more ? { more: true } : undefined;
+}
+
+/* FONTNOW (Paul, 24 Nov 2026: the new fonts "throughout the application"): an engraving that waits for its approval, prepared in the font that stood in for the shop's word before, is set again in the font the word is now:
+   placed anew when nobody placed it, where a person put it when somebody did. One that cannot be placed in it keeps the placement it has. Approved work is never touched. */
+const refontable = j => !!j && !j.archived && !j.approving && !j.approvedAt && !j.fontLocked && j.state === "review" && !!O.FONT_WAS[j.fontKey] && !!(Array.isArray(j.lineInput) && j.lineInput.length ? j.lineInput : j.lines || []).join("").trim();
+async function refont(ctx, E, lc, j) {
+  const to = O.fontNow(j, lc.spec, pieceIndexOf(Faces.parseKey(j.key).slot)); if (!to) return null;
+  const hand = !!(j.nudged || j.decision), t = Object.assign({}, j, { fontKey: to, state: "ready", place: hand && j.place ? Object.assign({}, j.place, { fontKey: to }) : undefined }, hand ? {} : { wantSize: undefined, applied: undefined });
+  const r = await fitOne(ctx, E, lc, t); if (!r || r.wait) return r || null;
+  if (!r.patch || r.patch.state !== "review" || !r.patch.place) return null;
+  return { patch: Object.assign({}, r.patch, { fontKey: to, fontName: (O.fontById(to) || {}).name || to }, hand || r.patch.applied ? {} : { applied: undefined }) };
 }
 
 /** One job fitted: { patch } (the job's new fields), { wait } (its piece is not on a sheet yet, its design or font cannot be read yet: looked at again next pass), or { skip }
