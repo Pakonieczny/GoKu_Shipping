@@ -5502,11 +5502,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const why = h.rows[0].hold;
       return `<li class="swHeld" data-rid="${esc(h.rid)}" data-mkey="h:${esc(h.rid)}"${had.has("h:" + h.rid) ? ' style="animation:none"' : ""}><div class="top"><span class="no">${esc(h.rid)}</span><span class="what">${esc([...skus].map(([n, c]) => n + (c > 1 ? " ×" + c : "")).join(", "))}</span>${h.at ? `<span class="when">${esc(ago(h.at))}</span>` : ""}</div>
         <div class="why" title="${esc(why)}">${esc(why)}</div>${travelHtml(h.rid)}
-        <div class="acts"><button type="button" class="btn ghost xs" data-h="back" title="Back in line: the run places it on the next sheet that fits">Release hold</button><button type="button" class="btn ghost xs" data-h="cancel">Cancel order…</button><button type="button" class="btn ghost xs" data-h="orders" title="Show it in the Review tab">In Review</button></div></li>`;
+        <div class="acts"><button type="button" class="btn ghost xs" data-h="back" title="Release the hold. A charm not on a sheet yet is asked about first: nest it or skip it">Release hold</button><button type="button" class="btn ghost xs" data-h="cancel">Cancel order…</button><button type="button" class="btn ghost xs" data-h="orders" title="Show it in the Review tab">In Review</button></div></li>`;
     }).join(""));
     E.orders.querySelectorAll(".swHeld").forEach(li => {
       const rid = li.dataset.rid, rows = () => rowsOfOrder(rid).filter(r => r.hold);
-      li.querySelector("[data-h=back]").onclick = () => {
+      li.querySelector("[data-h=back]").onclick = async () => {
+        const RR = window.ReviewRelease, choice = RR && RR.choose ? await RR.choose({ kind: "heldOrder", key: "held:" + rid, rid }) : ""; if (choice === null) return;   // (NESTASK: a held piece on no sheet is asked about first; put away, nothing is done)
         // (SEALGREEN, Paul 28 Oct 2026: "change the colour of the 'Order Released' seal to be green ... throughout the entire application everywhere these seals are used": this release is an ORDER RELEASED
         //  seal too, as a Release Hold press is: its step carries the seal (who, when) and the release is kept as the Review card's is, ReviewRelease.keep, so the cards and the order window draw it; was a
         //  plain "released" step the timeline drew as a red HOLD RELEASED. How it releases is unchanged.)
@@ -5517,8 +5518,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
           /* CLOUDBACK (Paul, 23 Nov 2026, orders 4235923653 and 4230787700: "Order ... is back in line" was said and both stayed on hold): on a computer that follows the cloud the release is the cloud's (CNViewer.release:
              releaseAsk), never this page's own copy, and it is kept only once the cloud released it. */
           const cloud = !!(window.CNViewer && CNViewer.on && CNViewer.on());
-          if (cloud) { const a = await CNViewer.release(rid, { name: who, seal }); if (!a || !a.ok) throw new Error((a && a.error) || "the cloud did not release it"); }
-          else { for (const r of rows()) { r.heldAt = null; await Review.repool(r); } if (window.RunCtl) RunCtl.poke(); }
+          if (cloud) { const a = await CNViewer.release(rid, { name: who, seal, say: RR && RR.sayOf(choice, who) }); if (!a || !a.ok) throw new Error((a && a.error) || "the cloud did not release it"); }
+          else { for (const r of rows()) { r.heldAt = null; if (choice && choice.go === "skip" && choice.keys.includes(r.key)) Object.assign(r, { state: "skipped", hold: null, problems: [], reason: `no charm made: skipped at Release Hold by ${who}` }); else await Review.repool(r); } if (window.RunCtl) RunCtl.poke(); }
           agent({ bridge: true }, "DS", `Order ${rid} put back in line by ${who || "someone"}`);
           if (!cloud) window.SheetEvents?.order({ type: "released", orderId: rid, id: `sw-release-${at}`, by: who, at, text: "Hold released in the sheet window · back in line", data: { seal: "releaseHold", sealAt: at, sealId: seal.id, from: "sheetWindow" } });
           if (who && window.ReviewRelease && ReviewRelease.keep) ReviewRelease.keep([rid], seal, "sheetWindow").catch(e => console.warn("sheet window: release seal", e));

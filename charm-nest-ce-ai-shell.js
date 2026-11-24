@@ -114,7 +114,7 @@
     { id: 'file.close', label: 'Close', run: act('cancel') },
     { id: 'file.back', label: w => st(w).back || 'Close and Return', when: w => !!st(w).back, run: act('back') },
     { id: 'file.save', label: 'Save', key: 'Mod+S', run: act('save'), own: true },   // (own: the editor's own key already saves)
-    xe('file.sendToSheet', 'sendToSheet', 'Send to Sheet…'),
+    xe('file.sendToSheet', 'sendToSheet', 'Put on a Sheet…'),
     { id: 'file.place', label: 'Place…', key: 'Mod+Shift+P', when: w => st(w).importers > 0, run: act('import') }
   ]);
   add('Edit', [
@@ -747,7 +747,7 @@
     const body = `<div class="ce-aihelp"><p>This editor works as Adobe Illustrator does: the same menus, tools, keys and panels. What is different here:</p><ul>`
       + `<li><b>Front and Back</b> are the two document tabs: one charm, both of its faces.</li>`
       + `<li><b>Fill and Stroke are the laser.</b> A stroke is engraved along the line, a fill is engraved as a hatch, a cut line is cut through. ${k('Shift+X')} swaps a line engraving and a hatch fill.</li>`
-      + `<li><b>Save</b> (${k('Mod+S')}) keeps the charm and closes the editor; <b>Cancel</b> leaves without keeping anything. <b>Send to Sheet…</b> puts the design on a sheet.</li>`
+      + `<li><b>Save</b> (${k('Mod+S')}) keeps the charm and closes the editor; <b>Cancel</b> leaves without keeping anything. <b>Put on a Sheet…</b> puts the design on a sheet.</li>`
       + `<li><b>Units are millimeters.</b> The arrows nudge 0.05 mm, Shift + arrow 1 mm. Words are sized in points.</li>`
       + `<li>Drag from a <b>ruler</b> for a guide, back onto it to remove it; drag from the corner where the rulers meet to move the zero point (double-click it to reset).</li>`
       + `<li><b>View ▸ Laser Check</b> lists what the laser cannot do before you save.</li></ul></div>`;

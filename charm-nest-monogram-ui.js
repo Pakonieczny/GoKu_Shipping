@@ -805,7 +805,7 @@
         if (e.files.some(F => F.state === "reading")) { c.queue = { kind: "error", text: "The design is still being read. Press Approve to try again." }; return false; }
         const ap = approvedFile(c, true); if (!ap) { c.queue = { kind: "error", text: "The approved design is not on the order’s designs." }; return false; }
         const w = waitingOf(c, card); if (w.total) { say(`Monogram ${ap.letters}${c.of > 1 ? ` (${pieceTag(c.n, c.of).toLowerCase()})` : ""} is approved · it goes to the sheet once every piece is approved (${w.done} of ${w.total})`, "ok"); return false; }
-        if (e.files.some(F => F.state === "ready" && !F.metal)) { say(`Order ${ridOfCard(c)}: the buyer’s metal could not be read. Pick it, then Send to Sheet`, "bad"); if (o.press) openWindow(c, it); return false; }      // (once, at the card's last piece: never guessed)
+        if (e.files.some(F => F.state === "ready" && !F.metal)) { say(`Order ${ridOfCard(c)}: the buyer’s metal could not be read. Pick it, then press Release Hold`, "bad"); if (o.press) openWindow(c, it); return false; }      // (once, at the card's last piece: never guessed)
         if (d.CustomSheet.notReady && d.CustomSheet.notReady(e)) { if (o.press) openWindow(c, it); return false; }
       }
       // the designs window's own send, without the window: the same decision, receipt and placement (Review.repool: the next sheet of the design's metal); the monogram's seal was the press, so no second stamp

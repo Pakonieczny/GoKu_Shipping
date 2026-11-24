@@ -226,8 +226,8 @@
     } else if (hold) {
       p = holdAnswer(hold, onSheet, on);
     } else if (hand) {
-      const how = hand.how === 'button' ? 'button' : 'print';
-      p = { state: 'hand', text: 'Completed by hand', say: how === 'button' ? 'Completed by hand with Complete Order' : 'Completed by hand, its QR label printed', why: 'it was completed by hand and needs no sheet', next: null, nextText: '', fence: false, floor: 0, how, since: +hand.completedAt || 0, by: str(hand.completedBy, 80) };
+      const how = hand.how === 'button' || hand.how === 'skip' ? hand.how : 'print', skip = how === 'skip';   // (NESTASK: 'skip': a person skipped its charm at Release Hold)
+      p = { state: 'hand', text: skip ? 'No charm made' : 'Completed by hand', say: skip ? 'No charm made: skipped at Release Hold' : how === 'button' ? 'Completed by hand with Complete Order' : 'Completed by hand, its QR label printed', why: skip ? 'no charm is made for it' : 'it was completed by hand and needs no sheet', next: null, nextText: '', fence: false, floor: 0, how, since: +hand.completedAt || 0, by: str(hand.completedBy, 80) };
     } else if (onSheet) {
       p = { state: 'sheet', text: on, say: `On ${on}` + (sheets.length > 1 ? ` and ${sheets.length - 1} more` : '') + (partial ? `; ${copies - copiesOn} of ${copies} copies not on a sheet yet` : ''), why: partial ? `${copies - copiesOn} of ${copies} copies are not on a sheet yet` : '', next: partial ? 'sheet' : null, nextText: partial ? NEXT_TEXT : '', fence: false, floor: 1 };
     } else if (loading || unsure) {
@@ -350,7 +350,7 @@
       for (const c of mine) if (c && c.nested) { const k = c.sheetId || c.sheetLabel; if (!k || seen.has(k)) continue; seen.add(k); sheets.push({ id: c.sheetId || null, label: c.sheetLabel, metal: c.metal, setId: c.setId, cut: c.state === 'cut', pools: [c.poolId || c.key] }); }
       for (const s of sheets) for (const c of mine) if (c && c.nested && (c.sheetId || c.sheetLabel) === (s.id || s.label) && !s.pools.includes(c.poolId || c.key)) s.pools.push(c.poolId || c.key);
       // (a hold the cloud keeps, a pool row taken off for a hold: OrderPieces says so on the piece as `hold`, so a page whose own row never heard of it (another computer pressed Hold) says it too)
-      const cloudHold = mine.find(c => c && c.hold), lineHold = holdOfRow(row, o) || (cloudHold ? { reason: str(cloudHold.hold.reason, 200), at: +cloudHold.hold.at || 0, by: str(cloudHold.hold.by, 80) } : !row && mine.some(c => c && c.problem === 'held') ? { reason: (mine.find(c => c.problem === 'held') || {}).why || '' } : null);
+      const cloudHold = row && row._relNow ? null : mine.find(c => c && c.hold), lineHold = holdOfRow(row, o) || (cloudHold ? { reason: str(cloudHold.hold.reason, 200), at: +cloudHold.hold.at || 0, by: str(cloudHold.hold.by, 80) } : !row && mine.some(c => c && c.problem === 'held') ? { reason: (mine.find(c => c.problem === 'held') || {}).why || '' } : null);
       const sk = mine[0] || {}, hand = !lineHold && row ? handOfRow(row) : (!lineHold && mine.length && mine.every(c => c && c.hand) ? mine[0].hand : null);
       return { key: row ? row.key : sk.lineKey || null, name: sk.label || '', metal: (row && (row.material || (row.spec && row.spec.material))) || sk.metal || null, qty: Math.max(mine.length, 1),
         cancelled: (o && o.cancelled) || (row && row.state === 'gone') || (!row && mine.length > 0 && mine.every(c => c && c.gone)), hold: lineHold, hand,

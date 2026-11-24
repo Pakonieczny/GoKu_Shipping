@@ -65,7 +65,7 @@
    *  carries it (spec.customDone) or the server read it (handDone). The same rule as CharmNestReadiness.isHand: resolved, it needs no sheet; Reopen
    *  (state 'open') takes it back; a custom order sent to the sheets with its own designs (how 'sheet') is cut. Only a line with no pool ids: a pooled one
    *  is waiting for the nester (and the card a person completes was never pooled). */
-  const handOf = l => { const c = l && !(Array.isArray(l.poolIds) && l.poolIds.length) && (l.handDone || (l.spec && l.spec.customDone)); return c && typeof c === 'object' && c.state !== 'open' && c.how !== 'sheet' ? c : null; };
+  const handOf = l => { const c = l && !(Array.isArray(l.poolIds) && l.poolIds.length) && (l.state === 'skipped' && !l.hold ? { state: 'completed', how: 'skip' } : l.handDone || (l.spec && l.spec.customDone)); return c && typeof c === 'object' && c.state !== 'open' && c.how !== 'sheet' ? c : null; };   // (NESTASK: skipped at Release Hold: CharmNestReadiness.handOf)
   function problemOf(l, sku, hold) {
     if (hold) return 'held';   // (the cloud says a person took this piece off its sheet: whatever this page's own line says)
     if (!l) return sku ? null : 'noSku';
@@ -168,7 +168,7 @@
       const hand = !nested && !hold && !(l && (l.hold || l.changePending)) ? handOf(l) : null;
       const loading = !nested && !known && !unsure && !hand, unsureHere = !nested && unsure && !hand;
       let reason = '';
-      if (!nested) reason = hand ? HAND_REASON : loading ? '' : unsureHere ? 'its sheets could not be read just now' : problem ? REASON[problem] : l && l.state === 'pooled' ? 'it is waiting to be placed on a sheet' : 'it is not on a sheet yet';
+      if (!nested) reason = hand ? (hand.how === 'skip' ? 'no charm is made for it' : HAND_REASON) : loading ? '' : unsureHere ? 'its sheets could not be read just now' : problem ? REASON[problem] : l && l.state === 'pooled' ? 'it is waiting to be placed on a sheet' : 'it is not on a sheet yet';
       const thumb = (page && input.thumbOf && input.thumbOf(id)) || (l && l.thumb) || null;
       // the pair fields: the pool row's own when it has them (a record written since pairs were tracked), else what the line's plan says of this piece, else none
       const pp = o.plan && o.plan[o.pos] || null, rowSide = p && (p.side === 'L' || p.side === 'R') ? p.side : null, planSide = pp && (pp.side === 'L' || pp.side === 'R') ? pp.side : null;

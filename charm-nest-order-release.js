@@ -350,11 +350,13 @@
     const RF = G.CharmNestRunFollow, run = theRun(), runId = (run && run.runId) || (RF && typeof RF.state === 'function' ? RF.state().runId : null) || null;
     const dev = RF && typeof RF.dev === 'function' ? str(RF.dev()) : '';
     // (what the press sets aside is decided here, where the lines' questions are read; the cloud keeps it with the release)
-    const at = Date.now(), RR = G.ReviewRelease, aside = RR && RR.setAside ? RR.setAside(heldRows.filter(r => (r.problems || []).length), who, at) : { notes: [], away: [], left: [] };
+    // (NESTASK, Paul 23 Nov 2026: what the press was answered, opts.say { lineKey: { skip } | { skuOverride } } (ReviewRelease.sayOf): the cloud keeps it in the same write as the release)
+    const say = (opts && opts.say) || {}, at = Date.now(), RR = G.ReviewRelease, aside = RR && RR.setAside ? RR.setAside(heldRows.filter(r => (r.problems || []).length && !(say[r.key] && (say[r.key].skip || say[r.key].skuOverride))), who, at) : { notes: [], away: [], left: [] };
     const lines = {}; for (const r of heldRows) { const x = {}; if (r.releaseAnyway) x.releaseAnyway = r.releaseAnyway; if (r.blockOverride) x.blockOverride = r.blockOverride; if (Object.keys(x).length) lines[r.key] = x; }
+    for (const k of Object.keys(say)) Object.assign(lines[k] = lines[k] || {}, say[k]);
     const note = (aside.notes || []).slice(0, 4).map(t => str(t).slice(0, 80)).join('; ');
     let res = null;
-    try { res = await CN.api('charmNestLibrary', Object.assign({ op: 'releaseAsk', orderId: rid, by: who, dev, runId, keys: heldRows.map(r => r.key), lines }, opts && opts.seal ? { seal: opts.seal } : {}, note ? { note: 'released anyway: ' + note } : {}), { quiet: true, timeoutMs: 45000 }); }
+    try { res = await CN.api('charmNestLibrary', Object.assign({ op: 'releaseAsk', orderId: rid, by: who, dev, runId, keys: [...new Set(heldRows.map(r => r.key).concat(Object.keys(say)))], lines }, opts && opts.seal ? { seal: opts.seal } : {}, note ? { note: 'released anyway: ' + note } : {}), { quiet: true, timeoutMs: 45000 }); }
     catch (e) { return { ok: false, error: str(e && e.message || e).slice(0, 200), aside }; }
     if (!res || !res.ok) return { ok: false, error: str((res && res.error) || 'the cloud gave no answer').slice(0, 200), aside };
     return Object.assign({}, res, { aside });
@@ -367,7 +369,7 @@
       const l = lines[r.key]; if (!l) continue;
       // (the lines this release released take the cloud's line whole, with its stamp; another line of the order only loses a hold this page still shows and the cloud no longer has)
       const mine = +l.releasedAt > 0 && +l.releasedAt === +res.frontAt; if (!mine && !(r.hold && !l.hold)) continue;
-      for (const f of mine ? ['state', 'hold', 'heldAt', 'holdSeen', 'reason', 'frontAt', 'releaseHold', 'releaseAnyway', 'blockOverride'] : ['state', 'hold', 'heldAt', 'holdSeen', 'reason']) if (l[f] !== undefined) r[f] = l[f] && typeof l[f] === 'object' ? JSON.parse(JSON.stringify(l[f])) : l[f];
+      for (const f of mine ? ['state', 'hold', 'heldAt', 'holdSeen', 'reason', 'frontAt', 'releaseHold', 'releaseAnyway', 'blockOverride', 'skuOverride'] : ['state', 'hold', 'heldAt', 'holdSeen', 'reason']) if (l[f] !== undefined) r[f] = l[f] && typeof l[f] === 'object' ? JSON.parse(JSON.stringify(l[f])) : l[f];
       if (mine && l._lp && typeof l._lp === 'object') r._lp = Object.assign({}, l._lp);
       if (!r.hold) r.holdFromCloud = false;
     }
@@ -430,7 +432,7 @@
     // (RELEASE, Paul 19 Oct 2026: the press overrides the hold: what these lines still ask is set aside, row.releaseAnyway, and said on the timeline step; kept in the lines' record with the front place just below)
     // (RELEASEHOLD: set aside once, when the cloud was asked: askCloud)
     const RR = G.ReviewRelease, aside = cloud && cloud.aside ? cloud.aside : RR && RR.setAside ? RR.setAside(heldRows.filter(r => (r.problems || []).length), who, frontAt) : { notes: [], away: [], left: [] };
-    for (const r of heldRows) { r.frontAt = frontAt; r.releasing = { at: frontAt, by: who, stage: (r.releasing && r.releasing.stage) || 'queued' }; }
+    for (const r of heldRows) if (r.state !== 'skipped') { r.frontAt = frontAt; r.releasing = { at: frontAt, by: who, stage: (r.releasing && r.releasing.stage) || 'queued' }; }
     await persist();
     emit({ type: 'queued', rid, front: true, frontAt });
     const open = runOpen(), mine = rowsOfOrder(rid).filter(r => r.releasing);
@@ -452,7 +454,7 @@
 
     /* 3 · the hold is lifted through the existing path: the pieces are made up and put on the sheet the intake would use */
     try {
-      for (const r of rowsOfOrder(rid).filter(r => r.hold || (!resumed && r.releasing))) { r.heldAt = null; await G.Review.repool(r); }   // (a line the page shows as held with no flag of its own, a blocked SKU or a hold only the cloud knows, is made up again like the rest: Review says what is still wrong. `releasing` was set above on exactly the lines that were held, so a line a re-reading has since turned from "held" to "pulled" (a block the page no longer holds it for) is made up again too, RELTOQ)
+      for (const r of rowsOfOrder(rid).filter(r => r.state !== 'skipped' && (r.hold || (!resumed && r.releasing)))) { r.heldAt = null; await G.Review.repool(r); }   // (a line the page shows as held with no flag of its own, a blocked SKU or a hold only the cloud knows, is made up again like the rest: Review says what is still wrong. `releasing` was set above on exactly the lines that were held, so a line a re-reading has since turned from "held" to "pulled" (a block the page no longer holds it for) is made up again too, RELTOQ)
       if (resumed && open) for (const r of rowsOfOrder(rid).filter(r => r.releasing && !r.hold && ['pulled', 'held'].includes(r.state) && !(r.problems || []).length && !(G.Pool && G.Pool.onSheets && G.Pool.onSheets(r)))) await G.Pool.poolAdd(r, theRun());
     } catch (e) { refresh(); return fail(`The hold could not be lifted: ${str(e && e.message || e)}`, 'hold', { released: rowsOfOrder(rid).every(r => !r.hold) }); }
     for (const r of rowsOfOrder(rid)) if (r.releasing) r.releasing.stage = 'attached';

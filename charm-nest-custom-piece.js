@@ -483,7 +483,7 @@
     st.piece = pcRow && !needsDesign(pcRow) && !(o.fromEditor && !o.after) ? { poolId: pcPid, row: pcRow, sku: (pcRow.spec && pcRow.spec.designSku) || (pcRow.line && pcRow.line.sku) || 'piece' } : null;
     const ord = ctx ? `<button type="button" class="cpOpt" data-cp-attach="this" role="radio"><span class="cpDot"></span><span class="cpOptT"><b>This ${ctx.custom ? 'custom ' : ''}order${st.piece ? ' · its own piece' : ''}</b><span><span class="mono">${esc(ctx.rid)}</span>${ctx.buyer ? ' · ' + esc(ctx.buyer) : ''}${ctx.label ? ' · ' + esc(ctx.label) : ''}${ctx.sku ? ' · ' + esc(ctx.sku) : ''}</span>${st.piece ? `<span data-cp-this-piece>Kept on this order's own ${esc(st.piece.sku)}, as you saved it: no piece is added</span>` : ''}</span></button>` : '';
     dlg.innerHTML = `<div class="dlg">
-<div class="dlgHead"><div class="cpHd"><h3 id="cpT">Send to sheet</h3><span class="sub">The piece is cut exactly as designed, on the next sheet of the metal you pick</span></div>
+<div class="dlgHead"><div class="cpHd"><h3 id="cpT">Put on a sheet</h3><span class="sub">The piece is cut exactly as designed, on the next sheet of the metal you pick</span></div>
   <div class="right"><span class="cpTag" title="Every piece sent from here is marked handmade custom on its sheet and in its files"><i></i>Handmade custom</span><button type="button" class="cpX" data-cp-close aria-label="Close">×</button></div></div>
 <div class="cpBody">
   <section class="cpLeft" aria-label="The design">
@@ -510,7 +510,7 @@
     <section class="cpSec cpRow" data-cp-qtysec><h4 id="cpQtyT">How many</h4><span class="cuQty" role="group" aria-labelledby="cpQtyT"><button type="button" data-cp-qty="-1" aria-label="One fewer">−</button><b data-cp-n>1</b><button type="button" data-cp-qty="1" aria-label="One more">+</button></span></section>
   </div>
 </div>
-<div class="dlgFoot"><span class="left cpWho" data-cp-who></span><span class="cpWhy" data-cp-why aria-live="polite"></span><button type="button" class="btn ghost sm" data-cp-close>Cancel</button><button type="button" class="btn gold sm" data-cp-send>Send to sheet</button></div>
+<div class="dlgFoot"><span class="left cpWho" data-cp-who></span><span class="cpWhy" data-cp-why aria-live="polite"></span><button type="button" class="btn ghost sm" data-cp-close>Cancel</button><button type="button" class="btn gold sm" data-cp-send>Put on a sheet</button></div>
 </div>`;
     doc.body.appendChild(dlg);
     let resolve; const promise = new Promise(r => { resolve = r; });
@@ -547,7 +547,7 @@
       q('[data-cp-fix]').hidden = st.reason !== 'fix';
       // (THISORDER: the order's own piece takes the drawing: no metal, no count, no sheet; the head says so)
       const up = updating(); q('[data-cp-metsec]').hidden = up; q('[data-cp-qtysec]').hidden = up; q('.cpTag').hidden = up;
-      q('#cpT').textContent = up ? 'Keep on this order' : 'Send to sheet'; q('.cpHd .sub').textContent = up ? "Saved on this order's own piece: it is cut from this drawing with the order, on its own sheet" : 'The piece is cut exactly as designed, on the next sheet of the metal you pick';
+      q('#cpT').textContent = up ? 'Keep on this order' : 'Put on a sheet'; q('.cpHd .sub').textContent = up ? "Saved on this order's own piece: it is cut from this drawing with the order, on its own sheet" : 'The piece is cut exactly as designed, on the next sheet of the metal you pick';
       paintFix();
     }
     function paintFix() {
@@ -593,7 +593,7 @@
       w.textContent = why; w.classList.toggle('bad', !!st.err);
       b.setAttribute('aria-disabled', String(!!whyNot()));
       const vw = viewerOn();   // (CESEND: on a viewer the cloud chooses the sheet: the button never names this page's guess)
-      b.innerHTML = updating() ? esc(`Keep on order ${st.ctx.rid}'s piece`) : vw ? esc(`Send ${st.qty > 1 ? st.qty + ' ' : ''}to the cloud to place`) : esc(`Send ${st.qty > 1 ? st.qty + ' ' : ''}to ${g ? g.name : 'sheet'}`);
+      b.innerHTML = updating() ? esc(`Keep on order ${st.ctx.rid}'s piece`) : vw ? esc(`Put ${st.qty > 1 ? st.qty + ' ' : ''}on the next sheet`) : esc(`Put ${st.qty > 1 ? st.qty + ' ' : ''}on ${g ? g.name : 'a sheet'}`);
       q('[data-cp-n]').textContent = String(st.qty);
       for (const x of dlg.querySelectorAll('[data-cp-qty]')) x.disabled = +x.dataset.cpQty < 0 ? st.qty <= 1 : st.qty >= 99;
       const by = who(); q('[data-cp-who]').innerHTML = updating() ? (by ? `Saved by <b>${esc(by)}</b> · on the order's own piece` : '') : by ? `Sent by <b>${esc(by)}</b> · handmade custom` : 'You sign in when you send';
@@ -920,7 +920,7 @@
     strip.innerHTML = `<span class="cpStLbl">Charm Editor</span><button type="button" class="cpStPic" data-cp-strip-pic title="Open it in the Charm Designer">${att.svg || (att.thumbUrl ? `<img alt="" src="${esc(att.thumbUrl)}">` : NIB)}</button>`
       + `<span class="cpStMeta"><b>${esc(att.name)}<span class="cpV">v${esc(att.version)}</span></b><span class="dim mono">${(+att.widthMm || 0).toFixed(2)} × ${(+att.heightMm || 0).toFixed(2)} mm</span>`
       + `<span class="dim">${last ? `<span class="ok">On ${esc(last.sheet || codeOf(last.metal) + ' sheet')} × ${last.quantity}</span> · sent by ${esc(last.by)} · ${esc(when(last.at))}` : `Attached${att.by ? ' by ' + esc(att.by) : ''}${att.at ? ' · ' + esc(when(att.at)) : ''} · not on a sheet yet`}</span></span>`
-      + `<button type="button" class="btn ${last ? 'ghost' : 'gold'} sm" data-cp-strip-send title="Choose the metal and send this design to its next sheet, marked handmade custom">${last ? 'Send again…' : 'Send to sheet…'}</button>`;
+      + `<button type="button" class="btn ${last ? 'ghost' : 'gold'} sm" data-cp-strip-send title="Choose the metal and put this design on its next sheet, marked handmade custom">${last ? 'Put on a sheet again…' : 'Put on a sheet…'}</button>`;
   }
   /** The order window's header (OrderWin paint): Edit Design, left of the × (`at`), beside its Send to Sheet. A custom order that takes a design: "Design Charm" until it has one, then
    *  "Edit Design", in design mode; OWHEAD (Paul 29 Oct 2026: "Add the already existing 'Edit Design' button", on every order): any other order, a plain catalog charm, "Edit Design" opens
@@ -973,8 +973,8 @@
   }
   function hookEditor() {
     const CE = root.CharmEditor; if (!CE || CE.__cpHooked) return; CE.__cpHooked = true;
-    (CE.commands || (CE.commands = {})).sendToSheet = { title: 'Send to sheet…', group: 'Sheets', run: ctx => fromEditor(ctx), enabled: () => !!(root.CharmNestDesigns && root.Pool && typeof root.Pool.addCustomPiece === 'function') };
-    // (NOCESEND, Paul 29 Oct 2026: "Remove the 'Send to Sheet' button from the Charm Editor": no button beside Save; Send to Sheet… stays a command, in File and the right-click menu)
+    (CE.commands || (CE.commands = {})).sendToSheet = { title: 'Put on a sheet…', group: 'Sheets', run: ctx => fromEditor(ctx), enabled: () => !!(root.CharmNestDesigns && root.Pool && typeof root.Pool.addCustomPiece === 'function') };
+    // (NOCESEND, Paul 29 Oct 2026: "Remove the 'Send to Sheet' button from the Charm Editor": no button beside Save; it stays a command, in File and the right-click menu)
   }
   if (doc) hookEditor();
 

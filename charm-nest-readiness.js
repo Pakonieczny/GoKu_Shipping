@@ -48,7 +48,8 @@
    * Only a line with no pool ids is read this way (the card a person completes by hand was never pooled; the server looks up exactly those lines, one
    * small read each): a pooled line is waiting for the nester and stays a piece, and a copy that sits on a saved sheet is cut there (see readOrders). */
   const isHand=c=>!!c && typeof c==='object' && c.state!=='open' && c.how!=='sheet';
-  const handOf=l=>{const c=l && !(Array.isArray(l.poolIds) && l.poolIds.length) && (l.handDone || l.spec?.customDone);return isHand(c)?c:null;};
+  // (NESTASK, Paul 23 Nov 2026: a piece a person skipped at Release Hold, state "skipped" with no hold: no charm is made for it, so it needs no sheet and holds nothing back, as one completed by hand)
+  const handOf=l=>{const c=l && !(Array.isArray(l.poolIds) && l.poolIds.length) && (l.state==='skipped' && !l.hold ? {state:'completed',how:'skip',completedAt:+l.releasedAt || 0,completedBy:l.releasedBy || ''} : l.handDone || l.spec?.customDone);return isHand(c)?c:null;};
   function decisions(rows){
     const out={};
     // (a line whose record lost its pool ids is read by the ids the pool gives its copies, "<line key>_<n>", as orderReports reads them)

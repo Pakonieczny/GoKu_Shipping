@@ -212,7 +212,7 @@
   function decisionItems(W) {
     const keep = new Map();
     for (const l of W.lines) {
-      if (l.state === "gone" || l.hold) continue;   // (a line a person parked is parked)
+      if (l.state === "gone" || l.state === "skipped" || l.hold) continue;   // (a line a person parked is parked; one skipped asks nothing)
       if (isCustomRow(l) && l.problems.length) {
         const key = customKey(l);
         if (!keep.has(key)) keep.set(key, { kind: "customOrder", key, row: l, problem: l.problems[0], problems: [], rows: [], why: "" });
@@ -318,7 +318,7 @@
   function releasedCards(W, skip, answered) {
     const by = new Map();
     for (const l of W.lines) {
-      if (l.hold || ["gone", "skipped"].includes(l.state) || l.problems.length || skip.has(l.key)) continue;
+      if (l.hold || l.state === "gone" || (l.state !== "skipped" && l.problems.length) || skip.has(l.key)) continue;
       if ((l.spec && l.spec.special) || W.doneOf(l) || W.decisionOf(l)) continue;
       const at = Math.max(l.frontAt, l.releasing ? l.releasing.at : 0); if (!(at > 0)) continue;
       const r = rid(l); if (!by.has(r)) by.set(r, []); by.get(r).push(l);
@@ -329,7 +329,7 @@
       const at = Math.max(...rows.map(l => Math.max(l.frontAt, l.releasing ? l.releasing.at : 0)));
       if (said.has(r) && said.get(r) >= at - 120000) continue;   // (a card under Resolved already says this release)
       const going = rows.some(l => l.releasing), who = ((rows.find(l => l.releasing && l.releasing.by) || {}).releasing || {}).by || "";
-      out.push({ key: "rel:" + r, rowKey: rows[0].key, kind: "released", why: going ? "Being released to the nesting queue" : "Released to the nesting queue", lines: rows.length, orders: [r], by: who, t: at, _rows: rows });
+      out.push({ key: "rel:" + r, rowKey: rows[0].key, kind: "released", why: rows.every(l => l.state === "skipped") ? "Released · no charm made" : going ? "Being released to the nesting queue" : "Released to the nesting queue", lines: rows.length, orders: [r], by: who, t: at, _rows: rows });
     }
     return out;
   }
