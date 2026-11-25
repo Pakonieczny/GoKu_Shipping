@@ -396,6 +396,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 /* Manual Control (Paul, 18 Oct 2026; 10K and 14K only): the switch in the header, and the bar on the plate while it is on (the by-hand bar's look) */
 .swManual{display:inline-flex;align-items:center;gap:6px;height:28px;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:0 12px 0 9px;font:600 12px var(--sans);color:var(--ink70);cursor:pointer;white-space:nowrap;transition:background .15s,border-color .15s,color .15s,box-shadow .2s}
 .swManual svg{width:14px;height:14px;flex:none}
+/* MCZOOM: the plate's zoom while Manual Control is on */
+.swZoom{position:absolute;right:12px;top:10px;z-index:6;display:none;align-items:center;gap:2px;background:rgba(255,254,251,.95);border:1px solid var(--line);border-radius:999px;padding:2px;box-shadow:0 2px 8px rgba(30,26,20,.12);font:600 11.5px var(--sans);color:var(--ink)}
+.swZoom.on{display:inline-flex}.swZoom button{all:unset;cursor:pointer;min-width:24px;height:24px;border-radius:999px;display:grid;place-items:center;padding:0 7px;box-sizing:border-box}
+.swZoom button:hover{background:rgba(202,168,97,.2)}.swZoom button:focus-visible{outline:2px solid var(--gold2,#caa861)}.swZoom .pct{min-width:48px;text-align:center;font-variant-numeric:tabular-nums;color:var(--ink70);cursor:help}
+.swPlate.canPan canvas{cursor:grab}.swPlate.panning canvas{cursor:grabbing!important}
 .swManual:hover{background:var(--paper2);color:var(--ink)}
 .swManual[aria-pressed=true]{background:var(--velvet);border-color:var(--velvet);color:#fff;box-shadow:0 0 0 3px rgba(202,168,97,.28)}
 .swManual[aria-disabled=true]{color:var(--ink25);background:var(--card);cursor:default}
@@ -531,18 +536,24 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (W.view === "piece" && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); step(e.key === "ArrowLeft" ? -1 : 1); }
     });
     const fx = E.fx;
-    fx.addEventListener("pointermove", e => { W.pointer = e; if (!W.moveFrame) W.moveFrame = requestAnimationFrame(() => { W.moveFrame = 0; onMove(W.pointer); }); });
+    fx.addEventListener("pointermove", e => { if (W.pan) { panMove(e); return; } W.pointer = e; if (!W.moveFrame) W.moveFrame = requestAnimationFrame(() => { W.moveFrame = 0; onMove(W.pointer); }); });
     fx.addEventListener("pointerleave", () => { if (!W.hand) { setHover(null); tip(null); } });
     fx.addEventListener("wheel", e => {
-      if (!W.hand) return; e.preventDefault();
+      if (!W.hand) { if (MC.on) zoomWheel(e); return; }   // (MCZOOM: in Manual Control the wheel zooms where the pointer is)
+      e.preventDefault();
       const h = W.hand; h.acc = (h.acc || 0) + (e.deltaY || e.deltaX);
       if (Math.abs(h.acc) >= 40 || e.deltaMode) { handTurn(Math.sign(h.acc) * (e.shiftKey ? 2 : 10)); h.acc = 0; }
     }, { passive: false });
     E.addBtn.onclick = () => openAdd("");
     // Manual Control: a press on a charm takes it (and moves it as the pointer moves), a press on its tool's handles turns or resizes it
-    fx.addEventListener("pointerdown", e => { if (MC.on) mcDown(e); });
-    fx.addEventListener("pointerup", e => { if (MC.drag) mcUp(e); });
-    fx.addEventListener("pointercancel", () => { if (MC.drag) mcCancel(); });
+    fx.addEventListener("pointerdown", e => { if (MC.on) { if (panStart(e)) return; mcDown(e); } });
+    fx.addEventListener("pointerup", e => { if (W.pan) { panEnd(); return; } if (MC.drag) mcUp(e); });
+    fx.addEventListener("pointercancel", () => { if (W.pan) { panEnd(); return; } if (MC.drag) mcCancel(); });
+    // (MCZOOM: a double-click on a charm zooms to it; Space held lets a drag anywhere move the view)
+    fx.addEventListener("dblclick", e => { if (!MC.on) return; const p = hitAt(e); if (p) { e.preventDefault(); zoomToPiece(p); } });
+    const typing = t => !!t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || "") || t.isContentEditable);
+    window.addEventListener("keydown", e => { if (e.code !== "Space" || !MC.on || !zoomed() || !W.dlg || !W.dlg.open || typing(e.target)) return; e.preventDefault(); if (!W.space) { W.space = true; if (W.el.plate) W.el.plate.classList.add("canPan"); } }, true);
+    window.addEventListener("keyup", e => { if (e.code === "Space" && W.space) { W.space = false; if (W.el.plate) W.el.plate.classList.toggle("canPan", zoomed() && !!MC.on); } }, true);
     // (MCFREE, Paul 20 Oct 2026: the tool's handles may stand outside the plate, over the stage round it, or over a dock: a press on one is taken here first, before the
     //  plate (and the sheet hop's own press on a charm) or a dock sees it; the drag then follows the plate's canvas, which holds the pointer, wherever it goes)
     E.plateBox.addEventListener("pointerdown", e => { if (MC.on && !MC.drag && !(e.button > 0) && mcHandleAt(e)) { e.stopPropagation(); mcDown(e); } }, true);
@@ -721,10 +732,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      and the order is drawn there, in sage with a dashed edge, until the sheet is saved with it */
   function spotMark(spots) {
     if (!spots || !spots.length || !W.st || !W.dlg.open) return null;
-    const k = W.k / W.dpr, R = W.R / W.dpr; let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    const k = W.k / W.dpr, R = OX() / W.dpr, RY = OY() / W.dpr; let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
     for (const s of spots) { const c = s.c || {}, r = Math.max(+c.widthPt || 20, +c.heightPt || 20) / 2; x0 = Math.min(x0, s.cxPt - r); y0 = Math.min(y0, s.cyPt - r); x1 = Math.max(x1, s.cxPt + r); y1 = Math.max(y1, s.cyPt + r); }
     const m = h("i", "swSpot"); m.setAttribute("aria-hidden", "true");
-    Object.assign(m.style, { left: R + (backFace() ? W.st.wPt - x1 : x0) * k + "px", top: R + y0 * k + "px", width: Math.max(10, (x1 - x0) * k) + "px", height: Math.max(10, (y1 - y0) * k) + "px" });
+    Object.assign(m.style, { left: R + (backFace() ? W.st.wPt - x1 : x0) * k + "px", top: RY + y0 * k + "px", width: Math.max(10, (x1 - x0) * k) + "px", height: Math.max(10, (y1 - y0) * k) + "px" });
     W.el.plate.insertBefore(m, W.el.fx); setTimeout(() => m.remove(), 6000);
     return m;
   }
@@ -1085,6 +1096,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
 
   async function open(id, opts = {}) {
+    if (W.id !== id) { W.zv = null; W.ox = W.oy = null; if (W.k0) W.k = W.k0; }   // (MCZOOM: another sheet opens at its whole size)
     build();
     // (another sheet: Manual Control ends here, and what was moved is saved; MOVEINSTANT, Paul 20 Oct 2026: unless it is another sheet of the same run and metal, where it carries on: mcCarry)
     if (MC.on && MC.id !== id && !mcCarry(id)) mcOff({ bg: true });   // (MOVEINSTANT 2: what was moved is saved in the background, the chip, no panel)
@@ -1228,6 +1240,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     W.el.side.querySelector('[data-pane="sheet"]').hidden = false; W.el.side.querySelector('[data-pane="piece"]').hidden = true;
   }
   async function close(opts = {}) {
+    W.zv = null; W.ox = W.oy = null; if (W.k0) W.k = W.k0; W.pan = null; W.space = false;   // (MCZOOM: the next opening is the whole sheet)
     const d = W.dlg; if (!d || !d.open || W.leaving || d.classList.contains("closing") || W.folding) return;
     if (MC.on) mcOff({ bg: true });   // (closed with Manual Control on: what was moved is saved, as if it had been turned off; MOVEINSTANT 2: in the background)
     W.token++; menu(false);
@@ -1631,6 +1644,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function geometryReady(tok) {
     if (tok !== W.token) return;
     W.geom = true; W.pre = null; paintBase();
+    if (W.mcAfterOpen && W.mcAfterOpen === W.id && !MC.on && !MC.claiming) { W.mcAfterOpen = null; setTimeout(() => { if (W.dlg && W.dlg.open && !MC.on) mcToggle({ livened: true }); }, 0); }   // (HOPLIVE: drawn as this page holds it: Manual Control starts)
     // (the piece in hand, chosen before its drawing was read: once it is, a piece that is several charms says so in its panel, Paul 18 Oct 2026)
     { const x = W.sel; if (x && W.view === "piece" && W.pieces.includes(x) && charmsIn(x) > 1) { const mm = W.el.detail.querySelector("[data-r2=mm]"); if (mm) mm.textContent = `${copyText(x)}${mmOf(x)}`; tryDo(() => renderTrail(x)); } }
     W.el.base.style.opacity = "1";
@@ -1639,7 +1653,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (the picture the window grew out of gives way to the sheet drawn here, the two fading into each other)
     dropSnap(true);
     paintFx();
-    tryDo(() => { const live = mcLive(); if (live && !(MC.on && MC.sh === live)) mcWarm(live); });   // (MCINSTANT: a 10K / 14K sheet's checks made while it sits idle, so Manual Control starts at once)
+    tryDo(() => { const live = mcLiveQuiet(); if (live && !(MC.on && MC.sh === live)) mcWarm(live); });   // (MCINSTANT: a 10K / 14K sheet's checks made while it sits idle, so Manual Control starts at once)
     if (!MC.claiming) tryDo(mcButton);   // (MCLIBRARY: the switch says at once what the drawn sheet allows, a sheet loaded from its record included)
   }
 
@@ -1673,8 +1687,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     w = Math.floor(w); hh = Math.floor(hh);
     E.plate.style.width = w + "px"; E.plate.style.height = hh + "px";
     const dpr = Math.min(2.5, devicePixelRatio || 1);
-    W.dpr = dpr; W.R = R * dpr; W.k = (w * dpr - W.R) / st.wPt; W.cssW = w; W.cssH = hh;
+    W.dpr = dpr; W.R = R * dpr; W.k0 = W.k = (w * dpr - W.R) / st.wPt; W.cssW = w; W.cssH = hh;
     for (const cv of [E.rule, E.base, E.fx]) { const cw = Math.round(w * dpr), ch = Math.round(hh * dpr); if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; } }
+    applyView();   // (MCZOOM: a zoomed view keeps its zoom and its place on the sheet when the window is resized)
+    if (E.pv) E.pv.style.visibility = zoomed() ? "hidden" : "";
     // the saved preview is the plate without rulers: it sits where the plate sits
     // (inset first: set after them, it would put left and top back to auto, and the picture at the plate's corner)
     E.pv.style.inset = "auto"; E.pv.style.left = R + "px"; E.pv.style.top = R + "px"; E.pv.style.width = (w - R) + "px"; E.pv.style.height = (hh - R) + "px";
@@ -1687,14 +1703,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function paintRule() {
     const cv = W.el.rule, ctx = cv.getContext("2d"), R = W.R; if (!W.st || !cv.width) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#fffefb"; ctx.fillRect(0, 0, cv.width, cv.height);
+    // (MCZOOM: zoomed, the sheet's edge is clipped to the view and the rulers follow the zoom)
+    if (zoomed()) { ctx.save(); ctx.beginPath(); ctx.rect(R, R, cv.width - R, cv.height - R); ctx.clip(); sheetEdge(ctx, cv); ctx.restore(); if (R) zoomRulers(ctx, R, W.k, OX(), OY(), cv.width, cv.height); return; }
     if (R) drawRulers(ctx, R, W.k, cv.width - R, cv.height - R);
     sheetEdge(ctx, cv);
   }
   // the sheet's edge and its inset line
   function sheetEdge(ctx, cv) {
-    const R = W.R, k = W.k, Wp = cv.width - R, Hp = cv.height - R;
-    ctx.save(); ctx.translate(R, R);
-    ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, .5 * k); ctx.strokeRect(.5, .5, Wp - 1, Hp - 1);
+    const R = W.R, k = W.k, Wp = zoomed() ? W.st.wPt * k : cv.width - R, Hp = zoomed() ? W.st.hPt * k : cv.height - R;
+    ctx.save(); ctx.translate(OX(), OY());
+    ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, .5 * lineK()); ctx.strokeRect(.5, .5, Wp - 1, Hp - 1);
     const ins = (+S.settings.insetPt || 0) * k; ctx.setLineDash([4 * W.dpr, 4 * W.dpr]); ctx.strokeStyle = "rgba(147,140,128,.35)"; ctx.lineWidth = 1; ctx.strokeRect(ins, ins, Wp - 2 * ins, Hp - 2 * ins); ctx.setLineDash([]);
     // (CORNERS: each corner's keep-out, its long side dashed like the inset; a corner of the metal already cut away has none)
     if (typeof paintCorners === "function" && typeof cornerTris === "function" && W.st) tryDo(() => paintCorners(ctx, cornerTris(W.live || W.rec || {}, W.st), k, [4 * W.dpr, 4 * W.dpr]));
@@ -1705,8 +1723,113 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      laser. Mirroring the whole plate is mirroring each piece's centre and its own frame, so a piece stays where the metal
      has it and everything drawn on it — its outline, its cut-outs, its engraving — comes out the right way round. */
   const backFace = () => W.face === "back";
-  const plateX = cxPt => W.R + (backFace() && W.st ? W.st.wPt - cxPt : cxPt) * W.k;
-  function withPiece(ctx, x, fn) { const p = x.p, k = W.k; ctx.save(); ctx.translate(plateX(p.cxPt), W.R + p.cyPt * k); if (backFace()) ctx.scale(-1, 1); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale); fn(); ctx.restore(); }
+  /* MCZOOM (Paul, 25 Nov 2026: "add the ability to zoom in into any charm on a sheet while in manual mode, and ensure that the charms are showing as vectors so that their quality does not
+     diminish when zooming in. Also, the exact positional accuracy of the charms on a given sheet needs to be perfectly shown to the user when zooming into any charm on a sheet to ensure that
+     minor overlaps can be detected and corrected", and the pan that goes with it, on every metal's Manual Control, 10K / 14K included). The plate keeps its size; the VIEW changes the scale and
+     the origin the sheet is drawn at (W.k = W.k0 · zoom; W.ox, W.oy the sheet's corner on the canvas), and every charm is drawn again from its vectors at that scale: as sharp at 64× as at 1×,
+     exactly where its placement puts it (the very numbers the laser file is written from). Lines keep their on-screen width (lineK), so an outline stays a hairline at any zoom and two edges
+     that touch or cross show as they are. Zoom: the wheel or a pinch at the pointer, the plate's − / + / Fit, a double-click on a charm (zooms to it). Pan: drag the empty sheet, or hold Space
+     and drag, while zoomed. Manual Control turned off, another sheet or the window closed: the whole sheet again. */
+  const ZMAX = 64;
+  const OX = () => (W.ox != null ? W.ox : W.R), OY = () => (W.oy != null ? W.oy : W.R);
+  const zoomed = () => !!(W.zv && W.zv.z > 1.0001);
+  const lineK = () => W.k0 || W.k;
+  function applyView() {
+    const v = W.zv || (W.zv = { z: 1, x: 0, y: 0 }), st = W.st, cv = W.el && W.el.base; if (!st || !cv || !W.k0) return;
+    if (!(v.z > 1.0001)) { v.z = 1; v.x = 0; v.y = 0; W.k = W.k0; W.ox = W.oy = null; return; }
+    W.k = W.k0 * v.z;
+    const vw = cv.width - W.R, vh = cv.height - W.R;
+    v.x = Math.min(0, Math.max(vw - st.wPt * W.k, v.x)); v.y = Math.min(0, Math.max(vh - st.hPt * W.k, v.y));   // (the sheet slides, never off the view)
+    W.ox = W.R + v.x; W.oy = W.R + v.y;
+  }
+  function viewChanged() {
+    const E = W.el; if (!E || !W.st) return;
+    if (E.pv) { const vis = zoomed() ? "hidden" : ""; if (E.pv.style.visibility !== vis) E.pv.style.visibility = vis; }
+    if (E.plate) E.plate.classList.toggle("canPan", zoomed() && !!MC.on);
+    paintRule(); if (W.geom || (W.pre && W.pre.pieces)) paintBase(); paintFx(); zoomUi();
+  }
+  /** Zoom to z about the canvas point (px, py) (device pixels; the middle of the view when none): the sheet point under it stays under it. */
+  function zoomTo(z, px, py) {
+    if (!W.st || !W.k0) return; const v = W.zv || (W.zv = { z: 1, x: 0, y: 0 }), cv = W.el.base;
+    const nz = Math.max(1, Math.min(ZMAX, z)); if (Math.abs(nz - v.z) < 1e-4) return;
+    if (px == null) { px = W.R + (cv.width - W.R) / 2; py = W.R + (cv.height - W.R) / 2; }
+    const sx = (px - OX()) / W.k, sy = (py - OY()) / W.k, k = W.k0 * nz;
+    v.z = nz; v.x = px - W.R - sx * k; v.y = py - W.R - sy * k; applyView(); viewChanged();
+  }
+  function panBy(dx, dy) { const v = W.zv; if (!v || !(v.z > 1.0001)) return; v.x += dx; v.y += dy; applyView(); viewChanged(); }
+  function resetView() { const had = zoomed(); W.zv = { z: 1, x: 0, y: 0 }; W.ox = W.oy = null; if (W.k0) W.k = W.k0; if (had && W.el && W.el.base) viewChanged(); else tryDo(zoomUi); }
+  /** A double-click on a charm: it fills about half the view, its centre in the middle. */
+  function zoomToPiece(x) {
+    if (!x || !x.p || !W.st || !W.k0) return; const cv = W.el.base, vw = cv.width - W.R, vh = cv.height - W.R, p = x.p;
+    const r = Math.max(+p.wPt || 0, +p.hPt || 0, x.c ? Math.max(+x.c.widthPt || 0, +x.c.heightPt || 0) : 0, 8);
+    const v = W.zv || (W.zv = { z: 1, x: 0, y: 0 }); v.z = Math.max(1.0002, Math.min(ZMAX, Math.min(vw, vh) * 0.5 / (r * W.k0)));
+    const k = W.k0 * v.z, X = (backFace() ? W.st.wPt - p.cxPt : p.cxPt) * k, Y = p.cyPt * k;
+    v.x = vw / 2 - X; v.y = vh / 2 - Y; applyView(); viewChanged();
+  }
+  /** A charm nudged near the edge of the zoomed view: the view moves with it, so it stays in sight. q: its pose (sheet points). */
+  function keepInView(q) {
+    if (!zoomed() || !q || !W.el || !W.el.base) return; const cv = W.el.base, m = 48 * (W.dpr || 1);
+    const X = plateX(q.cxPt), Y = OY() + q.cyPt * W.k;
+    const dx = X < W.R + m ? W.R + m - X : X > cv.width - m ? cv.width - m - X : 0, dy = Y < W.R + m ? W.R + m - Y : Y > cv.height - m ? cv.height - m - Y : 0;
+    if (dx || dy) panBy(dx, dy);
+  }
+  function plateDev(e) { const cv = W.el.fx, r = cv.getBoundingClientRect(), s = cv.width / (r.width || 1); return [(e.clientX - r.left) * s, (e.clientY - r.top) * s]; }
+  function zoomWheel(e) {
+    e.preventDefault(); const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+    const [px, py] = plateDev(e); zoomTo((W.zv ? W.zv.z : 1) * Math.exp(-d * (e.ctrlKey ? 0.01 : 0.0022)), px, py);
+  }
+  /** Pan: a press on the empty sheet, or anywhere with Space held, while zoomed in Manual Control. A press that does not move is a press on the empty sheet (it lets go of the charm in hand). */
+  function panStart(e) {
+    if (!MC.on || !zoomed() || e.button > 0 || MC.drag || !W.el) return false;
+    if (!W.space && (mcHandleAt(e) || hitAt(e))) return false;
+    e.preventDefault(); const [px, py] = plateDev(e);
+    W.pan = { pid: e.pointerId, x: px, y: py, moved: 0 }; try { W.el.fx.setPointerCapture(e.pointerId); } catch (_) {}
+    W.el.plate.classList.add("panning"); tip(null); return true;
+  }
+  function panMove(e) { const P = W.pan; if (!P) return false; const [px, py] = plateDev(e), dx = px - P.x, dy = py - P.y; P.x = px; P.y = py; P.moved += Math.abs(dx) + Math.abs(dy); panBy(dx, dy); return true; }
+  function panEnd() { const P = W.pan; if (!P) return false; W.pan = null; if (W.el && W.el.plate) W.el.plate.classList.remove("panning"); try { W.el.fx.releasePointerCapture(P.pid); } catch (_) {} if (P.moved < 4 * (W.dpr || 1) && !W.space) tryDo(() => mcSelect(null)); return true; }
+  /** The plate's zoom buttons, there while Manual Control is on: −, the zoom, +, Fit. */
+  function zoomUi() {
+    const E = W.el; if (!E || !E.plateBox) return;
+    let z = E.zoom;
+    if (!z) {
+      if (!MC.on) return;   // (made the first time Manual Control is on: a window opening or flying writes nothing into itself, SWSMOOTH)
+      z = E.zoom = h("div", "swZoom"); z.setAttribute("role", "group"); z.setAttribute("aria-label", "Zoom");
+      z.innerHTML = '<button type="button" data-z="out" title="Zoom out" aria-label="Zoom out">−</button><span class="pct" title="Zoom: the wheel or a pinch zooms where the pointer is; double-click a charm to zoom to it; drag the empty sheet, or hold Space and drag, to move around. Zoomed, the arrows move the charm in hand by a screen pixel, Shift + arrows by ten">100%</span><button type="button" data-z="in" title="Zoom in" aria-label="Zoom in">+</button><button type="button" data-z="fit" title="The whole sheet">Fit</button>';
+      z.addEventListener("click", ev => { const b = ev.target.closest("[data-z]"); if (!b) return; ev.stopPropagation(); const cur = W.zv ? W.zv.z : 1; if (b.dataset.z === "in") zoomTo(cur * 2); else if (b.dataset.z === "out") zoomTo(cur / 2); else resetView(); });
+      z.addEventListener("pointerdown", ev => ev.stopPropagation());
+      E.plateBox.appendChild(z);
+    }
+    const on = !!MC.on; if (z.classList.contains("on") !== on) z.classList.toggle("on", on);
+    const t = Math.round((W.zv ? W.zv.z : 1) * 100) + "%", pct = z.querySelector(".pct"); if (pct.textContent !== t) pct.textContent = t;
+  }
+  /** The rulers of a zoomed view: millimetres from the sheet's corner, as fine as the zoom allows (down to 0.01 mm), only those in view. */
+  function zoomRulers(ctx, R, k, ox, oy, Wc, Hc) {
+    const ppm = k * 72 / 25.4, f = getComputedStyle(document.body).getPropertyValue("--mono") || "monospace";
+    const sheetW = W.st.wPt * 25.4 / 72, sheetH = W.st.hPt * 25.4 / 72;
+    const steps = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10], minor = steps.find(t => t * ppm >= 5) || 10, mid = minor * 5, major = minor * 10, dec = major < 0.1 ? 2 : major < 1 ? 1 : 0;
+    const on = (v, t) => Math.abs(v / t - Math.round(v / t)) < 1e-6;
+    ctx.save(); ctx.fillStyle = "#f3efe6"; ctx.fillRect(0, 0, Wc, R); ctx.fillRect(0, 0, R, Hc);
+    ctx.strokeStyle = "rgba(60,54,46,.55)"; ctx.fillStyle = "rgba(60,54,46,.85)"; ctx.lineWidth = 1; ctx.font = `${Math.max(8, Math.round(R * 0.42))}px ${f}`; ctx.textAlign = "left"; ctx.textBaseline = "top";
+    const run = (a0, a1, len, o, fn) => { for (let i = Math.max(0, Math.ceil(a0 / minor)); i * minor <= Math.min(a1, len) + 1e-9; i++) fn(i * minor, Math.round(o + i * minor * ppm) + .5); };
+    ctx.beginPath();
+    run((R - ox) / ppm, (Wc - ox) / ppm, sheetW, ox, (mm, x) => { if (x < R) return; const t = on(mm, major) ? R * .55 : on(mm, mid) ? R * .34 : R * .18; ctx.moveTo(x, R); ctx.lineTo(x, R - t); });
+    run((R - oy) / ppm, (Hc - oy) / ppm, sheetH, oy, (mm, y) => { if (y < R) return; const t = on(mm, major) ? R * .55 : on(mm, mid) ? R * .34 : R * .18; ctx.moveTo(R, y); ctx.lineTo(R - t, y); });
+    ctx.stroke();
+    run((R - ox) / ppm, (Wc - ox) / ppm, sheetW, ox, (mm, x) => { if (x < R || !on(mm, major)) return; ctx.fillText(mm.toFixed(dec), x + 2, 1); });
+    run((R - oy) / ppm, (Hc - oy) / ppm, sheetH, oy, (mm, y) => { if (y < R || !on(mm, major)) return; ctx.save(); ctx.translate(1, y - 2); ctx.rotate(-Math.PI / 2); ctx.fillText(mm.toFixed(dec), 0, 0); ctx.restore(); });
+    ctx.fillStyle = "#f3efe6"; ctx.fillRect(0, 0, R, R); ctx.fillStyle = "rgba(60,54,46,.6)"; ctx.font = `${Math.max(7, Math.round(R * 0.36))}px ${f}`; ctx.fillText("mm", 2, R * 0.5);
+    ctx.strokeStyle = "rgba(60,54,46,.35)"; ctx.beginPath(); ctx.moveTo(R + .5, 0); ctx.lineTo(R + .5, Hc); ctx.moveTo(0, R + .5); ctx.lineTo(Wc, R + .5); ctx.stroke();
+    ctx.restore();
+  }
+  /** A charm wholly outside the zoomed view (not drawn: at 64× most of the sheet is). */
+  function offView(x, cv) {
+    if (!zoomed() || !x || !x.p) return false; const p = x.p, k = W.k;
+    const r = Math.max(+p.wPt || 0, +p.hPt || 0, x.c ? Math.max(+x.c.widthPt || 0, +x.c.heightPt || 0) * (p.scale || 1) : 0, 30) * k * 0.75 + 6;
+    const X = plateX(p.cxPt), Y = OY() + p.cyPt * k; return X + r < W.R || Y + r < W.R || X - r > cv.width || Y - r > cv.height;
+  }
+  const plateX = cxPt => OX() + (backFace() && W.st ? W.st.wPt - cxPt : cxPt) * W.k;
+  function withPiece(ctx, x, fn) { const p = x.p, k = W.k; ctx.save(); ctx.translate(plateX(p.cxPt), OY() + p.cyPt * k); if (backFace()) ctx.scale(-1, 1); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale); fn(); ctx.restore(); }
   function outlinePath(ctx, x, holes) {
     const c = x.c; ctx.beginPath();
     if (!c) { const w = x.p.wPt * W.k / (x.p.scale || 1), hh = x.p.hPt * W.k / (x.p.scale || 1); ctx.roundRect ? ctx.roundRect(-w / 2, -hh / 2, w, hh, 3 * W.dpr) : ctx.rect(-w / 2, -hh / 2, w, hh); return; }
@@ -1786,35 +1909,37 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** The physical sheet's history, under the pieces (turned over with the plate on its Back). */
   function roseUnder(ctx) {
     const v = roseView(); if (!v || !W.st) return;
-    ctx.save(); ctx.translate(W.R, W.R); if (backFace()) { ctx.translate(W.st.wPt * W.k, 0); ctx.scale(-1, 1); }
+    ctx.save(); ctx.translate(OX(), OY()); if (backFace()) { ctx.translate(W.st.wPt * W.k, 0); ctx.scale(-1, 1); }
     try { RoseStock.paint(ctx, v, W.k, "history"); } catch (e) { console.warn("sheet window: the physical sheet's history", e); }
     ctx.restore();
   }
   function paintBase() {
     const cv = W.el.base, ctx = cv.getContext("2d"), st = W.st, R = W.R, k = W.k; if (!st) return;
-    const Wp = cv.width - R, Hp = cv.height - R;
+    const Wp = zoomed() ? st.wPt * k : cv.width - R, Hp = zoomed() ? st.hPt * k : cv.height - R, lk = lineK();
     // the sheet alone (the rulers are the plate's own layer, under it); before the record is read, a Nest card's sheet
     // as the page holds it
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
-    ctx.fillStyle = "#fffefb"; ctx.fillRect(R, R, Wp, Hp);
+    ctx.save(); if (zoomed()) { ctx.beginPath(); ctx.rect(R, R, cv.width - R, cv.height - R); ctx.clip(); }   // (MCZOOM: the view's own area, never over the rulers)
+    ctx.fillStyle = "#fffefb"; ctx.fillRect(OX(), OY(), Wp, Hp);
     roseUnder(ctx);   // (RGWINDOW: the cuts made before this sheet's, under it)
     sheetEdge(ctx, cv);
     for (const x of W.geom || !(W.pre && W.pre.pieces) ? W.pieces : W.pre.pieces) {
-      if (x.gone || x === MC.lift) continue;   // (the charm Manual Control holds is drawn on the marks layer, where it moves)
+      if (x.gone || x === MC.lift || offView(x, cv)) continue;   // (the charm Manual Control holds is drawn on the marks layer, where it moves; MCZOOM: one out of view is not drawn)
       withPiece(ctx, x, () => {
         // a custom order's own design is plum here too, as on the sheet's card (CustomSheet)
         const cu = x.c && x.c.custom;
         ctx.fillStyle = cu ? "rgba(125,86,168,.20)" : "rgba(200,162,78,.10)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
-        if (x.c && !backFace()) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
+        if (x.c && !backFace()) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), lineK());   // (MCZOOM: lines at their on-screen width, a hairline at any zoom)
         else { ctx.strokeStyle = "rgba(60,54,46,.5)"; ctx.lineWidth = W.dpr; outlinePath(ctx, x); ctx.stroke(); }
         // from behind, this charm's own words, where the laser burns them (a charm with no engraving stays plain)
-        if (backFace() && x.c) { const geo = engGeoOf(x, W.backs); tryDo(() => drawBackArt(ctx, x, tx0(x.c), k, backInk())); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: backInk() })); }   // (SHEETBACK: and what the Charm Editor added to its back. BLUEBACK, Paul 12 Nov 2026: in the hatching blue)
+        if (backFace() && x.c) { const geo = engGeoOf(x, W.backs); tryDo(() => drawBackArt(ctx, x, tx0(x.c), lk, backInk())); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: backInk() })); }   // (SHEETBACK: and what the Charm Editor added to its back. BLUEBACK, Paul 12 Nov 2026: in the hatching blue)
         // the front of the plate: this charm's FRONT words, as they lie on it (not turned over); a charm with no front engraving is drawn as it always was
         else if (x.c && x.eng && x.eng.faces && x.eng.faces.front) { const geo = engGeoOf(x, W.backs, "front"); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: backInk() })); }   // (FRONTBLUE)
         if (cu) { outlinePath(ctx, x); ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = 1.6 * W.dpr; ctx.setLineDash([4 * W.dpr, 3 * W.dpr]); ctx.stroke(); ctx.setLineDash([]); }
         markShipped(ctx, x);
       });
     }
+    ctx.restore();
   }
   /* SHIPPEDSTAYS (Paul, 24 Nov 2026: "grey them out an ad read outlines so they're noticeable as different, but all the information about the harmony order should still remain and be accessible by clicking into the sheet"):
      a piece whose order shipped stays on its sheet: grey with a red outline, and it opens as any other. The cloud's record of the sheet says which (shippedOut); a set marked completed is never changed. */
@@ -1833,9 +1958,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return { f, mates };
   }
   // (one mark that cannot be drawn never stops the others, the loop that animates them, or what asked for the drawing)
-  function paintFx(now) { try { paintMarks(now); } catch (e) { console.warn("sheet window: plate marks", e); } tryDo(mcToolPaint); }   // (MCFREE: the Manual Control tool on its own layer, over the stage)
+  function paintFx(now) {
+    // (MCZOOM: zoomed, the marks are clipped to the view, never over the rulers)
+    const cv = W.el && W.el.fx, c = cv && zoomed() ? cv.getContext("2d") : null;
+    if (c) { c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, cv.width, cv.height); c.save(); c.beginPath(); c.rect(W.R, W.R, cv.width - W.R, cv.height - W.R); c.clip(); }
+    try { paintMarks(now); } catch (e) { console.warn("sheet window: plate marks", e); } finally { if (c) c.restore(); }
+    tryDo(mcToolPaint);
+  }   // (MCFREE: the Manual Control tool on its own layer, over the stage)
   function paintMarks(now) {
-    const cv = W.el.fx, ctx = cv.getContext("2d"), k = W.k, R = W.R; if (!W.st) return;
+    const cv = W.el.fx, ctx = cv.getContext("2d"), k = W.k, R = OY(); if (!W.st) return;   // (MCZOOM: R is the sheet's top on the canvas: every mark below is put at R + y · k)
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
     const t1 = now || performance.now();
     const q = W.q, matches = q ? W.pieces.filter(x => matchesQ(x, q)) : null;
@@ -1852,7 +1983,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // (the rest of the order lighter than the charm itself, which is marked last, above them)
       for (const x of keep) { if (x.gone || (fs && x === fs.f)) continue; const mate = !!fs && fs.mates.includes(x); withPiece(ctx, x, () => {
         ctx.fillStyle = mate ? "rgba(202,168,97,.14)" : "rgba(74,107,120,.14)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
-        if (x.c && !backFace()) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
+        if (x.c && !backFace()) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), lineK());   // (MCZOOM: lines at their on-screen width, a hairline at any zoom)
         else { outlinePath(ctx, x); ctx.strokeStyle = "rgba(60,54,46,.5)"; ctx.lineWidth = W.dpr; ctx.stroke(); }
         markBack(ctx, x); markShipped(ctx, x); });
         // one line round it, along its own outline (haloOf): gold for the rest of the order, slate for a search's finds
@@ -1920,12 +2051,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       markBack(ctx, x); markShipped(ctx, x);
     });
     // told apart by its own gold and this line along its outline (haloOf), never by dimming the sheet round it
-    layHalo(ctx, haloOf(x, W.k, W.dpr, backFace(), { w: 1.9 }), plateX(x.p.cxPt), W.R + x.p.cyPt * W.k, s, 1);
+    layHalo(ctx, haloOf(x, W.k, W.dpr, backFace(), { w: 1.9 }), plateX(x.p.cxPt), OY() + x.p.cyPt * W.k, s, 1);
   }
   /** A small L / R chip at the centre of a lit piece that is an ear of a pair. Nothing on any other charm. */
   function markSide(ctx, x) {
     const q = x.p && sideOfPiece(x); if (!q) return;
-    const cx = plateX(x.p.cxPt), cy = W.R + x.p.cyPt * W.k, r = Math.max(6, Math.min(9, 2.2 * W.k / W.dpr)) * W.dpr;
+    const cx = plateX(x.p.cxPt), cy = OY() + x.p.cyPt * W.k, r = Math.max(6, Math.min(9, 2.2 * W.k / W.dpr)) * W.dpr;
     ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = "#fffefb"; ctx.fill(); ctx.lineWidth = 1.4 * W.dpr; ctx.strokeStyle = "#a9823f"; ctx.stroke();
     ctx.fillStyle = "#6b5120"; ctx.font = `700 ${Math.round(r * 1.15)}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(q, cx, cy + .5 * W.dpr); ctx.restore();
   }
@@ -1938,7 +2069,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   // a point clicked on a picture, where its charm is not known yet: a gold ring about a charm's size, and its centre
   function markAt(ctx, at) {
-    const x = plateX(at.xPt), y = W.R + at.yPt * W.k, r = 4.6 * 72 / 25.4 * W.k;
+    const x = plateX(at.xPt), y = OY() + at.yPt * W.k, r = 4.6 * 72 / 25.4 * W.k;
     ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fillStyle = "rgba(202,168,97,.30)"; ctx.fill(); ctx.strokeStyle = "#b8893a"; ctx.lineWidth = 2.5 * W.dpr; ctx.stroke();
     ctx.beginPath(); ctx.arc(x, y, Math.max(2.5 * W.dpr, r * .12), 0, Math.PI * 2); ctx.fillStyle = "#b8893a"; ctx.fill(); ctx.restore();
   }
@@ -1973,8 +2104,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /* ── pointer ── */
   function toPlate(e) {
     const r = W.el.fx.getBoundingClientRect(), sx = W.el.fx.width / r.width;
-    const px = ((e.clientX - r.left) * sx - W.R) / W.k;
-    return { x: backFace() && W.st ? W.st.wPt - px : px, y: ((e.clientY - r.top) * sx - W.R) / W.k, cx: e.clientX - r.left, cy: e.clientY - r.top };
+    const px = ((e.clientX - r.left) * sx - OX()) / W.k;   // (MCZOOM: through the view)
+    return { x: backFace() && W.st ? W.st.wPt - px : px, y: ((e.clientY - r.top) * sx - OY()) / W.k, cx: e.clientX - r.left, cy: e.clientY - r.top };
   }
   function hitAt(e) { const { x, y } = toPlate(e); return hitPt(x, y); }
   /** The charm at a point of the sheet (in points), by its drawing where the window has it, else by its outline box. */
@@ -5686,7 +5817,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      object of another sheet, and its pose { cxPt, cyPt, angle } is in sheet points, y down, as placements are. A charm that leaves the sheet while Manual
      Control is on (the hop) is dropped from what the save writes, and the hop's own writes of the held sheet pass its hold (rewritePage).
        CNManual.fromRecord(charm)               -> { by, at, size? } | null   a saved charm's manual mark, as the page's restore of a sheet reads it ── */
-  const MANUAL_METALS = ["gold10k", "gold14k"], MC_MIN = 0.8, MC_MAX = 1.2, MC_TURN = 15, MC_SNAP_PT = 1, MC_STALE = 90000, MC_BEAT = 30000;
+  /* MCEVERY (Paul, 25 Nov 2026: "When clicking into a sheet inside the library, you need to give users an option to click manual control kind of like we already have in 14K sheets ... click on
+     any given charm size it up and down, rotated it and position it anywhere on a sheet. We DO NOT need the ability to move orders between sheets"). Manual Control is on every metal's sheet
+     (MC_METALS); what is 10K / 14K's own stays theirs (MANUAL_METALS: the green line that follows the charms, goldOpen / goldAfter, and the hop to another sheet, charm-nest-sheet-hop.js).
+     The one lock is the same: the laser cut it (laserCut). A piece that has shipped stays where it was cut (mcLocked). */
+  const MANUAL_METALS = ["gold10k", "gold14k"], MC_METALS = ["gold", "silver", "rose", "gold10k", "gold14k"], MC_MIN = 0.8, MC_MAX = 1.2, MC_TURN = 15, MC_SNAP_PT = 1, MC_STALE = 90000, MC_BEAT = 30000;
   /* ZEROGAP (Paul, 27 Oct 2026: "The tolerance should be 0, meaning that as long as the outline of a given charm does not overlap with any other charm around it that should be acceptable.
      Same goes for the edge of the sheet ... unless the actual pixels are overlapping on the cut lines for a given charm then it must be allowed"). A charm placed by hand keeps no clearance from
      its neighbours and no margin from the sheet's edge: the check's grid has none (mcClr(), MC_INSET), and where that half-point grid says no, the verifier decides at the exact pose, pixel by
@@ -5713,6 +5848,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   // (MCLIBRARY, Paul 9 Nov 2026: Manual Control on any 10K / 14K sheet not cut on the laser, from ANY screen: the run's own live sheet where this sorter holds it, else the sheet loaded from
   //  its saved record (mcStandalone), so a sheet opened from the Library, on a station without its run, after the run closed, or recalled onto the cards, is moved by hand all the same)
   const mcLive = () => (W.id ? mcRunSheet(W.id) || mcStandalone() : null);
+  /* (MCEVERY: a GF / SS / RG sheet this page does not hold is loaded from its record only when Manual Control is pressed: its window opening, sitting idle or drawing its switch reads
+     nothing more (a Rose Gold sheet's stock was read once for its picture, RGWINDOW; loading the sheet for Manual Control reads it again). A 10K / 14K sheet is loaded as before. */
+  const mcLiveQuiet = () => { const rec = W.rec; if (!W.id || !rec || MANUAL_METALS.includes(rec.metal) || MC.on || MC.claiming || mcRunSheet(W.id) || (STAND.id === W.id && STAND.ready && STAND.sh)) return mcLive(); return null; };
+  /** (MCEVERY) Why a sheet not loaded yet cannot start Manual Control, from its record alone ("" = press it): the laser's mark, another screen's claim. */
+  function mcCheapWhy(rec) {
+    if (laserCut(null, rec)) return LASER_CUT_WORDS;
+    const lock = rec && rec.manualEdit;
+    if (lock && lock.tab && lock.tab !== MC_TAB && Date.now() - (+lock.at || 0) < MC_STALE) return `${lock.by || "Someone"} is moving this sheet's charms by hand on another screen. One person at a time: try again once they are done.`;
+    return "";
+  }
   const mcApproved = sh => { const sets = (window.Sets && Sets.ofRun && Sets.ofRun(sh.runId)) || []; return !!(+sh.laserDoneAt > 0 || sh.laserSetPending || sh.processReady || sets.some(s => (s.sheetIds || []).includes(sh.sheetId) && (s.committedAt || s.processReady || +s.laserDoneAt > 0 || s.laserSetPending))); };
   /* GOLDEDIT (Paul, 27 Oct 2026: "I already requested that the users should be able to add and remove charms from 10 K and 14 K gold sheets even after the green cut line has been approved and even
      after the entire sheet has been approved. This must be allowed to happen until such time a sheet has been cut on a laser and marked as cut by the user at which point a sheet is locked and could
@@ -5727,7 +5872,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       check (its claim and its flow are its own); o.api: CNManual's (no record, no window). */
   function mcBlock(sh, rec, o = {}) {
     const metal = (sh && sh.metal) || (rec && rec.metal) || "";
-    if (!MANUAL_METALS.includes(metal)) return "Manual Control is for 10K and 14K solid gold sheets only.";
+    if (!MC_METALS.includes(metal)) return "Manual Control is not available for this sheet's metal.";
     // (GOLDEDIT, Paul 27 Oct 2026: the laser's mark is the ONE lock; a recorded green line cut is set aside when Manual Control starts, mcToggle -> goldOpen)
     if (laserCut(sh, rec)) return LASER_CUT_WORDS;
     const lock = rec && rec.manualEdit;
@@ -5749,6 +5894,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** Why this one charm stays where it is ("" = it may move). */
   function mcLocked(sh, c) {
     if (!c || !c.bits || !c.w) return "This charm's drawing is not loaded here, so it cannot be checked and stays where it is.";
+    // (MCEVERY: a piece whose order shipped is on the metal that was cut: it stays where it is, on every metal)
+    { const r = W.rec, m = r && r.shippedOut; if (m && c.poolId && m[c.poolId]) return "This piece has shipped: it stays where it was cut."; }
     // (GOLDEDIT: on a 10K / 14K sheet a charm inside a green line moves too: the line follows the charms and is drawn again, goldAfter. Another metal's saved line keeps its charms, as before)
     if (sh && !MANUAL_METALS.includes(sh.metal) && sh.roseProtected && (sh.roseProtected.placements || []).some(p => p.id === c.id)) return "This charm is inside a saved green line: it stays where the line was drawn.";
     return "";
@@ -5980,7 +6127,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     mcVerify({ sheet: E.sheet, clearancePt: E.clearancePt, others: [] }, c, q);
   }
   function mcWarm(sh, focus) {
-    const Sv = SV(); if (!sh || !MANUAL_METALS.includes(sh.metal) || !Array.isArray(sh.placements) || !Sv || !Sv.verify || !Sv.makeSheetGrid) return;
+    const Sv = SV(); if (!sh || !MC_METALS.includes(sh.metal) || !Array.isArray(sh.placements) || !Sv || !Sv.verify || !Sv.makeSheetGrid) return;
     if (focus) {
       // (the charm in hand: its 15° turns, nearest first)
       const c = focus.c, q = mcDraftOf(focus), a0 = Math.round(normDeg(q.angle) / MC_TURN) * MC_TURN, tok = MC.tok;
@@ -5996,7 +6143,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const MCC = new WeakMap();
   const mcClashSig = sh => JSON.stringify([mcClr(), MC_INSET, mcCornerPt(sh), sh.placements.map(p => [p.id, +p.cxPt, +p.cyPt, +p.angle, +p.scale || 1]), sh.charms.map(c => [c.id, sizeOf(c), !!c.bits])]);
   function mcSheetClash(sh) {
-    if (!sh || !MANUAL_METALS.includes(sh.metal) || !Array.isArray(sh.placements) || !sh.placements.length) return [];
+    if (!sh || !MC_METALS.includes(sh.metal) || !Array.isArray(sh.placements) || !sh.placements.length) return [];
     const sig = mcClashSig(sh);
     const hit = MCC.get(sh); if (hit && hit.sig === sig) return hit.ids;
     const res = mcClashes(sh, null, null), ids = [...res].filter(([, w]) => w).map(([id]) => id);
@@ -6009,13 +6156,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (MC.on && MC.sh === sh) return [...(MC.bad || [])];
     // (FOLLOWTRUST, Paul 15 Nov 2026: a 14K sheet read "6 charms overlap" on the computer that follows the run while the cloud's record of it is verified clean): a sheet shown from the cloud, not changed here, is as its record says; it is not judged again on this computer
     if (sh.followed && !sh.dirty && sh.verification && sh.verification.ok === true) return [];
-    if (!MANUAL_METALS.includes(sh.metal) || !(sh.charms || []).some(c => c && c.manual)) return [];
+    if (!MC_METALS.includes(sh.metal) || !(sh.charms || []).some(c => c && c.manual)) return [];
     return mcSheetClash(sh);
   }
   /** The stage's note while charms overlap: "N charms overlap". */
   function mcWarn() {
     const n0 = W.el && W.el.mcWarn; if (!n0) return;
-    const sh = W.dlg && W.dlg.open ? mcLive() : null, n = sh ? (tryDo(() => sheetClashes(sh)) || []).length : 0;
+    const sh = W.dlg && W.dlg.open ? mcLiveQuiet() : null, n = sh ? (tryDo(() => sheetClashes(sh)) || []).length : 0;
     const html = n ? `<span><b>${n} charm${n === 1 ? " overlaps" : "s overlap"}</b> <small>${MC.on && MC.sh === sh ? "· red until moved clear; the sheet cannot be cut while any do" : "· this sheet cannot go to the laser until they are moved clear in Manual Control"}</small></span>` : "";
     if (n0.hidden !== !n) n0.hidden = !n;
     if (n0.dataset.n !== String(n) || n0.innerHTML !== html) { n0.dataset.n = String(n); n0.innerHTML = html; }
@@ -6108,9 +6255,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /* ── the switch, the bar, the tool ── */
   function mcButton() {
     const b = W.el && W.el.manual; if (!b) return;
-    const rec = W.rec, show = !!rec && MANUAL_METALS.includes(rec.metal);
+    const rec = W.rec, show = !!rec && MC_METALS.includes(rec.metal);
     if (b.hidden !== !show) b.hidden = !show; if (!show) return;
-    const why = MC.on || MC.claiming ? "" : mcBlock(mcLive(), rec);
+    const quiet = MC.on || MC.claiming ? null : mcLiveQuiet();
+    const why = MC.on || MC.claiming ? "" : quiet || MANUAL_METALS.includes(rec.metal) ? mcBlock(quiet, rec) : mcCheapWhy(rec);   // (MCEVERY: a GF / SS / RG sheet not loaded yet: its record says)
     const title = MC.on ? "Manual Control is on: press a charm to move it, turn it or resize it. Press here again when you are done: the sheet is checked and saved, its files and QR label made again"
       : MC.claiming ? "Starting Manual Control…" : why || "Manual Control: move, turn and resize this sheet's charms by hand";
     // (written only when it changes: the window's flights watch that nothing in it is drawn again while they run)
@@ -6120,6 +6268,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     { const n = MC.on && !MC.wait ? movedCount() : 0, u = n ? `· ${n} unsaved` : ""; if ((b.getAttribute("data-unsaved") || "") !== u) { if (u) b.setAttribute("data-unsaved", u); else b.removeAttribute("data-unsaved"); } }
     if (b.classList.contains("busy") !== MC.claiming) b.classList.toggle("busy", MC.claiming);
     tryDo(mcWarn);   // (MCFREE)
+    tryDo(zoomUi);   // (MCZOOM: the plate's zoom, there while Manual Control is on)
   }
   function mcSay(text, tone) {
     if (!MC.on) { if (text && !swNote(W.el.manual, { text })) toast(text, tone === "bad" ? "bad" : "", 6000); return; }
@@ -6191,6 +6340,28 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      re-rendered check, the report and the preview at the paths it had, its .pdf copied again), with no run needed. The laser's mark still refuses it, here and on the server. ── */
   const STAND = { id: "", key: "", sh: null, ready: false, why: "", tries: 0, at: 0, tok: 0 };
   /** The sheet of the run open on this screen, unless it is only a recalled card (its pieces are not on the page: its record is the sheet). */
+  /** (HOPLIVE) A sheet built here from its record (CharmNestCloudSheets.ensureLive) only when it then holds EVERY charm its record lays out. One built short (a design that could not be read here)
+   *  is put back as the record it was: never edited here, never a sheet to drop onto, since writing it would drop the charms it lacks. → true when it is held whole. */
+  async function liveWhole(id) {
+    const CS = window.CharmNestCloudSheets, pg = allSheets().find(p => p.sheetId === id); if (!CS || typeof CS.ensureLive !== "function" || !pg) return false;
+    if (!pg.recalled && (pg.charms || []).length) return true;
+    const keep = { recalled: pg.recalled, charms: pg.charms, placements: pg.placements, status: pg.status, followed: pg.followed, dirty: pg.dirty, problem: pg.problem };
+    let rec = null; try { rec = (await api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 })).sheet; } catch (_) { rec = null; }
+    const want = (rec && Array.isArray(rec.placements) ? rec.placements : []).map(q => String(q.id)); if (!want.length) return false;
+    try { await CS.ensureLive(id); } catch (e) { console.warn("sheet window: build " + id, e && e.message); }
+    const have = new Set((pg.placements || []).map(q => String(q.id))), ids = new Set((pg.charms || []).map(c => String(c.id)));
+    const whole = !pg.recalled && want.every(x => have.has(x) && ids.has(x));
+    if (!whole) { Object.assign(pg, keep); console.warn(`sheet window: ${id} was not built whole here (${have.size} of ${want.length} charms); it stays as its record`); }
+    return whole;
+  }
+  /** (HOPLIVE) The run's other 10K / 14K sheets of this metal, built here one after another while Manual Control is on, then the hop's docks drawn again. One cut on the laser is not built. */
+  async function hopLive(sh) {
+    const CS = window.CharmNestCloudSheets; if (!CS || typeof CS.ensureLive !== "function" || !sh || !MANUAL_METALS.includes(sh.metal)) return;
+    const todo = allSheets().filter(p => p !== sh && p.sheetId && p.recalled && !(p.charms || []).length && p.metal === sh.metal && (p.runId || null) === (sh.runId || null) && !laserCut(p, p.recalled));
+    let n = 0;
+    for (const p of todo) { if (!MC.on || MC.sh !== sh) return; try { if (await liveWhole(p.sheetId)) n++; } catch (e) { console.warn("sheet window: a sheet to move charms onto", e && e.message); } }
+    if (n && MC.on && MC.sh === sh) tryDo(() => window.SheetHop && SheetHop.refresh());
+  }
   function mcRunSheet(id) {
     const p = allSheets().find(q => q.sheetId === id) || null;
     return p && p.recalled && !(p.charms || []).length ? null : p;
@@ -6205,7 +6376,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** The sheet loaded from its saved record (see above), once its stock and green line are read; null meanwhile (mcStandWhy says why). */
   function mcStandalone() {
     const rec = W.rec, id = W.id;
-    if (!rec || rec.id !== id || !MANUAL_METALS.includes(rec.metal)) return null;
+    if (!rec || rec.id !== id || !MC_METALS.includes(rec.metal)) return null;
     // (the one Manual Control holds: kept while it is on, so the window read again meanwhile never changes the sheet under it)
     if (MC.sh && MC.sh._standalone && MC.sh.sheetId === id && (MC.on || MC.claiming)) return MC.sh;
     if (!W.geom) return null;
@@ -6349,6 +6520,22 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   async function mcToggle(o0) {
     if (MC.claiming && !MC.on) return;   // (MOVEINSTANT 2: on, the toggle always ends it, even while a carried-to sheet is still being claimed)
     if (MC.on) return mcOff();
+    /* HOPLIVE (Paul, 25 Nov 2026: "When I'm in manual mode inside the 10k 14K ... sheets I can't seem to move charms between sheets. I used to have an option to drag a charm onto a new sheet, but
+       now that option doesn't seem to work because the available sheets are not showing"). Since FASTOPEN / NODISK (23 Nov) a computer builds only the sheet it looks at in the Nest tab, so a 10K /
+       14K sheet opened from the Library was edited from its record alone (MCLIBRARY) and the run's other sheets of its metal, the hop's sheets to drop onto, were none of them held here. Manual
+       Control on a 10K / 14K sheet first makes it a sheet this page holds (CharmNestCloudSheets.ensureLive, as an opened draft is: openDrafts), the window draws it again and Manual Control starts
+       by itself; the run's other sheets of the metal are built behind it (hopLive) and the hop's docks come back. A sheet that cannot be built here is edited from its record, as before. */
+    if (!(o0 && o0.livened) && W.rec && MANUAL_METALS.includes(W.rec.metal) && !mcRunSheet(W.id) && !laserCut(null, W.rec) && window.CharmNestCloudSheets && typeof CharmNestCloudSheets.ensureLive === "function" && allSheets().some(p => p.sheetId === W.id)
+      && allSheets().some(p => p.sheetId && p.sheetId !== W.id && p.metal === W.rec.metal && (p.runId || null) === (W.rec.runId || null) && !laserCut(p, p.recalled))) {   // (only when its run has another sheet of the metal to move charms onto)
+      const id = W.id; MC.claiming = true; mcButton(); mcSay("Getting this sheet and its run's other sheets ready to move charms between them…", "");
+      let ok = false; try { ok = await within(liveWhole(id), 120000, "it was not ready in two minutes") && !!mcRunSheet(id); } catch (e) { console.warn("sheet window: live sheet", e && e.message); }
+      MC.claiming = false; mcButton();
+      if (!W.dlg || !W.dlg.open || W.id !== id) return;
+      if (!ok) return mcToggle(Object.assign({}, o0 || {}, { livened: true }));   // (not built here: its record is edited, as before; no sheets to move charms onto)
+      W.mcAfterOpen = id; return open(id, { keepWork: true, keepSet: false });   // (drawn again as this page now holds it; geometryReady starts Manual Control)
+    }
+    // (MCEVERY: a GF / SS / RG sheet is loaded from its record now, its stock and green line read once; the press waits for that read, then starts)
+    if (!(o0 && o0.read)) { const s0 = mcLive(); if (!s0 && STAND.prep) { MC.claiming = true; mcButton(); mcSay("Reading this sheet's saved stock and green line…", ""); try { await within(STAND.prep, 25000, "it was not read in 25 seconds"); } catch (_) {} MC.claiming = false; mcButton(); if (W.dlg && W.dlg.open) return mcToggle(Object.assign({}, o0 || {}, { read: true })); return; } }
     const sh = mcLive(), why = mcBlock(sh, W.rec);
     // (STUCKSHEET, Paul 25 Oct 2026: "I can't seem to manipulate this sheet by switching it to manual control": a sheet owed a write, with nothing writing it, is written now AS IT
     //  STANDS (the page's writeAsPlaced: no search, every charm where it is), then Manual Control can be taken as usual)
@@ -6379,6 +6566,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     stopHand(true); if (W.add) closeAdd();
     if (backFace()) turnPlate("front");   // (the tool works on the sheet as it lies, face up)
     Object.assign(MC, { on: true, sh, id: sh.sheetId, who, sel: null, lift: null, drag: null, edits: new Map(), valid: null, msg: "", tone: "", owed: new Set() });
+    if (MANUAL_METALS.includes(sh.metal) && !sh._standalone) tryDo(() => hopLive(sh));   // (HOPLIVE: the run's other sheets of the metal, to drop charms onto)
     MC.from = new Map(sh.placements.map(p => [p.id, mcPoseOf(sh, p.id, null)]));
     for (const x of W.pieces) { const q = MC.from.get(x.id); if (q) mcShow(x, q); }   // (drawn as this sorter holds them)
     const restored = tryDo(() => mcDraftRestore(sh)) || 0;   // (MCINSTANT: moves a reload left unsaved here, back)
@@ -6424,6 +6612,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     cancelAnimationFrame(MC.spring); MC.spring = 0; MC.springBad = false; clearInterval(MC.beat); clearTimeout(MC.msgT);
     if (MC.keyRun) { clearTimeout(MC.keyRun.t); MC.keyRun = null; }   // (NUDGEFAST: turned off with a run of arrows unchecked: the sheet's own check reads the placements as they are saved)
     MC.on = false; MC.sel = null; MC.lift = null; MC.drag = null; MC.valid = null; MC.G = null; MC.grids.clear(); MC.msg = "";
+    if (W.pan) panEnd(); W.space = false; tryDo(resetView);   // (MCZOOM: the whole sheet again)
     MC.bad = new Set(); MC.badWhy = new Map(); if (W.el.plateBox) W.el.plateBox.style.cursor = ""; tryDo(mcToolPaint); tryDo(mcWarn);   // (MCFREE)
     if (W.el.plate) { W.el.plate.classList.remove("manual", "mcDrag"); W.el.fx.style.cursor = ""; }
     mcRender(); mcButton();
@@ -6539,7 +6728,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function mcBox(x) {
     const p = x.p, c = x.c, k = W.k, d = W.dpr, s = p.scale || 1;
     const hw = ((c && +c.widthPt) || p.wPt / s) / 2 * s * k + 5 * d, hh = ((c && +c.heightPt) || p.hPt / s) / 2 * s * k + 5 * d;
-    const a = (+p.angle || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a), X = plateX(p.cxPt), Y = W.R + p.cyPt * k;
+    const a = (+p.angle || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a), X = plateX(p.cxPt), Y = OY() + p.cyPt * k;
     const at = (lx, ly) => [X + lx * ca - ly * sa, Y + lx * sa + ly * ca];
     return { X, Y, corners: [at(-hw, -hh), at(hw, -hh), at(hw, hh), at(-hw, hh)], top: at(0, -hh), knob: at(0, -hh - 22 * d), bottom: at(0, hh), knobBelow: at(0, hh + 22 * d) };   // (MCFREE: knobBelow, the knob's place when there is no room above)
   }
@@ -6660,13 +6849,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (NOMCBAR: with the bar gone, Ctrl/⌘ + Z is its "Put back": the charm in hand goes back where it stood when Manual Control was turned on)
     if (MC.sel && !MC.drag && !MC.spring && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && String(e.key).toLowerCase() === "z") { e.preventDefault(); mcPutBack(); return true; }
     const x = MC.sel; if (!x || MC.drag || MC.spring || e.altKey || e.ctrlKey || e.metaKey) return false;   // (Alt + Shift + ← / → is the sheet hop's: the charm onto the next sheet)
-    const st = e.shiftKey ? MC_NUDGE_BIG : MC_NUDGE, mv = { ArrowLeft: [-st, 0], ArrowRight: [st, 0], ArrowUp: [0, -st], ArrowDown: [0, st] }[e.key];   // (NUDGE: 0.05 mm, Shift 1 mm)
+    /* (NUDGE: 0.05 mm, Shift 1 mm. MCZOOM, Paul 25 Nov 2026: "shift + keyboard arrows, and just keyboard arrows movement for very fine adjustment of positioning especially when zoomed in":
+        zoomed, an arrow moves the charm one screen pixel's worth (never more than 0.05 mm, never less than 0.005 mm) and Shift + arrow ten of them) */
+    const zz = zoomed() ? W.zv.z : 1, fine = zz > 1.0001 ? Math.max(0.005 * MM_PT, Math.min(MC_NUDGE, (W.dpr || 1) / W.k)) : MC_NUDGE;
+    const st = e.shiftKey ? (zz > 1.0001 ? fine * 10 : MC_NUDGE_BIG) : fine, mv = { ArrowLeft: [-st, 0], ArrowRight: [st, 0], ArrowUp: [0, -st], ArrowDown: [0, st] }[e.key];
     const turn = { "[": -MC_TURN, "]": MC_TURN, "{": -1, "}": 1 }[e.key], grow = { "+": .01, "=": .01, "-": -.01, "_": -.01 }[e.key];
     if (grow && frozenWhy(x.c)) { e.preventDefault(); mcSay(frozenWhy(x.c), "bad"); return true; }   // (CUSTOMPOOL: + and − do not size it)
     if (!mv && !turn && !grow) return false;
     e.preventDefault();
     const q = Object.assign({}, mcDraftOf(x));
     if (mv) { q.cxPt = Math.max(0, Math.min(W.st ? W.st.wPt : Infinity, q.cxPt + mv[0])); q.cyPt = Math.max(0, Math.min(W.st ? W.st.hPt : Infinity, q.cyPt + mv[1])); } else if (turn) q.angle = normDeg(Math.abs(turn) === MC_TURN ? Math.round((q.angle + turn) / MC_TURN) * MC_TURN : q.angle + turn); else q.size = clampSize(q.size + grow);
+    if (mv && zoomed()) tryDo(() => keepInView(q));   // (MCZOOM: a charm nudged to the edge of the view takes the view with it)
     if (mv) mcNudge(x, q); else mcApply(x, q);   // (NUDGE: an arrow says nothing: its colour, sage or red, and the stage's "N charms overlap" say it; a held key would stack toasts)
     return true;
   }
@@ -6703,7 +6896,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   function paintManual(ctx) {
     if (!MC.on || !W.geom) return;
-    const d = W.dpr, R = W.R, k = W.k;
+    const d = W.dpr, R = OY(), k = W.k;   // (MCZOOM: R is the sheet's top on the canvas)
     // a charm inside an earlier green line stays: a fine dashed sage line round it says so
     for (const p of (MC.sh && MC.sh.roseProtected && MC.sh.roseProtected.placements) || []) { const x = W.byId.get(p.id); if (!x || x.gone) continue; withPiece(ctx, x, () => { ctx.setLineDash([3 * d, 3 * d]); outlinePath(ctx, x); ctx.strokeStyle = "rgba(95,122,91,.7)"; ctx.lineWidth = d; ctx.stroke(); ctx.setLineDash([]); }); }
     // the charms moved so far wear the Nest tab's pinned dot
@@ -6862,11 +7055,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function mcAdoptStart() {
     if (mcAdoptSync || !window.CNSync || typeof window.CNSync.follow !== "function") return;
     mcAdoptSync = window.CNSync.follow({ name: "mc-adopt", kinds: "s", wild: "", active: () => true, every: () => 0,
-      wants: k => { const id = String(k).slice(2), p = mcRunSheet(id); return !!p && MANUAL_METALS.includes(p.metal); },
+      wants: k => { const id = String(k).slice(2), p = mcRunSheet(id); return !!p && MC_METALS.includes(p.metal); },
       read: (why, keys) => { if (!["keys", "wrote", "dirty"].includes(why)) return; for (const k of keys || []) tryDo(() => mcAdopt(String(k).slice(2))); } });
   }
   async function mcAdopt(id) {
-    const sh = mcRunSheet(id); if (!sh || !MANUAL_METALS.includes(sh.metal) || ADOPT.has(id) || ((MC.on || MC.claiming) && MC.sh === sh)) return 0;
+    const sh = mcRunSheet(id); if (!sh || !MC_METALS.includes(sh.metal) || ADOPT.has(id) || ((MC.on || MC.claiming) && MC.sh === sh)) return 0;
     ADOPT.add(id);
     try {
       const r = await api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 }), rec = r && r.sheet; if (!rec) return 0;
@@ -7182,7 +7375,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (for the tests: the window's state, a point of the sheet on the screen, and where the tool's handles are on the screen)
     _MC: MC,
     _STAND: STAND, _live: () => mcLive(), _adopt: id => mcAdopt(id),   // (MCLIBRARY: the tests read the sheet loaded from its record)
-    _client(xPt, yPt) { const cv = W.el.fx, r = cv.getBoundingClientRect(), s = cv.width / r.width; return [r.left + plateX(xPt) / s, r.top + (W.R + yPt * W.k) / s]; },
+    _client(xPt, yPt) { const cv = W.el.fx, r = cv.getBoundingClientRect(), s = cv.width / r.width; return [r.left + plateX(xPt) / s, r.top + (OY() + yPt * W.k) / s]; },
     // (MCFREE: the handles where they are drawn and taken, kept inside what can be seen of the stage; raw: where they would fall; vis: the stage's visible box; plate: the plate's)
     _tool() { const t = mcTool(); if (!t) return null; const r = W.el.fx.getBoundingClientRect(); return { centre: t.centre, knob: t.knob, corners: t.corners, raw: t.raw, vis: t.vis, plate: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } }; }
   };

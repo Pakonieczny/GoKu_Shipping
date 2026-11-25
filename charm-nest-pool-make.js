@@ -562,9 +562,62 @@
       if (!whole) return null;
       return piece.mirror === true ? (src.mirrors && src.mirrors[i]) || null : whole;
     }
+    /* MULTICHARM (25 Nov 2026, Paul: "The system should be able to identify individual charms in a given illustrator file ... make sure ... the multi pieces are respected and correctly processed identified
+       and tracked throughout the system process flow"): a custom order's file may draw several charms, and each of its pieces is ONE of them, which one kept on its pool row (customIndex: the bridge's
+       CustomSheet.prepare and the cloud's _charmNestCustomMake.js). A piece made again from its file (a sheet put back on a page, the cloud's nest, its sheet's writer, its engraving) comes here through the
+       file's master reading (masterCharm), which folds every charm of a file into the largest: the whole file, for every piece. customBodies reads the file again as the card read it (CustomSheet.read:
+       every closed outline its own charm, loose ink within reach of a piece part of it, its hoops joined) and the piece is cut from charm customIndex exactly, never from a size or a hash (two charms of
+       the same size are told apart). A file of one charm, and a piece that names no charm (made before this), are cut as before. */
+    const customIndexOf = (rec, piece) => {
+      const at = r => { const v = r && typeof r === "object" ? r.customIndex : null; return v != null && v !== "" && Number.isInteger(+v) && +v >= 0 && +v < 10000 ? +v : null; };
+      const row = rec && rec.poolId != null && B && B.pool && B.pool.rows ? B.pool.rows.get(String(rec.poolId)) : null;
+      for (const r of [rec, piece, row]) { const v = at(r); if (v != null) return v; }
+      return null;
+    };
+    // (only a custom order's own upload is read so: a library master is never cut by a piece's index, whatever a stale record says)
+    const customSrc = src => { if (!src) return false; if (src.custom === true) return true; let p = String((src.cloud && (src.cloud.path || src.cloud.url)) || ""); try { p = decodeURIComponent(p); } catch (_) { /* as it is */ } return /(?:^|\/)charmnest\/(?:sandbox\/)?custom\//i.test(p); };
+    const customBodies = src => !customSrc(src) ? Promise.resolve(null) : src.customChecked ? Promise.resolve(src.customCharms) : once(src, "custom", () => traceCustom(src));
+    async function traceCustom(src) {
+      src.customCharms = null;
+      try {
+        if (src.custom === true && Array.isArray(src.charms) && src.charms.length > 1) return (src.customCharms = src.charms);   // (the card's own source, CustomSheet.sourceOf: one charm per outline already)
+        // (the file read afresh from its bytes: the master reading's grouping is folded in place, so it is not read twice)
+        const parsed = src.bytes && src.bytes.length ? await P.parseSource(src.bytes, `${src.sku || "custom"}.pdf`) : src.parsed;
+        if (!parsed) return null;
+        const g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +S.settings.minPt || 6 });
+        for (const m of g.orphans || []) {
+          if (!m.bbox) continue;
+          const c = g.charms.find(c => { const b = c.bbox, pad = 2; return m.bbox[0] >= b[0] - pad && m.bbox[1] >= b[1] - pad && m.bbox[2] <= b[2] + pad && m.bbox[3] <= b[3] + pad; });
+          if (c && !c.members.includes(m)) c.members.push(m);
+        }
+        for (const c of g.charms) { const r = P.integrateRings(c); if (r.left.length) throw new Error("a hoop could not join its piece — " + r.left[0]); }
+        await P.buildSilhouettes(parsed, g.charms, +S.settings.silhouetteRes || 6);
+        const charms = g.charms.filter(c => !c.open); if (charms.length < 2) return null;
+        const one = src.charms[0] || {};
+        charms.forEach((c, i) => Object.assign(c, { id: `${src.id}:c${i}`, sourceId: src.id, sourceName: src.name, index: i, name: one.name, sku: src.sku, namedBy: one.namedBy, excluded: false, cloud: one.cloud || null, upAngle: null, engravable: false, backKeepOut: null, custom: true, customIndex: i }));
+        src.customParsed = parsed;
+        return (src.customCharms = charms);
+      } catch (e) { src.customCharms = null; agent({ pool: true }, "warn", `${src.sku || "a custom design"}: its charms could not be read one by one (${e.message}) — a piece of it is cut as before`); return null; }
+      finally { src.customChecked = true; }
+    }
+    /** The charm a custom piece naming charm `ci` of its file is cut from (its mirror image for the mirrored ear of a pair, made once). Throws when the file has no such charm: never another. */
+    async function customBase(src, own, ci, piece) {
+      const body = own[ci]; if (!body) throw new Error(`its design has no charm ${ci + 1} (the file has ${own.length})`);
+      if (!piece || piece.mirror !== true) return body;
+      return once(src, "cmirror" + ci, async () => {
+        if (src.customMirrors && src.customMirrors[ci]) return src.customMirrors[ci];
+        const Pair = win.CharmNestPair, geo = Pair && Pair.pieceGeometry ? Pair.pieceGeometry(body, { side: "R", bodyIndex: 0, mirror: true }) : null;   // (CustomSheet.mirroredOf: the Right of one body twice)
+        if (!geo || geo === body) throw new Error("the mirrored (right-hand) piece cannot be made: charm-nest-pair.js has no pieceGeometry");
+        const made = Object.assign({}, body, geo, { id: `${src.id}:c${ci}m`, mirror: true }); delete made.frontAt; made.pinned = null;
+        await P.buildSilhouettes(src.customParsed || src.parsed, [made], +S.settings.silhouetteRes || 6);
+        (src.customMirrors || (src.customMirrors = {}))[ci] = made;
+        return made;
+      });
+    }
     /** baseFor, making what it needs: the bodies of a recovered source, and the mirrored charm (CharmNestPair.pieceGeometry: the outline and art
         reflected about the body's own vertical axis, its silhouette traced again) once per body and source. Throws when a mirrored charm cannot be made. */
     async function ensureBase(src, piece, rec) {
+      { const ci = customIndexOf(rec, piece); if (ci != null) { const own = await customBodies(src); if (own && own.length > 1) return customBase(src, own, ci, sidedPiece(piece) ? piece : null); } }   // (MULTICHARM: one charm of a custom file of several, exactly)
       if (!sidedPiece(piece)) return (rec && await soloBase(src, rec)) || src.charms[0];   // (`rec`, the piece's stored record, may say it is ONE body of the design: soloBase)
       await splitBodies(src);
       // (TAKEOVERSAFE2, Paul 14 Nov 2026: "Yes, fix resume first"): an ear of a pair of TWO designs (a Tennis Ball Left, a Tennis Racket Right) is cut from its own design's one body, body 0, as the pool cuts it (ear2 above); its records keep the pair's numbering (the Right is body 1),

@@ -328,7 +328,7 @@
     const back = K.back(), k = W.k, a = .55 + .35 * Math.sin((now || performance.now()) / 260);
     for (const z of d.unit.pieces) {
       const p = z.p; if (!p) continue;
-      ctx.save(); ctx.translate(W.R + (back ? W.st.wPt - p.cxPt : p.cxPt) * k, W.R + p.cyPt * k); if (back) ctx.scale(-1, 1); ctx.rotate((+p.angle || 0) * Math.PI / 180);
+      ctx.save(); ctx.translate((W.ox != null ? W.ox : W.R) + (back ? W.st.wPt - p.cxPt : p.cxPt) * k, (W.oy != null ? W.oy : W.R) + p.cyPt * k);   // (MCZOOM: the view's origin) if (back) ctx.scale(-1, 1); ctx.rotate((+p.angle || 0) * Math.PI / 180);
       charmPath(ctx, z.c, k, radiusOf(z.c, p)); ctx.fillStyle = "#fffefb"; ctx.lineWidth = 3 * W.dpr; ctx.strokeStyle = "#fffefb"; ctx.fill("evenodd"); ctx.stroke();
       ctx.setLineDash([4 * W.dpr, 3 * W.dpr]); ctx.lineWidth = 1.3 * W.dpr; ctx.strokeStyle = d.nope ? `rgba(176,86,63,${a})` : `rgba(169,130,63,${a})`; ctx.stroke();
       ctx.restore();
@@ -474,8 +474,9 @@
   const tf = (L, x, y, rot, s, m) => `translate3d(${x - L.size / 2}px,${y - L.size / 2}px,0) rotate(${rot}deg) scale(${s * (m || 1)},${s})`;
   /** Where a pose of the window's sheet is on the screen (its centre, css px), and the plate's scale. */
   function plateAt(K, p) {
-    const W = K.W, r = W.el.fx.getBoundingClientRect(), kc = W.k / W.dpr, R = W.R / W.dpr, back = K.back();
-    return { x: r.left + R + (back ? W.st.wPt - p.cxPt : p.cxPt) * kc, y: r.top + R + p.cyPt * kc, kc };
+    // (MCZOOM, 25 Nov 2026: the sheet window's zoomed view draws the sheet's corner at W.ox, W.oy; unzoomed they are its ruler offset, W.R)
+    const W = K.W, r = W.el.fx.getBoundingClientRect(), kc = W.k / W.dpr, RX = (W.ox != null ? W.ox : W.R) / W.dpr, RY = (W.oy != null ? W.oy : W.R) / W.dpr, back = K.back();
+    return { x: r.left + RX + (back ? W.st.wPt - p.cxPt : p.cxPt) * kc, y: r.top + RY + p.cyPt * kc, kc };
   }
   /** Where a pose of a dock's sheet is on the screen, and the dock's scale. */
   const dkScale = dk => { const r = dk.cv.getBoundingClientRect(); return dk.st && r.width ? r.width / dk.st.wPt : 0; };

@@ -100,12 +100,14 @@
       return null;
     } catch (e) { warn('a row', e); return null; }
   }
+  /** The pieces a line is in the list: its quantity, or for a custom line sent its pieces from its card, the pieces it was sent (MULTICHARM, 25 Nov 2026: spec.customPieces, the bridge's interpretAll). */
+  const qtyOfRow = r => +((r && r.spec && r.spec.customPieces > 0 && r.spec.customPieces) || (r && r.spec && r.spec.quantity) || (r && r.line && r.line.quantity) || 1) || 1;
   /** A small copy of the order for the list (what a row of the Completed list shows), from its lines in the pull. */
   function snapOf(rows) {
     const list = (rows || []).filter(r => r && r.order); if (!list.length) return null;
     const o = list[0].order;
     return { buyer: String((o.buyer && o.buyer.name) || ''), shipBy: +o.shipBy || 0, createTs: +o.createTs || 0,
-      lines: list.slice(0, 12).map(r => ({ key: String(r.key || ''), sku: String((r.spec && r.spec.designSku) || (r.line && r.line.sku) || ''), title: String((r.line && r.line.title) || '').slice(0, 160), qty: +((r.spec && r.spec.quantity) || (r.line && r.line.quantity) || 1) || 1, material: String(r.material || '') })) };
+      lines: list.slice(0, 12).map(r => ({ key: String(r.key || ''), sku: String((r.spec && r.spec.designSku) || (r.line && r.line.sku) || ''), title: String((r.line && r.line.title) || '').slice(0, 160), qty: qtyOfRow(r), material: String(r.material || '') })) };
   }
   const rank = f => f.src === 'timeline' ? 3 : f.src === 'label' ? 2 : 1;
   function learn(rid, fact, rows) {
@@ -218,7 +220,7 @@
   const PAGE = 60;
   const W = { host: null, nodes: new Map(), limit: PAGE, drawn: '' };
   function rowHtml(e, live) {
-    const s = e.snap || {}, lines = live && live.length ? live.map(r => ({ sku: (r.spec && r.spec.designSku) || (r.line && r.line.sku) || '', title: (r.line && r.line.title) || '', qty: +((r.spec && r.spec.quantity) || (r.line && r.line.quantity) || 1) || 1 })) : s.lines || [];
+    const s = e.snap || {}, lines = live && live.length ? live.map(r => ({ sku: (r.spec && r.spec.designSku) || (r.line && r.line.sku) || '', title: (r.line && r.line.title) || '', qty: qtyOfRow(r) })) : s.lines || [];
     const buyer = live && live[0] && live[0].order && live[0].order.buyer && live[0].order.buyer.name || s.buyer || '';
     const first = lines[0] || null, more = lines.length - 1, pieces = lines.reduce((n, l) => n + (+l.qty || 1), 0);
     return `<div class="cmpId"><span class="queueLabel">Order</span><b class="mono onum">${esc(e.rid)}</b>${buyer ? `<span class="cmpBuyer">${esc(buyer)}</span>` : ''}</div>`

@@ -1990,6 +1990,12 @@ const Orders = window.Orders = (() => {
       // its designs carry no back to engrave; a line with pieces of its own goes on like any other
       if (window.CustomSheet && CustomSheet.sentOf(row) && !row.spec.customDone) {
         row.problems = []; row.spec.engraveCandidate = false; const m0 = CustomSheet.metalOf(row); if (m0) row.spec.material = m0;
+        /* MULTICHARM (25 Nov 2026, Paul: "this order has to be treated as an order with multiple pieces ... correctly processed identified and tracked throughout the system process flow"): the line is
+           the pieces its card sent it, not its Etsy quantity (a file of three charms on a quantity-1 line is three pieces): that count is the line's own (spec.pieceCount, which every reader counts by:
+           CharmNestOrders.pieceCountOf; spec.customPieces for the readers that count the Etsy quantity first: the order window, Completed), pinned as a pooled line is (O.pinPieces, as Pool.pinPooled
+           pins it once its pieces are made: the line is not made a group of pieces), from the send on, with no "pooled as N pieces" note (the count is the person's, not a shortfall).
+           An earring pair keeps its Left + Right count (the pair's own rule; its send is checked against it, notReady). */
+        { const n = CustomSheet.piecesOf(row), sp0 = row.spec; if (n > 0 && !(sp0.pair && sp0.pair.earring === true)) { sp0.customPieces = n; O.pinPieces(sp0, n); delete sp0.pieceNote; } }
         if (CustomSheet.piecesOf(row) && !row.hold && !(row.poolIds || []).length && ["held", "unmatched", "oversize", "noDesign"].includes(row.state)) { row.state = "pulled"; row.reason = null; }
       }
       window.Engrave?.putAwayNever?.(row);     // (NO EARRING IS EVER ENGRAVED, ZODNOBACK: an engraving job still open on an earring line, from an earlier reading or session, is put away as "no engraving")
@@ -17964,6 +17970,38 @@ const CustomSheet = window.CustomSheet = (() => {
   const metalOf = k => METALS.find(m => m.key === k) || null;
   const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
   const safe = s => String(s || "design").replace(/[^\w.\-]+/g, "_").slice(0, 60);
+  /* MULTICHARM (25 Nov 2026, Paul: "Ability to add several charms at once in one .ai file. The system should be able to identify individual charms in a given illustrator file and then add all of them to
+     that particular order"; "the file is the whole order — one piece per charm in it, whatever the order line's quantity — BUT the users should still be able to manually change the quantity of EACH charm
+     inside the popup modal"). A file dropped on the card that draws several charms starts at one piece of each charm; each charm's count is kept on its file, F.charmQty { "0": n, "1": n, ... } (a map, never
+     an array inside the files' array: Firestore), 0 leaving that charm out. A file of ONE charm keeps F.qty as before (the lines' quantity: an order for 2 of one design still makes 2). A file read before
+     this (no charmQty) and a monogram's design are sent exactly as they always were. */
+  const multiFile = F => !!F && !F.mono && (+F.pieces || 0) > 1 && !!F.charmQty && typeof F.charmQty === "object" && !Array.isArray(F.charmQty);
+  /** How many pieces of charm i of a file to cut: its own count in a file of several charms, else the file's count. */
+  const charmQtyOf = (F, i) => { if (!multiFile(F)) return Math.max(1, Math.round(+F.qty || 1)); const v = F.charmQty[String(i)]; return v == null ? 1 : Math.max(0, Math.min(99, Math.round(+v) || 0)); };
+  /** The pieces a file makes: the sum of its charms' counts, or (one charm, or a file read before MULTICHARM) its charms times its count. */
+  const filePieces = F => { if (!F) return 0; if (!multiFile(F)) return (+F.pieces || 0) * (+F.qty || 1); let n = 0; for (let i = 0; i < +F.pieces; i++) n += charmQtyOf(F, i); return n; };
+  /** A file just read: one of several charms (not a monogram's) starts at one piece of each charm, whatever the lines' quantity; a file of one charm keeps the count it was dropped with. */
+  const startCounts = (F, n) => { if (!F.mono && n > 1 && !(F.charmQty && typeof F.charmQty === "object")) { F.charmQty = {}; for (let i = 0; i < n; i++) F.charmQty[String(i)] = 1; F.qty = 1; } return F; };
+  /** The words a file is logged with: "ring.ai × 2", or for one of several charms "ring.ai: 3 pieces (charm 1 × 2, charm 3 × 1)". */
+  const fileWords = F => !multiFile(F) ? `${F.name} × ${F.qty}` : `${F.name}: ${filePieces(F)} piece${filePieces(F) === 1 ? "" : "s"} (${Array.from({ length: +F.pieces }, (_, i) => [i, charmQtyOf(F, i)]).filter(([, q]) => q > 0).map(([i, q]) => `charm ${i + 1} × ${q}`).join(", ")})`;
+  /** The pieces each open line of the card is sent: { lineKey: [{ f, i }] }. countOf(F): the charms read in the file. A file of one charm (or read before MULTICHARM, or a monogram's) goes as it always
+   *  did: copy q of it, all its charms, on line q of the card in turn (a monogram's on its own line). A file of several charms: copy q is every charm with more than q pieces to cut, and each piece goes
+   *  on the next line in turn (one line: every piece on it); on an earring-pair card a copy stays whole on one line (its Left and its Right together, as earsOf reads them). */
+  function planLines(files, rows, countOf, pairCard) {
+    const lines = {}; for (const r of rows) lines[r.key] = [];
+    for (const F of files) {
+      const n = Math.max(0, Math.round(+countOf(F) || 0)), many = multiFile(F) && n > 1, each = i => (many ? charmQtyOf(F, i) : Math.max(1, Math.round(+F.qty || 1)));
+      const own = (F.mono && rows.find(x => x.key === F.mono.line)) || null;
+      let most = 0; for (let i = 0; i < n; i++) most = Math.max(most, each(i));
+      for (let q = 0, k = 0; q < most; q++) {
+        const set = []; for (let i = 0; i < n; i++) if (each(i) > q) set.push(i);
+        if (many && !own && !pairCard) { for (const i of set) lines[rows[k++ % rows.length].key].push({ f: F.id, i }); }
+        else { const r = own || rows[q % rows.length]; for (const i of set) lines[r.key].push({ f: F.id, i }); }
+      }
+    }
+    return lines;
+  }
+  /* MULTICHARM end */
   function changed() { ver++; try { Session.schedule(); } catch (_) {} redraw(); try { window.CharmNestCloudShare && CharmNestCloudShare.customChanged && CharmNestCloudShare.customChanged(); } catch (_) {} }   // (customChanged: (CLOUDSHARE, Paul 14 Nov 2026: "Do all of these they all must be in the cloud"): the designs dropped here and not sent yet, shared with every computer)
   function redraw() { try { Review.render(); } catch (_) {} try { if (window.OrderWin?.isOpen?.()) OrderWin.paint(); } catch (_) {} if (D.dlg && D.dlg.open) paint(); }
   /** The line keys of every card sent, to the card they went with (read by interpretAll and preparePool). */
@@ -18037,9 +18075,11 @@ const CustomSheet = window.CustomSheet = (() => {
     const bad = e.files.find(F => F.state === "error"); if (bad) return `${bad.name} could not be read — remove it or drop it again`;
     const none = e.files.filter(F => !F.metal); if (none.length) return none.length === 1 ? `Pick the metal for ${none[0].name}` : `Pick a metal for each design (${none.length} have none)`;
     const big = e.files.find(F => tooBig(F)); if (big) return `${big.name} is too big for the ${labelOf(big.metal)} plate`;
+    // (MULTICHARM, 25 Nov 2026: a file of several charms with every count at 0 makes nothing: it is set or removed, never sent as no piece)
+    const empty = e.files.find(F => multiFile(F) && !filePieces(F)); if (empty) return `${empty.name}: every charm in it is at 0 — set how many of each to cut, or remove it`;
     // a pair of earrings needs a left and a right piece for every pair: fewer pieces than that would leave an ear uncut
     const need = needOf(e);
-    if (need.pairs) { const have = e.files.reduce((a, F) => a + F.pieces * F.qty, 0); if (have < need.total) return `This order is ${need.pairs === 2 ? "a pair of earrings" : "pairs of earrings"}: it needs ${plural(need.total, "piece")} (a left and a right for each pair) and the designs make ${have}. Raise how many to cut, or add the other ear's design`; }
+    if (need.pairs) { const have = e.files.reduce((a, F) => a + filePieces(F), 0); if (have < need.total) return `This order is ${need.pairs === 2 ? "a pair of earrings" : "pairs of earrings"}: it needs ${plural(need.total, "piece")} (a left and a right for each pair) and the designs make ${have}. Raise how many to cut, or add the other ear's design`; }
     // PIECES (Paul, 16 Oct 2026): a monogram line of quantity N is N pieces, each approved on its own with ITS design (quantity 1): the card is sent only when every piece has its design, never with a piece left out
     if (need.mono) { const have = e.files.reduce((a, F) => a + (F.pieces || 1) * (F.qty || 1), 0); if (have < need.mono) return `Approve every monogram piece first: ${have} of ${plural(need.mono, "piece")} ${have === 1 ? "has" : "have"} a design on this order`; }
     return "";
@@ -18062,7 +18102,7 @@ const CustomSheet = window.CustomSheet = (() => {
   }
   // the card's own designs only (one card's file being read no longer rebuilds every other custom card, which also
   // dropped the drag state of the card under the pointer)
-  const stamp = it => { const c=cardOf(it), e = c?.e; return [keepStamp(c?.ck || ckOf(it)), busy.get(c?.ck || ckOf(it)) || "", sheetSig(it), e ? e.files.map(F => F.id + F.state + F.metal + F.qty + (tooBig(F) ? "!" : "")).join() + (e.sent ? "s" + e.sent.at + (e.sent.by || "") : e.sendIntent ? "p" + e.sendIntent.at + (e.sendError || "") : "") : ""].join("|"); };
+  const stamp = it => { const c=cardOf(it), e = c?.e; return [keepStamp(c?.ck || ckOf(it)), busy.get(c?.ck || ckOf(it)) || "", sheetSig(it), e ? e.files.map(F => F.id + F.state + F.metal + F.qty + (multiFile(F) ? JSON.stringify(F.charmQty) : "") + (tooBig(F) ? "!" : "")).join() + (e.sent ? "s" + e.sent.at + (e.sent.by || "") : e.sendIntent ? "p" + e.sendIntent.at + (e.sendError || "") : "") : ""].join("|"); };
 
   /* ── reading a design: its PDF (a .dxf read into one), traced as a master's is ── */
   function read(F) {
@@ -18077,16 +18117,17 @@ const CustomSheet = window.CustomSheet = (() => {
       const g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +S.settings.minPt || 6 });
       if (!g.charms.length) throw new Error("no closed cut outline in it — a piece's outline must be a closed black or grey line");
       // loose ink within reach of a piece is part of that piece (as a master's is, Pool.readMasterCharm)
+      let loose = 0;   // (MULTICHARM, 25 Nov 2026: ink within reach of no cut outline is not cut; the window says how many parts, F.loose)
       for (const m of g.orphans) {
         if (!m.bbox) continue;
         const c = g.charms.find(c => { const b = c.bbox, pad = 2; return m.bbox[0] >= b[0] - pad && m.bbox[1] >= b[1] - pad && m.bbox[2] <= b[2] + pad && m.bbox[3] <= b[3] + pad; });
-        if (c && !c.members.includes(m)) c.members.push(m);
+        if (c && !c.members.includes(m)) c.members.push(m); else if (!c) loose++;
       }
       for (const c of g.charms) { const r = P.integrateRings(c); if (r.left.length) throw new Error("a hoop could not join its piece — " + r.left[0]); }
       await P.buildSilhouettes(parsed, g.charms, +S.settings.silhouetteRes || 6);
       const charms = g.charms.filter(c => !c.open);
       if (!charms.length) throw new Error("its outlines are not closed — every piece needs a closed cut line");
-      return { parsed, g, charms };
+      return { parsed, g, charms, loose: loose + (g.charms.length - charms.length) };
     })();
     geo.set(F.id, task); task.catch(() => geo.delete(F.id));
     return task;
@@ -18113,6 +18154,16 @@ const CustomSheet = window.CustomSheet = (() => {
     for (const c of charms) P.drawCharm(ctx, c, tx, s);
     return cv.toDataURL("image/png");
   }
+  /** MULTICHARM (25 Nov 2026): each charm of a file of several, as its row in the window lists them: [{ thumb, wMm, hMm }] in the file's order, drawn once a session from the file's reading and never
+   *  stored; null while the file is read (the window is drawn again with them), [] when it cannot be read (the charms are then listed by number). */
+  const charmViews = new Map();
+  function charmsView(F) {
+    const had = charmViews.get(F.id); if (had) return had.list;
+    const slot = { list: null }; charmViews.set(F.id, slot);
+    read(F).then(({ charms }) => { slot.list = charms.map(c => { const o = outlineBox(c.outline); return { thumb: thumbOf([c], 72), wMm: (o[2] - o[0]) * MM, hMm: (o[3] - o[1]) * MM }; }); })
+      .catch(() => { slot.list = []; }).then(() => { if (D.dlg && D.dlg.open) paint(); });
+    return null;
+  }
   async function ingest(F) {
     ingesting.add(F.id);
     try {
@@ -18122,10 +18173,12 @@ const CustomSheet = window.CustomSheet = (() => {
       if (F.kind === "dxf") { if (!window.CharmNestDXF) throw new Error("the .dxf reader is not loaded — reload the page"); const r = await CharmNestDXF.toPdf(raw, F.name); F.bytes = r.bytes; F.units = r.meta.units; }
       else F.bytes = raw;
       F.hash = await sha256(F.bytes);
-      const { charms } = await read(F);
+      const { charms, loose } = await read(F);
       const bb = charms.reduce((a, c) => { const o = outlineBox(c.outline); return [Math.min(a[0], o[0]), Math.min(a[1], o[1]), Math.max(a[2], o[2]), Math.max(a[3], o[3])]; }, [Infinity, Infinity, -Infinity, -Infinity]);
       Object.assign(F, { pieces: charms.length, wMm: (bb[2] - bb[0]) * MM, hMm: (bb[3] - bb[1]) * MM, thumb: thumbOf(charms, 176),
-        maxPt: Math.max(...charms.map(c => Math.max(c.widthPt || 0, c.heightPt || 0))), minPt: Math.max(...charms.map(c => Math.min(c.widthPt || 0, c.heightPt || 0))), maxAreaPt2: Math.max(...charms.map(c => c.areaPt2 || 0)), state: "ready", error: null });
+        maxPt: Math.max(...charms.map(c => Math.max(c.widthPt || 0, c.heightPt || 0))), minPt: Math.max(...charms.map(c => Math.min(c.widthPt || 0, c.heightPt || 0))), maxAreaPt2: Math.max(...charms.map(c => c.areaPt2 || 0)), loose: loose || 0, state: "ready", error: null });
+      // (MULTICHARM, 25 Nov 2026: "one piece per charm in it, whatever the order line's quantity": a file of several charms starts at one of each; a monogram's design keeps its own count)
+      startCounts(F, charms.length);
       popThumb.add(F.id);
     } catch (err) { F.state = "error"; F.error = String((err && err.message) || err).replace(F.name + ": ", ""); geo.delete(F.id); }
     finally { ingesting.delete(F.id); }
@@ -18204,18 +18257,26 @@ const CustomSheet = window.CustomSheet = (() => {
     try {
       if (F.state !== "ready" || e.files.length !== 1 || e.files[0] !== F || all()[e.ck] !== e) return;
       const need = needOf(e); if (!need.pairs || !F.pieces) return;
-      const qty = Math.max(1, Math.min(99, Math.ceil(need.total / F.pieces))); if (qty !== F.qty) { F.qty = qty; changed(); }
+      const qty = Math.max(1, Math.min(99, Math.ceil(need.total / F.pieces)));
+      // (MULTICHARM: both ears drawn as charms of one file: each charm as many times as the pairs need)
+      if (multiFile(F)) { const each = Object.fromEntries(Object.keys(F.charmQty).map(k => [k, qty])); if (JSON.stringify(each) !== JSON.stringify(F.charmQty)) { F.charmQty = each; F.qty = qty; changed(); } return; }
+      if (qty !== F.qty) { F.qty = qty; changed(); }
     } catch (_) { /* the quantity stays as it was */ }
   }
   function remove(ck, id) {
     const e = all()[ck]; if (!e || e.sent || e.sendIntent || busy.has(ck)) return;
     keepFileRemoved(e.rid, e.files.find(F => F.id === id));   // (KEEPSAVE: a save of this file that is not in the repository yet is switched off with it)
-    e.files = e.files.filter(F => F.id !== id); geo.delete(id); pending.delete(id); arriving.delete(id); popThumb.delete(id);
+    e.files = e.files.filter(F => F.id !== id); geo.delete(id); pending.delete(id); arriving.delete(id); popThumb.delete(id); charmViews.delete(id);
     if (!e.files.length) delete all()[ck];
     changed();
   }
   function setMetal(ck, id, m) { const e = all()[ck]; if (!e || e.sent || e.sendIntent || busy.has(ck)) return; for (const F of e.files) if (id == null || F.id === id) F.metal = m; changed(); }
-  function setQty(ck, id, d) { const e = all()[ck]; if (!e || e.sent || e.sendIntent || busy.has(ck)) return; const F = e.files.find(x => x.id === id); if (!F) return; F.qty = Math.max(1, Math.min(99, (F.qty || 1) + d)); changed(); }
+  // (MULTICHARM, 25 Nov 2026: ci, the charm of a file of several whose own count changes, 0 to 99; without it the file's count, as before)
+  function setQty(ck, id, d, ci) {
+    const e = all()[ck]; if (!e || e.sent || e.sendIntent || busy.has(ck)) return; const F = e.files.find(x => x.id === id); if (!F) return;
+    if (ci != null && multiFile(F)) { const i = Math.round(+ci); if (!(i >= 0 && i < +F.pieces)) return; F.charmQty = Object.assign({}, F.charmQty, { [String(i)]: Math.max(0, Math.min(99, charmQtyOf(F, i) + d)) }); changed(); return; }
+    F.qty = Math.max(1, Math.min(99, (F.qty || 1) + d)); changed();
+  }
 
   /* ── the designs go on their sheets (Release Hold, "Nest it": NESTASK, Paul 23 Nov 2026; it was the Send to Sheet button) ── */
   /** how.from: the button pressed in a window (the order window's Release Hold): the design lifts off it, and the
@@ -18233,7 +18294,7 @@ const CustomSheet = window.CustomSheet = (() => {
   // Only metadata and durable file references cross the API. The original bytes stay in the workspace.
   function cloudRecord(e, phase) {
     const sent=e.sent || e.sendIntent;
-    return {ck:e.ck,rid:String(e.rid),at:e.at || sent.at,phase,files:e.files.map(F=>({id:F.id,name:F.name,kind:F.kind,size:F.size || 0,hash:F.hash || null,cloud:F.cloud?{path:F.cloud.path,url:F.cloud.url}:null,metal:F.metal,qty:F.qty,pieces:F.pieces,wMm:F.wMm || 0,hMm:F.hMm || 0,maxPt:F.maxPt || 0,minPt:F.minPt || 0,maxAreaPt2:F.maxAreaPt2 || 0,state:"ready",thumb:F.thumb || null})),sent:{id:sent.id || `custom-sheet:${e.ck}:${sent.at}`,at:sent.at,by:sent.by || "",lines:sent.lines}};
+    return {ck:e.ck,rid:String(e.rid),at:e.at || sent.at,phase,files:e.files.map(F=>({id:F.id,name:F.name,kind:F.kind,size:F.size || 0,hash:F.hash || null,cloud:F.cloud?{path:F.cloud.path,url:F.cloud.url}:null,metal:F.metal,qty:F.qty,pieces:F.pieces,wMm:F.wMm || 0,hMm:F.hMm || 0,maxPt:F.maxPt || 0,minPt:F.minPt || 0,maxAreaPt2:F.maxAreaPt2 || 0,state:"ready",thumb:F.thumb || null,...(multiFile(F)?{charmQty:Object.assign({},F.charmQty)}:{})})),sent:{id:sent.id || `custom-sheet:${e.ck}:${sent.at}`,at:sent.at,by:sent.by || "",lines:sent.lines}};
   }
   async function saveCloud(e, phase) {
     if (!S.cloud.ok) { e.sendCloudPending=true; return; }
@@ -18306,8 +18367,8 @@ const CustomSheet = window.CustomSheet = (() => {
     const who=e.sendIntent?.by || (how.by && String(how.by).trim()) || employeeName();if(!who){if(!how.recover)open(it,{askName:true,from:cardNode(ck)});return;}
     const rows=e.sendIntent?currentRows(e):openLines(it);
     if(!rows.length || e.sendIntent && rows.length!==Object.keys(e.sendIntent.lines).length){if(!how.recover)toast("The recorded pieces of the order are still loading; retry when the order is available","bad",5000);return;}
-    const files=e.files.slice(), fileSig=JSON.stringify(files.map(F=>[F.id,F.hash,F.metal,F.qty]));
-    const current=()=>owns(e,owner,rows) && e.files.length===files.length && fileSig===JSON.stringify(e.files.map(F=>[F.id,F.hash,F.metal,F.qty]));
+    const sigOf=list=>JSON.stringify(list.map(F=>[F.id,F.hash,F.metal,F.qty,multiFile(F)?F.charmQty:null])),files=e.files.slice(), fileSig=sigOf(files);   // (MULTICHARM: a charm's own count changed under the send is a change too)
+    const current=()=>owns(e,owner,rows) && e.files.length===files.length && fileSig===sigOf(e.files);
     const say=t=>{busy.set(ck,t);redraw();};
     let flying=false,snap=null,holdKey="",nestHold=null,stampHost=null;
     const letGo=()=>{if(holdKey && window.Motion && Motion.carry)Motion.carry(holdKey,0);holdKey="";};
@@ -18318,8 +18379,9 @@ const CustomSheet = window.CustomSheet = (() => {
         if(!F.cloud && S.cloud.ok){say(`Saving ${F.name}…`);F.cloud=await uploadBytes(`charmnest/custom/${e.rid}/${String(F.hash || F.id).slice(0,12)}-${safe(F.name.replace(ACCEPT,""))}.pdf`,F.bytes,"application/pdf",`Saving ${F.name}`);if(!current())return;}
       }
       if(!e.sendIntent){
-        const lines={};for(const r of rows)lines[r.key]=[];
-        for(const F of files)for(let q=0;q<F.qty;q++){const r=(F.mono && rows.find(x=>x.key===F.mono.line)) || rows[q%rows.length],{charms}=await read(F);if(!current())return;for(let i=0;i<charms.length;i++)lines[r.key].push({f:F.id,i});}
+        // (MULTICHARM, 25 Nov 2026: each charm of a file of several its own count of pieces, spread over the card's lines: planLines; a file of one charm as before)
+        const counts=new Map();for(const F of files){const {charms}=await read(F);if(!current())return;counts.set(F.id,charms.length);}
+        const lines=planLines(files,rows,F=>counts.get(F.id) || 0,rows.some(r=>!!pairPlan(r)));
         /* PAIRSEND (Paul, 17 Nov 2026: "only one charm returns to the sheet ... and the other one did not because they were a set of earrings"): one body sent for an earring-PAIR line used to
            make ONE piece, so the Left went on the sheet and the Right never existed. A pair line that is sent exactly one body per pair makes the pair: the same body twice, the Right its
            mirror image (earsOf: "one body twice"). A person who sends both ears, or a count that is not half the pair's, is taken as sent. */
@@ -18397,10 +18459,10 @@ const CustomSheet = window.CustomSheet = (() => {
       }catch(err){console.warn("[sendreleases]",err && err.message);}
       // (a person's press only: a send finished again after a reload, how.recover, is not logged as new work)
       if(!how.recover)try{humanAct("complete",{orderId:String(e.rid),parts:Object.values(lines).reduce((a,l)=>a+l.filter(pc=>!pc.removed).length,0),orders:1,detail:"custom designs sent to the sheets"});}catch(_){}
-      for(const r of rows)TL.line(r,"designSent",{id:`${r.key}.${e.sent.at}`,at:e.sent.at,by:e.sent.by,text:`Custom design${files.length===1?"":"s"} sent to the sheets by ${e.sent.by}: ${files.map(F=>`${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`.slice(0,200),data:{decisionId:e.sent.id,files:files.map(F=>({name:F.name,qty:F.qty,metal:F.metal,pieces:F.pieces})).slice(0,12),pieces:(lines[r.key] || []).length,placed:["pooled","written","committed"].includes(r.state)}});
+      for(const r of rows)TL.line(r,"designSent",{id:`${r.key}.${e.sent.at}`,at:e.sent.at,by:e.sent.by,text:`Custom design${files.length===1?"":"s"} sent to the sheets by ${e.sent.by}: ${files.map(F=>`${fileWords(F)} → ${labelOf(F.metal)}`).join(", ")}`.slice(0,200),data:{decisionId:e.sent.id,files:files.map(F=>({name:F.name,qty:F.qty,metal:F.metal,pieces:F.pieces})).slice(0,12),pieces:(lines[r.key] || []).length,placed:["pooled","written","committed"].includes(r.state)}});
       Session.schedule();await Session.flushNow?.();
       if(nestHold)nestHold.bind(rows.flatMap(r=>r.poolIds || []).filter(id=>!Pool.sheetOf(id)));
-      agent({bridge:true},"POOL",`${e.rid}: custom designs sent to the sheets by ${e.sent.by} — ${files.map(F=>`${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`);
+      agent({bridge:true},"POOL",`${e.rid}: custom designs sent to the sheets by ${e.sent.by} — ${files.map(F=>`${fileWords(F)} → ${labelOf(F.metal)}`).join(", ")}`);
       busy.delete(ck);redraw();stampHost?.remove();stampHost=null;
       if(how.recover)return;
       await keepHold(keepK);   // (the window waits for the save, up to 20 s, then closes; a failure never holds it)
@@ -18658,8 +18720,8 @@ const CustomSheet = window.CustomSheet = (() => {
       const c = Object.assign({}, base, { id: `${src.id}:${poolId}`, pinned: null });
       Object.assign(c, { name: `${rid} · Custom · ${F.name.replace(ACCEPT, "")}${mine.length > 1 ? ` · ${copy}/${mine.length}` : ""}`, custom: true, customCk: e.ck, order: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}),
         orderInfo: { receiptId: rid, transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", copy, quantity: mine.length, form: sp.form, size: sp.size, custom: true, file: F.name },
-        poolId, metal: F.metal, lineKey: row.key, excluded: false, engravable: false, backKeepOut: null });
-      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", material: F.metal, size: null, form: sp.form || null, chain: sp.chain || null, copy, quantity: mine.length, charmHash: c.hash, masterHash: null, aiPath: (F.cloud && F.cloud.path) || null, engrave: false, state: "ready", lineKey: row.key, updateTs: row.order.updateTs, custom: true, customFile: F.name, ...(mineFields || {}) });
+        poolId, metal: F.metal, lineKey: row.key, customIndex: pc.i, excluded: false, engravable: false, backKeepOut: null });
+      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", material: F.metal, size: null, form: sp.form || null, chain: sp.chain || null, copy, quantity: mine.length, charmHash: c.hash, masterHash: null, aiPath: (F.cloud && F.cloud.path) || null, engrave: false, state: "ready", lineKey: row.key, updateTs: row.order.updateTs, custom: true, customFile: F.name, customIndex: pc.i, ...(mineFields || {}) });   // (MULTICHARM, 25 Nov 2026: customIndex, which charm of its file the piece is: the piece is made again from exactly that charm, Pool.ensureBase)
       if (mineFields) Object.assign(c, mineFields);   // side, mirror, bodyIndex, groupKey, groupSize: only a piece of an earring pair carries them
       charms.push(c);
     }
@@ -18674,7 +18736,9 @@ const CustomSheet = window.CustomSheet = (() => {
     if (!p || !p.poolId || !p.aiPath) return null;
     const F = { id: "held:" + p.poolId, name: String(p.customFile || "custom.ai"), bytes: null, cloud: { path: p.aiPath }, metal: p.material || "gold" };
     const { charms } = await read(F);
-    const base = charms.find(c => c && c.hash && String(c.hash) === String(p.charmHash || "")) || (charms.length === 1 ? charms[0] : null);
+    // (MULTICHARM, 25 Nov 2026: a piece that says which charm of its file it is, customIndex, is that charm; else its hash, else a file of one charm)
+    const ci = p.customIndex != null && p.customIndex !== "" && Number.isInteger(+p.customIndex) && +p.customIndex >= 0 ? +p.customIndex : -1;
+    const base = (ci >= 0 && ci < charms.length ? charms[ci] : null) || charms.find(c => c && c.hash && String(c.hash) === String(p.charmHash || "")) || (charms.length === 1 ? charms[0] : null);
     if (!base) return null;
     const id = "cust:held:" + String(p.poolId);
     return Object.assign({}, base, { id: `${id}:${p.poolId}`, pinned: null, sourceId: id, name: `${p.orderId || ""} · Custom · ${F.name.replace(ACCEPT, "")}`, custom: true, order: String(p.orderId || ""), poolId: p.poolId, metal: p.material || F.metal, lineKey: p.lineKey || null, excluded: false, engravable: false, backKeepOut: null });
@@ -18711,8 +18775,8 @@ const CustomSheet = window.CustomSheet = (() => {
   function lit(n, cls, ms = 1100) { if (!n) return; n.classList.remove(cls); void n.offsetWidth; n.classList.add(cls); clearTimeout(n["_" + cls]); n["_" + cls] = setTimeout(() => n.classList.remove(cls), ms); }
   function stripHtml(it) {
     const c = cardOf(it); if (!c || !c.files.length) return "";
-    const byMetal = new Map(); for (const F of c.files) if (F.state === "ready") byMetal.set(F.metal, (byMetal.get(F.metal) || 0) + F.pieces * F.qty);
-    const n = c.files.reduce((a, F) => a + (F.state === "ready" ? F.pieces * F.qty : 0), 0), rid = linesOf(it)[0].order.receiptId;
+    const byMetal = new Map(); for (const F of c.files) if (F.state === "ready") byMetal.set(F.metal, (byMetal.get(F.metal) || 0) + filePieces(F));   // (MULTICHARM: each charm's own count)
+    const n = c.files.reduce((a, F) => a + (F.state === "ready" ? filePieces(F) : 0), 0), rid = linesOf(it)[0].order.receiptId;
     // where the designs stand, in a few words: ready, what is still missing (in amber), or sent, by whom and when
     const decision=decisionOf(linesOf(it)[0]);
     const words = c.sent ? `Sent${decision?.by ? " by " + decision.by : ""}${decision?.at ? " · " + fmtT(decision.at) : ""}` : c.e?.sendIntent ? (c.e.sendError ? "Not on a sheet yet · press Release Hold again" : "Going on the sheets") : c.why || "Ready for a sheet";
@@ -18892,17 +18956,32 @@ const CustomSheet = window.CustomSheet = (() => {
   }
   // the metals, a group of choices: one stop for Tab (the one chosen), the arrows choose within it
   const chips = (sel, data) => { const has = METALS.some(m => m.key === sel); return METALS.map((m, i) => `<button type="button" role="radio" aria-checked="${sel === m.key}" tabindex="${sel === m.key || (!has && !i) ? 0 : -1}" class="cuM${sel === m.key ? " on" : ""}" data-m="${m.key}" ${data} style="--mc:${m.color}" title="${esc(m.long)}"><i></i>${esc(m.label)}</button>`).join(""); };
-  function rowHtml(F) {
-    const big = tooBig(F), err = F.state === "error";
-    const size = F.state === "ready" ? `${F.wMm.toFixed(1)} × ${F.hMm.toFixed(1)} mm · ${plural(F.pieces, "piece")}${F.kind === "dxf" && F.units ? ` · DXF in ${F.units}` : ""}` : "";
-    return `<div class="cuThumb">${F.thumb ? `<img alt="${esc(F.name)}" src="${F.thumb}">` : F.state === "reading" ? '<span class="spin" aria-hidden="true"></span>' : '<span class="x" aria-hidden="true">!</span>'}</div>` +
-      `<div class="cuMeta"><b title="${esc(F.name)}">${esc(F.name)}</b>${F.state === "reading" ? '<span class="dim">Reading the design…</span>' : err ? `<span class="err">${esc(F.error || "could not be read")}</span>` : `<span class="dim">${esc(size)}</span>${big ? `<span class="err">Too big for the ${esc(labelOf(F.metal))} plate</span>` : !F.metal ? '<span class="warn">Pick a metal for it</span>' : ""}`}</div>` +
-      (err ? "" : `<div class="cuMetals" role="radiogroup" aria-label="Metal for ${esc(F.name)}">${chips(F.metal, "")}</div>` +
-        `<div class="cuQty" role="group" aria-label="How many of ${esc(F.name)} to cut" title="How many of this design to cut"><button type="button" data-q="-1" aria-label="Cut one fewer"${F.qty <= 1 ? " disabled" : ""}>−</button><b aria-live="polite">× ${F.qty}</b><button type="button" data-q="1" aria-label="Cut one more"${F.qty >= 99 ? " disabled" : ""}>+</button></div>`) +
-      `<button type="button" class="cuRm" data-rm aria-label="Remove ${esc(F.name)}" title="Remove this design">×</button>`;
+  /* MULTICHARM (25 Nov 2026, Paul: "the users should still be able to manually change the quantity of EACH charm inside the popup modal"): a file of several charms lists each charm under its row, its
+     picture, its number and size, and its own count (0 leaves it out); the row's own count says the pieces the file makes. */
+  function charmsHtml(F) {
+    const views = charmsView(F), n = +F.pieces || 0, out = [];
+    for (let i = 0; i < n; i++) {
+      const v = views && views[i], q = charmQtyOf(F, i), name = `charm ${i + 1} of ${esc(F.name)}`;
+      out.push(`<div class="cuCharm${q ? "" : " off"}"><span class="cuCt">${v && v.thumb ? `<img alt="" src="${v.thumb}">` : views ? "" : '<span class="spin" aria-hidden="true"></span>'}</span>` +
+        `<span class="cuCn">Charm ${i + 1}<i>${v ? `${v.wMm.toFixed(1)} × ${v.hMm.toFixed(1)} mm` : ""}${q ? "" : `${v ? " · " : ""}left out`}</i></span>` +
+        `<span class="cuQty" role="group" aria-label="How many of ${name} to cut"><button type="button" data-q="-1" data-ci="${i}" aria-label="Cut one fewer of ${name}"${q <= 0 ? " disabled" : ""}>−</button><b aria-live="polite">× ${q}</b><button type="button" data-q="1" data-ci="${i}" aria-label="Cut one more of ${name}"${q >= 99 ? " disabled" : ""}>+</button></span></div>`);
+    }
+    return `<div class="cuCharms" role="group" aria-label="How many of each charm in ${esc(F.name)} to cut">${out.join("")}</div>`;
   }
-  // a row redrawn keeps the focus where it was (the metal just chosen with the arrows, the + pressed again and again)
-  const focusOf = host => { const a = document.activeElement; if (!a || a === host || !host.contains(a)) return null; return a.dataset.m ? `[data-m="${a.dataset.m}"]` : a.dataset.q ? `[data-q="${a.dataset.q}"]` : a.hasAttribute("data-rm") ? "[data-rm]" : null; };
+  function rowHtml(F) {
+    const big = tooBig(F), err = F.state === "error", many = F.state === "ready" && multiFile(F);
+    const size = F.state === "ready" ? `${F.wMm.toFixed(1)} × ${F.hMm.toFixed(1)} mm · ${plural(F.pieces, many ? "charm" : "piece")}${F.kind === "dxf" && F.units ? ` · DXF in ${F.units}` : ""}` : "";
+    // (MULTICHARM: ink that lies within reach of no cut outline is not cut: said, never dropped without a word)
+    const loose = F.state === "ready" && +F.loose > 0 ? `<span class="warn">${plural(+F.loose, "part")} of the drawing ${+F.loose === 1 ? "lies" : "lie"} outside every cut outline: not cut</span>` : "";
+    return `<div class="cuThumb">${F.thumb ? `<img alt="${esc(F.name)}" src="${F.thumb}">` : F.state === "reading" ? '<span class="spin" aria-hidden="true"></span>' : '<span class="x" aria-hidden="true">!</span>'}</div>` +
+      `<div class="cuMeta"><b title="${esc(F.name)}">${esc(F.name)}</b>${F.state === "reading" ? '<span class="dim">Reading the design…</span>' : err ? `<span class="err">${esc(F.error || "could not be read")}</span>` : `<span class="dim">${esc(size)}</span>${big ? `<span class="err">Too big for the ${esc(labelOf(F.metal))} plate</span>` : !F.metal ? '<span class="warn">Pick a metal for it</span>' : ""}${loose}`}</div>` +
+      (err ? "" : `<div class="cuMetals" role="radiogroup" aria-label="Metal for ${esc(F.name)}">${chips(F.metal, "")}</div>` +
+        (many ? `<b class="cuQtySum" aria-live="polite">${plural(filePieces(F), "piece")}</b>` :
+        `<div class="cuQty" role="group" aria-label="How many of ${esc(F.name)} to cut" title="How many of this design to cut"><button type="button" data-q="-1" aria-label="Cut one fewer"${F.qty <= 1 ? " disabled" : ""}>−</button><b aria-live="polite">× ${F.qty}</b><button type="button" data-q="1" aria-label="Cut one more"${F.qty >= 99 ? " disabled" : ""}>+</button></div>`)) +
+      `<button type="button" class="cuRm" data-rm aria-label="Remove ${esc(F.name)}" title="Remove this design">×</button>` + (many ? charmsHtml(F) : "");
+  }
+  // a row redrawn keeps the focus where it was (the metal just chosen with the arrows, the + pressed again and again; MULTICHARM: on its own charm)
+  const focusOf = host => { const a = document.activeElement; if (!a || a === host || !host.contains(a)) return null; return a.dataset.m ? `[data-m="${a.dataset.m}"]` : a.dataset.q ? `[data-q="${a.dataset.q}"]${a.dataset.ci != null ? `[data-ci="${a.dataset.ci}"]` : ":not([data-ci])"}` : a.hasAttribute("data-rm") ? "[data-rm]" : null; };
   const refocus = (host, sel) => { if (!sel) return; let b = host.querySelector(sel); if (b && b.disabled) b = host.querySelector("[data-q]:not(:disabled)"); if (b) b.focus({ preventScroll: true }); };
   const addWords = () => { const d = D.dlg, e = D.ck && all()[D.ck], t = d && d.querySelector(".cuAddT"); if (t) t.innerHTML = e && e.files.length ? "Drop more .ai or .dxf files here, or <u>browse</u>" : "Drop the order's .ai or .dxf files here, or <u>browse</u>"; };
   function paint() {
@@ -18929,13 +19008,13 @@ const CustomSheet = window.CustomSheet = (() => {
     for (const F of files) {
       let n = [...list.children].find(x => x.dataset.id === F.id && !x._leaving); const made = !n;
       if (made) { n = el("div", "cuFile"); n.dataset.id = F.id; if (prev) prev.after(n); else list.prepend(n); if (arriving.has(F.id) && !motionOff()) n.classList.add("arriving"); }
-      const sig = [F.state, F.metal, F.qty, F.thumb ? 1 : 0, F.error, locked, tooBig(F)].join("|");
+      const sig = [F.state, F.metal, F.qty, F.thumb ? 1 : 0, F.error, locked, tooBig(F), +F.loose || 0, multiFile(F) ? JSON.stringify(F.charmQty) + ((charmViews.get(F.id) || {}).list ? "v" : "") : ""].join("|");   // (MULTICHARM: a charm's own count, its pictures once drawn)
       if (n._sig !== sig) { const f = focusOf(n); n.classList.toggle("bad", F.state === "error"); n.innerHTML = rowHtml(F); n._sig = sig; n.querySelectorAll("button").forEach(b=>{if(locked)b.disabled=true;}); refocus(n, f); if (F.thumb && ringNext.delete(F.id)) lit(n.querySelector(".cuThumb"), "cuLanded", 1000); }
       if (made && !calm) Motion.grow(n, { ms: 700 });
       prev = n;
     }
     if (!files.length && !list.querySelector(":scope > .cuEmpty")) list.appendChild(el("div", "cuEmpty", `<b>No designs yet</b><span>The order's .ai or .dxf files show here as soon as you drop them</span>`));
-    const ready = files.filter(F => F.state === "ready"), n = ready.reduce((a, F) => a + F.pieces * F.qty, 0), why = notReady(e);
+    const ready = files.filter(F => F.state === "ready"), n = ready.reduce((a, F) => a + filePieces(F), 0), why = notReady(e);
     d.querySelector("#cuSum").innerHTML = busyNow ? `<span class="cuStat"><span class="spin"></span>${esc(busyNow)}</span>` : files.length ? `<b>${plural(files.length, "design")} · ${plural(n, "piece")} to cut</b>${why ? `<span class="warn">${esc(why)}</span>` : ""}` : "";
     // (Release Hold stays where it is, greyed while its designs are not ready, and says why: pressed, the reason lights up)
     const sb = d.querySelector("[data-cu-nest]"); sb.disabled = !!busyNow || sent;
@@ -18979,7 +19058,7 @@ const CustomSheet = window.CustomSheet = (() => {
     list.onclick = ev => {
       const n = ev.target.closest(".cuFile"); if (!n || n._leaving || !D.ck) return; const id = n.dataset.id;
       const m = ev.target.closest("[data-m]"); if (m) { setMetal(D.ck, id, m.dataset.m); return; }
-      const q = ev.target.closest("[data-q]"); if (q) { setQty(D.ck, id, +q.dataset.q); return; }
+      const q = ev.target.closest("[data-q]"); if (q) { setQty(D.ck, id, +q.dataset.q, q.dataset.ci != null ? +q.dataset.ci : null); return; }   // (MULTICHARM: data-ci, the charm of a file of several)
       if (ev.target.closest("[data-rm]")) {
         // the focus goes on to the next design's × (or the one before, or the add box) as the row folds away
         const rows = [...list.children].filter(x => x.classList.contains("cuFile") && !x._leaving), i = rows.indexOf(n), next = rows[i + 1] || rows[i - 1];
@@ -20030,7 +20109,7 @@ const CustomSheet = window.CustomSheet = (() => {
     }, delay || 0);
     return true;
   }
-  return { touched: () => { ver++; redraw(); }, add, remove, send, prepare, heldCharm, sentOf, decisionOf, sending, recover, load, hydrate, applyRemote, askCarrier, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, sheetStamps, sheetSealsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepResumes: () => true, keepViewerResume, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
+  return { touched: () => { ver++; redraw(); }, add, remove, send, prepare, heldCharm, filePieces, planLines, sentOf, decisionOf, sending, recover, load, hydrate, applyRemote, askCarrier, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, sheetStamps, sheetSealsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepResumes: () => true, keepViewerResume, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════
@@ -22257,7 +22336,7 @@ const Review = window.Review = (() => {
     const metals = [...new Set(own ? a.card.files.map(F => metalWords(F.metal)) : a.rows.map(x => metalWords(x.material || x.spec.material)))].filter(Boolean);
     return CNNestAsk.ask({ rid: a.rid, orders: a.orders, metals, print: !!(o && o.print), cannot: no.length && no.every(Boolean) ? no[0] : "",
       pieces: own ? [] : a.rows.map(x => ({ row: x, sku: pickOf(x) || ListMedia.designs(x).join(" + "), facts: [metalWords(x.material || x.spec.material), x.spec.size ? "Size " + x.spec.size : "", partWords(x)] })),
-      files: own ? a.card.files.map(F => ({ thumb: F.thumb, name: F.name, facts: [metalWords(F.metal), F.wMm > 0 ? `${F.wMm.toFixed(1)} × ${F.hMm.toFixed(1)} mm` : "", F.pieces * F.qty > 1 ? F.pieces * F.qty + " pieces" : ""] })) : [] }).then(go => (go ? { go, own, keys, custom } : null));
+      files: own ? a.card.files.map(F => ({ thumb: F.thumb, name: F.name, facts: [metalWords(F.metal), F.wMm > 0 ? `${F.wMm.toFixed(1)} × ${F.hMm.toFixed(1)} mm` : "", CustomSheet.filePieces(F) > 1 ? CustomSheet.filePieces(F) + " pieces" : ""] })) : [] }).then(go => (go ? { go, own, keys, custom } : null));
   }
   /** INSTANT: the lines a press releases read released (or skipped) on this page at the press, while the cloud does it. → back(): as they were. Viewers only (the computer that carries a run makes its pieces up itself). */
   function showReleased(rows, out, who) {

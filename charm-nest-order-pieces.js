@@ -103,6 +103,9 @@
     const countOf = typeof input.countOf === 'function' ? input.countOf : null;
     const countedOf = l => { if (!countOf) return 0; try { return Math.floor(+countOf(l)) || 0; } catch (_) { return 0; } };
     const planOf = l => { if (!pairOf) return null; try { const x = pairOf(l); return Array.isArray(x) && x.length > 1 ? x : null; } catch (_) { return null; } };
+    // MULTICHARM (25 Nov 2026, Paul: "the multi pieces are respected and correctly processed identified and tracked throughout the system process flow"): a custom line sent its pieces from its card is
+    // the pieces it was sent (spec.customPieces, the bridge's interpretAll), more or fewer than its Etsy quantity; every other line as before
+    const customOf = l => Math.max(0, Math.floor(+(l && l.spec && l.spec.customPieces) || 0));
 
     // 1 · the pieces: every copy of every line, then pool rows and sheet entries no line explains (a line lost from the pull)
     const out = [], seen = new Set();
@@ -114,7 +117,7 @@
     // (the order Issues-truth's CharmNestReadiness.pieces counts in, so that "piece 2" is the same piece in the Library's issues panel and here:
     //  lines by the number at the end of their key, a line's copies by their copy number (the number at the end of the pool id; the quantity's missing ones are "<line key>_<n>"))
     for (const l of lines.slice().sort((a, b) => tailNo(a.key) - tailNo(b.key))) {
-      const key = String(l.key || `${rid}_${l.transactionId || ''}`), qty0 = Math.max(1, Math.floor(+((l.spec && l.spec.quantity) || l.quantity) || 1), countedOf(l));
+      const key = String(l.key || `${rid}_${l.transactionId || ''}`), qty0 = customOf(l) || Math.max(1, Math.floor(+((l.spec && l.spec.quantity) || l.quantity) || 1), countedOf(l));
       let plan = planOf(l), glued = false; const wasPlan = plan;
       const ids = [...new Set((Array.isArray(l.poolIds) ? l.poolIds : []).filter(Boolean).map(String))];
       // an OLD record of a mismatched pair (pooled before pairs were tracked) is ONE glued piece per unit that carries both bodies: it is on a sheet whole, with nothing to split.
@@ -284,7 +287,7 @@
     function lineOfRow(r) {
       const sp = r.spec || {}, ln = r.line || {};
       return { key: r.key, receiptId: r.order && r.order.receiptId, form: sp.form || '', transactionId: ln.transactionId, sku: sp.designSku || ln.sku || '', title: ln.title || '', material: r.material || sp.material || r.metal || null,
-        quantity: sp.quantity || ln.quantity || 1, state: r.state, poolIds: r.poolIds || [], hold: r.hold || null, changePending: !!r.changePending, problems: r.problems || [], spec: { noDesign: sp.noDesign, customDone: sp.customDone || null, pieceCount: sp.pieceCount, pair: sp.pair }, reason: r.reason || '', listingId: ln.listingId || '' };
+        quantity: sp.quantity || ln.quantity || 1, state: r.state, poolIds: r.poolIds || [], hold: r.hold || null, changePending: !!r.changePending, problems: r.problems || [], spec: { noDesign: sp.noDesign, customDone: sp.customDone || null, pieceCount: sp.pieceCount, pair: sp.pair, ...(sp.customPieces > 0 ? { customPieces: sp.customPieces } : {}) }, reason: r.reason || '', listingId: ln.listingId || '' };
     }
     /* PERF (Oct 2026): an order's pulled rows were found by reading every row of the page at each ask: 800 × 800 when a surface asks for
        every row (the Orders tab's hold counts). They are indexed by receipt once and the index kept for the rest of the task, while the
@@ -318,7 +321,7 @@
         pools.set(id, Object.assign({}, a, b, { sheetId: GONE.has(b.state) ? (b.sheetId || null) : (b.sheetId || a.sheetId || null) }));
       };
       // (how many copies a line makes: its quantity, or the pieces of an earring pair: a Left and a Right for every unit)
-      const copiesOf = l => { const pl = pairOf(l), n = Math.max(1, Math.round(+l.quantity || 1), countOf(l)); return pl ? Math.max(n, (l.poolIds || []).length, pl.length) : n; };
+      const copiesOf = l => { const pl = pairOf(l), n = Math.max(1, Math.round(+l.quantity || 1), countOf(l), Math.floor(+(l.spec && l.spec.customPieces) || 0)); return pl ? Math.max(n, (l.poolIds || []).length, pl.length) : n; };   // (MULTICHARM: a custom line's sent pieces are looked up too)
       if (mem) for (const l of lines) {
         for (let c = 1; c <= copiesOf(l); c++) { const id = `${l.key}_${c}`, p = mem.get(id); if (p) merge(id, p); }
         for (const id of l.poolIds || []) { const p = mem.get(String(id)); if (p) merge(String(id), p); }
