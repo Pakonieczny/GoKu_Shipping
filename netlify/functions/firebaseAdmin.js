@@ -110,6 +110,56 @@ if (!process.env.CORS_SET) {
   process.env.CORS_SET = "1";   // prevent repeats on warm invokes
 }
 
+/* ─── READMETER (25 Nov 2026: Firestore reads cost ~$60/day; find where they come from) ──────
+   Counts the documents every function reads (DocumentReference.get, Query.get, Transaction.get / getAll,
+   Firestore.getAll), by function, request tag (charmNestLibrary sets its op) and collection, and adds the
+   totals, at most once a minute per warm instance, to ONE document per hour: Ops_Read_Meter/<YYYY-MM-DDTHH>
+   { c: { "<function>|<tag>|<collection>": n }, n: total }. It never changes what a read returns; a failure
+   to count or to save is ignored. Off with READ_METER=off in the environment.                            */
+(function readMeter() {
+  if (global.__readMeter || String(process.env.READ_METER || "").toLowerCase() === "off") return;
+  let F; try { F = admin.firestore; } catch (_) { return; }
+  if (!F || !F.DocumentReference || !F.Query) return;
+  const M = global.__readMeter = { counts: new Map(), total: 0, last: Date.now(), tag: "", busy: false };
+  const fnName = String(process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.FUNCTION_NAME || "local").replace(/^[0-9a-f]{8,}[-_]/i, "").replace(/[^A-Za-z0-9_\-]/g, "_").slice(0, 60);
+  const collOfPath = path => String(path || "").split("/").filter((_, i) => i % 2 === 0).join("/").slice(0, 80) || "?";
+  const collOfQuery = q => { try { const o = q && q._queryOptions; if (!o) return "query"; return (o.allDescendants ? "group:" : "") + (o.collectionId || "?"); } catch (_) { return "query"; } };
+  const collOf = x => (x && typeof x.path === "string" && x.firestore ? collOfPath(x.path) : collOfQuery(x));
+  const add = (coll, n) => {
+    try {
+      const k = `${fnName}|${M.tag || "-"}|${coll}`.replace(/[.\/]/g, "_");
+      M.counts.set(k, (M.counts.get(k) || 0) + n); M.total += n;
+      if (!M.busy && Date.now() - M.last > 60000) flush();
+    } catch (_) { /* never in the way of a read */ }
+  };
+  function flush() {
+    if (!M.counts.size) { M.last = Date.now(); return; }
+    const c = {}, FV = F.FieldValue; let n = 0;
+    for (const [k, v] of M.counts) { c[k] = FV.increment(v); n += v; }
+    M.counts = new Map(); M.last = Date.now(); M.busy = true;
+    const hour = new Date().toISOString().slice(0, 13);
+    try {
+      admin.firestore().collection("Ops_Read_Meter").doc(hour).set({ c, n: FV.increment(n), at: FV.serverTimestamp() }, { merge: true })
+        .catch(() => null).then(() => { M.busy = false; });
+    } catch (_) { M.busy = false; }
+  }
+  const wrap = (proto, name, count) => {
+    const orig = proto && proto[name]; if (typeof orig !== "function" || orig.__metered) return;
+    const w = function () { const args = arguments, self = this; const p = orig.apply(self, args); try { if (p && typeof p.then === "function") p.then(r => { try { count(self, args, r); } catch (_) {} }, () => null); } catch (_) {} return p; };
+    w.__metered = true; proto[name] = w;
+  };
+  const sizeOf = r => (r && typeof r.size === "number" ? Math.max(1, r.size) : 1);   // (an empty query is still charged one read)
+  wrap(F.DocumentReference.prototype, "get", self => add(collOf(self), 1));
+  wrap(F.Query.prototype, "get", (self, a, r) => add(collOf(self), sizeOf(r)));
+  if (F.Transaction) {
+    wrap(F.Transaction.prototype, "get", (self, a, r) => add(collOf(a[0]), sizeOf(r)));
+    wrap(F.Transaction.prototype, "getAll", (self, a, r) => { const list = Array.isArray(r) ? r : []; for (const d of list) add(collOf(d && d.ref), 1); });
+  }
+  if (F.Firestore) wrap(F.Firestore.prototype, "getAll", (self, a, r) => { const list = Array.isArray(r) ? r : []; for (const d of list) add(collOf(d && d.ref), 1); });
+  /** The tag the next reads are counted under (charmNestLibrary: its op). → the tag before. */
+  M.setTag = t => { const was = M.tag; if (t !== undefined) M.tag = String(t || "").replace(/[^A-Za-z0-9_:\-]/g, "_").slice(0, 60); return was; };
+})();
+
 module.exports = admin;
 
 // ~60 functions do `const admin = require("./firebaseAdmin")` and use the
@@ -120,3 +170,5 @@ module.exports.CORS_ORIGINS = CORS_ORIGINS;
 module.exports.CORS_CONFIG  = CORS_CONFIG;
 module.exports.applyBucketCors = applyBucketCors;
 module.exports.DEFAULT_BUCKET  = DEFAULT_BUCKET;
+/** READMETER: the tag the next reads are counted under. meterTag() reads it; meterTag(t) sets it and returns the one before. */
+module.exports.meterTag = t => (global.__readMeter && global.__readMeter.setTag ? global.__readMeter.setTag(t) : "");

@@ -7247,7 +7247,7 @@ exports.worldBump = async () => { PREFIX = ""; FEED_TOUCHED = new Set(); return 
    lines, the run's sheets) are ONE answer (`whole`) and not parts read one after the other: the platform carries 6 MB, and 10 MB of SKU list is 1.6 MB compressed. A caller that takes no gzip has its parts, as before. */
 const pack = res => (!PACK || !res || typeof res.body !== "string" || res.body.length < 1000000 ? res : Object.assign({}, res, { headers: Object.assign({}, res.headers, { "Content-Encoding": "gzip", Vary: "Accept-Encoding" }), body: require("zlib").gzipSync(res.body, { level: 4 }).toString("base64"), isBase64Encoded: true }));
 const PAGE_READS = new Set("optionMapGet aliasGet noDesignGet customGet reviewSettledGet cancelList customSheetGet getOrderDays customPieceList driveGet runList runGet shareGet trayList activityGet sandboxStatus".split(" "));
-exports.handler = async event => { const res = await answer(event); return pack(res); };
+exports.handler = async event => { const was = admin.meterTag ? admin.meterTag() : ""; try { const res = await answer(event); return pack(res); } finally { if (admin.meterTag) admin.meterTag(was); } };   // (READMETER: the op's reads are counted under its name; an in-process call gives the tag back)
 async function answer(event) {
   PACK = event[MARK] !== true && /\bgzip\b/.test(String((event.headers && (event.headers["accept-encoding"] || event.headers["Accept-Encoding"])) || ""));
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: require("./_charmNestAuth").CORS, body: "" };
@@ -7266,6 +7266,7 @@ async function answer(event) {
   if (typeof body.by === "string") { try { body.by = require("./_activityKinds").loginName(body.by); } catch (_) {} }
   PREFIX = body.sandbox === true || body.sandbox === 1 || body.sandbox === "1" ? "Sandbox_" : "";
   MARKED = marked;
+  try { if (admin.meterTag) admin.meterTag((marked ? "cloud:" : "") + String(body.op || "-")); } catch (_) {}   // (READMETER)
   DONE_TOUCH = false; FEED_TOUCHED = new Set(); PLACE_QUIET = false;
   // the Charm Repo's password door (_charmNestRepoAuth.js; plans/repo-protect-1011): its own ops (unlock, the Alert, the download link), then the
   // token every upload / delete / modify of the repository needs. This is the HTTP door only: code that calls OPS in-process is not asked.
