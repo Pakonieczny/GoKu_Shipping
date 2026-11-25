@@ -112,6 +112,8 @@ function afterRead(row, prev, sent) {
   else if (row.spec.ownDesign && !row.spec.customDone && !row.hold && !(row.poolIds || []).length && ["held", "unmatched", "waiting", "oversize"].includes(row.state)) { row.state = "held"; row.reason = O.specialOf && O.specialOf.addOn ? O.specialOf.addOn.wait : row.reason; }
   if (sent && !row.spec.customDone) {
     row.problems = []; row.spec.engraveCandidate = false; if (sent.metal) row.spec.material = sent.metal;
+    // (MULTICHARM, 25 Nov 2026, as the page's interpretAll: the line is the pieces its card sent it, not its Etsy quantity; an earring pair keeps its own Left + Right count)
+    if (sent.pieces > 0 && !(row.spec.pair && row.spec.pair.earring === true) && O.pinPieces) { row.spec.customPieces = sent.pieces; O.pinPieces(row.spec, sent.pieces); delete row.spec.pieceNote; }
     if (sent.pieces && !row.hold && !(row.poolIds || []).length && ["held", "unmatched", "oversize", "noDesign"].includes(row.state)) { row.state = "pulled"; row.reason = null; }
   }
   if (row.materialOverride) { row.spec.material = row.materialOverride; row.problems = row.problems.filter(p => p.kind !== "needsMaterial"); }
@@ -151,7 +153,7 @@ const cut$ = s => !!(s && (+s.laserDoneAt > 0 || +s.roseCutAt > 0));
 function pieceLine(r) {
   const sp = r.spec || {}, ln = r.line || {};
   return { key: r.key, receiptId: r.order && r.order.receiptId, form: sp.form || "", transactionId: ln.transactionId, sku: sp.designSku || ln.sku || "", title: ln.title || "", material: r.material || sp.material || r.metal || null,
-    quantity: sp.quantity || ln.quantity || 1, state: r.state, poolIds: r.poolIds || [], hold: r.hold || null, changePending: !!r.changePending, problems: r.problems || [], spec: { noDesign: sp.noDesign, customDone: sp.customDone || null, pieceCount: sp.pieceCount, pair: sp.pair }, reason: r.reason || "", listingId: ln.listingId || "" };
+    quantity: sp.quantity || ln.quantity || 1, state: r.state, poolIds: r.poolIds || [], hold: r.hold || null, changePending: !!r.changePending, problems: r.problems || [], spec: { noDesign: sp.noDesign, customDone: sp.customDone || null, pieceCount: sp.pieceCount, pair: sp.pair, ...(sp.customPieces > 0 ? { customPieces: sp.customPieces } : {}) }, reason: r.reason || "", listingId: ln.listingId || "" };
 }
 /** The line's sheet facts (what the page's factsOf takes from the line's copies): what a cached reading keeps between builds. A line's own hold, hand and cancel are added fresh at each build. */
 function sheetFactsOf(rid, rows, answer, entryFor, setCut) {

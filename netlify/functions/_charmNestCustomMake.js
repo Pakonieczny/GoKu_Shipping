@@ -101,11 +101,12 @@ function create(o) {
       const fields = ear ? PoolPieces.fieldsOf({ side: ear.side, mirror: ear.mirror, bodyIndex: ear.bodyIndex, groupKey: gk, groupSize: mine.length }) : null;
       const copy = n + 1, poolId = O.poolId(row.order, row.line, copy), name = String(F.name || "").replace(ACCEPT, "");
       const c = Object.assign({}, base, { id: `${src.id}:${poolId}`, pinned: null, name: `${rid} · Custom · ${name}${mine.length > 1 ? ` · ${copy}/${mine.length}` : ""}`, custom: true, customCk: e.ck, order: rid,
-        poolId, metal: F.metal, lineKey: row.key, excluded: false, engravable: false, backKeepOut: null });
+        poolId, metal: F.metal, lineKey: row.key, customIndex: pc.i, excluded: false, engravable: false, backKeepOut: null });
       const g = { widthPt: Math.round((+base.widthPt || 0) * 100) / 100, heightPt: Math.round((+base.heightPt || 0) * 100) / 100, areaPt2: Math.round((+base.areaPt2 || 0) * 10) / 10 };
+      // (MULTICHARM, 25 Nov 2026: customIndex, which charm of its file the piece is, as the page writes it: a piece made again is cut from exactly that charm, charm-nest-pool-make.js ensureBase)
       pools.push(Object.assign({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0 }, +row.frontAt > 0 ? { frontAt: +row.frontAt } : {},
         { transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", material: F.metal, size: null, form: sp.form || null, chain: sp.chain || null, copy, quantity: mine.length, charmHash: c.hash || null, masterHash: null,
-          aiPath: (F.cloud && F.cloud.path) || null, engrave: false, state: "ready", lineKey: row.key, updateTs: row.order.updateTs || null, custom: true, customFile: F.name, customCk: e.ck }, g.areaPt2 > 0 && g.widthPt > 0 && g.heightPt > 0 ? g : {}, fields || {}));
+          aiPath: (F.cloud && F.cloud.path) || null, engrave: false, state: "ready", lineKey: row.key, updateTs: row.order.updateTs || null, custom: true, customFile: F.name, customCk: e.ck, customIndex: pc.i }, g.areaPt2 > 0 && g.widthPt > 0 && g.heightPt > 0 ? g : {}, fields || {}));
       if (fields) Object.assign(c, fields);
       charms.push(c);
     }

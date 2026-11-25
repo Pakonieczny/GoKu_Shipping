@@ -5267,6 +5267,12 @@ function cleanCustomSheet(b) {
     for (const key of ["wMm", "hMm", "maxPt", "minPt", "maxAreaPt2"]) file[key] = Math.max(0, num(f[key]));
     if (typeof f.thumb === "string" && f.thumb.length <= 60000 && /^data:image\/png;base64,/.test(f.thumb)) file.thumb = f.thumb;
     if (typeof f.units === "string") file.units = str(f.units, 60);
+    /* MULTICHARM (25 Nov 2026, Paul: "the users should still be able to manually change the quantity of EACH charm inside the popup modal"): a file of several charms keeps each charm's own count
+       (a map "<charm index>": 0..99, never an array inside the files' array), so the card reads the same after a reload and on every computer. A count that is not one is left out. */
+    if (pieces > 1 && f.charmQty && typeof f.charmQty === "object" && !Array.isArray(f.charmQty)) {
+      const cq = {}; for (const k of Object.keys(f.charmQty).slice(0, 400)) { const i = Number(k), v = f.charmQty[k], n = typeof v === "number" ? v : NaN; if (/^\d{1,5}$/.test(k) && i < pieces && Number.isInteger(n) && n >= 0 && n <= 99) cq[String(i)] = n; }
+      if (Object.keys(cq).length) file.charmQty = cq;
+    }
     files.push(file); ids.set(file.id, file);
   }
   const lines = {}, keys = Object.keys(sent.lines);
@@ -5290,7 +5296,8 @@ function cleanCustomSheet(b) {
 }
 function customSheetEvents(r) {
   return Object.keys(r.sent.lines).map(key => Timeline.clean({ orderId: r.rid, type: "designSent", id: `${key}.${r.sent.at}`, at: r.sent.at, by: r.sent.by, station: "sorter", lineKey: key, transactionId: key.split("_")[1] || "",
-    text: `Custom design${r.files.length === 1 ? "" : "s"} sent to the sheets by ${r.sent.by}: ${r.files.map(f => `${f.name} × ${f.qty} → ${METAL_CODE[f.metal] || f.metal}`).join(", ")}`.slice(0, 200),
+    // (MULTICHARM, 25 Nov 2026: a file of several charms says the pieces it makes, each charm its own count)
+    text: `Custom design${r.files.length === 1 ? "" : "s"} sent to the sheets by ${r.sent.by}: ${r.files.map(f => `${f.charmQty ? `${f.name}: ${Object.values(f.charmQty).reduce((a, n) => a + n, 0)} pieces` : `${f.name} × ${f.qty}`} → ${METAL_CODE[f.metal] || f.metal}`).join(", ")}`.slice(0, 200),
     data: { decisionId: r.sent.id, card: r.ck, files: r.files.map(f => ({ name: f.name, qty: f.qty, metal: f.metal, pieces: f.pieces })).slice(0, 12), pieces: r.sent.lines[key].length }
   }, { source: "sorter" })).filter(Boolean);
 }
