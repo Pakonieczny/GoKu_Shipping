@@ -1760,6 +1760,12 @@ function metalToBadge(label){
       const s = String(raw ?? "");
       return /^\s*SS[-_\s]?187\s*$/i.test(s) ? "GF_187" : s;
     }
+    // GF_187 (and an SS_187 that goes out as GF_187) always carries GF_187's HS code. Any other SKU keeps its HS code.
+    const GF_187_HS = "7113205000";
+    function correctItemHs(sku, hs){
+      return /^\s*(?:SS|GF)[-_\s]?187\s*$/i.test(String(sku ?? "")) ? GF_187_HS : hs;
+    }
+    window.correctItemHs = correctItemHs;
     // Manufacturer postal code: no dash (L4Z1R5)
     function correctManufacturerPostal(raw){ return String(raw ?? "").replace(/-/g, ""); }
 
@@ -1773,6 +1779,10 @@ function metalToBadge(label){
       if (!fix) return;
       const fixed = fix(el.value);
       if (fixed !== el.value) el.value = fixed;
+      if (fix === correctItemSku) {
+        const hsEl = el.closest(".cc-line-item")?.querySelector(".cc_item_hs_tariff_code");
+        if (hsEl) { const hs = correctItemHs(el.value, hsEl.value); if (hs !== hsEl.value) hsEl.value = hs; }
+      }
     });
 
     function buildEtsyDesc(it){
@@ -1844,7 +1854,7 @@ function metalToBadge(label){
     const c = canon.toLowerCase();
     // Silver family
     if (c === "silver" || c === "sterling silver") {
-      return { hs: "7113115000", sku: "GF_187" };
+      return { hs: GF_187_HS, sku: "GF_187" };   // goes out as GF_187, so GF_187's HS code
     }
     // Gold family (Gold, Rose Gold, 10K, 14K, Gold Filled)
     if (c === "gold" || c === "rose gold" || c === "10k" || c === "14k" || c === "gold filled" || c === "rose") {
@@ -1927,12 +1937,13 @@ function metalToBadge(label){
         const canon          = canonFromOrder || canonFromItem;
         const mapped         = mapHsSkuForCanon(canon);
         if (mapped){
-          qHS.value  = mapped.hs;     // 7113205000 for gold-family • 7113115000 for silver-family
+          qHS.value  = mapped.hs;     // 7113205000: GF_187's HS code, for every metal
           qSku.value = mapped.sku;    // GF_187 for every metal
         } else {
           // If nothing detected, keep existing SKU and ensure HS has a sane default
           if (!qHS.value) qHS.value = defaults.hs;
         }
+        qHS.value = correctItemHs(qSku.value, qHS.value);
       })();
 
       const bindRecalc = () => {
@@ -1983,7 +1994,7 @@ function metalToBadge(label){
         // NEW: total item value from the UI field (falls back later if blank)
         value       : Number($(".cc_item_value")?.value || 0),
         origin_country      : ($(".cc_item_origin_country")?.value || "").trim().toUpperCase() || null,
-        hs_tariff_code      : ($(".cc_item_hs_tariff_code")?.value || "").trim() || null,
+        hs_tariff_code      : correctItemHs($(".cc_item_sku")?.value, ($(".cc_item_hs_tariff_code")?.value || "").trim()) || null,
         manufacture_country : ($(".cc_item_manufacture_country")?.value || "").trim().toUpperCase() || null,
         manufacturer_contact       : ($(".cc_item_manufacturer_contact")?.value || "").trim() || null,
         manufacturer_street        : ($(".cc_item_manufacturer_street")?.value || "").trim() || null,
@@ -5456,7 +5467,8 @@ function metalToBadge(label){
         const label  = pickLabelFromShipment(stored);
         if (label.zpl || label.pdf || label.png) return shipmentId;   // already bought: cannot be changed
         const stale  = li => correctItemDescription(li?.description) !== String(li?.description ?? "")
-                          || correctItemSku(li?.sku_code)            !== String(li?.sku_code ?? "");
+                          || correctItemSku(li?.sku_code)            !== String(li?.sku_code ?? "")
+                          || correctItemHs(li?.sku_code, li?.hs_tariff_code) !== li?.hs_tariff_code;
         if (!lines.some(stale)) return shipmentId;
 
         const payload = buildShipmentPayload();
@@ -5465,6 +5477,7 @@ function metalToBadge(label){
             ...li,
             description: correctItemDescription(li?.description),
             sku_code   : li?.sku_code ? correctItemSku(li.sku_code) : undefined,
+            hs_tariff_code: correctItemHs(li?.sku_code, li?.hs_tariff_code),
             manufacturer_postal_code: li?.manufacturer_postal_code ? correctManufacturerPostal(li.manufacturer_postal_code) : undefined
           }));
           if (stored.value != null)  payload.customs.value          = String(stored.value);
@@ -5472,7 +5485,7 @@ function metalToBadge(label){
         }
         const created = await replaceDraftShipment(shipmentId, payload);
         const newId   = String(created?.id || created?.shipment?.id || "");
-        if (!newId) throw new Error("Item description or SKU could not be corrected, label not bought");
+        if (!newId) throw new Error("Item description, SKU or HS code could not be corrected, label not bought");
         pushShipmentId(newId);
         return newId;
       }
