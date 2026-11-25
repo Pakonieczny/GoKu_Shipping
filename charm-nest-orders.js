@@ -1715,7 +1715,13 @@
     return entry.flipOk === false || FLIP_BLOCK.test(text) ? "flip" : "genuine";
   }
   /** The reason an entry may not be CUT, "" when it may (a flip-only block never stops cutting). */
-  const entryBlock = entry => (blockKind(entry) === "genuine" ? String(entry.blocked) : "");
+  /* RELONLY (Paul, 25 Nov 2026, order 4247021823, listing 559716663 "Add on an Extender to your Jewelry (w shipping)": "The app is still incorrectly adding the charm from this particular listing onto
+     the sheets. Please ensure that this listing is never added to a sheet unless manually chosen by the user when releasing the hold"). Its design is held as a blocked SKU is, whatever the master says: never
+     made into a piece, the order waits in Review, and only Release Hold → "Nest it" (row.blockOverride, the person's) puts it on a sheet ("Skip it": no charm). One list, read by the page and the cloud alike. */
+  const RELEASE_ONLY = { "ADD_6663": "Extender add-on (listing 559716663): it goes on a sheet only when Nest it is chosen at Release Hold" };
+  /** The reason a design is held until a person releases it (RELONLY), "" for any other. */
+  const releaseOnly = sku => { try { return RELEASE_ONLY[upSku(sku || "")] || ""; } catch (_) { return ""; } };
+  const entryBlock = entry => (entry && releaseOnly(entry.sku)) || (blockKind(entry) === "genuine" ? String(entry.blocked) : "");
   /** A person's "Release to nesting queue" on a blocked SKU (row.blockOverride = { sku, by, at, skus? }): does it set aside the block of THIS sku? `ov` may be one such object or a list of them. */
   function blockReleased(ov, sku) {
     const k = upSku(sku); if (!ov || !k) return false;
@@ -5448,7 +5454,7 @@
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_WAS, fontNow, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,
-    KNOWN_SKU_NAMES, knownName, namedSku, sameDesign, designFile, FORMS, formOfText, masterForm, lineForm, formClash, siblingsOf, formOfLine, lookalikeRead, entryBlock, blockKind, blockReleased, blockFor,
+    KNOWN_SKU_NAMES, knownName, namedSku, sameDesign, designFile, FORMS, formOfText, masterForm, lineForm, formClash, siblingsOf, formOfLine, lookalikeRead, entryBlock, blockKind, blockReleased, blockFor, releaseOnly, RELEASE_ONLY,
     SIGN_ORDER, skuSign, sharedZodiac, signsInText, signsNamed, zodiacRead,
     SYMBOL_LISTINGS, symbolListing, symbolRead, symbolMember, runesInText, RUNE_NAMES, RUNES_ABSENT, LISTING_DESIGNS, listingDesign,
     NUMBER_LISTINGS, numberListing, numberRead, numberMemberOf, digitsInText, NUMBER_NEVER_WHY,

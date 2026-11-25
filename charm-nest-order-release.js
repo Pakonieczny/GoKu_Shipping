@@ -427,6 +427,8 @@
       return cloudDone(rid, who, cloud, emit, out);
     }
 
+    // (RELONLY, 25 Nov 2026: a line the person skipped at Release Hold that the cloud's run did not hold (no run of it in the cloud) is skipped here too, as the cloud skips it: no charm, no pieces; never made up below)
+    { const say = (opts && opts.say) || {}; for (const r of heldRows) if (say[r.key] && say[r.key].skip === true && r.state !== 'skipped' && !(G.Pool && G.Pool.onSheets && G.Pool.onSheets(r))) Object.assign(r, { state: 'skipped', poolIds: [], hold: null, heldAt: null, holdSeen: false, problems: [], reason: `no charm made: skipped at Release Hold by ${who}` }); }
     /* 1 · the place at the front of the queue, saved before anything else changes (a reload from here on finishes it) */
     const frontAt = resumed ? +rows0.find(r => r.releasing).releasing.at || Date.now() : (cloud && cloud.ok && +cloud.frontAt) || Date.now();   // (RELEASEHOLD: the cloud's front time, so the timeline step below is the cloud's own)
     // (RELEASE, Paul 19 Oct 2026: the press overrides the hold: what these lines still ask is set aside, row.releaseAnyway, and said on the timeline step; kept in the lines' record with the front place just below)
@@ -477,7 +479,7 @@
     const split = splitLines(rid, after.filter(r => r.releasing), new Set([...stay].map(String)), fresh);   // (a pair or line with pieces on a sheet already cut: split, R3)
     const done = ['pooled', 'written', 'labelled', 'committed'];
     // (a line that is never cut, a chain only line or one completed by hand, has nothing to put on a sheet: it is "noDesign" with no pieces, and no reason to stop the release)
-    const unplaced = after.filter(r => !done.includes(r.state) && !(r.state === 'noDesign' && !(r.poolIds || []).length));
+    const unplaced = after.filter(r => !done.includes(r.state) && r.state !== 'skipped' && !(r.state === 'noDesign' && !(r.poolIds || []).length));   // (RELONLY: a line skipped at the press has nothing to place)
     // (RELEASE, Paul 19 Oct 2026: a line with nothing to place, the empty chain, is "noDesign" with no pieces: released as it is, and said; it is no error and nothing is nested for it)
     const awayRows = new Set(aside.away.map(x => x.row)), nothingRows = after.filter(r => awayRows.has(r) && r.releasing && r.state === 'noDesign' && !(r.poolIds || []).length);   // (only the lines the press set aside: a chain only line was never asked)
     const nothingWhy = nothingRows.length ? ([...new Set(aside.away.filter(x => nothingRows.includes(x.row)).map(x => x.why))].join('; ') || 'no design to cut') : '';

@@ -22277,6 +22277,7 @@ const Review = window.Review = (() => {
     // (the piece is in the queue or waits on its engraving) or the order is no longer here. Every question a line still asks (an option, a design, a metal, a size, a block) is set aside by the press and said, never a reason to grey the button: asideOf.)
     for (const rid of new Set(rows.map(r => String(r.order.receiptId)))) if (window.Cancelled && Cancelled.has && Cancelled.has(rid)) return no(`Order ${rid} was cancelled: there is nothing to release.`);
     if (kind === "blockedSku" && p.noOutline) { const a = asideOf(rows); return { how: "anyway", why: "", title: anywayTitle(a, rows), notes: a.notes, away: a.away.length }; }
+    if (kind === "blockedSku" && O.releaseOnly(p.sku)) return { how: "override", why: "", title: `Release the hold: ${upK(p.sku)} is held until a person chooses to nest it. Nest it: ${of} to the front of the queue and onto the next sheet. Skip it: no charm is made.` };   // (RELONLY)
     if (kind === "blockedSku") {
       return { how: "override", why: "", title: `Cut ${upK(p.sku)} although the master blocks it (${p.reason || "blocked"}): ${of} to the front of the queue and onto the next sheet. The block stays in the master; only ${orders === 1 ? "this order sets" : `these ${orders} orders set`} it aside.` };
     }
@@ -22605,7 +22606,7 @@ const Review = window.Review = (() => {
       if (!on && r.why === "This order is no longer in this run.") { if (slot) slot.remove(); return; }
       if (slot) slot.replaceWith(b); else acts.insertBefore(b, acts.firstChild);
       if (it.kind === "blockedSku" && host) { const old = host.querySelector("[data-a=unblock]"); if (old) old.classList.replace("gold", "ghost"); }   // (the decision card has its own "Unblock this SKU": the release is the primary one)
-      else if (it.kind === "blockedSku") {
+      else if (it.kind === "blockedSku" && !O.releaseOnly(it.problem && it.problem.sku)) {   // (RELONLY: a design held until released has no block in the master to take off)
         const u = document.createElement("button"); u.type = "button"; u.className = "btn ghost sm"; u.dataset.rvUnblock = "1"; u.textContent = "Unblock this SKU";
         u.title = "Take the block off this SKU in the master itself (asks for the repo password); every order held on it goes back in line";
         u.onclick = e => { e.stopPropagation(); if (u.disabled) return; u.disabled = true; unblockSku(it).catch(err => toast("Could not unblock it: " + ((err && err.message) || err), "bad", 8000)).finally(() => { u.disabled = false; }); };
@@ -22820,7 +22821,8 @@ const Review = window.Review = (() => {
       c.querySelector("[data-a=nodesign]").onclick = saving(c, async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: p.huggie ? "^" + String(r.line.title).slice(0, 40).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ".*\\(HUGGIE\\)$" : "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: p.huggie ? "by title · Huggie CHARM SET" : "by title" }); answered(it, "decided", "Nothing to cut", { noDesign: true, sku: sku || null }, who); await Orders.loadMaps(true); answeredTake(it); /* (ANSWERED) */ await repoolAll(it); });
       // a SKU blocked in the master (a flip check at indexing, an open outline) held every order of it with no way out but the Master tab: "Unblock this SKU" is that tab's own unblock (the same repo-password guard), then every line of the card goes back in line
       const ub = c.querySelector("[data-a=unblock]");
-      if (ub) ub.onclick = saving(c, () => unblockSku(it));   // (RELTOQ: the same routine as the Review row's button)
+      if (ub && it.kind === "blockedSku" && O.releaseOnly(p.sku || (sp && sp.designSku))) ub.remove();   // (RELONLY: nothing to unblock in the master: Release Hold is the way)
+      else if (ub) ub.onclick = saving(c, () => unblockSku(it));   // (RELTOQ: the same routine as the Review row's button)
       const mb = c.querySelector("[data-a=master]");
       if (mb) mb.onclick = () => {
         const sku = p.sku || (sp && sp.designSku) || "";
