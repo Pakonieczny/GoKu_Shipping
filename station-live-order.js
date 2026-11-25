@@ -94,8 +94,36 @@
     try { const O = ordersLib(); return !!(O && typeof O.lineSignals === "function" && t && typeof t === "object" && O.lineSignals(t).soldAs === "pair"); } catch (_) { return false; }
   }
   const qtyOf = t => Math.max(1, Math.floor(Number(t && (t.quantity != null ? t.quantity : t.__qty))) || 1);
+  /* MULTICHARM (Paul, 25 Nov 2026: a custom order whose one design file holds several charms is an order of several pieces, "correctly processed identified and tracked throughout the system
+     process flow", the stations included). A custom line's pieces are what the sorter made of it (its pool rows), not its Etsy quantity: read once per order from the cloud (charmNestLibrary
+     getOrderPieces, a read; only for a line whose SKU or title says custom; kept a minute), then countOf and the Quantity box say them. Not read, or the read fails: the Etsy quantity, as always. */
+  const CUSTOM = new Map(), CUSTOM_MS = 60000, customLine = t => /custom/i.test(String((t && (t.sku || t.product_data && t.product_data.sku)) || "") + " " + String((t && t.title) || ""));
+  const ridOfT = t => digits(t && (t.receipt_id != null ? t.receipt_id : t.receiptId != null ? t.receiptId : t.typedOrderNumber), 20), txOfT = t => digits(t && (t.transaction_id != null ? t.transaction_id : t.transactionId), 20);
+  function customRead(rid) {
+    const had = CUSTOM.get(rid); if (had && (had.wait || Date.now() - had.at < CUSTOM_MS)) return had;
+    const e = { at: Date.now(), lines: null, wait: null, cbs: [] }; CUSTOM.set(rid, e);
+    e.wait = fetch("/.netlify/functions/charmNestLibrary", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "getOrderPieces", orderId: rid }) })
+      .then(r => (r.ok ? r.json() : null)).then(d => {
+        const pools = (d && d.orders && d.orders[rid] && d.orders[rid].pools) || [], lines = new Map();
+        for (const p of pools) if (p && p.custom === true && !/^(abandoned|superseded)$/.test(String(p.state || ""))) { const x = digits(p.transactionId, 20); if (x) lines.set(x, (lines.get(x) || 0) + 1); }
+        e.lines = lines;
+      }).catch(() => { e.lines = new Map(); }).then(() => { e.at = Date.now(); e.wait = null; const cbs = e.cbs.splice(0); for (const f of cbs) { try { f(); } catch (_) {} } });
+    return e;
+  }
+  /** The pieces the sorter made of a custom line, or 0 while not known (or not a custom line). */
+  function customCount(t) {
+    if (!customLine(t)) return 0; const rid = ridOfT(t), x = txOfT(t); if (!rid || !x) return 0;
+    const e = customRead(rid); return e.lines ? e.lines.get(x) || 0 : 0;
+  }
+  /** "3 pieces" for a custom line the sorter made into more or fewer pieces than its Etsy quantity, else "". */
+  function pieceWord(t) { try { const n = customCount(t); return n > 0 && n !== qtyOf(t) ? n + " pieces" : ""; } catch (_) { return ""; } }
+  /** cb(word) once the cloud has said how many pieces a custom line is (at once when known; never for a line that is not custom). */
+  function whenPieces(t, cb) {
+    try { if (!customLine(t)) return; const rid = ridOfT(t); if (!rid) return; const e = customRead(rid); if (e.lines) return cb(pieceWord(t)); e.cbs.push(() => cb(pieceWord(t))); } catch (_) {}
+  }
   /** how many pieces one line makes: CharmNestOrders.pieceCountOf (the Etsy quantity times what the rules say), else the Etsy quantity as always */
   function countOf(t) {
+    { const c = customCount(t); if (c > 0) return c; }   // (MULTICHARM: a custom line is the pieces the sorter made of it)
     let n = qtyOf(t);
     try { const O = ordersLib(); if (O && typeof O.pieceCountOf === "function") { const c = Math.floor(Number(O.pieceCountOf(t))); if (c >= 1) n = c; } } catch (_) {}
     return n;
@@ -310,5 +338,5 @@
       return r;
     } catch (_) { cur = null; return false; }
   }
-  window.StationLiveOrder = { start, again, batch, sheet, note, end, pieces, units, kind, tag, sides, ears, current: () => (cur ? { kind: cur.kind, rid: cur.rid, title: cur.title, scannedAt: cur.scannedAt } : null) };
+  window.StationLiveOrder = { start, again, batch, sheet, note, end, pieces, units, kind, tag, sides, ears, pieceWord, whenPieces, current: () => (cur ? { kind: cur.kind, rid: cur.rid, title: cur.title, scannedAt: cur.scannedAt } : null) };
 })();
