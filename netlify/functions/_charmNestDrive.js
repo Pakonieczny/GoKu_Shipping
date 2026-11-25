@@ -307,7 +307,7 @@ async function pass(env) {
     //    to start only when the run reached its own "nest" step, so with the run waiting at commit or labels (the Etsy freshness gate) a person's nest never ran. Every pass now starts
     //    the oldest queued job of each free lane and keeps running ones alive (Nest.pumpLanes: one lane per run and metal, as the nest step does). Nothing new is asked here.
     if (cloudSteps.includes("nest") && run.status !== "abandoned" && run.status !== "complete" && !ctlDone.stopped && Date.now() < budgetEnd - PASS_TAIL_MS) {
-      try { const NestQ = require("./_charmNestNest"), live = (await NestQ.jobsOfRun(db, runId)).filter(j => j && (j.status === "queued" || j.status === "running")); if (live.length) { await NestQ.pumpLanes(db, live, { by: "drive" }); out.nestPumped = live.length; } }
+      try { const NestQ = require("./_charmNestNest"), live = await (NestQ.liveJobsOfRun ? NestQ.liveJobsOfRun(db, runId) : NestQ.jobsOfRun(db, runId).then(l => l.filter(j => j && (j.status === "queued" || j.status === "running")))); if (live.length) { await NestQ.pumpLanes(db, live, { by: "drive" }); out.nestPumped = live.length; } }   // (READCUT: only the queued and running ones are read)
       catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; say("[drive] queued nests: " + String((e && e.message) || e).slice(0, 200)); }
     }
     // ── the intake (§1.6 item 5, build step 4): new orders join the run, and behind the gate (C5) become pool pieces, before the run's own step (_charmNestIntake.js; only for "pull" / "pool" in cloudSteps)

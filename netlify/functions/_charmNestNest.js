@@ -164,9 +164,46 @@ async function roseStockOf(db, rec) {
 async function sheetsOfRun(db, runId) { const q = await db.collection(SHEETS).where("runId", "==", runId).get(); return q.docs.map(d => Object.assign({ id: d.id }, d.data() || {})).filter(s => !s.archived); }
 /** The run's nest jobs, their bookkeeping only (a job's result is read by the writer, never by every pass of the driver). */
 const JOB_FIELDS = ["kind", "status", "sheetId", "sheetName", "layoutBase", "contentBase", "lane", "createdMs", "stopRequested", "stopFor", "auto", "slots", "attempt", "inputPath", "error", "preparedMs"];
-async function jobsOfRun(db, runId) {
+/* READCUT (Paul, 25 Nov 2026: "this is costing me about $60 per day … cut down the usage several fold without affecting usability or real time"; Query Insights: this run's
+   `jobs where runId` read ~9,900 documents at every call, 1,758 calls a day, 17.5M of the day's 23M reads). A run keeps every nest it ever asked (each attempt, each revision);
+   a pass needs only the jobs still queued or running, and each sheet's latest job (its record's nestJob: the one nestStart writes in the same transaction that makes the job).
+   So: those, by id, and the live ones by two equality queries (runId + status: single-field indexes, no composite index); about a hundred reads where there were ten thousand.
+   Any failure of the narrow read falls back to the whole list, as before (never a wrong answer, only a dearer one). */
+async function allJobsOfRun(db, runId) {
   const q = db.collection(JOBS).where("runId", "==", runId), s = await (typeof q.select === "function" ? q.select(...JOB_FIELDS) : q).get();
   return s.docs.map(d => Object.assign({ id: d.id }, d.data() || {})).filter(j => j.kind === "nest");
+}
+const LIVE_STATUS = ["queued", "running"];
+/** The run's nest jobs that are queued or running. */
+async function liveJobsOfRun(db, runId) {
+  try {
+    const one = st => { const q = db.collection(JOBS).where("runId", "==", runId).where("status", "==", st); return (typeof q.select === "function" ? q.select(...JOB_FIELDS) : q).get(); };
+    const snaps = await Promise.all(LIVE_STATUS.map(one)), out = new Map();
+    for (const s of snaps) for (const d of s.docs) out.set(d.id, Object.assign({ id: d.id }, d.data() || {}));
+    return [...out.values()].filter(j => j.kind === "nest");
+  } catch (e) {
+    console.warn("[nest] READCUT: the live jobs could not be read narrowly, the whole list is read:", (e && e.message) || e);
+    return (await allJobsOfRun(db, runId)).filter(j => LIVE_STATUS.includes(j.status));
+  }
+}
+/** The run's nest jobs a pass decides from: every live one, and each sheet's latest (sheets: the run's sheet records, read already, or read here). */
+async function jobsOfRun(db, runId, sheets, o) {
+  try {
+    const recs = Array.isArray(sheets) ? sheets : await sheetsOfRun(db, runId);
+    const ids = [...new Set(recs.map(r => r && r.nestJob && r.nestJob.id).filter(isId).map(String))];
+    // (o.sheetIds: sheets whose every job is wanted: an old hold, made before holds kept their revisions, is lifted by ANY person's nest of the sheet that ended done)
+    const whole = [...new Set(((o && o.sheetIds) || []).filter(isId).map(String))].slice(0, 30);
+    const bySheet = id => { const q = db.collection(JOBS).where("sheetId", "==", id); return (typeof q.select === "function" ? q.select(...JOB_FIELDS, "runId") : q).get(); };
+    const [snaps, live, ...each] = await Promise.all([ids.length ? getMany(db, ids.map(id => jobRef(db, id)), JOB_FIELDS) : [], liveJobsOfRun(db, runId), ...whole.map(bySheet)]);
+    const out = new Map();
+    for (const d of snaps) if (d.exists) out.set(d.id, Object.assign({ id: d.id }, d.data() || {}));
+    for (const s of each) for (const d of s.docs) { const j = d.data() || {}; if (j.runId === runId) out.set(d.id, Object.assign({ id: d.id }, j)); }
+    for (const j of live) out.set(j.id, j);
+    return [...out.values()].filter(j => j.kind === "nest");
+  } catch (e) {
+    console.warn("[nest] READCUT: the jobs could not be read narrowly, the whole list is read:", (e && e.message) || e);
+    return allJobsOfRun(db, runId);
+  }
 }
 
 /** What the nest of a sheet is made of, beyond its two revisions (P2): the plate, the physical sheet, the Settings it reads, the protected green-line layout, the gap fill,
@@ -374,5 +411,5 @@ function pinMerge(o) {
 }
 
 module.exports = { start, pumpLanes, keepSlots, ensureSlot, kickSlot, kickDriver, slotsEnded, DEAD_MS, readSettings, readPolicy, stockFor, cornerPt, angleSet, usableArea, inflatedArea, topupRoom, groupOf, planEnv, plateOf,
-  poolRowsOf, roseStockOf, sheetsOfRun, jobsOfRun, inputKeyOf, owedNest, refusal, activeCharms, personPins, pinKeyOf, pinMerge, jobBase, attemptId, seedOf, inputPathOf, jobRef, slotRef,
+  poolRowsOf, roseStockOf, sheetsOfRun, jobsOfRun, liveJobsOfRun, allJobsOfRun, inputKeyOf, owedNest, refusal, activeCharms, personPins, pinKeyOf, pinMerge, jobBase, attemptId, seedOf, inputPathOf, jobRef, slotRef,
   JOBS, SHEETS, POOL, CARRIER, OPEN, CLOUD_DEV, MAX_ATTEMPTS, AUTO_ERROR_ATTEMPTS, MAX_SLOTS, MAX_SLOT_TRIES, CLOUD_CORES, ENDED, DEFAULTS, num, str, isId, sha };

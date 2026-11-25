@@ -294,9 +294,19 @@ async function build(opts) {
 
   /* 5 · the inputs of the reading, from the cloud's own ops */
   let entries = null;
-  { const first = await ops.masterList({ limit: 3000 }), sig = J(first.index || null);
+  /* READCUT (Paul, 25 Nov 2026: Firestore cost; Query Insights: the library read 500 records at a time, ~725 whole readings a day, ~2.6M reads): the build asked for the first 3,000 records BEFORE it
+     compared the library's signature, so even a warm instance holding the library as it stands read it all again every two minutes. The signature alone is read first (masterList limit 1:
+     a count and two one-record reads); then the copy this instance holds, else the library's saved file of that very signature (Storage, no database read), else the whole library side by
+     side (masterNow) and saved for the next build; the old reading in parts only if all of that fails. A copy of another signature is never used. */
+  { const sg = await ops.masterList({ limit: 1 }), sig = J(sg.index || null);
     if (CACHE.masterEntries && CACHE.masterSig === sig && sig !== "null") entries = CACHE.masterEntries;
-    else { entries = (first.entries || []).slice(); let cursor = first.next; for (let i = 0; cursor && i < 20; i++) { const r = await ops.masterList({ limit: 3000, cursor }); entries.push(...(r.entries || [])); cursor = r.next; } CACHE.masterSig = sig; CACHE.masterEntries = entries; } }
+    else {
+      const bucket = bucketOf(opts), kept = await masterKept(bucket, sig);
+      if (kept) entries = kept;
+      else { const quick = await masterNow(db, sg.index).catch(() => null); if (quick) { entries = quick; keepMaster(bucket, sig, quick); } }
+      if (!entries) { const first = await ops.masterList({ limit: 3000 }); entries = (first.entries || []).slice(); let cursor = first.next; for (let i = 0; cursor && i < 20; i++) { const r = await ops.masterList({ limit: 3000, cursor }); entries.push(...(r.entries || [])); cursor = r.next; } }
+      CACHE.masterSig = sig; CACHE.masterEntries = entries;
+    } }
   const M = masterIndex(entries);
   const [om, al, nd, cl, cancels] = await Promise.all([ops.optionMapGet({}), ops.aliasGet({}), ops.noDesignGet({}), ops.customGet({}), ops.cancelList({ idsOnly: true }).catch(e => { errors.push("cancels: " + e.message); return { ids: [] }; })]);
   const maps = { optionMaps: (om && om.maps) || {}, aliases: (al && al.aliases) || {}, noDesign: (nd && nd.list) || { patterns: [], skus: [], rows: [] } };

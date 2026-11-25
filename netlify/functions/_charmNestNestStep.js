@@ -71,7 +71,8 @@ async function nestUnit(ctx) {
 async function nestCore(ctx) {
   const { db, run, runId } = ctx, now = Date.now();
   const [S, policy, sheets] = await Promise.all([Nest.readSettings(db), Nest.readPolicy(db), Nest.sheetsOfRun(db, runId)]);
-  let jobs = await Nest.jobsOfRun(db, runId);
+  const oldHolds = sheets.filter(r => run.sheetHolds && run.sheetHolds[r.id] && !(run.sheetHoldRevs && run.sheetHoldRevs[r.id])).map(r => r.id);   // (HOLDTAKES: an old hold looks at every job of its sheet)
+  let jobs = await Nest.jobsOfRun(db, runId, sheets, { sheetIds: oldHolds });   // (READCUT: the live jobs and each sheet's latest, not every nest the run ever asked)
   // (a hold is written onto the run record only when one changes: run.sheetHolds, which the driver saves with the record; a lifted hold is null, the save merges)
   const holds = run.sheetHolds && typeof run.sheetHolds === "object" ? run.sheetHolds : {}, waits = [], held = [];
   /* HOLDTAKES (Paul, 21 Nov 2026): a hold names the revisions it was made at (run.sheetHoldRevs); a sheet that changed since (pieces placed on it, moved onto it, taken off) is
@@ -112,7 +113,7 @@ async function nestCore(ctx) {
     if (!res || res.status >= 400) { hold(rec.id, `${rec.fileBase || rec.metalLabel || rec.id}: ${str((res && res.error) || "its nest could not be asked", 260)}`); continue; }
     asked++;
   }
-  if (asked) jobs = await Nest.jobsOfRun(db, runId);
+  if (asked) jobs = await Nest.jobsOfRun(db, runId, sheets, { sheetIds: oldHolds });   // (READCUT: a job just asked is queued: the live read finds it)
   // the lanes: one per run and metal; the oldest queued job starts, a running job's slots are kept alive (a slot cut off starts again from its checkpoint)
   const live = jobs.filter(j => LIVE.has(j.status));
   await Nest.pumpLanes(db, live, { by: "drive" });
