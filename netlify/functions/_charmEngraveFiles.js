@@ -187,6 +187,13 @@ const needsFit = (j, l) => !!j && !j.archived && !j.approving && (j.state === "r
    only the editor's artwork keeps no place in its record, so its approval was never taken up. Its place is the artwork itself (artOnly). */
 const wordless = j => !!j && !(Array.isArray(j.lines) ? j.lines : []).join("").trim() && !String(j.text == null ? "" : j.text).trim();
 const needsResume = (j, l) => !!j && !j.archived && !j.approving && j.state === "approved" && num(j.approvedAt) > 0 && !!j.approvedBy && (!!j.place || wordless(j)) && Date.now() - num(l.at) > RESUME_AFTER_MS;
+/* FRONTLIKEBACK (Paul, 25 Nov 2026: "there is no difference between back or front engraving it should be exactly the same"): the parts a person adds to a FRONT in the Charm Editor are that face's
+   engraving, written in its file as a back's are (charm-nest-art-edit.js artFront, charm-nest-pdf.js buildBackFile). A front approved before that change has a file without them (they were drawn in
+   the sheet's drawing, which a sheet drawn again no longer does). Each such approval's file is written again ONCE, from that same approval (its place, its words, its person and time: no new
+   Approve, no new seal), on a sheet not cut yet, and only for a piece whose front the editor drew and that was not edited since it was approved. A piece's state is never moved by it. */
+const FACEART_SINCE = Date.UTC(2026, 10, 28);   // (approvals from before the change reached production; one written by it already carries the parts, and is written again at most once)
+const needsFaceArt = (j, l) => !!j && !j.archived && !j.approving && ["approved", "written"].includes(j.state) && num(j.approvedAt) > 0 && num(j.approvedAt) < FACEART_SINCE && !!j.approvedBy
+  && Faces.faceOf(j) === "front" && (!!j.place || wordless(j)) && Date.now() - num(l.at) > RESUME_AFTER_MS;
 
 async function fitUnit(ctx) {
   if (["stopped", "abandoned", "complete"].includes(ctx.run.status)) return;   // (as the page: the automatic fit runs beside a run that is not stopped; a person's approvals are written whatever the run does)
@@ -204,7 +211,8 @@ async function fitUnit(ctx) {
     if (got.length >= 500) more = true;
     if (num(cur.oneCount) < 1) for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.engrave && !l.engrave.approved) keys.add(k);   // (ONECOUNT: the lines whose copy said "waits" before this rule, looked at once)
     if (num(cur.fontNow) < 2) for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.engrave && !l.engrave.approved) keys.add(k);   // (FONTNOW: the engravings that wait for approval, looked at once)
-    if (num(cur.artLook) < 1) for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.engrave && /"state":"approved"/.test(JSON.stringify(l.engrave))) keys.add(k);   // (ARTAPPROVED: the lines approved before this rule, whose file was never written, looked at once)
+    if (num(cur.artLook) < 1) for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.engrave && /"state":"approved"/.test(JSON.stringify(l.engrave))) keys.add(k);
+    if (num(cur.faceArt) < 1) for (const [k, l] of Object.entries(lines)) if (l && !O.FINISHED_LINE.has(l.state) && l.engrave && /"state":"(?:approved|written)"/.test(JSON.stringify(l.engrave))) keys.add(k);   // (FRONTLIKEBACK: the lines approved before it, looked at once)   // (ARTAPPROVED: the lines approved before this rule, whose file was never written, looked at once)
   }
   const all = [...keys], pending = {};
   for (const k of all.slice(400)) pending[k] = true;   // (more than one read's worth: the rest at the next pass)
@@ -213,10 +221,10 @@ async function fitUnit(ctx) {
   for (const [key, l] of recs) {
     const rec = l.rec; if (!rec || !Array.isArray(rec.jobs)) continue;
     const lineState = (lines[key] || {}).state; if (O.FINISHED_LINE.has(lineState)) continue;
-    const need = rec.jobs.filter(j => needsFit(j, l)), resume = rec.jobs.filter(j => needsResume(j, l)), again = rec.jobs.filter(refontable);
-    if (Date.now() > ctx.budgetEnd) { if (need.length || resume.length || again.length || ((lines[key] || {}).engrave || {}).approved === false) { more = true; pending[key] = true; } continue; }
+    const need = rec.jobs.filter(j => needsFit(j, l)), resume = rec.jobs.filter(j => needsResume(j, l)), again = rec.jobs.filter(refontable), faceArt = rec.jobs.filter(j => needsFaceArt(j, l) && !resume.includes(j));
+    if (Date.now() > ctx.budgetEnd) { if (need.length || resume.length || again.length || faceArt.length || ((lines[key] || {}).engrave || {}).approved === false) { more = true; pending[key] = true; } continue; }
     if (!need.length) { try { await followRecord(ctx, E, key, l); } catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; ctx.say && ctx.say(`[engrave] ${key}: the run's line was not brought up to its record (${String((e && e.message) || e).slice(0, 160)})`); } }   // (ONECOUNT)
-    if (!need.length && !resume.length && !again.length) continue;
+    if (!need.length && !resume.length && !again.length && !faceArt.length) continue;
     const lc = await lineContext(ctx, E, key); if (!lc) continue;
     if (lc.spec && lc.spec.engraveNever) continue;   // (NO EARRING IS EVER ENGRAVED: the reading puts its jobs away, never the fit)
     let changed = false;
@@ -241,6 +249,7 @@ async function fitUnit(ctx) {
       catch (e) { if (e && (e.fenced || e.yielded || e.fatal || e.overBudget)) throw e; ctx.say && ctx.say(`[engrave] ${key}: it keeps the font it was prepared in (${String((e && e.message) || e).slice(0, 160)})`); }
     }
     for (const j of resume) { try { const made = await resumeTask(ctx, E, lc, l, j); if (made === "wait") pending[key] = true; } catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; ctx.say && ctx.say(`[engrave] ${key}: ${e.message}`); } }
+    for (const j of faceArt) { try { await resumeTask(ctx, E, lc, l, j, { faceArt: true }); } catch (e) { if (e && (e.fenced || e.yielded || e.fatal)) throw e; ctx.say && ctx.say(`[engrave] ${key}: the front's file was not written again (${String((e && e.message) || e).slice(0, 160)})`); } }   // (FRONTLIKEBACK)
     if (changed) {
       rec.engrave = lineSummary(E, lc, rec) || rec.engrave;
       const w = await writeLine(ctx, l, rec, `engrave-fit|${key}|${l.rev}`);
@@ -249,7 +258,7 @@ async function fitUnit(ctx) {
     }
   }
   const pend = Object.keys(pending).slice(0, 1500);
-  await ctx.db.runTransaction(async tx => { await fenceTx(ctx, tx); tx.set(cref, { runId: ctx.runId, artLook: 1, oneCount: 1, fontNow: 2, since: newest, pending: Object.fromEntries(pend.map(k => [k, true])), at: Date.now() }); });
+  await ctx.db.runTransaction(async tx => { await fenceTx(ctx, tx); tx.set(cref, { runId: ctx.runId, artLook: 1, oneCount: 1, fontNow: 2, faceArt: 1, since: newest, pending: Object.fromEntries(pend.map(k => [k, true])), at: Date.now() }); });
   return more ? { more: true } : undefined;
 }
 
@@ -284,7 +293,7 @@ async function fitOne(ctx, E, lc, job) {
   const input = { charm: { outline: charm.outline, members: charm.members, bbox: charm.bbox, widthPt: charm.widthPt, heightPt: charm.heightPt, upAngle: charm.upAngle },
     lines: lineInput.slice(), lineMode: job.lineMode || "auto", opts, fontKey: f.fontKey, ...(f.scriptIds.length ? { scriptIds: f.scriptIds } : {}),
     viewOptions: G.viewOptionsFor({ editingBack: false, savedUp: null, charmUp: charm.upAngle, entry, nudged: !!job.nudged, viewUp: undefined, oriented: job.orientVersion === G.ORIENT, turnUp: job.turnUp, ...(front ? { face: "front" } : {}) }),
-    maskOptions: { marginMm: s.engraveMarginMm, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [], ...(!front && Array.isArray(charm.artBack) && charm.artBack.length ? { avoid: charm.artBack } : {}) },
+    maskOptions: { marginMm: s.engraveMarginMm, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [], ...(BF.faceArt(charm, front ? "front" : "back").length ? { avoid: BF.faceArt(charm, front ? "front" : "back") } : {}) },   // (FRONTLIKEBACK: the words keep off a face's added parts, either face)
     ...(keep ? { keep } : {}) };
   let result;
   try { result = require("../../charm-nest-engrave-fit.js").calculate(input, f.fonts, G); }
@@ -377,16 +386,18 @@ function applyAsks(J, F, s, G) {
 /* ═══ 2 · BACK FILES ═════════════════════════════════════════════════════ */
 const taskIdOf = (jobKey, at) => `${String(jobKey).replace(/\//g, "_")}@${Math.round(num(at))}`;
 /** ENGPRE: the task of a job approved before its piece reached a sheet, made when its piece is on one. "wait" while it is not. */
-async function resumeTask(ctx, E, lc, l, job) {
-  const copies = copiesOf(E, lc, job); if (!copies.length) return "wait";
-  for (const id of copies) if (!(await sheetOf(E, id))) return "wait";
-  if (!job.place) { await E.piece.poolRows(copies); if (!wordless(job) || !copies.every(id => { const a = artAtOf(E.piece.rows.get(id), Faces.faceOf(job) === "front" ? "front" : "back"); return a > 0 && a <= num(job.approvedAt) + 2000; })) return "none"; }   // (ARTAPPROVED: only artwork that has not been changed since it was approved)
-  const id = taskIdOf(job.key, job.approvedAt), ref = ctx.db.collection(TASKS).doc(id), now = Date.now();
+async function resumeTask(ctx, E, lc, l, job, opts) {
+  const faceArt = !!(opts && opts.faceArt);   // (FRONTLIKEBACK: a front approved before the change, its file written again once)
+  const copies = copiesOf(E, lc, job); if (!copies.length) return faceArt ? "none" : "wait";
+  for (const id of copies) { const sh = await sheetOf(E, id); if (!sh) return faceArt ? "none" : "wait"; if (faceArt && num(sh.laserDoneAt) > 0) return "none"; }   // (a cut sheet keeps its files as they were cut)
+  if (faceArt) { await E.piece.poolRows(copies); if (!copies.every(id => { const a = artAtOf(E.piece.rows.get(id), "front"); return a > 0 && a <= num(job.approvedAt) + 2000; })) return "none"; }   // (only a front the editor drew, unchanged since its approval)
+  else if (!job.place) { await E.piece.poolRows(copies); if (!wordless(job) || !copies.every(id => { const a = artAtOf(E.piece.rows.get(id), Faces.faceOf(job) === "front" ? "front" : "back"); return a > 0 && a <= num(job.approvedAt) + 2000; })) return "none"; }   // (ARTAPPROVED: only artwork that has not been changed since it was approved)
+  const id = taskIdOf(job.key, job.approvedAt) + (faceArt ? "~fa1" : ""), ref = ctx.db.collection(TASKS).doc(id), now = Date.now();
   return ctx.db.runTransaction(async tx => {
     await fenceTx(ctx, tx);
     const s = await tx.get(ref); if (s.exists) return "had";
     tx.create(ref, { id, runId: ctx.runId, lineKey: l.key, jobKey: job.key, face: Faces.faceOf(job), slot: Faces.parseKey(job.key).slot || null, at: num(job.approvedAt), by: String(job.approvedBy), text: job.text == null ? "" : String(job.text), place: job.place || { artOnly: true, upAngle: null },
-      artAtBy: null, origin: "resume", state: "waiting", stage: "check", copies: null, done: {}, staged: {}, files: {}, sheets: {}, errors: 0, createdAt: now, updatedAt: now, expireAt: new Date(now + 30 * 86400000) });
+      artAtBy: null, origin: "resume", ...(faceArt ? { faceArt: true } : {}), state: "waiting", stage: "check", copies: null, done: {}, staged: {}, files: {}, sheets: {}, errors: 0, createdAt: now, updatedAt: now, expireAt: new Date(now + 30 * 86400000) });
     return "made";
   });
 }
@@ -449,6 +460,7 @@ async function endInvalid(ctx, E, t, why, invalid = true) {
     const l = (await readLines(ctx, [t.lineKey])).get(t.lineKey); if (!l || !l.rec) return { ended: "failed" };
     const job = (l.rec.jobs || []).find(j => j && j.key === t.jobKey); if (!job) return { ended: "failed" };
     if (t.origin === "resume") {
+      if (t.faceArt) return { ended: "failed" };   // (FRONTLIKEBACK: a file written again that could not be made leaves the approval, and the file it had, as they were)
       // (an approval made before its piece reached a sheet, whose file cannot be made as approved: blocked with the reason, for a person to fit again, as the page's writeBacks does)
       if (!invalid || job.state !== "approved" || num(job.approvedAt) !== num(t.at)) return { ended: "failed" };
       job.state = "blocked"; job.reason = why;
@@ -552,8 +564,10 @@ async function oneCopy(ctx, E, t, lc, job, f, poolId, slot, shared) {
     const name = BF.backName(sh.fileBase, face, poolId, num(t.at)), paths = { ai: `${dir}/${face}/${name}.ai`, png: `${dir}/${face}/${name}.png` };
     // (the tokens are kept BEFORE the bytes go up: a pass that dies after an upload finds its file there, under its token, and never uploads it again)
     let plan = t.files && t.files[poolId];
-    if (!plan || !plan.ai || plan.ai.path !== paths.ai || !plan.png || plan.png.path !== paths.png) { plan = { ai: { path: paths.ai, token: uuid() }, png: { path: paths.png, token: uuid() } }; t = await taskPut(ctx, t.id, () => ({ files: { [poolId]: plan }, stage: "files" })); }
-    const [ai, pu] = await Promise.all([upload(ctx, E, plan.ai.path, built.bytes, "application/illustrator", plan.ai.token), upload(ctx, E, plan.png.path, png, "image/png", plan.png.token)]);   // (APPROVENOW: side by side)
+    // (FRONTLIKEBACK: a front's file written again keeps the token its file already has, so every link to it that is kept anywhere stays good; its bytes are written whatever the token)
+    const tokenFor = async p => { if (!t.faceArt) return uuid(); const had = await tokensOf(E.bucket().file(p)); return (had && had[0]) || uuid(); };
+    if (!plan || !plan.ai || plan.ai.path !== paths.ai || !plan.png || plan.png.path !== paths.png) { plan = { ai: { path: paths.ai, token: await tokenFor(paths.ai) }, png: { path: paths.png, token: await tokenFor(paths.png) }, ...(t.faceArt ? { again: true } : {}) }; t = await taskPut(ctx, t.id, () => ({ files: { [poolId]: plan }, stage: "files" })); }
+    const [ai, pu] = await Promise.all([upload(ctx, E, plan.ai.path, built.bytes, "application/illustrator", plan.ai.token, !!plan.again), upload(ctx, E, plan.png.path, png, "image/png", plan.png.token, !!plan.again)]);   // (APPROVENOW: side by side)
     const jobFields = Object.assign({}, job, { text: t.text, lines: R.fit.lines.slice(), face: face === "front" ? "front" : undefined });
     const fr = face === "front" ? { face: "front" } : {}, seal = sealOf(face, num(t.at), t.by);
     const seals = t.origin === "resume" ? Seals.merge(Object.assign({ engravingSeals: job.engravingSeals || [] }, fr), Object.assign({ seals: [seal] }, fr)) : [seal];   // (SEALAFTERSAVE: the approval's own seal; an approval made before (ENGPRE) keeps the job's seals, CNEngravingSeals.keep)
@@ -593,11 +607,11 @@ function pngOf(pic) {
 const dlUrl = (bucketName, p, token) => "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucketName) + "/o/" + encodeURIComponent(p) + "?alt=media&token=" + encodeURIComponent(token);
 async function tokensOf(file) { try { const [meta] = await file.getMetadata(); const t = meta && meta.metadata && meta.metadata.firebaseStorageDownloadTokens; return t ? String(t).split(",").filter(Boolean) : []; } catch (_) { return null; } }
 /** One file up, under the token planned for it; a file already there under that token is not uploaded again. The fence is read again first (C7). */
-async function upload(ctx, E, p, bytes, contentType, token) {
+async function upload(ctx, E, p, bytes, contentType, token, again) {
   if (!/^charmnest\/(?!sandbox\/)/.test(p)) throw new Error("the cloud writes the shop's own files only");
   await fenceCheck(ctx);
   const bucket = E.bucket(), file = bucket.file(p), had = await tokensOf(file);
-  if (had && had.includes(token)) return { path: p, url: dlUrl(bucket.name, p, token), had: true };
+  if (had && had.includes(token) && !again) return { path: p, url: dlUrl(bucket.name, p, token), had: true };   // (again: FRONTLIKEBACK's file written anew under the token it has)
   await file.save(Buffer.from(bytes), { resumable: false, contentType, metadata: { contentType, metadata: { firebaseStorageDownloadTokens: token } } });
   return { path: p, url: dlUrl(bucket.name, p, token) };
 }
@@ -613,7 +627,7 @@ async function poolFlags(ctx, E, t, lc, rec, job, copies) {
   const others = ((rec && rec.jobs) || []).filter(o => o && o.key !== job.key && !o.archived && copiesOf(E, lc, o).some(id => copies.includes(id)));
   const othersDone = others.every(o => ["written", "skipped", "none"].includes(o.state));
   const patch = front ? { engraveFront: true, engraveFrontApprovedBy: t.by } : { engrave: true, engraveApprovedBy: t.by };
-  if (othersDone && t.origin !== "edit") patch.state = "engraved";   // (ITEM 9: an edit of a piece already engraved, cut or packed changes its back only, never its state, as the page's edit)
+  if (othersDone && t.origin !== "edit" && !t.faceArt) patch.state = "engraved";   // (FRONTLIKEBACK: a front's file written again never moves its piece's state)   // (ITEM 9: an edit of a piece already engraved, cut or packed changes its back only, never its state, as the page's edit)
   const live = copies.filter(id => { const p = E.piece.rows.get(id); return !p || !["abandoned", "superseded"].includes(p.state); });
   if (!live.length) return;
   const res = await ctx.call({ op: "poolUpdate", poolIds: live, patch }, `engrave-pool|${t.id}`);
