@@ -8313,10 +8313,12 @@ const Engrave = window.Engrave = (() => {
   /** ENGPRE: such a job whose piece is not even pooled yet (its `copies` are the pool ids it WILL get): it has no pool row, so nothing for it is written to the pool. */
   const virtualJob = job => unplacedPre(job) && !job.copies.some(id => B.pool.rows.has(id));
   /* EDITOR WORDS (Paul, 27 Oct 2026: "If the user adds text or fonts or makes any changes to a charm using the built-in editor, then the system should not force the user to also add text on top of
-     already added text from within the Charm Editor"). A face the charm editor ADDED parts to (charm-nest-art-edit.js: a front's additions are the piece's members, `artAdded`; a back's are its
-     `artBack`) is engraved by those parts, so it may be approved with no words at all. THE one test every rule that asks for words reads (the Approve, the words step, the panel's face switch);
+     already added text from within the Charm Editor"). A face the charm editor ADDED parts to (charm-nest-art-edit.js: its artFront or artBack, the same for both faces since FRONTLIKEBACK) is engraved by those parts, so it may be approved with no words at all. THE one test every rule that asks for words reads (the Approve, the words step, the panel's face switch);
      a face with no art edit keeps every rule it had. `face`: the other face of the same piece. */
-  const faceHasEditorArt = (job, face) => { try { const ch = job && (job.copies || []).length ? charmFor(job) : null; if (!ch) return false; return (face || faceOf(job)) === "front" ? Array.isArray(ch.members) && ch.members.some(m => m && m.artAdded) : Array.isArray(ch.artBack) && ch.artBack.length > 0; } catch (_) { return false; } };
+  /** FRONTLIKEBACK (Paul, 25 Nov 2026: "there is no difference between back or front engraving it should be exactly the same ... The only difference is one is on the front one is on the back"):
+      the parts a person added to a face in the Charm Editor are that face's engraving, the charm's artFront or artBack (charm-nest-art-edit.js), read the same way for both faces. null when none. */
+  const faceArtOf = (charm, front) => { const l = charm && (front ? charm.artFront : charm.artBack); return Array.isArray(l) && l.length ? l : null; };
+  const faceHasEditorArt = (job, face) => { try { const ch = job && (job.copies || []).length ? charmFor(job) : null; if (!ch) return false; return !!faceArtOf(ch, (face || faceOf(job)) === "front"); } catch (_) { return false; } };
   /** The words a face job carries, as lines (none: []). */
   const engravedWords = job => ((job && (job.lineInput && job.lineInput.length ? job.lineInput : job.lines)) || []).map(s => String(s == null ? "" : s).trim()).filter(Boolean);
   /** EDITOR WORDS: the words of a face are only the order's offer, never a person's: none, a proposal still waiting for a person (the words step), or the buyer's whole note put in as it came (what a
@@ -8381,7 +8383,7 @@ const Engrave = window.Engrave = (() => {
       // (the FRONT of a piece is drawn as the charm is, not turned over: backView takes the face, and the keep-out is the master's FRONT KEEP-OUT layer; plans/front-back-1011/CONTRACT.md section 9)
       // (UPRIGHT2, Paul 29 Oct 2026: "Charms must always be shown right side up": a saved back with no angle recorded keeps the ORIGINAL hole rule it was decided with (holeRule 1), never the new one)
       job.view=G.backView(charm,{res:6,upAngle:saved.upAngle ?? charm.upAngle,holeOnly:true,holeRule:1,solidBack:job.solidBack,...(face === "front" ? {face:"front"} : {})});
-      job.mask=G.engraveMask(job.view,{marginMm:S.settings.engraveMarginMm,keepOut:(face === "front" ? charm.frontKeepOut : charm.backKeepOut) || [],...(face !== "front" && charm.artBack?.length ? {avoid:charm.artBack} : {})});   // (CHARM EDIT · BACK: see fitInput)
+      job.mask=G.engraveMask(job.view,{marginMm:S.settings.engraveMarginMm,keepOut:(face === "front" ? charm.frontKeepOut : charm.backKeepOut) || [],...(faceArtOf(charm, face === "front") ? {avoid:faceArtOf(charm, face === "front")} : {})});   // (CHARM EDIT · BACK: see fitInput)
       const font=fontFor(saved.weight,job),layout=G.layoutLines(job.lines,font,saved.sizePt,job.lineGap,saved.angle || 0,saved.centre || [job.mask.cx,job.mask.cy]);
       const check=G.verifyInk(layout.cmds,job.mask);
       if(check.ok) {
@@ -9067,7 +9069,7 @@ const Engrave = window.Engrave = (() => {
     return {charm:charm && {outline:charm.outline,members:charm.members,bbox:charm.bbox,widthPt:charm.widthPt,heightPt:charm.heightPt,upAngle:charm.upAngle},
       lines:(job.lineInput || job.lines).slice(),lineMode:job.lineMode || "auto",opts:fitOpts(job),fontKey:fontIdOf(job),...(job.scriptFonts && job.scriptFonts.length ? {scriptIds:job.scriptFonts.map(f=>f.id)} : {}),
       viewOptions:G.viewOptionsFor({editingBack:!!job.editingBack,savedUp:job.editingBack ? job.editOriginal.upAngle : null,charmUp:charm?.upAngle,entry,nudged:!!job.nudged,viewUp:job.view?.upAngle,oriented:job.orientVersion === G.ORIENT,turnUp:job.turnUp,...(isFront(job) ? {face:"front"} : {})}),
-      maskOptions:{marginMm:S.settings.engraveMarginMm,keepOut:(isFront(job) ? charm?.frontKeepOut : charm?.backKeepOut) || [],...(!isFront(job) && charm?.artBack?.length ? {avoid:charm.artBack} : {})},
+      maskOptions:{marginMm:S.settings.engraveMarginMm,keepOut:(isFront(job) ? charm?.frontKeepOut : charm?.backKeepOut) || [],...(faceArtOf(charm, isFront(job)) ? {avoid:faceArtOf(charm, isFront(job))} : {})},
       ...(keepFor(job) ? {keep:keepFor(job)} : {})};   // (KEEP: after a charm edit the words stay where they were placed: CharmNestEngraveFit keepPlacement)
   }
   const fitStamp = ({charm, ...options}) => JSON.stringify(options);
@@ -9078,7 +9080,7 @@ const Engrave = window.Engrave = (() => {
   const fitTasks = new WeakMap(), fitCut = new WeakSet();   // (fitCut: FITKEEP, the jobs whose placing a change cut short)
   /* EDITOR WORDS (27 Oct 2026): the placement of a face whose engraving is the charm editor's parts and no words. Its view and mask are the ones a fit makes (fitInput's own options, made here: with
      nothing to fit, no worker), its fit holds no letters (`artOnly`, set in the middle of the metal) and its check has no ink to check. So the face waits for Approve as any placement does, and the
-     approval writes its file and record as for words: a front's file carries no words (its parts are in the sheet's own drawing), a back's carries the artBack. → true when placed. */
+     approval writes its file and record as for words: its file carries the face's added parts (artFront or artBack: FRONTLIKEBACK), no words. → true when placed. */
   function artOnlyPlacement(job) {
     const charm = job && (job.copies || []).length ? charmFor(job) : null; if (!charm || !charm.outline) return false;
     let input, view, mask;
@@ -9455,7 +9457,7 @@ const Engrave = window.Engrave = (() => {
     let view, mask;
     try {
       view = G.backView(charm, { res: 6, upAngle: base - deg, holeOnly: true, ...(front ? { face: "front" } : {}) });
-      mask = G.engraveMask(view, { marginMm: S.settings.engraveMarginMm, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [], ...(!front && charm.artBack?.length ? { avoid: charm.artBack } : {}) });   // (CHARM EDIT · BACK: see fitInput)
+      mask = G.engraveMask(view, { marginMm: S.settings.engraveMarginMm, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [], ...(faceArtOf(charm, front) ? { avoid: faceArtOf(charm, front) } : {}) });   // (CHARM EDIT · BACK: see fitInput)
     } catch (e) { return no(e && e.message ? e.message : "the charm could not be turned"); }
     // the words keep their place on the charm: about the charm's own centre, by the step this change adds (the view's turn is about that same centre)
     const f0 = job.fit, step = wrap180(deg - was) * Math.PI / 180, ca = Math.cos(step), sa = Math.sin(step), cx = view.cx, cy = view.cy, dx = f0.centre[0] - cx, dy = f0.centre[1] - cy;
@@ -9494,7 +9496,7 @@ const Engrave = window.Engrave = (() => {
     try {
       if (base == null) base = G.backView(charm, G.viewOptionsFor({ charmUp: charm.upAngle, entry: Master.entryFor(job.row.spec.designSku) || {}, nudged: false, oriented: job.orientVersion === G.ORIENT, ...(front ? { face: "front" } : {}) })).upAngle;   // (the system's own turn of this face: fitInput's, with no turn of a person)
       view = G.backView(charm, { res: 6, upAngle: base - deg, holeOnly: true, ...(front ? { face: "front" } : {}) });
-      mask = G.engraveMask(view, { marginMm: S.settings.engraveMarginMm, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [], ...(!front && charm.artBack?.length ? { avoid: charm.artBack } : {}) });
+      mask = G.engraveMask(view, { marginMm: S.settings.engraveMarginMm, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [], ...(faceArtOf(charm, front) ? { avoid: faceArtOf(charm, front) } : {}) });
     } catch (e) { return no(e && e.message ? e.message : "the charm could not be turned"); }
     job.view = view; job.mask = mask; job.upSystem = base; if (deg === 0) delete job.turnUp; else job.turnUp = view.upAngle;
     try { Session.schedule(); } catch (_) {}
@@ -9978,7 +9980,7 @@ const Engrave = window.Engrave = (() => {
     if(!charm || !view || !job.copies?.length || (!job.pre && job.copies.some(id=>!sheetFor(job,id))))throw new Error("The charm needs its current sheet and outline before approval.");
     const src=sourceOf(charm.sourceId),poolId=job.copies[0];
     const glyphs=fit.glyphs.map(g=>({cmds:g.cmds.map(c=>{const o={type:c.type};if(c.type!=="Z"){o.x=c.x-view.cx;o.y=c.y-view.cy;}if(c.type==="C" || c.type==="Q"){o.x1=c.x1-view.cx;o.y1=c.y1-view.cy;}if(c.type==="C"){o.x2=c.x2-view.cx;o.y2=c.y2-view.cy;}return o;})}));
-    const built=await P.buildBackFile({charm,mirrored:!!charm.mirrored,parsed:src.parsed,cutMembers:view.cutMembers,cx:view.cx,cy:view.cy,angleDeg:view.angleDeg,padPt:5*PT,glyphs,...(isFront(job) ? {face:"front"} : {}),...(!isFront(job) && charm.artBack?.length ? {artBack:charm.artBack} : {}),view:fileViewOf(job),title:`${job.row.order.receiptId} · ${job.row.spec.designSku} · ${faceWord(job)}`,meta:{poolId,...(isFront(job) ? {face:"front"} : {}),order:job.row.order.receiptId,sku:job.row.spec.designSku,copy:job.editingBack?job.editOriginal.copy || 1:B.pool.rows.get(poolId)?.copy || 1,text:job.text,font:job.fontName || "Source Sans 3",fontKey:fontIdOf(job),weight:fit.weight,sizePt:fit.size,capMm:fit.capMm,lineGap:fitOpts(job).lineGap,angle:fit.angle,approvedBy:by,approvedAt:at,upAngle:view.upAngle,flipChecks:view.checks}});
+    const built=await P.buildBackFile({charm,mirrored:!!charm.mirrored,parsed:src.parsed,cutMembers:view.cutMembers,cx:view.cx,cy:view.cy,angleDeg:view.angleDeg,padPt:5*PT,glyphs,...(isFront(job) ? {face:"front"} : {}),...(faceArtOf(charm, isFront(job)) ? {artBack:faceArtOf(charm, isFront(job))} : {}),view:fileViewOf(job),title:`${job.row.order.receiptId} · ${job.row.spec.designSku} · ${faceWord(job)}`,meta:{poolId,...(isFront(job) ? {face:"front"} : {}),order:job.row.order.receiptId,sku:job.row.spec.designSku,copy:job.editingBack?job.editOriginal.copy || 1:B.pool.rows.get(poolId)?.copy || 1,text:job.text,font:job.fontName || "Source Sans 3",fontKey:fontIdOf(job),weight:fit.weight,sizePt:fit.size,capMm:fit.capMm,lineGap:fitOpts(job).lineGap,angle:fit.angle,approvedBy:by,approvedAt:at,upAngle:view.upAngle,flipChecks:view.checks}});
     const verified=await verifyBackFile(built.bytes,job);
     if(!verified.ok)throw new Error(`The ${faceWord(job)} file needs adjustment (${verified.why}). Move or resize the words before approving.`);
     return {fit,view};
@@ -10529,7 +10531,7 @@ const Engrave = window.Engrave = (() => {
     // CHARM EDIT · BACK (27 Oct 2026): what a person added to this BACK is engraved by the back's own file with the words, so every picture of the back draws it where the file puts it (backArtOf):
     // the work area as a front draws its art (the laser's colours, muted), the pictures written with the piece in the words' ink, as the file engraves it; under the cut line and the words
     // (BLUEBACK, Paul 12 Nov 2026: and every one of them, the work area too, in the back's own colours as its file engraves them: backArtInk, the words' blue)
-    const added = onFront ? [] : backArtOf(job), ownArt = g => { if (!added.length) return; backArtInk(g, added, tx, k); };   // (OWNART: every part added to a back is the person's own: full strength)
+    const added = backArtOf(job), ownArt = g => { if (!added.length) return; backArtInk(g, added, tx, k); };   // (OWNART: every part added to a back is the person's own: full strength)
     cv._backArt = added;
     ownArt(ctx);
     const cutLines = g => { for (const m of view.members) { g.beginPath(); P.pathToCanvas(g, m, tx); g.strokeStyle = "#000"; g.lineWidth = Math.max(1, (G.CUT_LINE_PT || 0.5) * k); g.stroke(); } };   // (MARGINS: the engravable tint above reaches this line's inner edge, charm-nest-geom.js EDGE_MM)
@@ -10670,9 +10672,9 @@ const Engrave = window.Engrave = (() => {
      own (view.M, then view.R): so they are turned into it by the very same two steps, from that same charm, and a part sits on the screen exactly where the file puts it. Kept per view and list. */
   const BACK_ART = new WeakMap();   // view -> { list (the charm's artBack), art (in the view's frame) }
   function backArtOf(job) {
-    const view = job && job.view; if (!view || view.face === "front") return [];
+    const view = job && job.view; if (!view) return [];   // (FRONTLIKEBACK: a front's added parts are drawn as a back's)
     let charm = job._viewCharm || null; if (!charm) try { charm = typeof charmFor === "function" ? charmFor(job) : null; } catch (_) { charm = null; }   // (FACEVIEW: the back of a piece engraved on its front is drawn from the piece's own charm)
-    const list = charm && Array.isArray(charm.artBack) && charm.artBack.length ? charm.artBack : null; if (!list) return [];
+    const own = charm && (view.face === "front" ? charm.artFront : charm.artBack), list = Array.isArray(own) && own.length ? own : null; if (!list) return [];   // (faceArtOf, written out: the tests read this function alone)
     const had = BACK_ART.get(view); if (had && had.list === list) return had.art;
     const art = list.filter(s => s && s.kind === "path" && Array.isArray(s.subpaths) && (s.fill || s.stroke)).map(s => { try { return G.transformSeg(G.transformSeg(s, view.M), view.R); } catch (_) { return null; } }).filter(Boolean);
     BACK_ART.set(view, { list, art });
@@ -10768,7 +10770,7 @@ const Engrave = window.Engrave = (() => {
   function viewPointOf(view, p) { try { return apAff(view.R, apAff(view.M, p)); } catch (_) { return null; } }
   function stagedFaceFit(job, face, fv, rec) {
     const view = fv.view, charm = fv.charm, front = face === "front";
-    if (!rec.mask || rec.view !== view) { rec.view = view; rec.centre = null; rec.mask = G.engraveMask(view, { marginMm: S.settings.engraveMarginMm, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [], ...(!front && charm.artBack?.length ? { avoid: charm.artBack } : {}) }); }
+    if (!rec.mask || rec.view !== view) { rec.view = view; rec.centre = null; rec.mask = G.engraveMask(view, { marginMm: S.settings.engraveMarginMm, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [], ...(faceArtOf(charm, front) ? { avoid: faceArtOf(charm, front) } : {}) }); }
     const mask = rec.mask, lines0 = draftLines(rec.text); rec.fitNow = null; if (!lines0.length) return { mask, fit: null };
     let fid = rec.fontWord ? O.fontOfPhrase(rec.fontWord) || "" : "";
     if (!fid) { try { fid = O.pieceFont(job.row && job.row.spec, pieceIndexOf(job), face).id; } catch (_) { fid = O.DEFAULT_FONT; } }
@@ -12515,7 +12517,7 @@ const Engrave = window.Engrave = (() => {
         let rec=job.stagedBacks.find(b=>b.poolId===poolId && b.approvedAt===approval && b.sheetId===sh.sheetId && b.outputs?.ai?.url && b.outputs?.png?.url);
         if(!rec){
         jobStep(job, "build", `Making the ${faceWord(job)} file for ${sh.fileBase ? sheetName(sh) : "its sheet"}…`);
-        const built = await P.buildBackFile({ charm: charm0, mirrored: !!charm0.mirrored, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, ...(isFront(job) ? { face: "front" } : {}), ...(!isFront(job) && Array.isArray(charm0.artBack) && charm0.artBack.length ? { artBack: charm0.artBack } : {}), view: fileViewOf(job), title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · ${faceWord(job)}`, meta: { poolId, ...(isFront(job) ? { face: "front" } : {}), order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: apBy(job), approvedAt: apAt(job), upAngle: view.upAngle, flipChecks: view.checks } });
+        const built = await P.buildBackFile({ charm: charm0, mirrored: !!charm0.mirrored, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, ...(isFront(job) ? { face: "front" } : {}), ...(faceArtOf(charm0, isFront(job)) ? { artBack: faceArtOf(charm0, isFront(job)) } : {}), view: fileViewOf(job), title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · ${faceWord(job)}`, meta: { poolId, ...(isFront(job) ? { face: "front" } : {}), order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: apBy(job), approvedAt: apAt(job), upAngle: view.upAngle, flipChecks: view.checks } });
         const verified = await verifyBackFile(built.bytes, job);                 // 7.4 · flip integrity re-run on the written, re-parsed file
         if (!verified.ok) throw Object.assign(new Error(`the written ${faceWord(job)} file did not re-verify (${verified.why})`),{engravingInvalid:true});
         let ai = null, pngUp = null;
@@ -12585,7 +12587,7 @@ const Engrave = window.Engrave = (() => {
     if (!fontSetOf(job)) { loadFontSet(fontIdOf(job)); throw Object.assign(new Error("The engraving font is loading; retry in a moment"), { engravingPending: true }); }
     const charm = charmFor(job); if (!charm) throw Object.assign(new Error("The charm is being moved between sheets; retry saving its engraving after nesting finishes"),{engravingPending:true});
     let view; try { view = G.backView(charm, { res: 6, upAngle: w.upAngle, holeOnly: true, ...(isFront(job) ? { face: "front" } : {}) }); } catch (e) { throw again(`This charm's ${faceWord(job)} could not be read again (${e.message}) — fit the words again`); }
-    const mask = G.engraveMask(view, { marginMm: w.marginMm, keepOut: (isFront(job) ? charm.frontKeepOut : charm.backKeepOut) || [], ...(!isFront(job) && charm.artBack?.length ? { avoid: charm.artBack } : {}), ...(w.artFree ? {} : { keepArtClear: true }) });   // (CHARM EDIT · BACK: see fitInput; MARGINS: a placement kept before 28 Oct 2026 is rebuilt by the rule it was approved under, art kept clear)
+    const mask = G.engraveMask(view, { marginMm: w.marginMm, keepOut: (isFront(job) ? charm.frontKeepOut : charm.backKeepOut) || [], ...(faceArtOf(charm, isFront(job)) ? { avoid: faceArtOf(charm, isFront(job)) } : {}), ...(w.artFree ? {} : { keepArtClear: true }) });   // (CHARM EDIT · BACK: see fitInput; MARGINS: a placement kept before 28 Oct 2026 is rebuilt by the rule it was approved under, art kept clear)
     // the charm's back is not what the words were approved on (its drawing or keep-out changed): a person fits them again
     if (maskKey(mask) !== w.maskKey) throw again(`This charm's ${faceWord(job)} changed since the words were approved — fit the words again`);
     const layout = G.layoutLines(w.lines, fontFor(w.weight, job), w.size, w.lineGap, w.angle || 0, w.centre), geometry = G.verifyInk(layout.cmds, mask);
@@ -12637,7 +12639,7 @@ const Engrave = window.Engrave = (() => {
   async function verifyBackFile(bytes, job) {
     // (cloud plan v2 build step 11: the check lives in charm-nest-back-file.js, line for line as it was here, and the cloud's back-file tasks run the very same one)
     const BF = window.CharmNestBackFile; if (!BF || typeof BF.verifyBackFile !== "function") return { ok: false, why: "charm-nest-back-file.js did not load: reload the page" };
-    let added = []; try { added = job.face !== "front" && typeof backArtOf === "function" ? backArtOf(job) : []; } catch (_) { added = []; }
+    let added = []; try { added = typeof backArtOf === "function" ? backArtOf(job) : []; } catch (_) { added = []; }   // (FRONTLIKEBACK: either face)
     return BF.verifyBackFile(bytes, { P, G, view: job.view, mask: job.mask, fit: job.fit, face: job.face, backFileView: S.settings.backFileView || "asSeenFromBack", added });
   }
   /** back/back-index.pdf and back/back-report.json for a sheet: a summary for people, drawn once after a run of

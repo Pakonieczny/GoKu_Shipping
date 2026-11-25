@@ -7376,9 +7376,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      very transform its words are drawn with (the charm's front frame; the plate's own mirror turns both over), a traced image's greys in their own grey, everything else in the words' ink. */
   const artPaint = s => s && s.kind === "path" && Array.isArray(s.subpaths) && s.subpaths.length && (s.fill || s.stroke);
   /** The parts added to a piece's back in the Charm Editor that are drawn (none: []). */
-  const backArtOf = x => { const a = x && x.c && x.c.artBack; return Array.isArray(a) ? a.filter(artPaint) : []; };
+  // (FRONTLIKEBACK, Paul 25 Nov 2026: a face's added parts, the charm's artFront or artBack, are that face's engraving and counted the same way; the front draws them with the charm: CharmNestPDF.drawCharm)
+  const faceArtList = (x, face) => { const a = x && x.c && (face === "front" ? x.c.artFront : x.c.artBack); return Array.isArray(a) ? a.filter(artPaint) : []; };
+  const backArtOf = x => faceArtList(x, "back");
   /** The words typed among them (the editor keeps a text's words with its outlines: artText), as one string ("" when none). */
-  const backArtText = x => backArtOf(x).map(s => String(s.artText || "").trim()).filter(Boolean).join("\n");
+  const backArtText = (x, face) => faceArtList(x, face || "back").map(s => String(s.artText || "").trim()).filter(Boolean).join("\n");
   /* BLUEBACK (Paul, 12 Nov 2026: "all back engraving, unless otherwise chosen, needs to be blue, the same blue we already have an option for in the editor"): the screen's blue of a back's
      engraving (CharmNestBacks.INK, the Charm Editor's hatch swatch), and the added parts painted by the back file's own rule (CharmNestPDF.backArtPaint): a traced image's grey in its grey, a
      coloured pen a person chose in its colour, everything else in the back's blue. */
@@ -7399,7 +7401,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     ctx.restore(); return true;
   }
   /** The centre of a piece's added back parts in the charm's own points (null when none). */
-  const backArtCentre = x => { const art = backArtOf(x); if (!art.length) return null; let b = null; for (const s of art) { const q = s.bbox; if (!Array.isArray(q)) continue; b = b ? [Math.min(b[0], q[0]), Math.min(b[1], q[1]), Math.max(b[2], q[2]), Math.max(b[3], q[3])] : q.slice(); } return b ? [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2] : null; };
+  const backArtCentre = (x, face) => { const art = faceArtList(x, face || "back"); if (!art.length) return null; let b = null; for (const s of art) { const q = s.bbox; if (!Array.isArray(q)) continue; b = b ? [Math.min(b[0], q[0]), Math.min(b[1], q[1]), Math.max(b[2], q[2]), Math.max(b[3], q[3])] : q.slice(); } return b ? [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2] : null; };
   /* SHEETBACK: a saved sheet's pieces are drawn from the master (the design the sheet was cut from), so a piece's own edit (its pool row's artEdit, or the "~ae…" the record's hash carries,
      charm-nest-art-edit.js) is put over it here, as every other place a piece is made from the master does (CharmNestArtEdit.piece): its front parts in its drawing, its back parts on its back.
      A piece no edit is known for is the master's, as before (no read); a piece whose edit cannot be read is drawn as the master draws it, never left out. */
@@ -7602,13 +7604,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       back: on => { if (!active()) return; G.backSide = !!on; if (G.backSide) ensureBacks(G, readOpts); else ensureFront(G); redraw(); },
       // (pieces that carry words on a face, the back unless asked for the "front": a piece engraved on both faces is counted once on each, never twice on one)
       // (SHEETBACK: a back the Charm Editor drew — its parts on the charm's artBack — is an engraved back too)
-      engraved: face => G.pieces.filter(x => engGeoOf(x, G.backs, face === "front" ? "front" : undefined) || faceTextOf(x, face === "front" ? "front" : "back") || (face !== "front" && backArtOf(x).length)).length,
-      sides: () => ({ front: G.pieces.filter(x => engGeoOf(x, G.backs, "front") || faceTextOf(x, "front")).length, back: G.pieces.filter(x => engGeoOf(x, G.backs) || faceTextOf(x, "back") || backArtOf(x).length).length }),
+      engraved: face => G.pieces.filter(x => engGeoOf(x, G.backs, face === "front" ? "front" : undefined) || faceTextOf(x, face === "front" ? "front" : "back") || faceArtList(x, face === "front" ? "front" : "back").length).length,
+      sides: () => ({ front: G.pieces.filter(x => engGeoOf(x, G.backs, "front") || faceTextOf(x, "front") || faceArtList(x, "front").length).length, back: G.pieces.filter(x => engGeoOf(x, G.backs) || faceTextOf(x, "back") || backArtOf(x).length).length }),
       // what the back of this sheet says: every charm that carries words, whose it is, and where on the plate they are drawn (face "front": the front words). SHEETBACK: on the back, a charm's parts
       // added in the Charm Editor count too: `art` (how many), their words (artText) when it has no words of its own, drawn where they lie
-      words: face => G.pieces.map(x => { const f = face === "front" ? "front" : "back", geo = engGeoOf(x, G.backs, f === "front" ? "front" : undefined), art = f === "back" ? backArtOf(x).length : 0;
-        const text = (geo && geo.text) || faceTextOf(x, f) || (art ? backArtText(x) : "") || ""; if (!text && !art) return null;
-        const at = geo ? engPointOf(G, x, geo) : art && x.c ? tryDo(() => engPointOf(G, x, { centre: backArtCentre(x) })) : null;
+      words: face => G.pieces.map(x => { const f = face === "front" ? "front" : "back", geo = engGeoOf(x, G.backs, f === "front" ? "front" : undefined), art = faceArtList(x, f).length;
+        const text = (geo && geo.text) || faceTextOf(x, f) || (art ? backArtText(x, f) : "") || ""; if (!text && !art) return null;
+        const at = geo ? engPointOf(G, x, geo) : art && x.c ? tryDo(() => engPointOf(G, x, { centre: backArtCentre(x, f) })) : null;
         return Object.assign({ poolId: x.poolId, rid: x.rid, text, face: f, drawn: !!(geo && geo.glyphs) || (art > 0 && !!x.c) }, art ? { art } : {}, at || {}); }).filter(Boolean),
       hitAt: (x, y) => hitOrder(G, x, y),
       // where a piece's centre is on the screen

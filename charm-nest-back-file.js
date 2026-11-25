@@ -10,7 +10,8 @@
  *  Nothing here reaches the network, a page global, Firestore or Etsy: what it needs is handed in (P = CharmNestPDF, G = CharmNestGeom).
  *
  *    maskKey(mask)                         the identity of an engravable area (size, frame, a hash of its bits): a placement kept as numbers is rebuilt only on the same area
- *    backArtOf(view, charm, G)             the parts a person added to a BACK in the Charm Editor (charm.artBack), turned into the view's frame (view.M, then view.R)
+ *    backArtOf(view, charm, G)             the parts a person added to this FACE in the Charm Editor (charm.artBack, or charm.artFront for a front view), turned into the view's frame
+ *    faceArt(charm, face)                  the charm's list of parts added to that face (artFront | artBack): the face's engraving, the same for both faces (FRONTLIKEBACK)
  *    relGlyphs(fit, view)                  the fit's letter outlines about the view's centre: the frame buildBackFile writes the ENGRAVE layer in
  *    fileViewOf(face, backFileView)        what the file says of itself: a front "asSeenFromFront", a back the shop's setting (asSeenFromBack | frontCoordinates)
  *    backSpec(o)                           the spec of charm-nest-pdf.js buildBackFile for one piece (what writeBacksOnce hands it)
@@ -35,11 +36,14 @@
   /** The identity of an engravable area (bridge restoreWritten): its size, its frame and a hash of its bits. */
   const maskKey = m => { let h = 2166136261; for (let i = 0; i < m.bits.length; i++) h = Math.imul(h ^ m.bits[i], 16777619) >>> 0; return [m.w, m.h, m.res, m.ox, m.oy, h].join(":"); };
 
-  /** CHARM EDIT · BACK (27 Oct 2026): the parts a person added to this BACK (the charm's artBack, in its own points as seen from the front), turned into the view's frame by the
-   *  same two steps the file turns them (view.M, then view.R). A front, or a back with nothing added: []. */
+  /** FRONTLIKEBACK (Paul, 25 Nov 2026: "there is no difference between back or front engraving it should be exactly the same"): the parts a person added to a face in the Charm Editor are
+   *  that face's engraving, the charm's artFront or artBack (charm-nest-art-edit.js), in its own points as seen from the front. [] when none. */
+  const faceArt = (charm, face) => { const list = charm && (faceWord(face) === "front" ? charm.artFront : charm.artBack); return Array.isArray(list) && list.length ? list : []; };
+  /** CHARM EDIT (27 Oct 2026, both faces since FRONTLIKEBACK): the parts a person added to this view's face, turned into the view's frame by the same two steps the file turns them
+   *  (view.M, then view.R). A face with nothing added: []. */
   function backArtOf(view, charm, G) {
-    if (!view || view.face === "front") return [];
-    const list = charm && Array.isArray(charm.artBack) && charm.artBack.length ? charm.artBack : null; if (!list) return [];
+    if (!view) return [];
+    const list = faceArt(charm, view.face === "front" ? "front" : "back"); if (!list.length) return [];
     return list.filter(s => s && s.kind === "path" && Array.isArray(s.subpaths) && (s.fill || s.stroke)).map(s => { try { return G.transformSeg(G.transformSeg(s, view.M), view.R); } catch (_) { return null; } }).filter(Boolean);
   }
 
@@ -59,7 +63,7 @@
   function backSpec(o) {
     const front = o.face === "front", charm = o.charm, view = o.view, fit = o.fit, m = o.meta || {};
     return { charm, mirrored: !!charm.mirrored, parsed: o.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: relGlyphs(fit, view),
-      ...(front ? { face: "front" } : {}), ...(!front && Array.isArray(charm.artBack) && charm.artBack.length ? { artBack: charm.artBack } : {}),
+      ...(front ? { face: "front" } : {}), ...(faceArt(charm, o.face).length ? { artBack: faceArt(charm, o.face) } : {}),   // (artBack: buildBackFile's name for the face's added parts, either face)
       view: fileViewOf(o.face, o.backFileView), title: o.title,
       meta: { poolId: m.poolId, ...(front ? { face: "front" } : {}), order: m.order, sku: m.sku, copy: m.copy, text: m.text, font: m.font || "Source Sans 3", fontKey: m.fontKey, weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap: m.lineGap, angle: fit.angle, approvedBy: m.approvedBy, approvedAt: m.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } };
   }
@@ -97,7 +101,7 @@
       // CHARM EDIT · BACK (27 Oct 2026): the parts a person added to the back are written in the same ENGRAVE layer as the words. They were checked on the metal when they were saved
       // (charm-nest-art-edit.js) and the words keep off them (engraveMask avoid); the clearance off the cut edges checked here is the words' own, so an added part (known by its box, turned into
       // this frame as the view turns it: backArtOf) is not read as a word. A file with nothing added is read exactly as before.
-      const addedBoxes = o.face !== "front" ? (o.added || []).filter(s => s.fill).map(s => G.transformSeg(s, G.translate(-bbV[0], -bbV[1])).bbox) : [];
+      const addedBoxes = (o.added || []).filter(s => s.fill).map(s => G.transformSeg(s, G.translate(-bbV[0], -bbV[1])).bbox);   // (FRONTLIKEBACK: a front's added parts as a back's)
       const addedPart = s => { if (!addedBoxes.length) return false; const b = G.transformSeg(s, writtenToView).bbox; return !!b && addedBoxes.some(a => a.every((v, i) => Math.abs(v - b[i]) < .1)); };
       const textPaths = parsed.segments.concat(parsed.nested).filter(s => s.kind === "path" && s.fill && !s.stroke && !/CUT OUTLINE/.test(s.layer || "") && !addedPart(s)), textOk = textPaths.length >= 1;
       // Preserve the written Béziers so verifyInk uses the same curved outlines
@@ -140,7 +144,7 @@
     catch (e) { throw again(`This charm's ${word} could not be read again (${e.message}) — fit the words again`); }
     const tol = +o.tolPt > 0 ? +o.tolPt : 1e-6;   // (the cloud allows the shop's 0.06 mm between its reading of a drawing and Chrome's; a page reads its own)
     if (Number.isFinite(+place.cx) && Number.isFinite(+place.cy) && place.cx !== null && (Math.abs(view.cx - +place.cx) > tol || Math.abs(view.cy - +place.cy) > tol)) throw again(`This charm's ${word} changed since the words were placed — fit the words again`);
-    const mask = G.engraveMask(view, Object.assign({ marginMm: o.marginMm, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [] }, !front && Array.isArray(charm.artBack) && charm.artBack.length ? { avoid: charm.artBack } : {}, o.keepArtClear ? { keepArtClear: true } : {}));
+    const mask = G.engraveMask(view, Object.assign({ marginMm: o.marginMm, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [] }, faceArt(charm, o.face).length ? { avoid: faceArt(charm, o.face) } : {}, o.keepArtClear ? { keepArtClear: true } : {}));
     if (o.maskKey && maskKey(mask) !== o.maskKey) throw again(`This charm's ${word} changed since the words were approved — fit the words again`);
     if (place.artOnly) {
       const fit = { ok: true, artOnly: true, lines: [], glyphs: [], cmds: [], centre: maskCentroid(mask), angle: 0, size: 0, fittedMax: 0, capMm: 0, weight: "Regular", small: false, thin: false, metrics: null, rect: null };
@@ -204,7 +208,7 @@
     return out;
   }
   const rgb = c => `rgb(${c.slice(0, 3).map(v => Math.round(Math.max(0, Math.min(1, +v || 0)) * 255)).join(",")})`;
-  /** The picture's paint, in order: the parts added to a back (the words' blue; a traced image's grey in its grey; a coloured pen a person chose in its colour), the cut lines in black, the words.
+  /** The picture's paint, in order: the parts added to the face (the words' blue; a traced image's grey in its grey; a coloured pen a person chose in its colour), the cut lines in black, the words.
    *  o = { view, fit, face, added (backArtOf), P (for backArtPaint), px (the long side, 500), cutLinePt (G.CUT_LINE_PT) }
    *  → { width, height, sizePt: { w, h } (the frame in points: the record's previewWPt / previewHPt), ops: [{ fill | stroke (css colour), rule, width, cap, subs }] } */
   function previewOps(o) {
@@ -214,7 +218,7 @@
     const W = Math.max(1, Math.round(w * k)), H = Math.max(1, Math.round(h * k));
     const tx = (x, y) => [(x - bb[0] + pad) * k, (bb[3] + pad - y) * k];
     const ink = front ? FRONT_INK_CSS : BACK_INK_CSS, ops = [];
-    for (const s of front ? [] : o.added || []) {
+    for (const s of o.added || []) {   // (FRONTLIKEBACK: a front's added parts drawn as a back's)
       const paint = o.P && o.P.backArtPaint ? o.P.backArtPaint(s) : {}, subs = segSubs(s, tx); if (!subs.length) continue;
       if (s.fill) ops.push({ fill: s.artGrey && Array.isArray(s.fillRGB) ? rgb(s.fillRGB) : ink, rule: String(s.paintOp || "").endsWith("*") ? "evenodd" : "nonzero", subs });
       if (s.stroke) ops.push({ stroke: paint.stroke ? rgb(paint.stroke) : ink, width: Math.max(0.6, (s.lwPt || 0.25) * k), cap: "round", subs });
@@ -251,5 +255,5 @@
     return ctx;
   }
 
-  return { VERSION, isFront, faceWord, maskKey, backArtOf, relGlyphs, fileViewOf, backName, backSpec, verifyBackFile, maskCentroid, rebuild, backRecord, previewOps, svgOfOps, previewSvg, drawPreview };
+  return { VERSION, isFront, faceWord, maskKey, faceArt, backArtOf, relGlyphs, fileViewOf, backName, backSpec, verifyBackFile, maskCentroid, rebuild, backRecord, previewOps, svgOfOps, previewSvg, drawPreview };
 });

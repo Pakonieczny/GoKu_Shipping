@@ -2259,6 +2259,22 @@
       : m === c.outline || isCutLine(m) ? {...m, strokeRGB:[0,0,0], fillRGB:m !== c.outline && m.fill && m.fillRGB && lum(m.fillRGB) > 0.35 ? m.fillRGB : [0,0,0]} : m), tx, scale);
     ctx.beginPath(); pathToCanvas(ctx, c.outline, tx);
     ctx.strokeStyle = "#000"; ctx.lineWidth = Math.max(.6, (isCutSilhouetteFill(c, c.outline) ? CUT_HAIRLINE_PT : c.outline.lwPt || .25) * scale); ctx.stroke();
+    drawFaceArt(ctx, c.artFront, tx, scale);
+  }
+  /* FRONTLIKEBACK (Paul, 25 Nov 2026: "there is no difference between back or front engraving it should be exactly the same"): a charm drawn as seen from the front shows what a person added to its
+     FRONT in the Charm Editor (its artFront: that face's engraving, written in the front's engraving file as a back's parts are in the back's), painted as the file engraves it (backArtPaint: the
+     hatching blue, a traced image's grey in its grey, a pen a person chose in its colour). Those parts used to be the charm's own members, so every front picture drew them; it still does. */
+  function drawFaceArt(ctx, list, tx, scale) {
+    if (!Array.isArray(list) || !list.length || !ctx) return;
+    const css = c => `rgb(${c.slice(0, 3).map(v => Math.round(Math.max(0, Math.min(1, +v || 0)) * 255)).join(",")})`;
+    ctx.save(); ctx.lineJoin = "round"; ctx.lineCap = "round";
+    for (const s of list) {
+      if (!s || !Array.isArray(s.subpaths) || !s.subpaths.length) continue;
+      const paint = backArtPaint(s), lw = Math.max(.6, (+s.lwPt || .25) * scale);
+      if (paint.fill) { ctx.beginPath(); pathToCanvas(ctx, s, tx); ctx.fillStyle = css(paint.fill); ctx.fill(String(s.paintOp || "").endsWith("*") ? "evenodd" : "nonzero"); }
+      if (paint.area || paint.stroke) { ctx.beginPath(); pathToCanvas(ctx, s, tx); ctx.strokeStyle = css(paint.stroke || BACK_INK); ctx.lineWidth = lw; ctx.stroke(); }
+    }
+    ctx.restore();
   }
   /* SHIPPEDSTAYS (Paul, 24 Nov 2026: "grey them out" with red outlines): a shipped piece, over its own drawing: a grey wash and a red line along its cut edge. On screens and pictures only, never in a laser file. */
   function shippedMark(ctx, c, tx, width) {
@@ -2892,7 +2908,9 @@
     }
     // ART EDIT (Paul, 27 Oct 2026): what a person added to this piece's BACK (charm-nest-art-edit.js, the charm's artBack, handed in as spec.artBack: in the charm's own points as
     // seen from the front) is engraved with the words, turned over with the cut reference (the same T · R · M). A file without it is written exactly as before.
-    const artBack = !isFront && Array.isArray(spec.artBack) ? spec.artBack.filter(s => s && Array.isArray(s.subpaths) && s.subpaths.length && (s.fill || s.stroke)) : [];
+    // FRONTLIKEBACK (Paul, 25 Nov 2026: "there is no difference between back or front engraving"): a FRONT's added parts (the charm's artFront, handed in as spec.artBack too) are its
+    // engraving the same way, in its ENGRAVE layer, with the front's own T · R (its M turns nothing over). A front made only of them is no longer an empty file.
+    const artBack = Array.isArray(spec.artBack) ? spec.artBack.filter(s => s && Array.isArray(s.subpaths) && s.subpaths.length && (s.fill || s.stroke)) : [];
     if (artBack.length) {
       page.pushOperators(popGraphicsState(), pushGraphicsState());
       if (frontView) page.pushOperators(cm(Mp));
@@ -3438,7 +3456,7 @@
     }
     return out;
   }
-  root.CharmNestPDF = { scaleSource, closeNearlyClosed, markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, shippedMark, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
+  root.CharmNestPDF = { scaleSource, closeNearlyClosed, markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, drawFaceArt, shippedMark, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
     takeSampleText, sampleTextOf, parseSkuLabel, READER_VERSION, LETTERS_READER_VERSION, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
   // the hoop finder, for the tests and the audit (kept off the long list above so a merge there never touches it)
   root.CharmNestPDF.findHoops = findHoops; root.CharmNestPDF.circleOf = circleOf;

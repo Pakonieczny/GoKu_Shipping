@@ -213,7 +213,7 @@
   function baseOf(charm) {
     if (!charm || !charm.artFrom) return charm;
     const b = Object.assign({}, charm, charm.artFrom);
-    for (const k of (charm.artFrom.absent || []).concat(["absent", "artFrom", "artEdit", "artBack", "artTrace", "artThumb"])) delete b[k];
+    for (const k of (charm.artFrom.absent || []).concat(["absent", "artFrom", "artEdit", "artBack", "artFront", "artTrace", "artThumb"])) delete b[k];
     return b;
   }
   /** A segment with its own geometry arrays (its points, box, matrix and the held state ranges); references to other segments (a mirror's original, a chain's parts) stay references. */
@@ -271,7 +271,7 @@
     const base = baseOf(charm), ids = memberIds(base), at = new Map(ids.map((id, i) => [id, i]));
     const out = Object.assign({}, charm, pick(base, BASE_KEYS));
     for (const k of BASE_KEYS) if (base[k] === undefined) delete out[k];
-    out.artEdit = Object.assign({}, charm.artEdit || {}); delete out.artEdit.front; delete out.artTrace; delete out.artThumb;
+    out.artEdit = Object.assign({}, charm.artEdit || {}); delete out.artEdit.front; delete out.artTrace; delete out.artThumb; delete out.artFront;
     if (emptyRec(rec)) return finish(out, base);
     const note = { at: +rec.at || 0, by: rec.by || null, key: recSig(rec), removed: 0, changed: 0, added: 0, refused: [], stale: [] };
     out.artEdit.front = note;
@@ -306,7 +306,7 @@
       if ((groups.get(t) || []).some(j => !remove.has(j) && !change.has(j) && !isPath(members[j]))) { no(ids[i], WHY.group); remove.delete(i); change.delete(i); }
     }
     const dropTops = new Set(); for (const i of [...remove, ...change.keys()]) { const t = topOf(members[i]); if (t != null) dropTops.add(t); }
-    const list = [], copyOf = new Map(); let cutTouched = false;
+    const list = [], copyOf = new Map(), art = []; let cutTouched = false;
     members.forEach((m, i) => {
       if (remove.has(i)) { if (roleOf(m, base) === "cut") cutTouched = true; return; }
       let c;
@@ -318,8 +318,14 @@
       const seg = segOf(e, null, base); if (!seg) { no(e.id, WHY.path); continue; }
       if (seg.artRole === "cut") { if (!cutOk) { no(e.id, WHY.cutPlaced); continue; } cutTouched = true; }
       else if (!onMetal(seg.subpaths, polys)) { no(e.id, WHY.offMetal); continue; }
-      seg.artAdded = true; list.push(seg); note.added++;
+      /* FRONTLIKEBACK (Paul, 25 Nov 2026: "there is no difference between back or front engraving it should be exactly the same ... The only difference is one is on the front one is on the
+         back"): what a person ADDS to the front is that face's engraving, kept as the charm's artFront exactly as an addition to the back is kept as its artBack (applyBack), and written into
+         the front's engraving file. It used to be put in the charm's own drawing (members), so a front made only of them had an empty engraving file and the sheet's download stopped. A cut
+         line added is the charm's shape (one for both faces), so it stays in the drawing; so does a change to the master's own parts, which is the charm itself. */
+      seg.artAdded = true; note.added++;
+      if (seg.artRole === "cut") list.push(seg); else art.push(seg);
     }
+    if (art.length) out.artFront = art;
     note.removed = remove.size; note.changed = change.size;
     out.members = list;
     out.outline = copyOf.get(base.outline) || base.outline;
@@ -450,7 +456,7 @@
     const rec = { v: VERSION, face, baseKey: baseKeyOf(base), removed: [], cutIds: [], changed: {}, added: [], cut: false }, refused = [];
     const no = (id, why) => refused.push({ id: String(id), why });
     // (an item sent with its move, scale or turn and no path of its own is moved from where the piece draws it NOW: an edit saved before stays the start of the next)
-    const now = new Map(); for (const m of (charm.members || []).concat(charm.artBack || [])) if (m && m.artMemberId && isPath(m)) now.set(String(m.artMemberId), m);
+    const now = new Map(); for (const m of (charm.members || []).concat(charm.artFront || [], charm.artBack || [])) if (m && m.artMemberId && isPath(m)) now.set(String(m.artMemberId), m);
     const ownOf = (id, m) => () => mapSubs(((now.get(String(id)) || m || {}).subpaths) || [], fr.toItem);
     // (SHAREDSHAPE, Paul 29 Oct 2026: "it's the same charm it's like the same coin with two different sides": the charm's SHAPE, its cut parts (the outline, its holes, its ring), is ONE and is kept
     //  in the FRONT record whichever face it was changed on (the editor keeps both faces' shape the same, the back's mirrored): the back's record carries only the back's own parts, and the shape
@@ -550,7 +556,8 @@
       stroke: m.stroke ? (m.strokeRGB || BLACK).slice(0, 3) : null, fill: m.fill ? (m.hatchBlue ? BLUE : (m.fillRGB || BLACK).slice(0, 3)) : null, lwPt: m.lwPt || null, even: String(m.paintOp || "").endsWith("*"),
       editable: isPath(m) && !(face === "back"), layer: m.layer || null, tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, ...(m.artText ? { text: m.artText } : {}), ...(m.artGroup ? { group: m.artGroup } : {}), ...(m.artWeightMm ? { weightMm: m.artWeightMm } : {}), ...(m.artGrey ? { artGrey: true } : {}) });
     charm.members.forEach((m, i) => { if (!m) return; if (face === "back" && roleOf(m, charm) !== "cut") return; list.push(one(m, ids[i], m.artAdded ? "added" : "master")); });
-    if (face === "back") for (const m of charm.artBack || []) list.push(Object.assign(one(m, m.artMemberId, "added"), { editable: true }));
+    // (FRONTLIKEBACK: the parts added to a face are that face's engraving, the charm's artFront or artBack, listed the same way for both faces)
+    for (const m of (face === "back" ? charm.artBack : charm.artFront) || []) list.push(Object.assign(one(m, m.artMemberId, "added"), { editable: true }));
     return list;
   }
 

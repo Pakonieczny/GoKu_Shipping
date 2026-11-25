@@ -185,7 +185,9 @@
   /* CHARM EDIT · BACK (27 Oct 2026): the parts a person added to a piece's BACK in the charm editor (charm-nest-art-edit.js: the charm's artBack, in its own points as seen from the front) are engraved by
      the back's own file (charm-nest-pdf.js buildBackFile: turned over with the cut, M then R), so the Back box draws them as the Front box draws the design's art: in the frame of the face (view.M then
      view.R, or the charm's own turn), in the laser's colours (CharmNestPDF.drawCharm: a hatched part blue, a line in its pen). A back with nothing added is drawn exactly as before. */
-  const backAddsOf = charm => (charm && Array.isArray(charm.artBack) && charm.artBack.some(isArt) ? charm.artBack : null);   // (the charm's own list: a frame is kept per list)
+  // (FRONTLIKEBACK, Paul 25 Nov 2026: "there is no difference between back or front engraving": a face's added parts are its engraving, the charm's artFront or artBack, drawn the same way)
+  const addsOf = (charm, face) => { const l = charm && (face === 'front' ? charm.artFront : charm.artBack); return Array.isArray(l) && l.some(isArt) ? l : null; };   // (the charm's own list: a frame is kept per list)
+  const backAddsOf = charm => addsOf(charm, 'back');
   /* BLUEBACK (Paul, 12 Nov 2026: "all back engraving, unless otherwise chosen, needs to be blue, the same blue we already have an option for in the editor ... including all the vector thumbnails of
      back engraving everywhere"): a back's engraving is drawn in the Charm Editor's hatch blue (BACK_INK, CharmNestBacks.INK): its words (the CSS below) and the parts added to it, each painted by the
      back file's own rule (CharmNestPDF.backArtPaint): a traced image's grey in its grey, a coloured pen a person chose in its colour, everything else (a hatched part, a black or grey line) in the blue. */
@@ -196,11 +198,11 @@
   };
   /** The frame of a back view with the parts added to the back (`adds`, the charm's artBack) in it: the view's own frame and box, its art those parts turned as the view turns the charm. One per view and list. */
   function frameOfViewWith(view, adds) {
-    const F = frameOfView(view); if (!F || !adds || F.face !== 'back') return F;
+    const F = frameOfView(view); if (!F || !adds) return F;
     return memo(adds, 'v' + ident(view), () => {
       const G = GEO(); if (!G || !G.transformSeg) return F;
       const art = adds.filter(isArt).map(d => { try { const a = view.M ? G.transformSeg(d, view.M) : d; return backInked(view.R ? G.transformSeg(a, view.R) : a); } catch (_) { return null; } }).filter(Boolean);
-      return { kind: 'view', face: 'back', box: F.box, outline: F.outline, cut: F.cut, art };
+      return { kind: 'view', face: F.face, box: F.box, outline: F.outline, cut: F.cut, art: (F.face === 'front' && Array.isArray(F.art) ? F.art : []).concat(art) };   // (FRONTLIKEBACK: a front keeps its design's art under them)
     });
   }
   /** The frame of a job's view (a back view: the charm turned over and turned; a front view: as it is, turned): the cut geometry as the work area draws it, and for the FRONT the design's art in the same frame. */
@@ -231,7 +233,7 @@
       const cx = (ob[0] + ob[2]) / 2, cy = (ob[1] + ob[3]) / 2, M = face === 'front' ? null : G.mirrorX(cx), R = G.rotateAbout(cx, cy, 90 - upA);
       const T = s => G.transformSeg(M ? G.transformSeg(s, M) : s, R);
       const tcut = cut.map(T), box = unionBox(tcut); if (!box) return null;
-      const art = face === 'front' ? charm.members.filter(m => !cut.includes(m) && isArt(m)).map(T) : (backAddsOf(charm) || []).filter(isArt).map(T).map(backInked);   // (the back: what a person added to it, CHARM EDIT · BACK; BLUEBACK: in the back's blue)
+      const art = (face === 'front' ? charm.members.filter(m => !cut.includes(m) && isArt(m)).map(T) : []).concat((addsOf(charm, face) || []).filter(isArt).map(T).map(backInked));   // (FRONTLIKEBACK: a front's added parts as a back's, over the design)   // (the back: what a person added to it, CHARM EDIT · BACK; BLUEBACK: in the back's blue)
       return { kind: 'charm', face, box, outline: tcut[cut.indexOf(outline)], cut: tcut, art, up: upA };
     });
   }
@@ -307,7 +309,7 @@
   function frameFor(o) {
     o = o || {}; const job = o.job, face = job ? faceOfJob(job) : o.face === 'front' ? 'front' : 'back';
     const view = job && (job.view || (heldOf(job) || {}).view);
-    if (view) { const f = face === 'back' ? frameOfViewWith(view, backAddsOf(charmFor(o))) : frameOfView(view); if (f) return f; }
+    if (view) { const f = frameOfViewWith(view, addsOf(charmFor(o), face)); if (f) return f; }
     const charm = charmAny(o); if (!charm) return null;
     // (UPRIGHT: its own approved turn, else the other face's mirror (pairedUp), else the library's typed angle (the back's: the front its mirror), else the rule)
     const w = job && job.writtenFit, own = w && fin(+w.upAngle) ? +w.upAngle : null, sib = own == null ? pairedUp(o, face) : null, op = own == null && sib == null ? operatorUp(o.row || (job && job.row)) : null;
@@ -395,7 +397,7 @@
     const s = cfg(), font = set.Regular, opts = { minCapMm: +s.engraveMinCapMm || 1.6, maxHeightFrac: +s.engraveMaxHeightFrac || 0.4, lineGap: 0.216, minStrokeMm: +s.engraveMinStrokeMm || 0, minGapMm: +s.engraveMinGapMm || 0, measure: false };
     const Fit = root && root.CharmNestEngraveFit; if (!Fit || typeof Fit.quickPlace !== 'function') return fail('no fit code');
     const ch = a.charm, M = root && root.Master, entry = (a.row && a.row.spec && M && M.entryFor ? M.entryFor(a.row.spec.designSku) : null) || {};
-    const adds = a.face === 'front' ? null : backAddsOf(ch);   // (CHARM EDIT · BACK: the words keep off what a person added to the back, as the bridge makes every mask of a back: fitInput)
+    const adds = addsOf(ch, a.face);   // (FRONTLIKEBACK: either face)   // (CHARM EDIT · BACK: the words keep off what a person added to the back, as the bridge makes every mask of a back: fitInput)
     let sf = []; try { sf = typeof font.scriptFonts === 'function' ? font.scriptFonts(a.lines.join('\n')) : []; } catch (_) { sf = []; }
     const input = {
       charm: { outline: ch.outline, members: ch.members, bbox: ch.bbox, widthPt: ch.widthPt, heightPt: ch.heightPt, upAngle: ch.upAngle }, face: a.face, lines: a.lines.slice(), opts, fontKey: a.id, ...(sf.length ? { scriptIds: sf.map(f => f.id) } : {}),

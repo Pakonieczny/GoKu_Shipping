@@ -91,12 +91,14 @@
   const busy = j => !!j && (j.state === 'fitting' || safe(() => { const R = REFIT(); return !!(R && R.busy && !j.fit && R.busy(j)); }, false));
   /** What a face's art edit says (charm-nest-art-edit.js apply: the charm's artEdit[face] note), '' when it has none. */
   const editKey = (charm, face) => { const n = charm && charm.artEdit && charm.artEdit[face]; return n && (n.added || n.changed || n.removed) ? String(n.key || n.at || 1) : ''; };
-  const backAdds = charm => !!(charm && Array.isArray(charm.artBack) && charm.artBack.length);
+  // (FRONTLIKEBACK, Paul 25 Nov 2026: a face's added parts, artFront or artBack, are read the same way for both faces)
+  const faceAdds = (charm, face) => { const l = charm && (face === 'front' ? charm.artFront : charm.artBack); return !!(Array.isArray(l) && l.length); };
+  const backAdds = charm => faceAdds(charm, 'back');
   /** One piece as this page holds it: { tiles: [{ face, job, words }], sig, faces, busy } or null (nothing of its own: no words fitted, no edit). */
   function stateOf(poolId) {
     if (!poolId) return null;
     const charm = safe(() => host.charmOf && host.charmOf(poolId), null), pj = jobsOf(poolId);
-    const wf = wordsOf(pj.front), wb = wordsOf(pj.back), ef = editKey(charm, 'front'), eb = editKey(charm, 'back') || (backAdds(charm) ? 'adds' : '');
+    const wf = wordsOf(pj.front), wb = wordsOf(pj.back), ef = editKey(charm, 'front') || (faceAdds(charm, 'front') ? 'adds' : ''), eb = editKey(charm, 'back') || (backAdds(charm) ? 'adds' : '');
     if (!wf && !wb && !ef && !eb) return null;
     if (!charm && !(wf || wb)) return null;
     const tiles = [{ face: 'front', job: wf ? pj.front : null, words: wf }];
@@ -243,7 +245,7 @@
    *  clear sent from here lands) is never shown: its line shows the Vector design, in the same tick. */
   function plainNow(poolId) {
     const pj = jobsOf(poolId), js = [pj.front, pj.back].filter(Boolean), charm = safe(() => host.charmOf && host.charmOf(poolId), null);
-    return !!charm && js.length > 0 && js.every(j => j.state === 'none' || j.state === 'skipped') && !editKey(charm, 'front') && !editKey(charm, 'back') && !backAdds(charm);
+    return !!charm && js.length > 0 && js.every(j => j.state === 'none' || j.state === 'skipped') && !editKey(charm, 'front') && !editKey(charm, 'back') && !faceAdds(charm, 'front') && !backAdds(charm);
   }
   /** Which picture a piece shows: { kind: 'local', sig, st, made } | { kind: 'cloud', made } | null. A cloud picture drawn by an older drawing than this page's never wins over this page's own. */
   function pick(poolId) {

@@ -6,8 +6,8 @@
  * FRONT + BACK ENGRAVING (11 Oct 2026, plans/front-back-1011/CONTRACT.md sections 9-11). A back file is laid ABOVE the cut sheet (layer "BACK <poolId>[ Left|Right] / ...").
  * A front file (CharmNestPDF.buildBackFile({ face: "front" }), unmirrored) is put ON its charm in the sheet: compose(front, sheet, backs, fronts) reads the matrix the file
  * says it was drawn with (Info entry BritesFrontFrame), takes the charm's own placement from the cut sheet, and writes the engraving paths under that placement in the layer
- * "FRONT <poolId>[ Left|Right] / ENGRAVE" (the Right ear's mirror is already in its view: nothing is flipped here). A front file that cannot be put on its charm is laid above the
- * sheet like a back (layers "FRONT <poolId> / CUT OUTLINE (reference)" and "... / ENGRAVE"), and the layout says so (frontLayout[].placed = false, .reason) for IMPORT.txt.
+ * "FRONT <poolId>[ Left|Right] / ENGRAVE" (the Right ear's mirror is already in its view: nothing is flipped here). A front file that cannot be put on its charm is NEVER laid above the
+ * sheet like a back (FRONTONCHARM, 25 Nov 2026): it is left out, and the layout says so (frontLayout[].placed = false, .leftOut, .reason) for the download's warning and IMPORT.txt.
  * A sheet with no front record composes, exports and indexes exactly as it did before: every front step below is behind `fronts.length`.
  */
 (function(root) {
@@ -154,17 +154,22 @@
   /** The ear a back engraving is for ("L" | "R"), from the back's own record, else from the sheet's charm of that pool id; null for any other piece (pairs, 9 Oct). */
   const sideOfBack = (sheet, b) => { const s = b.side || ((sheet.charms || []).find(c => c.poolId === b.poolId) || {}).side; return s === 'L' || s === 'R' ? s : null; };
   const groupOfBack = b => { if (b.groupKey) return String(b.groupKey); const m = /^(\d{4,20})_([^_]*)_\d{1,3}$/.exec(String(b.poolId || '')); return m ? m[1] + ':' + m[2] : ''; };
-  /** The front engravings of a sheet, each on its charm or (when that cannot be done) set aside to be laid above the sheet. `fronts`: records with their file bytes.
+  /** The front engravings of a sheet, each on its charm or (when that cannot be done) left out and named (FRONTONCHARM: never laid above the sheet). `fronts`: records with their file bytes.
    *  A front is put on its charm only when its file says how it sits on the charm (BritesFrontFrame), the sheet gives the charm's own placement, and the engraving lands
-   *  inside that charm once placed; anything less and it goes above the sheet like a back, and the entry says why. */
+   *  inside that charm once placed; anything less and it is left out of the download, and the entry says why (leftOut). */
   async function planFronts(front, sheet, fronts) {
     const P = pdf(), onCharm = [], above = [], entries = [];
     for (const f of fronts) {
       const parsed = await P.parseSource(f.bytes, 'Front engraving '+f.poolId), paths = leaves(parsed);
       // (the engraving is what the file's ENGRAVE layer holds; the lines of its cut reference may carry the master's own layer name, so they are told apart by NOT being on ENGRAVE)
-      const ink = paths.filter(p => /^ENGRAVE$/i.test(p.layer || ''));
+      let ink = paths.filter(p => /^ENGRAVE$/i.test(p.layer || ''));
+      const side = sideOfBack(sheet, f);
+      /* FRONTLIKEBACK (Paul, 25 Nov 2026: "there is no difference between back or front engraving"). Before that day the parts a person added to a FRONT in the Charm Editor were put in the charm's own
+         drawing, so a front made only of them (artOnly) had a file with nothing on ENGRAVE and this stopped the whole download ("Front engraving contains no engraving paths": three sheets of
+         22 Nov). Such a front's parts are in the sheet's drawing: there is nothing in its file to lay on, and the download goes on. A front with words and no ENGRAVE paths is still an error. */
+      if (!ink.length && f.artOnly) { entries.push({poolId:f.poolId, face:'front', ...(side?{side,groupKey:groupOfBack(f)}:{}), placed:true, inDrawing:true, reason:'its Charm Editor parts are in the sheet drawing (approved before 25 Nov 2026)', parentSheetId:sheet.id || sheet.sheetId}); continue; }
       if (!ink.length) throw new Error('Front engraving contains no engraving paths.');
-      const side = sideOfBack(sheet, f), parent = parentForm(front, sheet, f, 'Front engraving');
+      const parent = parentForm(front, sheet, f, 'Front engraving');
       const entry = {poolId:f.poolId, face:'front', ...(side?{side,groupKey:groupOfBack(f)}:{}), scale:parent.scale, parentSheetId:sheet.id || sheet.sheetId};
       entries.push(entry);
       const frame = frontFrame(parsed), back = frame && inv(frame);
@@ -177,7 +182,20 @@
         const fb = parent.form.bbox, tol = 2;
         if (!box || !fb || box[0] < fb[0]-tol || box[1] < fb[1]-tol || box[2] > fb[2]+tol || box[3] > fb[3]+tol) why = 'its engraving does not fall on its charm once placed';
       }
-      if (why) { entry.placed = false; entry.reason = why; above.push({rec:f, parsed, scale:parent.scale, entry}); }
+      if (!why) {
+        /* FRONTLIKEBACK: a front file written since 25 Nov 2026 carries the Charm Editor's parts with its words. On a sheet drawn before that day the same parts are in the charm's own drawing too:
+           a part of the file drawn exactly where the sheet already draws one on this charm is left out, so the laser engraves it once. Words are never in a sheet's drawing, so they always stay. */
+        const drawn = (parent.form.children || []).filter(k => k && k.kind === 'path' && Array.isArray(k.bbox) && !/^CUT$|CUT OUTLINE|^SHEET(?: |$)/i.test(k.layer || ''));
+        if (drawn.length) {
+          const boxOfInk = p => { let b = null; for (const sub of p.subpaths || []) for (const o of sub) for (let i = 1; i < o.length; i++) { const q = apM(X, o[i][0], o[i][1]); b = union(b, [q[0], q[1], q[0], q[1]]); } return b; };
+          const tolPt = .05, kept = ink.filter(p => { const b = boxOfInk(p); return !b || !drawn.some(k => k.bbox.every((v, i) => Math.abs(v - b[i]) <= tolPt)); });
+          if (kept.length < ink.length) { entry.inDrawing = ink.length - kept.length; ink = kept; }
+        }
+      }
+      /* FRONTONCHARM (Paul, 25 Nov 2026: "Make sure that front engravings do not end up as a charm on top of the sheet like back engravings do ... all front engravings do not go to the top of the
+         sheet because they're already engraved on the front"). A front is engraved ON its charm in the cut sheet, never laid above the sheet as a back is. One that cannot be put on its charm (its
+         file does not say how it sits, or it would fall off the charm) is left out of the download, and the download names it with the reason (export-ui), never in silence. */
+      if (why) { entry.placed = false; entry.leftOut = true; entry.reason = why; }
       else { entry.placed = true; entry.layer = layerPrefix('front', f.poolId, side) + 'ENGRAVE'; entry.boundsPt = box; onCharm.push({rec:f, ink, X, entry}); }
     }
     return {onCharm, above, entries};
@@ -230,8 +248,8 @@
     const front = await P.parseSource(frontBytes, 'Front sheet');
     const plan = fronts.length ? await planFronts(front, sheet, fronts) : null;
     const inputs = [], layout = []; let x = SPACE, y = front.pageH + GAP, rowH = 0;
-    // the backs, then any front engraving that could not be put on its charm, are laid in rows above the cut sheet
-    const laid = backs.map(b => ({b})).concat(plan ? plan.above.map(a => ({b:a.rec, parsed:a.parsed, scale:a.scale, entry:a.entry})) : []);
+    // the backs are laid in rows above the cut sheet (FRONTONCHARM: a front never is: it is on its charm, or left out and named)
+    const laid = backs.map(b => ({b})).concat(plan ? plan.above.map(a => ({b:a.rec, parsed:a.parsed, scale:a.scale, entry:a.entry})) : []);   // (plan.above is always empty)
     for (const it of laid) {
       const b = it.b, isF = !!it.entry, what = isF ? 'Front' : 'Back';
       const parsed = it.parsed || await P.parseSource(b.bytes, 'Back '+b.poolId), paths = leaves(parsed);
@@ -278,7 +296,7 @@
     }
     await place(front,0,0,1,'');
     // front engravings ON their charm, in the layer "FRONT <poolId>[ Left|Right] / ENGRAVE", over the cut sheet (they are engraved in the cut run)
-    if (plan) plan.onCharm.forEach((item,i) => writeFront(out, page, item, 'ocFront'+i));
+    if (plan) plan.onCharm.forEach((item,i) => { if (item.ink.length) writeFront(out, page, item, 'ocFront'+i); });   // (FRONTLIKEBACK: a front whose every part the sheet already draws adds no layer)
     // (a back for one ear of a mismatched pair says so on its layer: "BACK 4171450075_9001_1 Left / ...")
     for(const item of inputs){const side=sideOfBack(sheet,item.back);await place(item.parsed,item.x,item.y,item.scale,layerPrefix(item.face,item.back.poolId,side),item.face!=='front');}
     // History never enters production artwork. Only this layout's new contour
