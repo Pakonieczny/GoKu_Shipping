@@ -22296,8 +22296,11 @@ const Review = window.Review = (() => {
   /* NESTASK (Paul, 23 Nov 2026: "when the user presses the release hold button, show them a new pop-up Modal that asks the user to choose whether to Nest the given charm on a Sheet or to skip adding the charm to a
      sheet. Set default to Nest"; "Some Orders will not have a Charm attached so those you can skip presenting the pop-up"): what a press is asked about, or null for nothing to ask: { own } the card's own dropped designs
      not on a sheet yet; or { rows } the lines the press releases that are on no sheet and show a person a charm (ListMedia.shows: the very picture of the card and the order window, matched or not). */
+  // (RELASK, Paul 25 Nov 2026: "when I press the release hold button inside the detailed order modal, it does not present me with the pop-up"): an order sent to Review (Send to Review: a review mark)
+  // has its pieces made already and is not held, so its lines were never asked about. A marked order's piece made but on no sheet is asked about as a held one is (Skip: the cloud drops its pieces).
+  const markedRow = x => { try { return !!(x && x.order && window.CharmNestReviewMark && CharmNestReviewMark.isMarked(String(x.order.receiptId))); } catch (_) { return false; } };
   const mayNest = x => {
-    const sp = x.spec, held = !!x.hold || Orders.heldNow(x); if (!sp || !x.line || x.parentRow || sp.customDone || ["gone", "committed"].includes(x.state) || (!held && (x.state === "skipped" || (x.poolIds || []).length)) || !ListMedia.designs(x).length) return false;   // (a piece made already is on its way)
+    const sp = x.spec, held = !!x.hold || Orders.heldNow(x) || (x.state !== "skipped" && markedRow(x)); if (!sp || !x.line || x.parentRow || sp.customDone || ["gone", "committed"].includes(x.state) || (!held && (x.state === "skipped" || (x.poolIds || []).length)) || !ListMedia.designs(x).length) return false;   // (a piece made already is on its way)
     try { const p = window.PiecePlacement && PiecePlacement.ofRow(x); return !(p && p.onSheet); } catch (_) { return true; }
   };
   /** The charm a line nobody matched shows (its own SKU question still open): the one its Nest uses, for this order only. "" for a line with its design. */
@@ -22419,7 +22422,7 @@ const Review = window.Review = (() => {
     }
     const t = Date.now(), lines = (rows && rows.length ? rows : mine).filter(x => x && x.state !== "gone");
     if (viewerOn()) return liftViaCloud(rid, who, lines, seal, out);   // (ITEM 8: a viewer makes nothing up and saves nothing: the press is the cloud's)
-    for (const x of lines) { x.frontAt = t; delete x.poolTry; if (sayFor(out, x.key).skuOverride) x.skuOverride = sayFor(out, x.key).skuOverride; if (sayFor(out, x.key).skip === true) Object.assign(x, { state: "skipped", reason: `no charm made: skipped at Release Hold by ${who}`, problems: [], hold: null }); else await repool(x); }
+    for (const x of lines) { x.frontAt = t; delete x.poolTry; if (sayFor(out, x.key).skuOverride) x.skuOverride = sayFor(out, x.key).skuOverride; if (sayFor(out, x.key).skip === true) Object.assign(x, { state: "skipped", reason: `no charm made: skipped at Release Hold by ${who}`, problems: [], hold: null, poolIds: [] }); else await repool(x); }
     const left = lines.find(x => (x.problems || []).length);
     if (left) { toast(`Order ${rid} is back in line, but it still needs a look: ${problemText(left.problems[0])}`, "bad", 9000); return false; }
     if (out) out.lifted.add(String(rid));
