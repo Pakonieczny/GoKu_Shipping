@@ -22388,7 +22388,7 @@ const Review = window.Review = (() => {
     if (!r || !r.ok) { if (back) back(); toast(`Order ${rid} was not released: the cloud did not take it (${String((r && r.error) || "no answer").replace(/[.\s]+$/, "").slice(0, 200)}). Nothing was changed: press Release Hold again.`, "bad", 9000); return false; }
     const got = lines.filter(x => { const l = (r.lines || {})[x.key]; return l && +l.releasedAt > 0 && +l.releasedAt === +r.frontAt; });
     if (!got.length) { if (back) back(); toast(`Order ${rid} was not released: ${r.runId ? "the cloud's run has nothing of it on hold or set aside" : "no run is open in the cloud"}, so nothing was changed.`, "bad", 9000); return false; }
-    for (const x of got) { const l = r.lines[x.key]; for (const f of ["state", "hold", "heldAt", "holdSeen", "reason", "frontAt", "releaseHold", "releaseAnyway", "blockOverride", "skuOverride", "_lp"]) if (l[f] !== undefined) x[f] = l[f] && typeof l[f] === "object" ? JSON.parse(JSON.stringify(l[f])) : l[f]; delete x.poolTry; x.holdFromCloud = false; }
+    for (const x of got) { const l = r.lines[x.key]; for (const f of ["state", "poolIds", "hold", "heldAt", "holdSeen", "reason", "frontAt", "releaseHold", "releaseAnyway", "blockOverride", "skuOverride", "_lp"]) if (l[f] !== undefined) x[f] = l[f] && typeof l[f] === "object" ? JSON.parse(JSON.stringify(l[f])) : l[f]; delete x.poolTry; x.holdFromCloud = false; }
     try { if (Orders.interpretAll) Orders.interpretAll(); } catch (_) { /* read again at the next look */ }   // (what was set aside is read into the lines' questions, as the cloud's world reads it)
     try { if (RF && RF.now) RF.now("released"); } catch (_) { /* the next feed */ }
     if (out) out.lifted.add(String(rid));
@@ -22532,7 +22532,9 @@ const Review = window.Review = (() => {
       const rid0 = String(live.rid || rids[0] || ""); if (rid0) out.lifted.add(rid0);   // (out of Review: it goes on to the sheets)
       let ok = true; for (const rid of rids) { const list = rowsOfOrder(rid), sk = list.filter(x => out.say && x.key in out.say); if (list.some(x => x.hold) || sk.length) ok = (await liftOrder(rid, who, list.some(x => x.hold) ? null : sk, seal, out)) && ok; }
       const left = rids.flatMap(rowsOfOrder).filter(x => (x.problems || []).length).length;
-      toast(left ? `Order ${rids[0]} left Review. ${left} piece${left === 1 ? "" : "s"} of it still wait${left === 1 ? "s" : ""} on a question of their own (see Review).` : `Order ${rids[0]} left Review: it goes on to the sheets`, "ok", 6000);
+      // (RELASK: every line of it skipped: the skip was said already (noCharm), or, skipped before, nothing goes on to the sheets)
+      const kept = rids.flatMap(rowsOfOrder).filter(x => x.state !== "gone"), none = kept.length > 0 && kept.every(x => x.state === "skipped");
+      if (!(none && kept.some(x => sayFor(out, x.key).skip === true))) toast(left ? `Order ${rids[0]} left Review. ${left} piece${left === 1 ? "" : "s"} of it still wait${left === 1 ? "s" : ""} on a question of their own (see Review).` : none ? `Order ${rids[0]} left Review: no charm is made` : `Order ${rids[0]} left Review: it goes on to the sheets`, "ok", 6000);
       syncOrderItems(); Orders.render(); RunCtl.poke();
       return ok;
     }
