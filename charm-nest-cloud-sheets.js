@@ -156,6 +156,11 @@
   /* (FOLLOWFEED, Paul 17 Nov 2026) a record read while a take-off or an exchange in place is half written (dirty: the piece list already cut, the layout still to be written by the computer that carries the run) is read again 5 s later, up to two minutes:
      the write that finishes it names the sheet on the feed as well (below), this is the net under it */
   const DIRTYN = new Map(), again = (id, dirty) => { if (!dirty) { DIRTYN.delete(id); return; } const n = (DIRTYN.get(id) || 0) + 1; DIRTYN.set(id, n); if (n <= 24) PENDING.add(id); };
+  /* (SKUSHOW, Paul 25 Nov 2026, order 4248582494: "I tried to update the SKU for this order and the modal told me everything was updated correctly, however the thumbnails and the Sheet did not update"): the cloud made the
+     piece again as the new charm (same pool id, another drawing) and the feed named the sheet; this page took the new record for a sheet it shows only as its saved record (recalled) but kept the pieces it had drawn
+     from the old one, and a sheet it rebuilt in the background painted nothing. Now a sheet whose pieces are other charms (pool id + drawing + SKU) is drawn again from the new record, and every view of it is painted. */
+  const pieceSig = list => (list || []).filter(c => c && c.poolId).map(c => [c.poolId, c.hash || c.charmHash || "", String(c.sku || "").toUpperCase()].join(":")).sort().join(",");
+  const repaint = id => { safe(() => root.OrderWin && typeof root.OrderWin.remade === "function" && root.OrderWin.remade([id])); safe(() => root.CharmNestMadeThumb && typeof root.CharmNestMadeThumb.refreshSoon === "function" && root.CharmNestMadeThumb.refreshSoon()); };
   async function changed(keys, probe) {
     for (const k of keys || []) {
       const id = String(k).slice(2); if (!id || id === "*") continue;
@@ -168,12 +173,17 @@
       again(id, rec.dirty === true);
       // (ORDERCLOUD 2, Paul 15 Nov 2026: the carrier's new draft order never reached the computer that follows): a followed sheet whose order changed in the cloud has this computer list the run's sheets again
       if (p.followed && rec.draftOrder != null && Number.isFinite(+rec.draftOrder) && +rec.draftOrder !== +p.draftOrder) { clearTimeout(orderT); orderT = setTimeout(() => safe(() => { const R = root.Recall, F = root.CharmNestRunFollow, id = (F && F.state().runId) || p.runId; if (R && R.follow && id) Promise.resolve(R.follow(id, { force: true })).catch(() => {}); }), 1500); }
-      if (p.recalled) { p.recalled = rec; p.answer = rec; st.refreshed++; safe(() => root.CN.renderCard(p)); if (!p.followed || revOf(p) === null) continue; }
+      if (p.recalled) {
+        const other = pieceSig(p.charms) !== pieceSig(rec.charms);
+        p.recalled = rec; p.answer = rec; st.refreshed++; safe(() => root.CN.renderCard(p));
+        if (other && root.Recall && typeof root.Recall.redraw === "function") { try { await root.Recall.redraw(p); st.redrawn = (st.redrawn || 0) + 1; safe(() => root.CN.renderCard(p)); repaint(id); } catch (e) { console.warn("[cloud-sheets] redraw", id, e); } }   // (SKUSHOW)
+        if (!p.followed || revOf(p) === null) continue;
+      }
       if (await completeTakeOff(p, rec)) continue;
       const mine = revOf(p);
       if (mine === null) { st.skipped++; continue; }   // (a sheet whose copy here was not the cloud's is never refreshed by itself)
       // (only a newer revision, saved by another computer, rebuilds a sheet held here: a sheet this page is changing itself is never rebuilt under it)
-      if ((+rec.layoutRev || 0) > mine) { try { await reload(p, "changed on another computer", { background: true }); } catch (e) { PENDING.add(id); console.warn("[cloud-sheets] reload", id, e); } }
+      if ((+rec.layoutRev || 0) > mine) { try { await reload(p, "changed on another computer", { background: true }); repaint(id); } catch (e) { PENDING.add(id); console.warn("[cloud-sheets] reload", id, e); } }   // (SKUSHOW: its views painted)
     }
     if (PENDING.size && !pendT) pendT = setTimeout(() => { pendT = 0; const ks = [...PENDING].map(id => "s:" + id); PENDING.clear(); changed(ks, true); }, 5000);
   }
