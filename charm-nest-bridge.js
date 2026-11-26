@@ -14436,7 +14436,7 @@ const LaserReview = window.LaserReview = (()=>{
      newer picture shows it at once, under a link that carries the picture's own time */
   function picNow(s,id){try{const at=+s.previewAt || 0,url=s.preview || (s.outputs && s.outputs.preview && s.outputs.preview.url);if(!id || !at || !url)return;const row=((S.library && S.library.rows) || []).find(r=>r && r.id===id);if(row && +row.previewAt>at)return;if(row){row.previewAt=at;row.preview=url;}
     const want=window.picUrl({preview:url,previewAt:at});for(const img of document.querySelectorAll('img[data-sheet-preview]'))if(img.dataset.sheetPreview===String(id) && !img.dataset.livePreview && img.getAttribute('src')!==want)img.src=want;}catch(e){console.warn('sheet picture',e);}}
-  function record(s,rev){const id=s.id || s.sheetId,old=records.get(id);picNow(s,id);if(id && (!old || (s.updatedAt || 0)>=(old.updatedAt || 0)))records.set(id,s);if(rev!==undefined)keep(s,rev);return s;}
+  function record(s,rev){try{if(window.CNRefit)CNRefit.see(s);}catch(_){}   /* (REFIT: what the record says of a nest to fit a piece coming back) */ const id=s.id || s.sheetId,old=records.get(id);picNow(s,id);if(id && (!old || (s.updatedAt || 0)>=(old.updatedAt || 0)))records.set(id,s);if(rev!==undefined)keep(s,rev);return s;}
   function projected(s){
     const id=s.id || s.sheetId,base=records.get(id) || s;
     const known=passDepth && passProjected?.get(base);if(known)return known;
@@ -27435,7 +27435,8 @@ const OrderWin = window.OrderWin = (() => {
       const W = tryDo(() => CharmNestSheetName.whereOf(rec, setRec || null)); if (!W) return "";
       const extra = [inf.stock ? `${Math.round(inf.stock.wPt * 25.4 / 72)} × ${Math.round(inf.stock.hPt * 25.4 / 72)} mm` : "", rec.density ? `${Math.round(rec.density * 100)}% full` : ""].filter(Boolean).join(" · ");
       return `<div class="owWhere" data-state="${esc(W.state)}" role="group" aria-label="Where this sheet is in the Library"><div class="owWhereHd"><i style="--c:${esc(colorOf(rec.metal))}"></i><b>${esc(W.name)}</b>${extra ? `<span>${esc(extra)}</span>` : ""}</div>` +
-        `<div class="owWherePath"><span class="lib">Library</span>${W.crumbs.map(c => `<span class="sep" aria-hidden="true">›</span><span>${esc(c)}</span>`).join("")}</div><div class="owWhereStage"><i aria-hidden="true"></i>${esc(W.stage)}</div></div>`; })();
+        `<div class="owWherePath"><span class="lib">Library</span>${W.crumbs.map(c => `<span class="sep" aria-hidden="true">›</span><span>${esc(c)}</span>`).join("")}</div><div class="owWhereStage"><i aria-hidden="true"></i>${esc(W.stage)}</div></div>` +
+        (window.CNRefit ? tryDo(() => CNRefit.html(Object.assign({ id: rec.id || rec.sheetId }, rec))) || "" : ""); })();   // (REFIT: the sheet is being nested again to fit a piece coming back to it)
     // (the charm shown when none was picked on the sheet: the piece this window is on (the Overview's switcher), so the Overview's back
     // engraving card and this tab's are always about the same piece; only then the first charm of the order on the sheet)
     const mine = inf ? inf.mine : [], x0 = mine.find(x => x.poolId === SV.focus) || mine.find(x => x.poolId && (r.poolIds || []).includes(x.poolId)) || mine[0] || null;

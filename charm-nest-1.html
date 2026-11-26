@@ -4105,7 +4105,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-nest-ask.js?v=1123-na1"></script>   <!-- NESTASK (Paul 23 Nov 2026): the Release Hold pop-up: nest the charm on a sheet, or skip it -->
 <script src="charm-nest-cmd-now.js?v=1121-now"></script>   <!-- NOWCMD (Paul 21 Nov 2026): every press that asks the cloud is followed until the cloud answers: its step, its words, a failure in red with Try again -->
 <script src="charm-nest-viewer.js?v=1120-v14-on1-fl1-va2-ds1-it1-it8-g2-s4-s3-s2-s5-now-in1-lo1"></script>   <!-- CLOUDDRIVE build step 14: pages become viewers when the cloud carries every run (Charm_Nest_Open/drive mode "on"); dormant in every other mode -->
-<script src="charm-nest-cloud-sheets.js?v=1117-dfdd13cc-s4-inst1-dr2-lo1-ss1"></script>
+<script src="charm-nest-refit.js?v=1125-rf1"></script>
+<script src="charm-nest-cloud-sheets.js?v=1117-dfdd13cc-s4-inst1-dr2-lo1-ss1-rf1"></script>
 <script src="charm-nest-drift.js?v=1120-world14-all1"></script><script src="charm-nest-cloud-world.js?v=1120-world8-v14-it2-fp1-inst1-fo1-nw1"></script><!-- charm-nest-cloud-world.js: the cloud world on this page, in memory only; a computer that carries no run takes its order lines from it (CLOUDWORLD stage B, Paul 20 Nov 2026) -->
 <script src="charm-nest-cloud-activity.js?v=20261113-ca1"></script>   <!-- CLOUDALL S4 (Paul 13 Nov 2026): every computer's activity log lines shared through the cloud -->   <!-- CLOUDALL (Paul 13 Nov 2026): every sheet is one cloud document, changed from any computer, followed by every computer -->   <!-- RUNFOLLOW (Paul 13 Nov 2026): a computer without the run follows the cloud run's lines (held, pooled, taken out) -->
 <script src="charm-nest-cloud-tray.js?v=20261114-ct1-cs1"></script>   <!-- (CLOUDTRAY, Paul 14 Nov 2026: "You must put all this in the cloud" -> "Yes, build it"): the Nest rail's dropped files shared by every computer through the cloud -->
@@ -4115,7 +4116,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-made-thumb.js?v=20261028-ts1-fb1-tb2-mv1-bx1-pb1-np1-gn1-bb1-fa1-fj1-fs1-fa2-fx1"></script><!-- charm-nest-made-thumb.js: every list box shows its pieces as they will be made (cut, art, Charm Editor changes, fitted words; front and back), live here and kept on the pool row for the other computers (THUMBSYNC, Paul 28 Oct 2026) -->
 <script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1-dm1-ko1-pv1"></script>
 <script src="qr-piece-label.js?v=20261014-ql1-noord1"></script><!-- qr-piece-label.js: the sticker of ONE piece of a multi-piece order, printed by hand: its note, fitted (Paul, 14 Oct 2026) -->
-<script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po2-adv2-cg1-sn1-dr2-sl1-rv1-cost1-cost18-ru1-nv1-hc1-hc2-inst1-na1-lo1-mc1"></script>
+<script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po2-adv2-cg1-sn1-dr2-sl1-rv1-cost1-cost18-ru1-nv1-hc1-hc2-inst1-na1-lo1-mc1-rf1"></script>
 <script src="charm-nest-order-rows.js?v=20261012-or1-rh1-br1-ms1-hb1-nv2"></script>
 <script src="charm-nest-order-group.js?v=20261013-on1"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2-cg1-cost18-na1"></script>
@@ -7858,6 +7859,7 @@ function renderCard(sh) {
   if (window.Session) Session.schedule();
   if (cardHold && sh.el) { cardHold.add(sh); return; }
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el); const st = stockFor(sh.metal, sh);
+  if (window.CNRefit) { try { CNRefit.card(el, sh); } catch (_) {} }   // (REFIT: a sheet being nested again to fit a piece coming back to it says so on its card)
   if (q("backs")) { q("backs").innerHTML = window.Engrave ? Engrave.backsMarkup(sh) : ""; engraveShelf(sh, el); }
   const rc = sh.recalled && !sh.charms.length ? sh.recalled : null;        // a saved sheet shown from its record
   el.style.setProperty("--ar", `${st.wPt}/${st.hPt}`);
@@ -9204,7 +9206,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26-now-inst1"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=1120-pair2-pmake1-apc1-place1-v14-dr1-dr2-sd1-sl1-or1-fa1-br1-sbc1-photo1-rm1-va1-it9-k14-it8-vi7-i16-cs1-g6-g9-s1-g4-s4-s3-s2-cd-now-nm1-lb1-lb2-se1-ia1-ts1-an1-rl1-ld1-ck1-src1-oa1-swh1-po1-lr1-rvl1-pf1-er1-sv1-ps1-ps2-mn1-ws1-la1-bp1-ub1-wc1-one1-an1-ac1-ah1-ia1-lc1-dp2-lbx1-ons1-inst1-ls1-dr1-dr2-fo1-nw1-na1-na2-lo1-ces1-ov1-tw2-tw3-n27-fx1-mc1-ra1-ra2-ro1"></script>
+<script src="charm-nest-bridge.js?v=1120-pair2-pmake1-apc1-place1-v14-dr1-dr2-sd1-sl1-or1-fa1-br1-sbc1-photo1-rm1-va1-it9-k14-it8-vi7-i16-cs1-g6-g9-s1-g4-s4-s3-s2-cd-now-nm1-lb1-lb2-se1-ia1-ts1-an1-rl1-ld1-ck1-src1-oa1-swh1-po1-lr1-rvl1-pf1-er1-sv1-ps1-ps2-mn1-ws1-la1-bp1-ub1-wc1-one1-an1-ac1-ah1-ia1-lc1-dp2-lbx1-ons1-inst1-ls1-dr1-dr2-fo1-nw1-na1-na2-lo1-ces1-ov1-tw2-tw3-n27-fx1-mc1-ra1-ra2-ro1-rf1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1-sy1-sy2"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1-ob1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>

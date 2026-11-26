@@ -170,6 +170,7 @@
       if (rec === SAME) { if (DIRTYN.has(id)) again(id, true); continue; }   // (not moved since this page read it; read half written, it is looked at again)
       if (!rec) continue;
       safe(() => root.CNViewer && typeof root.CNViewer.sawSheet === "function" && root.CNViewer.sawSheet(p, rec));   // (S4: a viewer learns the cloud's nest of this sheet, nestJob, for its card's Stop)
+      safe(() => root.CNRefit && root.CNRefit.see(rec));   // (REFIT)
       again(id, rec.dirty === true);
       // (ORDERCLOUD 2, Paul 15 Nov 2026: the carrier's new draft order never reached the computer that follows): a followed sheet whose order changed in the cloud has this computer list the run's sheets again
       if (p.followed && rec.draftOrder != null && Number.isFinite(+rec.draftOrder) && +rec.draftOrder !== +p.draftOrder) { clearTimeout(orderT); orderT = setTimeout(() => safe(() => { const R = root.Recall, F = root.CharmNestRunFollow, id = (F && F.state().runId) || p.runId; if (R && R.follow && id) Promise.resolve(R.follow(id, { force: true })).catch(() => {}); }), 1500); }

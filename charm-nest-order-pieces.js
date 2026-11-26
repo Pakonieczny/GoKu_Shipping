@@ -401,7 +401,7 @@
             const res = await api('charmNestLibrary', ask, { quiet: true, timeoutMs: 15000 });
             if (res && res.unchanged && last) { const g = gens.get(key); if (res.gen != null) gens.set(key, { gen: res.gen, at: ask.ifGen != null && res.gen === ask.ifGen && g ? g.at : Date.now() }); for (const r of part) { const e = entry(r); e.at = Date.now(); } continue; }
             if (res && res.rev) { revs.set(key, res.rev); if (res.gen != null) gens.set(key, { gen: res.gen, at: Date.now() }); else gens.delete(key); if (revs.size > 40) { const old = revs.keys().next().value; revs.delete(old); gens.delete(old); } } else { revs.delete(key); gens.delete(key); }
-            for (const r of part) { const x = (res.orders || {})[r] || {}, e = entry(r), was = readSig(e); e.pools = x.pools || []; e.sheets = x.sheets || []; e.at = Date.now(); e.ok = true; e.failed = null; if (was !== readSig(e)) changed = true; }
+            for (const r of part) { const x = (res.orders || {})[r] || {}, e = entry(r), was = readSig(e); e.pools = x.pools || []; e.sheets = x.sheets || []; try { const G = typeof window !== 'undefined' ? window : globalThis; if (G.CNRefit) for (const s of e.sheets) G.CNRefit.see(s); } catch (_) {} e.at = Date.now(); e.ok = true; e.failed = null; if (was !== readSig(e)) changed = true; }
           } catch (err) { for (const r of part) { const e = entry(r), was = readSig(e); e.failed = err; e.at = Date.now(); if (was !== readSig(e)) changed = true; } console.warn('OrderPieces: sheet records not read', err && err.message); }
         }
         for (const r of fresh) { const e = learned.get(r); if (e) e.task = null; }
