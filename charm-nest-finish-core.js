@@ -89,7 +89,8 @@
   function buildReport(sh, result, items, host) {
     const byId = new Map(items.map(c => [c.id, c])); const st = host.stockFor(sh.metal, sh);
     return {
-      version: 1, bestRevision: sh.bestRevision || 0, bestHistory: sh.bestHistory || [], sheetId: sh.sheetId, metal: sh.metal, metalLabel: host.labelOf(sh.metal), createdAt: (typeof host.now === "function" ? new Date(host.now()) : new Date()).toISOString(),
+      version: 1, frontInSheet: 1, bestRevision: sh.bestRevision || 0,   // (FRONTINSHEET, 26 Nov 2026: files written since then draw the Charm Editor's front parts on their charms; _charmNestFinish.js filesNow reads it)
+      bestHistory: sh.bestHistory || [], sheetId: sh.sheetId, metal: sh.metal, metalLabel: host.labelOf(sh.metal), createdAt: (typeof host.now === "function" ? new Date(host.now()) : new Date()).toISOString(),
       stock: { wIn: st.wIn, hIn: st.hIn, wPt: st.wPt, hPt: st.hPt }, params: result.params, endedBy: result.endedBy, trials: result.trials, elapsedMs: Math.round(result.elapsedMs),
       density: +result.density.toFixed(4), usablePt2: Math.round(result.usablePt2), freePt2: Math.round(result.freePt2), placedPt2: Math.round(result.placedPt2), pocket: result.pocket,
       placements: sh.placements.map((p, i) => ({ n: i + 1, id: p.id, layer: p.layerName, name: byId.get(p.id)?.name, hash: byId.get(p.id)?.hash, source: byId.get(p.id)?.sourceName, index: byId.get(p.id)?.index, angle: p.angle, scale: p.scale || 1, cxPt: +p.cxPt.toFixed(3), cyPt: +p.cyPt.toFixed(3), wPt: +p.wPt.toFixed(2), hPt: +p.hPt.toFixed(2), areaPt2: +(byId.get(p.id)?.areaPt2 || 0).toFixed(1) })),
