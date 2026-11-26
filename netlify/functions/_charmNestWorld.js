@@ -118,6 +118,8 @@ function afterRead(row, prev, sent) {
   else if (row.spec.ownDesign && !row.spec.customDone && !row.hold && !(row.poolIds || []).length && ["held", "unmatched", "waiting", "oversize"].includes(row.state)) { row.state = "held"; row.reason = O.specialOf && O.specialOf.addOn ? O.specialOf.addOn.wait : row.reason; }
   if (sent && !row.spec.customDone) {
     row.problems = []; row.spec.engraveCandidate = false; if (sent.metal) row.spec.material = sent.metal;
+    // (CUSTOMBACK, as the page's interpretAll: a line whose file drew its charms' backs engraves them, from the drawing, approved in Design & Engrave)
+    if (+sent.backs > 0) { row.spec.customBack = +sent.backs; row.spec.engraveCandidate = true; } else delete row.spec.customBack;
     // (MULTICHARM, 25 Nov 2026, as the page's interpretAll: the line is the pieces its card sent it, not its Etsy quantity; an earring pair keeps its own Left + Right count)
     if (sent.pieces > 0 && !(row.spec.pair && row.spec.pair.earring === true) && O.pinPieces) { row.spec.customPieces = sent.pieces; O.pinPieces(row.spec, sent.pieces); delete row.spec.pieceNote; }
     if (sent.pieces && !row.hold && !(row.poolIds || []).length && ["held", "unmatched", "oversize", "noDesign"].includes(row.state)) { row.state = "pulled"; row.reason = null; }
@@ -396,7 +398,7 @@ async function build(opts) {
     if (!same) for (let i = 0; i < keys.length; i += 1000) { const g = await ops.customSheetGet(Object.assign({ lineKeys: keys.slice(i, i + 1000) }, i === 0 ? { wantRev: true } : {})); Object.assign(customSheet, (g && g.records) || {}); if (i === 0) NL.sheetRev = (g && g.rev) || null; }
     NL.sheet = customSheet; NL.sheetLines = new Set(keys);
     const idx = new Map(); for (const e of Object.values(customSheet)) if (e && (e.sent || e.sendIntent)) for (const k of Object.keys((e.sent || e.sendIntent).lines || {})) idx.set(k, e);
-    sentOf = row => { const e = idx.get(row.key); if (!e) return null; const list = (((e.sent || e.sendIntent).lines || {})[row.key] || []).filter(pc => !(pc && pc.removed)), pc = list[0], F = pc && (e.files || []).find(x => x.id === pc.f); return { metal: (F && F.metal) || null, pieces: list.length, sent: !!e.sent }; };
+    sentOf = row => { const e = idx.get(row.key); if (!e) return null; const list = (((e.sent || e.sendIntent).lines || {})[row.key] || []).filter(pc => !(pc && pc.removed)), pc = list[0], F = pc && (e.files || []).find(x => x.id === pc.f); return { metal: (F && F.metal) || null, pieces: list.length, sent: !!e.sent, backs: list.filter(q => { const G = q && (e.files || []).find(x => x.id === q.f); return !!G && Array.isArray(G.charmBacks) && G.charmBacks.includes(Number.isInteger(q.i) ? q.i : 0); }).length }; };
   } catch (e) { errors.push("customSheet: " + e.message); }
 
   meterTag("world:pool");
@@ -654,7 +656,7 @@ async function readNow(o) {
   const byKey = new Map(rows.map(r => [r.row.key, r.row])), customRead = {}, customDecided = {};
   for (const d of reads) { if (!d.exists) continue; const x = d.data() || {}, r = byKey.get(d.id), rd = x.reads || {}, h = r && r.crh && rd[r.crh] ? r.crh : x.latest; if (h && rd[h]) customRead[d.id] = rd[h]; if (x.decided && x.decided.kind) customDecided[d.id] = x.decided; }
   const idx = new Map(); for (const e of Object.values((cs && cs.records) || {})) if (e && (e.sent || e.sendIntent)) for (const k of Object.keys((e.sent || e.sendIntent).lines || {})) idx.set(k, e);
-  const sentOf = row => { const e = idx.get(row.key); if (!e) return null; const list = (((e.sent || e.sendIntent).lines || {})[row.key] || []).filter(pc => !(pc && pc.removed)), pc = list[0], F = pc && (e.files || []).find(f => f.id === pc.f); return { metal: (F && F.metal) || null, pieces: list.length, sent: !!e.sent }; };
+  const sentOf = row => { const e = idx.get(row.key); if (!e) return null; const list = (((e.sent || e.sendIntent).lines || {})[row.key] || []).filter(pc => !(pc && pc.removed)), pc = list[0], F = pc && (e.files || []).find(f => f.id === pc.f); return { metal: (F && F.metal) || null, pieces: list.length, sent: !!e.sent, backs: list.filter(q => { const G = q && (e.files || []).find(x => x.id === q.f); return !!G && Array.isArray(G.charmBacks) && G.charmBacks.includes(Number.isInteger(q.i) ? q.i : 0); }).length }; };
   const ctx = { optionMaps: maps.optionMaps, aliases: maps.aliases, noDesign: maps.noDesign, customDone, customRead, customDecided, listingSkus: Object.assign({}, (ls && (ls.tables || ls.listings)) || {}), seen: O.seenSkus ? O.seenSkus((o.seenLines || []).concat(rows.map(r => r.row.line))) : {},
     masterEntry: M.entryFor, masterLoose: M.looseFor, masterShared: M.sharedFor, masterLike: M.likeFor, masterSkus: () => [...M.entries.keys()] };
   const batch = db.batch(); let n = 0;

@@ -5285,6 +5285,8 @@ function cleanCustomSheet(b) {
       const cq = {}; for (const k of Object.keys(f.charmQty).slice(0, 400)) { const i = Number(k), v = f.charmQty[k], n = typeof v === "number" ? v : NaN; if (/^\d{1,5}$/.test(k) && i < pieces && Number.isInteger(n) && n >= 0 && n <= 99) cq[String(i)] = n; }
       if (Object.keys(cq).length) file.charmQty = cq;
     }
+    // (CUSTOMBACK, 26 Nov 2026: the charms of the file that have a back drawn above them, by index: their pieces' backs are engraved from it, approved in Design & Engrave)
+    if (Array.isArray(f.charmBacks)) { const cb = [...new Set(f.charmBacks.filter(i => Number.isInteger(i) && i >= 0 && i < Math.max(1, pieces)))].slice(0, 400); if (cb.length) file.charmBacks = cb; }
     files.push(file); ids.set(file.id, file);
   }
   const lines = {}, keys = Object.keys(sent.lines);

@@ -391,7 +391,7 @@ async function resumeTask(ctx, E, lc, l, job, opts) {
   const copies = copiesOf(E, lc, job); if (!copies.length) return faceArt ? "none" : "wait";
   for (const id of copies) { const sh = await sheetOf(E, id); if (!sh) return faceArt ? "none" : "wait"; if (faceArt && num(sh.laserDoneAt) > 0) return "none"; }   // (a cut sheet keeps its files as they were cut)
   if (faceArt) { await E.piece.poolRows(copies); if (!copies.every(id => { const a = artAtOf(E.piece.rows.get(id), "front"); return a > 0 && a <= num(job.approvedAt) + 2000; })) return "none"; }   // (only a front the editor drew, unchanged since its approval)
-  else if (!job.place) { await E.piece.poolRows(copies); if (!wordless(job) || !copies.every(id => { const a = artAtOf(E.piece.rows.get(id), Faces.faceOf(job) === "front" ? "front" : "back"); return a > 0 && a <= num(job.approvedAt) + 2000; })) return "none"; }   // (ARTAPPROVED: only artwork that has not been changed since it was approved)
+  else if (!job.place) { await E.piece.poolRows(copies); if (!wordless(job) || !copies.every(id => { const r = E.piece.rows.get(id), front = Faces.faceOf(job) === "front", a = artAtOf(r, front ? "front" : "back"); return (a > 0 && a <= num(job.approvedAt) + 2000) || (!front && num(r && r.fileBack) > 0); })) return "none"; }   // (CUSTOMBACK: a back drawn in the custom file has no edit stamp: its row's fileBack)   // (ARTAPPROVED: only artwork that has not been changed since it was approved)
   const id = taskIdOf(job.key, job.approvedAt) + (faceArt ? "~fa1" : ""), ref = ctx.db.collection(TASKS).doc(id), now = Date.now();
   return ctx.db.runTransaction(async tx => {
     await fenceTx(ctx, tx);

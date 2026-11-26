@@ -317,9 +317,11 @@ async function readLine(ctx, P, key, row, l, hooks) {
   }
 
   /* ── the three ends of a reading (the page's setNone, toWords with EDITOR WORDS, setReady), and the order's timeline ── */
+  /** CUSTOMBACK (26 Nov 2026): the job's piece is cut from a charm whose custom file drew its back (its pool row's fileBack, written when it was made): that drawing is its back's art */
+  const fileBackOf = j => { const id = j && (j.copies || [])[0], r = id && P.sctx && P.sctx.poolRow ? P.sctx.poolRow(String(id)) : null; return !!(r && num(r.fileBack) > 0); };
   const setNone = (j, why) => { j.state = "none"; j.reason = why; j.row.engrave = Object.assign({}, j.row.engrave, { needed: false, state: "none", reason: why, approved: true }); return j; };
   /** EDITOR WORDS: the face's artwork edit adds parts (a back's added cut lines are refused by the editor, so they do not count) */
-  const editorArt = j => { const id = (j.copies || [])[0]; if (!id) return false; const a = P.art(id, faceOf(j)); return !!a && Array.isArray(a.added) && a.added.some(e => e && (isFront(j) || (e.role !== "cut" && e.artRole !== "cut"))); };
+  const editorArt = j => { const id = (j.copies || [])[0]; if (!id) return false; if (!isFront(j) && fileBackOf(j)) return true; const a = P.art(id, faceOf(j)); return !!a && Array.isArray(a.added) && a.added.some(e => e && (isFront(j) || (e.role !== "cut" && e.artRole !== "cut"))); };
   const artOnly = j => {   // (the page's artOnlyPlacement: no words, the editor's parts are what is engraved; it waits for Approve)
     Object.assign(j, { lines: [], lineInput: [], text: "", wantSize: null, nudged: false, claude: null, reason: null, missing: null, state: "review" });
     j.row.engrave = Object.assign({}, j.row.engrave, { needed: true, state: "review", text: "", approved: false });
@@ -365,6 +367,7 @@ async function readLine(ctx, P, key, row, l, hooks) {
     neverEngraves: neverOf, neverWhy, NEVER_OPEN: j => !["approved", "written"].includes(j.state), faceOf,
     trust: () => settings.engraveConfidence,
     customSent: () => false,   // (a line sent to a custom sheet: the world's reading has engraveCandidate false for it already)
+    fileBack: j => fileBackOf(j),   // (CUSTOMBACK)
     finished: r => O.FINISHED_LINE.has(r.state)
   });
   /** the page's classify(): the reading, then the timeline line (never for a line read before it is pooled: ENGPRE) */

@@ -31,6 +31,7 @@ function create(o) {
       const parsed = await P.parseSource(bytes, String(F.name || "design").replace(ACCEPT, "") + ".pdf");
       const g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +settings.minPt || 6 });
       if (!g.charms.length) throw new Error(`${F.name}: no closed cut outline in it`);
+      if (P.customBacks) P.customBacks(parsed, g);   // (CUSTOMBACK: as the card read it: a back drawn above its charm is that charm's back engraving, never a piece)
       for (const m of g.orphans || []) {
         if (!m.bbox) continue;
         const c = g.charms.find(c => { const b = c.bbox, pad = 2; return m.bbox[0] >= b[0] - pad && m.bbox[1] >= b[1] - pad && m.bbox[2] <= b[2] + pad && m.bbox[3] <= b[3] + pad; });
@@ -107,11 +108,13 @@ function create(o) {
       pools.push(Object.assign({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0 }, +row.frontAt > 0 ? { frontAt: +row.frontAt } : {},
         { transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", material: F.metal, size: null, form: sp.form || null, chain: sp.chain || null, copy, quantity: mine.length, charmHash: c.hash || null, masterHash: null,
           aiPath: (F.cloud && F.cloud.path) || null, engrave: false, state: "ready", lineKey: row.key, updateTs: row.order.updateTs || null, custom: true, customFile: F.name, customCk: e.ck, customIndex: pc.i }, g.areaPt2 > 0 && g.widthPt > 0 && g.heightPt > 0 ? g : {}, fields || {}));
+      // (CUSTOMBACK, 26 Nov 2026: a piece cut from a charm whose file drew its back: its row says so (the engraving reads it), its back waits for Approve)
+      { const fbN = Array.isArray(c.fileBack) ? c.fileBack.length : 0; if (fbN) { c.engravable = true; pools[pools.length - 1].fileBack = fbN; } }
       if (fields) Object.assign(c, fields);
       charms.push(c);
     }
     if (!charms.length) { row.state = "noDesign"; row.reason = "its sent designs were removed from the sheets"; return null; }
-    row.engrave = Object.assign({}, row.engrave || {}, { needed: false, state: "none", approved: true });
+    row.engrave = charms.some(c => Array.isArray(c.fileBack) && c.fileBack.length) ? Object.assign({}, row.engrave || {}, { needed: true, state: "classify", approved: false }) : Object.assign({}, row.engrave || {}, { needed: false, state: "none", approved: true });
     return { sp: Object.assign({}, sp, { material: charms[0].metal, quantity: charms.length, designSku: sp.designSku || row.line.sku || "CUSTOM" }), pools, charms, custom: true };
   }
   return { sentOf, prepare, read };
