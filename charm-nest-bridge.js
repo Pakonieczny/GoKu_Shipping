@@ -17995,7 +17995,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const lines = {}; for (const r of rows) lines[r.key] = [];
     for (const F of files) {
       const n = Math.max(0, Math.round(+countOf(F) || 0)), many = multiFile(F) && n > 1, each = i => (many ? charmQtyOf(F, i) : Math.max(1, Math.round(+F.qty || 1)));
-      const own = (F.mono && rows.find(x => x.key === F.mono.line)) || null;
+      const own = (F.mono && rows.find(x => x.key === F.mono.line)) || (F.line && rows.find(x => x.key === F.line)) || null;   // (PIECEPICK: a design dropped for one charm, all of it on that charm's line)
       let most = 0; for (let i = 0; i < n; i++) most = Math.max(most, each(i));
       for (let q = 0, k = 0; q < most; q++) {
         const set = []; for (let i = 0; i < n; i++) if (each(i) > q) set.push(i);
@@ -18050,6 +18050,58 @@ const CustomSheet = window.CustomSheet = (() => {
   /** The pieces the order asks for, as the card says them ("2 pieces ordered"): an earring pair is a Left and a Right per unit (pairPlan, the same count notReady
    *  waits for), every other line what its quantity says, as before. (defaultQty is something else: how many copies of ONE dropped design start the row.) */
   const piecesOrdered = it => Math.max(1, linesOf(it).reduce((n, r) => { const plan = r && r.spec && r.order && r.line ? pairPlan(r) : null; return n + (plan ? plan.length : (r.spec && r.spec.quantity) || 1); }, 0));
+  /* PIECEPICK (Paul, 26 Nov 2026: "when an order has multiple pieces, there's no way to select which specific piece/charm in a given multi-piece order is supposed to be updated ... when the user drops a
+     new .ai file to update the charm file"). A matched order of SEVERAL pieces shows one pill per piece on its Review card: the Design & Engrave piece pills (egPcStrip / egPcTab), numbered, with the
+     piece's metal. The piece picked is the charm a dropped design replaces: the design is tagged with that piece's line (F.line), and the send covers that line alone (sendRows, planLines): the order's
+     other charms stay exactly as they are matched, and those still on hold are released with it (ReviewRelease, sendOwn). The pieces of one line (an earring pair's Left and Right, the copies of a line
+     bought twice) are one charm, so a design replaces them together. A custom listing's card, and an order of one charm, send to every line as before. */
+  const picks = new Map();   // card key → the line its next dropped design replaces (the pill a person pressed; kept for the session only)
+  const lineMetalCode = r => { try { const c = window.CharmNestEngraveOrder && CharmNestEngraveOrder.metalOf ? CharmNestEngraveOrder.metalOf(r) : ""; if (c) return String(c); } catch (_) { /* below */ } const m = r && r.spec && r.spec.material; return m ? labelOf(m) : ""; };
+  const lineSkuOf = r => txt(String((r && r.spec && r.spec.designSku) || (r && r.line && r.line.sku) || ""));
+  const lineQty = r => Math.max(1, Math.round(+(r && r.spec && r.spec.quantity) || 1));
+  /** Every piece of the card's open lines, numbered as a person counts them: an earring pair's Left then Right, a line of N its N copies. */
+  function cardPieces(it) {
+    const out = []; let n = 0;
+    for (const r of openLines(it)) {
+      const plan = pairPlan(r), q = plan ? plan.length : lineQty(r), metal = lineMetalCode(r), sku = lineSkuOf(r);
+      for (let k = 0; k < q; k++) out.push({ n: ++n, line: r.key, row: r, side: plan && plan[k] ? plan[k].side : "", k, of: q, metal, sku });
+    }
+    return out;
+  }
+  /** Does a dropped design replace ONE charm of this card (a matched order with two or more lines that take designs), rather than every line, as a custom listing's card does? */
+  const pickable = it => { try { const r0 = linesOf(it)[0]; return !!it && it.kind !== "customOrder" && !(r0 && r0.spec && r0.spec.special) && openLines(it).length > 1; } catch (_) { return false; } };
+  /** The line the card's next dropped design replaces: the pill pressed, else the first open line (the one the card shows first). */
+  function pickRow(it) {
+    const lines = openLines(it); if (!lines.length) return null;
+    const want = picks.get(ckOf(it)); return (want && lines.find(r => r.key === want)) || lines[0];
+  }
+  function setPick(it, key) { if (!openLines(it).some(r => r.key === key)) return; const ck = ckOf(it); if (picks.get(ck) === key) return; picks.set(ck, key); ver++; redraw(); }
+  /** The pills: one per piece (number, metal dot, metal), the pieces of line `sel` pressed. o.attr: the data attribute a press reads; o.locked: shown, not pressable. */
+  function pillsHtml(it, sel, o) {
+    o = o || {}; const ps = cardPieces(it); if (ps.length < 2) return "";
+    const on = ps.filter(p => p.line === sel), a = on[0], z = on[on.length - 1], attr = o.attr || "data-rv-piece";
+    const of = !on.length ? `${ps.length} pieces` : on.length === 1 ? `Piece ${a.n} of ${ps.length}` : `Pieces ${a.n}–${z.n} of ${ps.length}`;
+    return `<span class="egPcStrip rvPcStrip" role="group" aria-label="${esc(o.label || `The ${ps.length} pieces of this order: the piece picked is the charm a dropped design replaces`)}" data-n="${ps.length}"><span class="egPcOf">${esc(of)}</span>` + ps.map((p, i) => {
+      const pressed = p.line === sel, next = i > 0 && ps[i - 1].line !== p.line;
+      const what = `${p.sku || "no SKU"}${p.side ? ` · ${p.side === "L" ? "Left" : "Right"} ear` : p.of > 1 ? ` · ${p.k + 1} of ${p.of}` : ""}`;
+      const t = `${o.locked ? "" : pressed ? "Picked: " : "Pick: "}piece ${p.n} of ${ps.length}, ${what}${p.of > 1 ? ` · one charm of ${p.of} pieces: a new design replaces all ${p.of}` : ""}`;
+      return `<button type="button" class="egPcTab${next ? " rvPcNext" : ""}" ${attr}="${esc(p.line)}" aria-pressed="${pressed}"${o.locked ? " disabled" : ""} title="${esc(t)}"><b class="egPcNo">${p.n}</b><i class="egPcDot" data-metal="${esc(p.metal)}" aria-hidden="true"></i><span class="egPcLbl">${esc(p.metal || "—")}</span></button>`;
+    }).join("") + `</span>`;
+  }
+  /** The pills on a Review card: an order of several pieces whose card takes designs (never a custom listing's), the line picked pressed; "" otherwise. */
+  function cardPills(it) {
+    try {
+      if (!it || it.kind === "customOrder") return "";
+      const c = cardOf(it); if (!c || c.sent || c.e?.sendIntent || !(c.dropOk || c.files.length) || cardPieces(it).length < 2) return "";
+      const r = pickRow(it); return r ? pillsHtml(it, r.key) : "";
+    } catch (_) { return ""; }
+  }
+  /** The lines a send covers: every open line, or (PIECEPICK) only the lines its designs were dropped for. */
+  function sendRows(it, e) {
+    const open0 = openLines(it), want = new Set(((e && e.files) || []).map(F => F && !F.mono && F.line).filter(Boolean));
+    return want.size ? open0.filter(r => want.has(r.key)) : open0;
+  }
+  const targetsOf = e => new Set(((e && e.files) || []).map(F => F && !F.mono && F.line).filter(Boolean));
   /* ── an earring pair cut from the customer's own designs (Paul, 9 Oct 2026, 18:47) ──
      A pair of earrings is a LEFT and a RIGHT piece for every pair bought (charm-nest-pair.js piecesFor), a custom order too. The customer's file may draw
      both ears (two bodies: the one on the left is the Left) or one (the Right is then the Left mirrored, as for every other design). The card's Send to
@@ -18069,7 +18121,8 @@ const CustomSheet = window.CustomSheet = (() => {
     const val = needOfNow(e, list); needMemo.set(e.ck, { ver, list, n: list.length, t: Date.now(), val }); return val;
   }
   function needOfNow(e, list) {
-    const rows = list.filter(r => r && r.spec && Review.cardKey(r) === e.ck && r.state !== "gone" && !(r.poolIds || []).length && !r.spec.customDone && !["committed", "skipped"].includes(r.state));
+    const want = targetsOf(e);   // (PIECEPICK: designs dropped for one charm need only that charm's pieces)
+    const rows = list.filter(r => r && r.spec && Review.cardKey(r) === e.ck && r.state !== "gone" && !(r.poolIds || []).length && !r.spec.customDone && !["committed", "skipped"].includes(r.state) && (!want.size || want.has(r.key)));
     let total = 0, pairs = 0, mono = 0;
     for (const r of rows) { const plan = pairPlan(r); if (plan) { total += plan.length; pairs += plan.length; } else { const n = Math.max(1, Math.round(+r.spec.quantity || 1)); total += n; if (r.spec.special && r.spec.special.monogram) mono += n; } }
     return { total, pairs, mono };
@@ -18101,14 +18154,14 @@ const CustomSheet = window.CustomSheet = (() => {
     if (e && staleReading(e)) ver++;
     if (!row || it.done) return null;
     const cut = !!(row.spec && row.spec.special && row.spec.special.notCut);
-    const sent = !!decisionOf(row), locked = !!(e?.sendIntent || busy.has(ck));
+    const sent = !!decisionOf(row) || !!(e && e.sent), locked = !!(e?.sendIntent || busy.has(ck));   // (PIECEPICK: a send that replaced another charm of the order is this card's send too)
     const open = openLines(it).length > 0;
     // a card takes designs while it can still be cut from them: not sent, not completed, not chain only (never cut)
     return { ck, e, files: e ? e.files : [], sent, open:open || !!e?.sendIntent, cut, busy: busy.get(ck) || "", why: sent ? "" : e?.sendIntent ? "" : notReady(e), dropOk: !sent && !locked && open && !cut };
   }
   // the card's own designs only (one card's file being read no longer rebuilds every other custom card, which also
   // dropped the drag state of the card under the pointer)
-  const stamp = it => { const c=cardOf(it), e = c?.e; return [keepStamp(c?.ck || ckOf(it)), busy.get(c?.ck || ckOf(it)) || "", sheetSig(it), e ? e.files.map(F => F.id + F.state + F.metal + F.qty + (multiFile(F) ? JSON.stringify(F.charmQty) : "") + (tooBig(F) ? "!" : "")).join() + (e.sent ? "s" + e.sent.at + (e.sent.by || "") : e.sendIntent ? "p" + e.sendIntent.at + (e.sendError || "") : "") : ""].join("|"); };
+  const stamp = it => { const c=cardOf(it), e = c?.e; return [keepStamp(c?.ck || ckOf(it)), busy.get(c?.ck || ckOf(it)) || "", sheetSig(it), picks.get(ckOf(it)) || "", e ? e.files.map(F => F.id + F.state + F.metal + F.qty + (F.line || "") + (multiFile(F) ? JSON.stringify(F.charmQty) : "") + (tooBig(F) ? "!" : "")).join() + (e.sent ? "s" + e.sent.at + (e.sent.by || "") : e.sendIntent ? "p" + e.sendIntent.at + (e.sendError || "") : "") : ""].join("|"); };
 
   /* ── reading a design: its PDF (a .dxf read into one), traced as a master's is ── */
   function read(F) {
@@ -18203,28 +18256,55 @@ const CustomSheet = window.CustomSheet = (() => {
      selects the toggle"). The question is asked before the first design lands on an order (a drop on its card, a drop on its window, the window's Add button); the files wait in memory meanwhile. Cancel (or Esc)
      adds nothing. Nothing is ever saved for the listing by this: only the window's "Save to the charm repository and link this listing" switch (off every time it opens) does that. ── */
   let asking = null;
+  /* PIECEPICK (Paul, 26 Nov 2026): on an order of several charms the question also asks WHICH piece the file replaces (the card's pills, the one picked there pressed), and on a matched order (not a custom
+     listing) whether the file is for this order only or also updates the charm repository ("The user should also be allowed to choose whether such a case updates the charm repository or just this
+     order"): the second presses the designs window's own switch ("Save to the charm repository and link this listing") once the design is read, which asks to confirm, as it always does. Nothing is
+     saved for the listing by the question itself. → false (Cancel, Esc), or { line: the line the file replaces | null, keep: true when the repository is to be updated } */
   function askOverride(it) {
     if (asking) return Promise.resolve(false);                       // (a second drop while the question is open is the same question: the page behind it is inert)
+    const many = cardPieces(it).length > 1 && it.kind !== "customOrder", pick = many ? pickable(it) : false, r00 = linesOf(it)[0];
+    const matchedOrder = it.kind !== "customOrder" && !(r00 && r00.spec && r00.spec.special);
+    let sel = (many ? pickRow(it) : null) || r00, keep = false;
     // (NOMATCHASK, Paul 20 Oct 2026, order 4203691345 TEST_@: "This message should only appear when there is an actual match to an existing vector file": a SKU the library does not hold, or a line
     //  still asking which charm it is, has no vector design selected, whatever SKU Etsy gave it)
-    const row = linesOf(it)[0], sp = row && row.spec, ds = sp && sp.designSku && !sp.ownDesign && !sp.noDesign ? String(sp.designSku) : "";
-    const matched = !!ds && !!(window.Master && Master.entryFor && Master.entryFor(ds)) && !(sp.problems || []).some(p => ["unmatchedSku", "needsMapping", "blockedSku"].includes(p.kind)) && !["unmatched"].includes(row.state);
-    const sku = matched ? txt(ds) : "";
+    const skuOf = row => { const sp = row && row.spec, ds = sp && sp.designSku && !sp.ownDesign && !sp.noDesign ? String(sp.designSku) : "";
+      const matched = !!ds && !!(window.Master && Master.entryFor && Master.entryFor(ds)) && !(sp.problems || []).some(p => ["unmatchedSku", "needsMapping", "blockedSku"].includes(p.kind)) && !["unmatched"].includes(row.state);
+      return matched ? txt(ds) : ""; };
     const d = el("dialog", "cuAsk"); d.id = "cuAsk"; d.setAttribute("aria-labelledby", "cuAskT"); d.setAttribute("aria-describedby", "cuAskB");
     const b = el("div", "dlgBody"); b.id = "cuAskB";
-    const p1 = el("p", "cuAskP"), strong = t => { const x = document.createElement("b"); x.textContent = t; return x; }, T = t => document.createTextNode(t);
-    if (sku) p1.append(T("This listing already has a vector design selected: "), strong(sku), T(". The file you add replaces it for "), strong("this order only"), T("."));
-    else p1.append(T("The file you add is used for "), strong("this order only"), T("."));
-    const p2 = el("p", "cuAskP sub"); p2.textContent = "Later orders of this listing are not changed. Nothing is kept for them unless you switch on \u201cSave to the charm repository and link this listing\u201d in the designs window.";
-    b.append(p1, p2);
-    const head = el("div", "dlgHead"), h = el("h3"); h.id = "cuAskT"; h.textContent = "Add a vector file to this order?"; head.append(h);
+    const strong = t => { const x = document.createElement("b"); x.textContent = t; return x; }, T = t => document.createTextNode(t);
+    const pickBox = many ? el("div", "cuAskPick") : null, p1 = el("p", "cuAskP"), p2 = el("p", "cuAskP sub"), keepBox = matchedOrder ? el("div", "cuAskKeep") : null;
+    if (pickBox) { const q = el("p", "cuAskP cuAskQ"); q.textContent = pick ? "Which piece does the file replace?" : "The file replaces this charm:"; pickBox.append(q, el("div", "cuAskPills")); }
+    if (keepBox) keepBox.setAttribute("role", "radiogroup"), keepBox.setAttribute("aria-label", "What the file updates");
+    function draw() {
+      if (pickBox) { const host = pickBox.querySelector(".cuAskPills"); host.innerHTML = pillsHtml(it, sel && sel.key, { attr: "data-ask-piece", locked: !pick, label: "The pieces of this order: press the one the file replaces" }); }
+      const sku = skuOf(sel), n = sel ? cardPieces(it).filter(x => x.line === sel.key).length : 0, them = n > 1 ? `its ${n} pieces` : "it";
+      p1.replaceChildren();
+      if (many && sel) { if (sku) p1.append(T("Piece selected: "), strong(sku), T(`. The file replaces ${them} for `), strong(keep ? "this order, and the repository" : "this order only"), T(". The order's other charms stay as they are.")); else p1.append(T(`The file is used for the piece selected (${them}), for `), strong(keep ? "this order, and the repository" : "this order only"), T(". The order's other charms stay as they are.")); }
+      else if (sku) p1.append(T("This listing already has a vector design selected: "), strong(sku), T(". The file you add replaces it for "), strong(keep ? "this order, and the repository" : "this order only"), T("."));
+      else p1.append(T("The file you add is used for "), strong("this order only"), T("."));
+      p2.textContent = keepBox
+        ? (keep ? "The designs window then asks you to confirm: the design is saved to the charm repository with its own SKU and this listing is linked to it, so its later orders use it." : "Later orders of this listing are not changed. Nothing is kept for them.")
+        : "Later orders of this listing are not changed. Nothing is kept for them unless you switch on \u201cSave to the charm repository and link this listing\u201d in the designs window.";
+      if (keepBox) keepBox.querySelectorAll("[data-ask-keep]").forEach(x => { const on = (x.dataset.askKeep === "1") === keep; x.setAttribute("aria-checked", on ? "true" : "false"); x.tabIndex = on ? 0 : -1; });
+    }
+    if (keepBox) keepBox.innerHTML = `<button type="button" class="cuAskOpt" role="radio" data-ask-keep="0"><b>This order only</b><span>The file replaces the charm for this order. Later orders of this listing are not changed.</span></button>`
+      + `<button type="button" class="cuAskOpt" role="radio" data-ask-keep="1"><b>Update the charm repository</b><span>Also save the file to the charm repository and link this listing to it, so its later orders use it.</span></button>`;
+    b.append(...[pickBox, p1, keepBox, p2].filter(Boolean));
+    draw();
+    const head = el("div", "dlgHead"), h = el("h3"); h.id = "cuAskT"; h.textContent = many ? "Replace a charm of this order?" : "Add a vector file to this order?"; head.append(h);
     const foot = el("div", "dlgFoot"), no = el("button", "btn ghost sm"), yes = el("button", "btn gold sm");
     no.type = yes.type = "button"; no.textContent = "Cancel"; yes.textContent = "Add vector file"; no.setAttribute("data-ask-no", ""); yes.setAttribute("data-ask-yes", "");
     foot.append(no, yes); const box = el("div", "dlg"); box.append(head, b, foot); d.append(box); document.body.appendChild(d);
+    b.addEventListener("click", ev => {
+      const pb = ev.target.closest("[data-ask-piece]"); if (pb && pick && !pb.disabled) { const r = openLines(it).find(x => x.key === pb.dataset.askPiece); if (r && (!sel || r.key !== sel.key)) { sel = r; draw(); const again = b.querySelector(`[data-ask-piece="${CSS.escape(r.key)}"]`); if (again) again.focus({ preventScroll: true }); } return; }
+      const kb = ev.target.closest("[data-ask-keep]"); if (kb) { keep = kb.dataset.askKeep === "1"; draw(); kb.focus({ preventScroll: true }); }
+    });
+    if (keepBox) keepBox.addEventListener("keydown", ev => { if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(ev.key)) return; ev.preventDefault(); keep = !keep; draw(); const on = keepBox.querySelector(`[data-ask-keep="${keep ? 1 : 0}"]`); if (on) on.focus(); });
     return asking = new Promise(res => {
       let done = false;
       const fin = v => { if (done) return; done = true; asking = null; try { d.close(); } catch (_) { /* gone */ } d.remove(); res(v); };
-      no.onclick = () => fin(false); yes.onclick = () => fin(true);
+      no.onclick = () => fin(false); yes.onclick = () => fin({ line: many && sel ? sel.key : null, keep: !!(keepBox && keep) });
       d.addEventListener("cancel", ev => { ev.preventDefault(); fin(false); });   // Esc
       d.addEventListener("close", () => fin(false));
       try { d.showModal(); yes.focus(); } catch (_) { fin(false); }
@@ -18242,12 +18322,16 @@ const CustomSheet = window.CustomSheet = (() => {
     if (!c.open) { toast("Every piece of that order is already on a sheet or completed", "bad", 5000); return; }
     if (c.cut && !c.files.length) { toast("That order is not laser cut, so it takes no designs", "bad", 5000); return; }
     // REVDROP (Paul, 15 Oct 2026): a vector file dropped on an order's card, or added in its window, asks first (the first design of an order): it replaces the listing's selected vector for THIS order only
-    if (opts.gate && !(all()[c.ck] && all()[c.ck].files.length)) { askOverride(it).then(yes => { if (yes) add(it, ok, Object.assign({}, opts, { gate: false })); }); return; }
+    if (opts.gate && !(all()[c.ck] && all()[c.ck].files.length)) { askOverride(it).then(ans => { if (ans) add(it, ok, Object.assign({}, opts, { gate: false }, ans.line ? { line: ans.line } : {}, ans.keep ? { keepWant: true } : {})); }); return; }
     const row = linesOf(it)[0];
+    // (PIECEPICK: on an order of several charms each design is for ONE of them: the piece picked in the question, else the card's pill; it is cut as many times as that charm's line asks)
+    const tgt = opts.mono ? null : (opts.line && openLines(it).find(r => r.key === opts.line)) || (pickable(it) ? pickRow(it) : null);
     const e = all()[c.ck] || (all()[c.ck] = { ck: c.ck, rid: String(row.order.receiptId), at: Date.now(), files: [], sent: null });
     // (PIECES, Paul, 16 Oct 2026: opts.qty / opts.mono / opts.metal are the monogram widget's: ONE piece's design, quantity 1, tagged with the line and slot it is the design of, on the metal the design it replaces had)
-    const metal = (opts.metal && metalOf(opts.metal) ? opts.metal : null) || (e.files.length ? e.files[e.files.length - 1].metal || defaultMetal(it) : defaultMetal(it)), qty = opts.qty >= 1 ? Math.min(99, Math.round(opts.qty)) : defaultQty(it);
-    const fresh = ok.map(f => Object.assign({ id: uid(), name: f.name, kind: /\.dxf$/i.test(f.name) ? "dxf" : "ai", size: f.size || 0, bytes: null, hash: null, cloud: null, metal, qty, pieces: 0, wMm: 0, hMm: 0, thumb: null, state: "reading", error: null }, opts.mono && opts.mono.line ? { mono: Object.assign({ line: String(opts.mono.line), slot: opts.mono.slot || null }, +opts.mono.hoops > 0 ? { hoops: +opts.mono.hoops } : {}) } : {}));   // (MONOHOOPS: mono.hoops, the design carries the two hoops)
+    const metal = (opts.metal && metalOf(opts.metal) ? opts.metal : null) || (tgt && tgt.spec && metalOf(tgt.spec.material) ? tgt.spec.material : null) || (e.files.length ? e.files[e.files.length - 1].metal || defaultMetal(it) : defaultMetal(it)), qty = opts.qty >= 1 ? Math.min(99, Math.round(opts.qty)) : tgt ? lineQty(tgt) : defaultQty(it);
+    if (tgt) picks.set(c.ck, tgt.key);
+    if (opts.keepWant) e.keepWant = { line: tgt ? tgt.key : null, at: Date.now() };   // (PIECEPICK: "Update the charm repository" was picked in the question: the window's switch is pressed for it once the design is read, and asks to confirm as ever)
+    const fresh = ok.map(f => Object.assign({ id: uid(), name: f.name, kind: /\.dxf$/i.test(f.name) ? "dxf" : "ai", size: f.size || 0, bytes: null, hash: null, cloud: null, metal, qty, pieces: 0, wMm: 0, hMm: 0, thumb: null, state: "reading", error: null }, tgt ? { line: tgt.key } : {}, opts.mono && opts.mono.line ? { mono: Object.assign({ line: String(opts.mono.line), slot: opts.mono.slot || null }, +opts.mono.hoops > 0 ? { hoops: +opts.mono.hoops } : {}) } : {}));   // (MONOHOOPS: mono.hoops, the design carries the two hoops)
     fresh.forEach((F, i) => pending.set(F.id, ok[i]));
     if (!e.files.length && !opts.quiet) stripNew.add(c.ck);           // the card's strip of designs opens its room when it first shows
     if (!opts.quiet) for (const F of fresh) arriving.add(F.id);
@@ -18373,7 +18457,8 @@ const CustomSheet = window.CustomSheet = (() => {
     if(how.from && (why || !e?.sendIntent && !employeeName())){toast(why || "Your name is needed first","bad",5000);return;}
     if(why){if(!how.recover){if((e && e.files.length) || !hint){open(it,{from:cardNode(ck)});nudge();}else{lit(hint,"cuNudge");toast(why,"bad",5000);}}return;}
     const who=e.sendIntent?.by || (how.by && String(how.by).trim()) || employeeName();if(!who){if(!how.recover)open(it,{askName:true,from:cardNode(ck)});return;}
-    const rows=e.sendIntent?currentRows(e):openLines(it);
+    const rows=e.sendIntent?currentRows(e):sendRows(it,e);   // (PIECEPICK: only the charms its designs were dropped for)
+    if(!e.sendIntent && !rows.length && targetsOf(e).size){if(!how.recover)toast("The piece this design was dropped for can no longer take a design (it is cut, completed or gone): remove the design, pick another piece and drop it again","bad",8000);return;}
     if(!rows.length || e.sendIntent && rows.length!==Object.keys(e.sendIntent.lines).length){if(!how.recover)toast("The recorded pieces of the order are still loading; retry when the order is available","bad",5000);return;}
     const sigOf=list=>JSON.stringify(list.map(F=>[F.id,F.hash,F.metal,F.qty,multiFile(F)?F.charmQty:null])),files=e.files.slice(), fileSig=sigOf(files);   // (MULTICHARM: a charm's own count changed under the send is a change too)
     const current=()=>owns(e,owner,rows) && e.files.length===files.length && fileSig===sigOf(e.files);
@@ -18819,6 +18904,7 @@ const CustomSheet = window.CustomSheet = (() => {
     node.querySelectorAll("[data-cu-designs]").forEach(b => b.onclick = ev => { ev.stopPropagation(); open(it, { browse: !c.files.length, from: node }); });
     node.querySelectorAll("[data-cu-keep-retry]").forEach(b => b.onclick = ev => { ev.stopPropagation(); if (b.dataset.cuKeepRetry === "repo") KeepUI.askPwFocus(); keepRetryFromCard(c.ck, it, node, b.dataset.cuKeepRetry); });
     node.querySelectorAll("[data-cu-mono]").forEach(b => b.onclick = ev => { ev.stopPropagation(); if (window.Engrave && Engrave.openMonogram) Engrave.openMonogram(linesOf(it)[0].key); });
+    node.querySelectorAll("[data-rv-piece]").forEach(b => b.onclick = ev => { ev.stopPropagation(); setPick(it, b.dataset.rvPiece); });   // (PIECEPICK: the piece a dropped design replaces)
     // what just came onto the card: its strip of designs opens its room the first time, a new picture settles in
     const strip = node.querySelector(".cuDesigns");
     if (strip && stripNew.delete(c.ck) && !motionOff()) queueMicrotask(() => { if (strip.isConnected) Motion.grow(strip, { ms: 700 }); });
@@ -18983,6 +19069,9 @@ const CustomSheet = window.CustomSheet = (() => {
   const customNever = () => { try { const row = D.it ? linesOf(D.it)[0] : null, Fc = window.CharmNestEngraveFaces; return !!(row && Fc && Fc.neverOf && Fc.neverOf(row)); } catch (_) { return false; } };
   function rowHtml(F) {
     const big = tooBig(F), err = F.state === "error", many = F.state === "ready" && multiFile(F);
+    // (PIECEPICK: a design dropped for one charm of the order says which piece it replaces)
+    const forR = F.line && D.it ? linesOf(D.it).find(r => r.key === F.line) : null, forP = forR ? cardPieces(D.it).filter(x => x.line === F.line) : [];
+    const forHtml = forR ? `<span class="dim cuFor">Replaces ${forP.length > 1 ? `pieces ${forP[0].n}\u2013${forP[forP.length - 1].n}` : forP.length ? `piece ${forP[0].n}` : "the piece picked"} \u00b7 ${esc(lineSkuOf(forR) || "no SKU")}; the order's other charms stay as they are</span>` : "";
     const size = F.state === "ready" ? `${F.wMm.toFixed(1)} × ${F.hMm.toFixed(1)} mm · ${plural(F.pieces, many ? "charm" : "piece")}${F.kind === "dxf" && F.units ? ` · DXF in ${F.units}` : ""}` : "";
     // (MULTICHARM: ink that lies within reach of no cut outline is not cut: said, never dropped without a word)
     const loose = (F.state === "ready" && +F.loose > 0 ? `<span class="warn">${plural(+F.loose, "part")} of the drawing ${+F.loose === 1 ? "lies" : "lie"} outside every cut outline: not cut</span>` : "")
@@ -18990,7 +19079,7 @@ const CustomSheet = window.CustomSheet = (() => {
       + (F.state === "ready" && +F.backs > 0 ? (customNever() ? `<span class="warn">This order is earrings, which are never engraved (the shop's rule): the back${+F.backs === 1 ? "" : "s"} drawn in the file ${+F.backs === 1 ? "is" : "are"} not engraved</span>` : `<span class="dim">${+F.backs === F.pieces && F.pieces > 1 ? "Every charm has" : plural(+F.backs, "charm") + (+F.backs === 1 ? " has" : " have")} a back engraving from the file: approved in Design &amp; Engrave</span>`) : "")
       + (F.state === "ready" && Array.isArray(F.backNotes) ? F.backNotes.map(t => `<span class="warn">${esc(t)}</span>`).join("") : "");
     return `<div class="cuThumb">${F.thumb ? `<img alt="${esc(F.name)}" src="${F.thumb}">` : F.state === "reading" ? '<span class="spin" aria-hidden="true"></span>' : '<span class="x" aria-hidden="true">!</span>'}</div>` +
-      `<div class="cuMeta"><b title="${esc(F.name)}">${esc(F.name)}</b>${F.state === "reading" ? '<span class="dim">Reading the design…</span>' : err ? `<span class="err">${esc(F.error || "could not be read")}</span>` : `<span class="dim">${esc(size)}</span>${big ? `<span class="err">Too big for the ${esc(labelOf(F.metal))} plate</span>` : !F.metal ? '<span class="warn">Pick a metal for it</span>' : ""}${loose}`}</div>` +
+      `<div class="cuMeta"><b title="${esc(F.name)}">${esc(F.name)}</b>${forHtml}${F.state === "reading" ? '<span class="dim">Reading the design…</span>' : err ? `<span class="err">${esc(F.error || "could not be read")}</span>` : `<span class="dim">${esc(size)}</span>${big ? `<span class="err">Too big for the ${esc(labelOf(F.metal))} plate</span>` : !F.metal ? '<span class="warn">Pick a metal for it</span>' : ""}${loose}`}</div>` +
       (err ? "" : `<div class="cuMetals" role="radiogroup" aria-label="Metal for ${esc(F.name)}">${chips(F.metal, "")}</div>` +
         (many ? `<b class="cuQtySum" aria-live="polite">${plural(filePieces(F), "piece")}</b>` :
         `<div class="cuQty" role="group" aria-label="How many of ${esc(F.name)} to cut" title="How many of this design to cut"><button type="button" data-q="-1" aria-label="Cut one fewer"${F.qty <= 1 ? " disabled" : ""}>−</button><b aria-live="polite">× ${F.qty}</b><button type="button" data-q="1" aria-label="Cut one more"${F.qty >= 99 ? " disabled" : ""}>+</button></div>`)) +
@@ -19003,7 +19092,7 @@ const CustomSheet = window.CustomSheet = (() => {
   function paint() {
     if(window.Seal?.defer('custom-design-view',paint))return;
     const d = D.dlg; if (!d || !D.ck) return;
-    const e = all()[D.ck], it = D.it, row = it && linesOf(it)[0];
+    const e = all()[D.ck], it = D.it, row0 = it && linesOf(it)[0], tg = it && e ? [...targetsOf(e)] : [], row = (tg.length === 1 && linesOf(it).find(r => r.key === tg[0])) || row0;   // (PIECEPICK: the charm its designs replace)
     if (!row) { d.close(); return; }
     const sp = row.spec || {}, spc = sp.special || {}, m0 = defaultMetal(it);
     d.querySelector("#cuDlgT").textContent = `Designs for order ${row.order.receiptId}`;
@@ -19024,7 +19113,7 @@ const CustomSheet = window.CustomSheet = (() => {
     for (const F of files) {
       let n = [...list.children].find(x => x.dataset.id === F.id && !x._leaving); const made = !n;
       if (made) { n = el("div", "cuFile"); n.dataset.id = F.id; if (prev) prev.after(n); else list.prepend(n); if (arriving.has(F.id) && !motionOff()) n.classList.add("arriving"); }
-      const sig = [F.state, F.metal, F.qty, F.thumb ? 1 : 0, F.error, locked, tooBig(F), +F.loose || 0, +F.backs || 0, (F.backNotes || []).length, multiFile(F) ? JSON.stringify(F.charmQty) + ((charmViews.get(F.id) || {}).list ? "v" : "") : ""].join("|");   // (MULTICHARM: a charm's own count, its pictures once drawn)
+      const sig = [F.state, F.metal, F.qty, F.line || "", F.thumb ? 1 : 0, F.error, locked, tooBig(F), +F.loose || 0, +F.backs || 0, (F.backNotes || []).length, multiFile(F) ? JSON.stringify(F.charmQty) + ((charmViews.get(F.id) || {}).list ? "v" : "") : ""].join("|");   // (MULTICHARM: a charm's own count, its pictures once drawn)
       if (n._sig !== sig) { const f = focusOf(n); n.classList.toggle("bad", F.state === "error"); n.innerHTML = rowHtml(F); n._sig = sig; n.querySelectorAll("button").forEach(b=>{if(locked)b.disabled=true;}); refocus(n, f); if (F.thumb && ringNext.delete(F.id)) lit(n.querySelector(".cuThumb"), "cuLanded", 1000); }
       if (made && !calm) Motion.grow(n, { ms: 700 });
       prev = n;
@@ -19603,7 +19692,8 @@ const CustomSheet = window.CustomSheet = (() => {
   /** The strip's state for the open card: made when it is wanted (one design, read, a connection) and only then. null: the strip is not shown at all. */
   function keepSync(e, it) {
     const ck = D.ck; if (!ck || !e || !it || !e.files.length) return null;
-    const row = linesOf(it)[0]; if (!row) return null;
+    // (PIECEPICK: the listing saved and linked is the one of the charm the design replaces)
+    const F0 = e.files.length === 1 ? e.files[0] : null, row = (F0 && F0.line && linesOf(it).find(r => r.key === F0.line)) || linesOf(it)[0]; if (!row) return null;
     if (!KeepLib()) return null;                                           // no engine: the window is exactly as it was
     // (KEEPUI: a save under way or done keeps its own strip whatever else is on the order: a second design dropped or still being read never hides it; one design is saved per order,
     //  the one the switch was turned on for)
@@ -19899,6 +19989,8 @@ const CustomSheet = window.CustomSheet = (() => {
     }
     const K = keepSync(e, it);
     if (!K) { host.dataset.phase = ""; host.dataset.state = ""; if (!host.hidden) { keepLeave(host, true); } return; }
+    // (PIECEPICK: "Update the charm repository" picked in the drop's question: the switch is pressed for it once, when it can be; it asks to confirm as ever. A design it cannot save says why on its line)
+    if (e && e.keepWant && d.open && !K.stub && K.phase !== "opening") { const kw = e.keepWant; e.keepWant = null; if (K.phase === "off" && !K.ask && !keepLive(K) && !e.sent) setTimeout(() => { try { if (keeps.get(D.ck) === K) keepToggle(K, true); } catch (err) { console.warn("Save strip", err); } }, 0); else if (K.phase === "quiet") toast(`Not saved to the charm repository: ${K.why || "saving is not offered for this design"}`, "", 7000); void kw; }
     KeepUI.bind();
     const sent = !!(e && e.sent), ph = K.phase, sandbox = !!(K.ctx ? K.ctx.sandbox : WORKSPACE_SANDBOX), locked = keepLocked(K);
     const V = KeepUI.view(K), rec = V && V.rec && V.rec.state !== "off" ? V.rec : null;     // V: the ONE calm line (null: nothing to say, the switch is off)
@@ -20125,7 +20217,7 @@ const CustomSheet = window.CustomSheet = (() => {
     }, delay || 0);
     return true;
   }
-  return { touched: () => { ver++; redraw(); }, add, remove, send, prepare, heldCharm, filePieces, planLines, sentOf, decisionOf, sending, recover, load, hydrate, applyRemote, askCarrier, legacyKeys, piecesOf, backsOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, sheetStamps, sheetSealsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepResumes: () => true, keepViewerResume, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
+  return { touched: () => { ver++; redraw(); }, add, remove, send, cardPills, pickRow, cardPieces, pickable, sendRows, setPick, prepare, heldCharm, filePieces, planLines, sentOf, decisionOf, sending, recover, load, hydrate, applyRemote, askCarrier, legacyKeys, piecesOf, backsOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, sheetStamps, sheetSealsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepResumes: () => true, keepViewerResume, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════
@@ -20990,9 +21082,13 @@ const Review = window.Review = (() => {
   }
   /** What Review offers for a line: the existing offer (siblingOffer) with the similar charms added to it, or the similar charms alone, or null when nothing is similar (no area at all).
    *  group: the lines of the card that share the question; a similar charm covers only those of them it is also similar for. */
-  function similarOffer(row, p, group, it) {
+  /* NOSIMLIST (Paul, 26 Nov 2026: "Do not show all of the similar charm options from the library in this view. Only show them inside the detailed order view modal"): a Review LIST card draws no
+     similar-charm list (o.noSimilar). An unknown SKU's own question keeps its answers on its card (the lookalike drawings, "Use both" with the numbered designs); the library's similar charms are the
+     order window's (Suggest, Change SKU: Review.editSkuChoices), shown there at once for an order held in Review. */
+  function similarOffer(row, p, group, it, o) {
     const lead = siblingOffer(row, p || {}, group);
     if (!row || !row.line || !row.spec) return lead;
+    if (o && o.noSimilar) return lead && (lead.pair || lead.lookalike || (lead.siblings || []).length) ? Object.assign({ ask: SIMILAR_ASK, pair: null, siblings: [], rows: [row] }, lead, { more: [], moreExtra: 0, cur: [] }) : null;
     const have = lead ? (lead.siblings || []).map(x => x.sku).concat(lead.pair ? [lead.pair.L, lead.pair.R] : []) : [];
     const mine = similarOf(row, have);
     if (!lead && !mine) return null;
@@ -21083,8 +21179,8 @@ const Review = window.Review = (() => {
   /** What the offer is drawn from (a row or card redraws when it changes: the designs it names and their pictures, which arrive with the library). */
   const siblingStamp = it => {
     if (!["unmatchedSku", "blockedSku", "reviewMark"].includes(it.kind) || it.done || it.decided) return "";
-    if (it.kind === "reviewMark") return rowsOf(it).map(r => offerStamp(r.line ? similarOffer(r, {}, [r], it) : null));   // (REVSUGGEST: one offer for each line of a Send to Review order)
-    const row = it.row || rowsOf(it)[0]; return offerStamp(row ? similarOffer(row, it.problem || {}, rowsOf(it), it) : null);
+    if (it.kind === "reviewMark") return "";   // (NOSIMLIST: a Send to Review order's card draws no similar charms; the order window has them)
+    const row = it.row || rowsOf(it)[0]; return offerStamp(row ? similarOffer(row, it.problem || {}, rowsOf(it), it, { noSimilar: true }) : null);
   };
   /** The two kinds of button an offer has, wired: `guard` wraps a save so the buttons hold while it saves and a failure says so. */
   function wireSib(host, it, p, sib, guard) {
@@ -22372,7 +22468,7 @@ const Review = window.Review = (() => {
   }
   /** Print QR label released the order too (Paul, 23 Nov 2026: "Print QR Label button must also release hold for that given order"): what the print was asked is carried out, and a hold or a Review mark of the order is lifted. */
   async function printed(it, choice) {
-    if (choice && choice.own && choice.go === "nest") return CustomSheet.send(it.act || it.kind === "customOrder" ? it : actOf(it), { stamp: false });
+    if (choice && choice.own && choice.go === "nest") return sendOwn(it.act || it.kind === "customOrder" ? it : actOf(it), { stamp: false });
     const rid = String((it.row && it.row.order.receiptId) || it.rid || ""), src = it.act ? it.src : it.kind === "customOrder" ? it : null; if (!rid) return;
     if (choice && choice.go === "nest" && src) await releaseToQueue(src, { choice });
     const mark = items().find(x => x.key === "ord:rvm:" + rid), held = rowsOfOrder(rid).some(x => Orders.heldNow(x) && !x._relNow);
@@ -22476,7 +22572,7 @@ const Review = window.Review = (() => {
   /** The press. it: the Review item (a row's or a card's), or the item its buttons act on (actOf). o.choice: what the pop-up was answered, when it was asked already (choose). → true when every order of it went back in line. */
   async function releaseToQueue(it, o) {
     const choice = o && o.choice !== undefined ? o.choice : await choose(it); if (choice === null) return false;   // (NESTASK: put away: nothing at all)
-    if (choice && choice.own && choice.go === "nest") { const win = window.OrderWin && OrderWin.isOpen() && !CustomSheet.isOpen() ? document.querySelector("#orderWin [data-rel-hold]") : null; return !!(await CustomSheet.send(it.act || it.kind === "customOrder" ? it : actOf(it), win ? { from: win } : {})); }   // (its own dropped designs go on their sheets, and the order is released)
+    if (choice && choice.own && choice.go === "nest") { const win = window.OrderWin && OrderWin.isOpen() && !CustomSheet.isOpen() ? document.querySelector("#orderWin [data-rel-hold]") : null; return !!(await sendOwn(it.act || it.kind === "customOrder" ? it : actOf(it), win ? { from: win } : {})); }   // (its own dropped designs go on their sheets, and the order is released)
     if (it && it.act && !it.src) return window.CustomPrint && CustomPrint.complete ? !!(await CustomPrint.complete(it)) : false;
     if (it && it.act) it = it.src;
     // (RELORDER, Paul 20 Oct 2026: "Remove the 'Complete Order' button from the Review tab and replace it with the new 'Release Order' button") A Custom Orders card's Release Hold releases it as
@@ -22499,6 +22595,16 @@ const Review = window.Review = (() => {
       // (RHSAME, Paul 20 Oct 2026: pressed on either tab, both show it at once: the Review row leaves (or stays, when nothing was released), the Orders card draws its seal, an open order window follows)
       try { syncOrderItems(); render(); Orders.render(); if (window.OrderWin && OrderWin.isOpen()) OrderWin.paint(); } catch (_) { /* drawn again at the next update */ }
     }
+  }
+  /** PIECEPICK (Paul, 26 Nov 2026): the order's own dropped designs go on their sheets (CustomSheet.send). Designs that replaced only some of its charms leave its other lines out of the send, so
+   *  those still on hold are released here the one Release Hold way (liftOrder): no charm of the order is left behind on hold. → what the send returned. */
+  async function sendOwn(target, how) {
+    const sent = target ? await CustomSheet.send(target, how || {}) : null; if (!sent) return sent;
+    try {
+      const rid = String(target.rid || (target.row && target.row.order && target.row.order.receiptId) || ""), rest = rid ? rowsOfOrder(rid).filter(x => !CustomSheet.decisionOf(x) && !x._relNow && (x.hold || (Orders.heldNow && Orders.heldNow(x)))) : [];
+      if (rest.length) { const who = sent.by || by(); if (who) await liftOrder(rid, who, rest, null, null); }
+    } catch (err) { console.warn("[piecepick] the order's other charms", err); }
+    return sent;
   }
   /** What the choice says of each line, as the cloud keeps it (releaseAsk): { skip: true } never made; { skip: false } a piece skipped before is made again; { skuOverride } the charm it shows, used for this order only
    *  ("Just this order"; the listing, its link and Etsy are not changed). */
@@ -23400,21 +23506,23 @@ const Review = window.Review = (() => {
     // SIBLINGS (Paul, 12 Oct 2026): an unknown SKU whose numbered designs sit in the library, on a necklace (or two charms): ONE quiet tap, "Use both", with the two thumbnails, and each design as a single choice, in the row itself
     // (ONECARD: on an order's card of several questions the similar-charm offer is its SKU question's, answered for every order that question covers: src)
     const sibIt=it.members?(it.members.find(m=>m.kind==='unmatchedSku'||m.kind==='blockedSku')||it):it,sibQ=sibIt.src||sibIt,sibRow=sibIt.row||row;
-    const pk=sibIt.problem||{},sib=!cu&&!it.done&&!it.decided&&sibRow&&(sibIt.kind==='unmatchedSku'||sibIt.kind==='blockedSku')?similarOffer(sibRow,pk,rowsOf(sibIt).length?rowsOf(sibIt):group,sibQ):null;
+    const pk=sibIt.problem||{},sib=!cu&&!it.done&&!it.decided&&sibRow&&(sibIt.kind==='unmatchedSku'||sibIt.kind==='blockedSku')?similarOffer(sibRow,pk,rowsOf(sibIt).length?rowsOf(sibIt):group,sibQ,{noSimilar:true}):null;   // (NOSIMLIST: no similar-charm list on a list card)
+    // PIECEPICK (Paul, 26 Nov 2026): an order of several charms that takes designs draws one pill per piece; the piece picked is the one a dropped .ai replaces, and the card shows its charm
+    const pills=ax&&cs&&!it.done&&!it.decided?CustomSheet.cardPills(ax):'',shown=(pills&&CustomSheet.pickRow(ax))||row;
     const issues=issueSections(it,cu,row),issuesHtml=`<div class="rvIssues" title="${esc(it.why || '')}">${issues.map(x=>`<div class="rvIssue">${issues.length>1?`<span class="rvIssueK">${esc(x.label)}</span>`:''}<ul>${x.pts.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></div>`).join('')}</div>`;
     /* ACCEPTONE (Paul, 23 Nov 2026, "functionality not working"): with every question of an order on its one card (ONECARD), "Accept the new order" was drawn only when the change was the most pressing of them, and a press on a joined
        card took no question down. It is on the card whenever the order changed, and answers each changed line's own question. */
     const chgs=it.members?it.members.filter(m=>m.kind==='orderChanged').map(m=>m.src||m):it.kind==='orderChanged'?[it]:[];
-    const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
+    const media=shown?ListMedia.pair(shown):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
-    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(issues.length>1?issues.length+' issues':cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind)+(it.job&&faceWordOf(it.job)?' · '+faceWordOf(it.job):''))}${aiChip}</span>${issuesHtml}${sib?`<div class="sibOffer" data-sib="${esc(JSON.stringify(siblingStamp(sibQ)))}"><div class="sibAsk">${esc(sib.ask)}</div><div class="sibPicks">${sibButtons(sib)}</div></div>`:''}${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${chgs.length&&row&&!it.decided?'<button type="button" class="btn gold sm" data-rv-accept title="make this order up again as it reads now: the old pieces come off the sheet they are on (a sheet already released or cut is never touched)">Accept the new order</button>':''}</div>${cs?CustomSheet.stripHtml(cx):''}`;
+    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(shown?.spec?.designSku || shown?.line?.sku || rec?.sku || '')}</span></div>${pills}<span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(issues.length>1?issues.length+' issues':cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind)+(it.job&&faceWordOf(it.job)?' · '+faceWordOf(it.job):''))}${aiChip}</span>${issuesHtml}${sib?`<div class="sibOffer" data-sib="${esc(JSON.stringify(siblingStamp(sibQ)))}"><div class="sibAsk">${esc(sib.ask)}</div><div class="sibPicks">${sibButtons(sib)}</div></div>`:''}${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces${pills?'':' · first item shown'}</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${chgs.length&&row&&!it.decided?'<button type="button" class="btn gold sm" data-rv-accept title="make this order up again as it reads now: the old pieces come off the sheet they are on (a sheet already released or cut is never touched)">Accept the new order</button>':''}</div>${cs?CustomSheet.stripHtml(cx):''}`;
     // (a row drawn again for another reason keeps the offer's loaded thumbnails, as it keeps its .comparePair: they are not asked for twice)
     // (SEALTRAVEL: the order's seals under its identity, never in the buttons' column, where a seal row rests over the button before it)
     if(trav.html)node.querySelector('.engravingIdentity')?.insertAdjacentHTML('beforeend',trav.html);
     if(sib&&cached?.node){const was=cached.node.querySelector('.sibOffer'),now=node.querySelector('.sibOffer');if(was&&now&&was.dataset.sib===now.dataset.sib)now.replaceWith(was);}
     if(sib){Master.mountPictures(node);wireSib(node,sibQ,pk,sib,fn=>saving(node,fn,'.sibOffer button'));}   // (the saved pair link or alias, for good; the buttons hold while it saves)
     if(it.kind==='reviewMark'&&window.CharmNestReviewMark)CharmNestReviewMark.decorateRow(node,it);   // (a slot for each line's suggested charms, and Mark OK)
-    if(it.kind==='reviewMark')fillMarkSlots(node,it);   // (REVSUGGEST: the similar charms of each line go in its slot, the charm it is matched to now marked; a line with nothing similar leaves its slot empty)
+    // (NOSIMLIST, Paul 26 Nov 2026: the similar charms of a Send to Review order are no longer put in its card's slots: they are the order window's, Suggest)
     if (typeof decorateRelease === "function") decorateRelease(node,it);   // (RELHOLD: Release Hold in the card's column where Complete Order stood, greyed with its one plain reason where the line cannot nest yet; "Unblock this SKU" after it on a blocked SKU; nothing under the reason any more)
     // (CANCELREVIEW, Paul 20 Oct 2026: "Relocate the 'Cancel Order' button to be only visible as part of the orders that are on Hold inside the Review list order view": one Cancel Order beside this card's Release Hold when its order is on hold; pressed, the card flies to the Orders tab, into Cancelled: charm-nest-cancel-ui.js)
     { const crid=cancelRidOf(it); if(crid)try{CancelUI.mount(node,crid);}catch(err){console.warn('Cancel Order button',err);} }
@@ -23427,7 +23535,8 @@ const Review = window.Review = (() => {
       const openIt=()=>OrderWin.openOrder(rid,{from:node});
       node.onclick=e=>{if(e.detail>1||e.target.closest('button,a,input,select,textarea,label,.comparePair,.cuDesigns'))return;openIt();};
       node.onkeydown=e=>{if(e.target===node&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openIt();}};}
-    if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
+    node._mediaRow=shown||null;   // (PIECEPICK: the pictures of the piece picked; the list mounts them)
+    if(cached?.node&&(cached.node._mediaRow||null)===(shown||null)){const pair=cached.node.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
     reviewRows.set(it.key,{stamp,node});return node;
   }
   /** A card's custom buttons (cx: what they act on; cs: its designs, when it takes them), and a click that opens its order:
@@ -23700,7 +23809,7 @@ const Review = window.Review = (() => {
     const sameView = !opts.still && !quiet && host._mView === view && host.childElementCount > 0; host._mView = view;
     if (window.Motion) Motion.reconcile(host, desired.length ? desired.map(x => x.node) : [empty()], { animate: sameView, leave });
     else { host.replaceChildren(...(desired.length ? desired.map(x => x.node) : [empty()])); }
-    for (const {it,node} of desired) { if(!it)continue; const r=it.settled?it.settled.row:it.row; if(r)ListMedia.mount(node,r); }
+    for (const {it,node} of desired) { if(!it)continue; const r=node._mediaRow||(it.settled?it.settled.row:it.row); if(r)ListMedia.mount(node,r); }   // (PIECEPICK: a card shows the piece picked)
     for (const {node} of desired) if(node._refocus){const f=node._refocus;node._refocus=null;f();}
     ListMedia.more(host,list.length,Math.min(upto,list.length),()=>{RV.limit+=40;render();});
     // (kept as it was; written only when it moved, so a card being brought into view is not stopped half way)
@@ -25749,7 +25858,9 @@ const OrderWin = window.OrderWin = (() => {
     byId("owSuggestN").textContent = choices.length ? String(choices.length) : "";
     sg.disabled = false; sg.title = !eo.ok ? `Suggest: ${eo.why || "not for this piece"}` : choices.length ? `${choices.length} similar charm${choices.length === 1 ? "" : "s"} in the repo` : "No similar charm found: press to search the whole repo";   // (SKUOPEN: never greyed out)
     // the tray: opened by Suggest, by "Wrong charm?", or at once for a line no charm matches
-    if (W.sgKey !== r.key && !r.loading) { W.sgKey = r.key; W.sgOpen = (st === "none" && choices.length > 0) || W.sgWant === r.key; W.sgWant = null; }
+    // (NOSIMLIST, Paul 26 Nov 2026: the similar charms left the Review list cards and are shown here: open at once for an order held in Review, or sent to Review)
+    const inReview = () => { try { const rid = String(r.order.receiptId); return !!((window.CharmNestReviewMark && CharmNestReviewMark.isMarked && CharmNestReviewMark.isMarked(rid)) || (Orders.heldNow && Orders.heldNow(r))); } catch (_) { return false; } };
+    if (W.sgKey !== r.key && !r.loading) { W.sgKey = r.key; W.sgOpen = (st === "none" && choices.length > 0) || W.sgWant === r.key || (choices.length > 0 && inReview()); W.sgWant = null; }
     else if (W.sgWant === r.key) { W.sgOpen = true; W.sgWant = null; }
     const open = !!(W.sgOpen && choices.length && !sg.disabled), tray = byId("owSkuTray");
     sg.setAttribute("aria-expanded", open ? "true" : "false"); tray.hidden = !open;
