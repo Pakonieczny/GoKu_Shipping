@@ -4285,7 +4285,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // it and set aside. Every other sheet gives them up, whatever else is true of it: still filling, full and released
       // for cutting, held, a Rose Gold one inside or outside its green lines (Paul, 29 Sep: "none of them disappears from
       // the sheet after being cancelled"; each of those used to keep them, and the sheet window's own Cancel did the same)
-      if (sh.roseCutAt || sh.laserDoneAt || sh.recalled || sentToStation(sh)) return { cut: true, why: "already cut" };
+      // (RETRYLEFT, 26 Nov 2026: a Rose Gold sheet's recorded green line is not a cut: only the laser's mark keeps the pieces, as the cloud's take-off has it since LASERONLY)
+      if (+sh.laserDoneAt > 0 || sh.recalled || sentToStation(sh)) return { cut: true, why: "already cut" };
       if (window.Gate?.holding?.(sh)) return { wait: true };                  // being changed in the sheet window just now
       // all a saved sheet holds: its saved files would stay behind, so the sheet is deleted from its menu instead
       if (sh.sheetId && sh.charms.every(c => ids.has(c.poolId))) return { only: true, why: "the only order on it" };
