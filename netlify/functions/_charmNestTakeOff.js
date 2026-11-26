@@ -267,7 +267,10 @@ function scopeOf(job, o, lines, rid) {
 
 /** One take-off job, from its first step to its last; every step can run again. → { status } */
 async function workJob(env, rid, key, job, save) {
-  const { read } = env, call = (body, tag) => env.call(body, `takeoff|${rid}|${key}|${tag}`), lines = (env.run && env.run.lines) || {};
+  // (RETRYLEFT: a cancel worked AGAIN names its writes anew: each write's mid is its unit and its body, and the ledger answers a mid it has seen with its first answer, so the same take-off sent again
+  //  would only be told the old "already cut" and never be done again)
+  const again = num(job.again) > 0 ? `|again${num(job.again)}` : "";
+  const { read } = env, call = (body, tag) => env.call(body, `takeoff|${rid}|${key}${again}|${tag}`), lines = (env.run && env.run.lines) || {};
   const by = job.by || "System";
   await call({ op: "takeOffJournal", orderId: rid, job: key, set: { status: "working", tries: num(job.tries) } }, "working|" + num(job.tries));
   // 1 · a cancel is read again just before anything moves: an order not cancelled any more is left as it is
