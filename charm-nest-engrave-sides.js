@@ -165,7 +165,10 @@
     const base = baseSlotOfId(ctx, row, poolId), u = unitShape(row);
     if (!u) {
       // (a line of quantity >= 2 pinned to the pieces it already has, a count the quantity does not divide: every piece it has is its own, as copies, unless the ears / discs already name it)
-      const sp = row && row.spec, q = Math.round(+(sp && sp.quantity) || +(row && row.line && row.line.quantity) || 1), ids = row && Array.isArray(row.poolIds) ? row.poolIds.length : 0, k = copyOf(poolId);
+      const sp = row && row.spec, q0 = Math.round(+(sp && sp.quantity) || +(row && row.line && row.line.quantity) || 1), ids = row && Array.isArray(row.poolIds) ? row.poolIds.length : 0, k = copyOf(poolId);
+      // (CUSTOMBACK, 26 Nov 2026, found in the sandbox: a custom line is one Etsy unit however many charms its file makes, so its pieces were ONE job and only the first piece's back was looked at. A line
+      //  whose file drew backs (spec.customBack) has every piece its own: its own back, its own Approve)
+      const q = sp && +sp.customBack > 0 ? Math.max(q0, ids) : q0;
       return !base && q >= 2 && ids >= 2 && k ? 'C' + k : base;
     }
     const n = copyOf(poolId); if (!n || n > u.total) return base;

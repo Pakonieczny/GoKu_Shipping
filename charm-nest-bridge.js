@@ -8791,7 +8791,7 @@ const Engrave = window.Engrave = (() => {
     neverEngraves: row => neverEngraves(row), neverWhy: row => neverWhy(row), NEVER_OPEN: j => NEVER_OPEN(j), faceOf: x => faceOf(x),
     trust: () => S.settings.engraveConfidence,   // (Settings' engraving confidence)
     customSent: row => !!(window.CustomSheet && CustomSheet.sentOf && CustomSheet.sentOf(row)),
-    fileBack: j => { const id = j && (j.copies || [])[0], r = id && B.pool && B.pool.rows ? B.pool.rows.get(String(id)) : null; if (r && +r.fileBack > 0) return true; try { const c = id ? Pool.charmOf(String(id)) : null; return !!(c && Array.isArray(c.fileBack) && c.fileBack.length); } catch (_) { return false; } },   // (CUSTOMBACK)
+    fileBack: j => (j && j.copies || []).some(id => { const r = B.pool && B.pool.rows ? B.pool.rows.get(String(id)) : null; if (r && +r.fileBack > 0) return true; try { const c = Pool.charmOf(String(id)); return !!(c && Array.isArray(c.fileBack) && c.fileBack.length); } catch (_) { return false; } }),   // (CUSTOMBACK: any of its pieces: a back is never dropped because the first piece has none)
     finished: row => !!(typeof O !== "undefined" && O && O.FINISHED_LINE && O.FINISHED_LINE.has(row.state))
   }));
   /* FOLLOWASK (Paul, 15 Nov 2026): the words lose the instruction text ("on the left side please", "all caps", a web link); the asks stay on the job (job.asks) for applyAsks after the fit (charm-nest-engrave-classify.js takeAsks). */
