@@ -176,7 +176,11 @@ STEP.S0 = async X => {
     let report = null; try { const rp = rec.outputs && rec.outputs.report && rec.outputs.report.path; if (rp) { const [b] = await X.bucket.file(rp).download(); report = JSON.parse(b.toString("utf8")); } } catch (_) { report = null; }
     const was = new Set(((report && report.placements) || []).filter(p => p && p.id != null).map(key)), now = new Set((rec.placements || []).filter(p => p && p.id != null).map(key));
     const drawn = new Map(((report && report.placements) || []).filter(p => p && p.hash).map(p => [String(p.id), String(p.hash)])), redrawn = (rec.placements || []).some(p => p && p.hash && drawn.has(String(p.id)) && drawn.get(String(p.id)) !== String(p.hash));   // (a piece made again in its own place: another drawing)
-    return { report, changed: !report || art || redrawn || was.size !== now.size || [...now].some(k => !was.has(k)) };
+    /* FRONTINSHEET (Paul, 26 Nov 2026: "The front engravings are not appearing on the downloaded .ai illustrator and .DXF files"): files written before that day's fix left out the parts a person added to a
+       piece's FRONT in the Charm Editor (charm-nest-pdf.js buildSheet). A sheet holding an edited piece (its placement's hash carries the edit's ~ae mark) whose files say nothing of the fix is
+       written ONCE again, from its layout as it is: nothing is nested and no piece moves. Its new report says frontInSheet, so it is never written again for this. */
+    const frontLost = !!report && !(num(report.frontInSheet) >= 1) && (rec.placements || []).some(p => p && /~ae[0-9a-z]+$/.test(String(p.hash || "")));
+    return { report, changed: !report || art || redrawn || frontLost || was.size !== now.size || [...now].some(k => !was.has(k)) };
   };
   const filesCurrent = async () => {
     try { await X.call({ op: "putSheet", sheet: { id: X.sheetId, filesOwed: null, outputs: rec.outputs }, contentBase: num(rec.contentRev), filesOwedBase: num(rec.filesOwed) }, `files-current|${num(rec.layoutRev)}|${num(rec.contentRev)}|${num(rec.filesOwed)}`);   /* (TWOEDITS, 24 Nov 2026: a front edit saved while the back's was looked at lost its owed mark here) */ X.notes.push("its files already show its layout: the owed mark is off and its picture is current"); }
