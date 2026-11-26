@@ -663,6 +663,10 @@ async function tick(env) {
      look still runs (it is a dozen reads and keeps the cloud's carrier alive), but a pass for the run's routine work starts at most every NIGHT_GAP_MS; whatever a person waits on (a press,
      a request, a label, a release) starts one at once, as by day. A pass that asks for the next one itself goes on as always. */
   if (nightNow(now) && !why.some(w => NIGHT_URGENT.test(w)) && now - Math.max(num(L.at), num(L.startedAt)) < NIGHT_GAP_MS) { out.night = true; return out; }
+  /* IDLEWAIT (Paul, 25 Nov 2026: "be clever about when and how things get used"): the last pass ended WAITING (a nest running, the world's next build, a take-off) and the only reason now
+     is that the run is running. Whatever ends such a wait wakes the driver itself (a nest's end and a sheet writer's: kickDriver / driveSoon("task"); a world build: driveSoon("world"); a
+     person's press: DRIVE_TRIGGERS), so the minute's look does not start a pass only to find it still waiting: one every WAIT_GAP_MS all the same, the net under a kick that was lost. */
+  if (why.length && why.every(w => w === "running") && S.wait && num(S.wait.since) > 0 && now - Math.max(num(L.at), num(L.startedAt)) < WAIT_GAP_MS) { out.waitQuiet = true; return out; }
   const got = await Lease.dispatch(db, db.collection(DRIVE).doc("lease"), "cron", { heartbeat: true });
   if (got && got.nonce) { out.dispatched = true; out.nonce = got.nonce; if (env.kick) await env.kick(got.nonce); }
   else out.queued = true;
@@ -670,7 +674,7 @@ async function tick(env) {
 }
 
 /** NIGHTQUIET: 9 PM to 7 AM in Toronto, when nobody works; what a person waits on is never held back. */
-const NIGHT_GAP_MS = 15 * 60000, NIGHT_URGENT = /press waits|request waits|request is under way|label ask|asked again|change of mode|lift|release|a take-off waits|cancel was recorded|engraving file/i;
+const WAIT_GAP_MS = 5 * 60000, NIGHT_GAP_MS = 15 * 60000, NIGHT_URGENT = /press waits|request waits|request is under way|label ask|asked again|change of mode|lift|release|a take-off waits|cancel was recorded|engraving file/i;
 function nightNow(t) { const f = String(process.env.CN_NIGHT || "").toLowerCase(); if (f === "on" || f === "off") return f === "on";   // (CN_NIGHT=on|off: a test, or the owner, decides)
   if (!process.env.AWS_LAMBDA_FUNCTION_NAME && !process.env.NETLIFY) return false;   // (only the live cloud keeps quiet at night: a test runs the same at any hour)
   try { const h = +new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", hour: "numeric", hourCycle: "h23" }).format(new Date(t || Date.now())); return h >= 21 || h < 7; } catch (_) { return false; } }
