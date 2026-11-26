@@ -196,7 +196,14 @@ async function workOrder(env, rid, jd, save) {
   for (const [aid, a] of Object.entries(jd.asks || {})) {
     if (!a || a.state !== "waiting") continue;
     if (a.kind === "retry") {
-      for (const [k, j] of Object.entries(jd.jobs || {})) if (j && (j.status === "held" || j.status === "stuck" || OPEN_JOB.has(j.status))) { await env.call({ op: "takeOffJournal", orderId: rid, job: k, set: { status: "due", tries: 0, why: null } }, `takeoff|retry|${rid}|${k}|${aid}`); j.status = "due"; j.tries = 0; }
+      /* RETRYLEFT (Paul, 26 Nov 2026, order 4242434945: cancelled on Etsy 23 Nov, its pair left on RG Sheet 1 as "already cut" because that sheet's green line was recorded, though the laser had
+         never cut it; "your previous solution now be effective on all remaining orders so I don't see this problem again"). Try again also takes up a cancel that ENDED with pieces left on a sheet:
+         it is worked again under today's rule (LASERONLY: only the laser's mark keeps a piece), so what a sheet no longer has to keep comes off, and what a laser-cut sheet keeps stays, said as before.
+         Its fates are written again (the cancel record and the timeline say where each piece is now). */
+      for (const [k, j] of Object.entries(jd.jobs || {})) {
+        const leftOn = !!j && j.kind === "cancel" && j.status === "done" && Array.isArray(j.left) && j.left.length > 0;
+        if (j && (j.status === "held" || j.status === "stuck" || OPEN_JOB.has(j.status) || leftOn)) { await env.call({ op: "takeOffJournal", orderId: rid, job: k, set: Object.assign({ status: "due", tries: 0, why: null }, leftOn ? { fatesSaved: false, again: now } : {}) }, `takeoff|retry|${rid}|${k}|${aid}`); j.status = "due"; j.tries = 0; if (leftOn) { j.fatesSaved = false; j.again = now; } }
+      }
       await env.call({ op: "takeOffJournal", orderId: rid, ask: { id: aid, state: "taken" }, set: { due: true } }, `takeoff|ask|${rid}|${aid}`);
       continue;
     }
@@ -333,6 +340,8 @@ async function workJob(env, rid, key, job, save) {
   const longWait = status === "waiting" && Date.now() - num(job.at) > WAIT_WORDS_MS;
   await call({ op: "takeOffJournal", orderId: rid, job: key, set: { status, why: longWait ? `Waiting since ${new Date(num(job.at)).toISOString().slice(11, 16)} UTC: ${why}` : why, taken: taken.map(t => ({ where: t.where, sheetId: t.sheetId, n: (t.ids || []).length })), left: left.map(l => ({ where: l.where, sheetId: l.sheetId, why: l.why, n: (l.ids || []).length })), removed: [...removed].slice(0, 300), fatesSaved: !!job.fatesSaved, queueSaid: !!job.queueSaid, noticed: !!job.noticed, ...(status === "done" ? { doneAt: Date.now() } : {}) } }, "end|" + status + "|" + removed.size + "|" + kept.size + "|" + waiting.length);
   if (job.kind === "cancel" && status === "done") await call({ op: "sharePut", name: NOTICES, set: { [`d:${rid}`]: { at: num(job.at), t: Date.now() } } }, "done");
+  // (RETRYLEFT: a cancel worked again that leaves nothing on any sheet now: its "set them aside" notice goes from every page's run pill)
+  if (job.kind === "cancel" && status === "done" && !left.length && job.noticed && num(job.again) > 0) await call({ op: "takeOffAck", orderId: rid, at: job.at, forget: true }, "aside-gone|" + num(job.again));
   if (env.say) env.say(`[takeoff] ${rid} (${job.kind}): ${status}${taken.length ? " · taken off " + joinAnd(taken.map(t => t.where)) : ""}${left.length ? " · stays on " + joinAnd(left.map(l => l.where)) : ""}${why ? " · " + why : ""}`);
   return { status };
 }
