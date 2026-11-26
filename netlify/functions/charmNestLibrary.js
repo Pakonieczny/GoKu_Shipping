@@ -2000,12 +2000,24 @@ async function masterIndexSig() {
    parts are read shows as a change the next time. */
 /** The whole index in one answer (FASTOPEN: `whole`): read in SKU order by many queries side by side, and kept by this instance while its signature stands. */
 const MASTER_CUTS = ["", ..."BCDEFGHIKLMNOPRSTUW", null]; let masterKept = null;
+/* READCUT (Paul, 25 Nov 2026: Firestore cost; the read meter: one page opened at night read the whole library, ~9,900 documents, because pages land on whichever instance is free and
+   few of them held it): the library as last read is kept ONCE in Storage, under its signature (the count and the newest change of its records), and any instance whose own copy is
+   older takes that file when the signature is the same (no database read); a file of another signature is never used, and the first instance that finds it older reads the library
+   and writes the file again. Never on a computer: in the cloud's own bucket. */
+const MASTER_WHOLE_FILE = "charmnest/cache/master-whole.json.gz";
+async function masterFileGet(sig) { try { if (PREFIX) return null; const [buf] = await admin.storage().bucket().file(MASTER_WHOLE_FILE).download(), d = JSON.parse(require("zlib").gunzipSync(buf).toString("utf8")); return d && d.v === 1 && d.sig === sig && Array.isArray(d.entries) && Array.isArray(d.shells) ? d : null; } catch (_) { return null; } }
+function masterFilePut(sig, entries, shells) { try { if (PREFIX) return; admin.storage().bucket().file(MASTER_WHOLE_FILE).save(require("zlib").gzipSync(Buffer.from(JSON.stringify({ v: 1, sig, entries, shells }), "utf8")), { contentType: "application/gzip", resumable: false }).catch(() => null); } catch (_) { /* the next reader writes it */ } }
 async function masterWhole() {
   const index = await masterIndexSig(), sig = JSON.stringify(index);
   if (!masterKept || masterKept.sig !== sig) {
-    const snaps = await Promise.all(MASTER_CUTS.slice(0, -1).map((lo, i) => { let q = db.collection(Master.INDEX); if (lo) q = q.where(docOrder(), ">=", lo); if (MASTER_CUTS[i + 1]) q = q.where(docOrder(), "<", MASTER_CUTS[i + 1]); return q.get(); }));
-    const entries = [], shells = []; for (const x of snaps) for (const d of x.docs) { const e = d.data(); if (e.sku) entries.push(Master.slimEntry(e)); else shells.push(d.id); }
-    masterKept = { sig, entries: entries.sort((x, y) => x.sku.localeCompare(y.sku)), shells };
+    const kept = await masterFileGet(sig);
+    if (kept) masterKept = { sig, entries: kept.entries, shells: kept.shells };
+    else {
+      const snaps = await Promise.all(MASTER_CUTS.slice(0, -1).map((lo, i) => { let q = db.collection(Master.INDEX); if (lo) q = q.where(docOrder(), ">=", lo); if (MASTER_CUTS[i + 1]) q = q.where(docOrder(), "<", MASTER_CUTS[i + 1]); return q.get(); }));
+      const entries = [], shells = []; for (const x of snaps) for (const d of x.docs) { const e = d.data(); if (e.sku) entries.push(Master.slimEntry(e)); else shells.push(d.id); }
+      masterKept = { sig, entries: entries.sort((x, y) => x.sku.localeCompare(y.sku)), shells };
+      masterFilePut(sig, masterKept.entries, masterKept.shells);
+    }
   }
   return { entries: masterKept.entries, shells: masterKept.shells, index, next: null, truncated: false };
 }
