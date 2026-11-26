@@ -318,7 +318,7 @@ async function readLine(ctx, P, key, row, l, hooks) {
 
   /* ── the three ends of a reading (the page's setNone, toWords with EDITOR WORDS, setReady), and the order's timeline ── */
   /** CUSTOMBACK (26 Nov 2026): the job's piece is cut from a charm whose custom file drew its back (its pool row's fileBack, written when it was made): that drawing is its back's art */
-  const fileBackOf = j => { const id = j && (j.copies || [])[0], r = id && P.sctx && P.sctx.poolRow ? P.sctx.poolRow(String(id)) : null; return !!(r && num(r.fileBack) > 0); };
+  const fileBackOf = j => (j && j.copies || []).some(id => { const r = P.sctx && P.sctx.poolRow ? P.sctx.poolRow(String(id)) : null; return !!(r && num(r.fileBack) > 0); });   // (any of its pieces: a back is never dropped because the first piece has none)
   const setNone = (j, why) => { j.state = "none"; j.reason = why; j.row.engrave = Object.assign({}, j.row.engrave, { needed: false, state: "none", reason: why, approved: true }); return j; };
   /** EDITOR WORDS: the face's artwork edit adds parts (a back's added cut lines are refused by the editor, so they do not count) */
   const editorArt = j => { const id = (j.copies || [])[0]; if (!id) return false; if (!isFront(j) && fileBackOf(j)) return true; const a = P.art(id, faceOf(j)); return !!a && Array.isArray(a.added) && a.added.some(e => e && (isFront(j) || (e.role !== "cut" && e.artRole !== "cut"))); };
