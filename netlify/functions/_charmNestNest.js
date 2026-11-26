@@ -291,7 +291,13 @@ async function start(L, b) {
       sheetName: d.fileBase || d.metalLabel || null, pieceCount: activeCharms(d).length, createdMs: now, createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() };
     tx.create(jobRef(db, pick.id), job);
     // (the nest takes up whatever changed the sheet: its dirty mark is cleared here, as the page's startNestReady clears it; a change made during the nest marks it again)
-    tx.set(sref, { nestJob: { id: pick.id, status: "queued", at: now, attempt: pick.attempt }, dirty: false }, { merge: true });
+    /* REFIT (Paul, 25 Nov 2026: "the user should be informed that the sheet is nesting again to fit the cheetah charm … anywhere they click onto this sheet"): a sheet already laid out and
+       released, in a set or approved that is nested to fit a piece coming back to it (a corrected charm, its own order's piece) says so on its record: which pieces, of which orders, and
+       when; every view of the sheet shows it (charm-nest-refit.js) until its new files are written (previewAt past refit.at) or the nest ends without a layout. */
+    const keepsLayout = !!d.releaseFull || !!(d.setId && !d.draft) || num(d.committedAt) > 0 || !!d.approvedAt;
+    const placedNow = new Set((d.placements || []).map(p => p && String(p.id))), waitingNow = keepsLayout && placedNow.size ? activeCharms(d).filter(c => !placedNow.has(String(c.id))) : [];
+    const refit = waitingNow.length ? { at: now, jobId: pick.id, pieces: waitingNow.slice(0, 12).map(c => ({ poolId: String(c.poolId || ""), sku: str(c.sku || c.name, 60), order: String(c.order || c.poolId || "").split(/[\/_]/)[0] })) } : null;
+    tx.set(sref, Object.assign({ nestJob: { id: pick.id, status: "queued", at: now, attempt: pick.attempt }, dirty: false }, refit ? { refit } : {}), { merge: true });
     return { ok: true, jobId: pick.id, created: true, status: "queued", attempt: pick.attempt };
   });
   if (out && out.ok && L.revTouch) L.revTouch(["s:" + sheetId]);

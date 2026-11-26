@@ -132,7 +132,10 @@ async function prepare(ctx) {
      Paul 20 Oct 2026: "a sheet that takes a replaced charm ... never moves a charm already on it to make room"). The page kept that rule (sh._keepPlaced); the cloud's nest never set it, so
      its append could lift the newest charms to make room (the solver's unjam). A sheet released full, in a set, approved or committed, or one that promised its charms stay where they are
      (appendOnly), never moves a charm already on it: the new piece goes into the room there is, or on to another sheet. Only a draft still filling may make room. */
-  const keepPlaced = !!rec.releaseFull || !!(rec.setId && !rec.draft) || num(rec.committedAt) > 0 || !!rec.approvedAt || rec.appendOnly === true;
+  /* NODROP (Paul, 25 Nov 2026: "I don't wanna lose this ability as long as the solver doesn't drop any of the existing pieces on the sheet"): such a sheet MAY move its charms to make room
+     for the piece coming back (the solver's unjam), but the layout is kept only if every charm already on it is still on it: otherwise the sheet keeps its layout exactly as it was and only
+     the new piece is turned away, to the next draft of its metal (pick, below: meta.noDrop). Only a sheet that promised its charms stay where they are (appendOnly) never makes room. */
+  const keepPlaced = rec.appendOnly === true, noDrop = !!rec.releaseFull || !!(rec.setId && !rec.draft) || num(rec.committedAt) > 0 || !!rec.approvedAt;
   const view = Object.assign({ metal: rec.metal, runId: rec.runId || null, sheetId: rec.id, charms, placements: fresh || whole ? (roseProtected ? roseProtected.placements.map(p => Object.assign({}, p)) : []) : saved.slice(), rejects: [], _keepPlaced: keepPlaced,
     topup: rec.topup || null, roseCutAt: null, roseProtected, nestFlow: "standard", runSeed: num(job.seed) || Nest.seedOf(job.id) }, plate);
   const env = Nest.planEnv(S, { agent: (scope, kind, text) => ctx.log(`[nest ${job.id}] ${kind}: ${text}`) });
@@ -179,7 +182,7 @@ async function prepare(ctx) {
   const keep = NestPlan.keepPlan(solverJob, n, items.length, 0);
   const infoOf = new Map(charms.map(c => [c.id, c.orderInfo]));
   const meta = { charms: all.map(c => metaCharm(c, infoOf.get(c.id) ? flat(infoOf.get(c.id)) : null, c.pinned ? flat(c.pinned) : null)), feedWait: (view.feedWait || []).map(String), appendOnly: view.appendOnly,
-    nestInitial: view.nestInitial ? view.nestInitial.map(flat) : null, protectedIds: roseProtected ? (roseProtected.placements || []).map(p => String(p.id)) : [], topup: view.topup || null,
+    nestInitial: view.nestInitial ? view.nestInitial.map(flat) : null, noDrop, protectedIds: roseProtected ? (roseProtected.placements || []).map(p => String(p.id)) : [], topup: view.topup || null,
     stock: flat(Nest.stockFor(S, rec.metal, view)), usablePt2: Nest.usableArea(S, view), clearancePt: +S.settings.clearancePt || 0, maxFill: +S.settings.maxFill || 0.8, nospread: S.settings.nospread !== "off",
     missing, verifyRes: [4, 6, 8].includes(+S.settings.verifyRes) ? +S.settings.verifyRes : 6 };
   if (whole) Object.assign(meta, { whole: true, seated, altSlot, altNestInitial: alt ? alt.lockedPlacements.filter(p => seated.includes(p.id)).map(flat) : null });
@@ -330,8 +333,26 @@ async function finishCheck(ctx) {
     const S = { settings: { clearancePt: meta.clearancePt, maxFill: meta.maxFill } };
     const whole = NestPlan.keepOrdersWhole(sh, turn, new Set(pick.pocketFilled || []), { groupOf: Nest.groupOf, Orders: O, usableArea: () => num(meta.usablePt2), inflatedArea: c => Nest.inflatedArea(S, c),
       settings: S.settings, nospread: () => (meta.nospread ? NoSpread : null), agent: (scope, kind, text) => notes.push(String(text).slice(0, 400)) });
+    /* NODROP (see prepare): on a released, set or approved sheet the layout that made room is kept only if every charm that was on the sheet is still on it. Otherwise the sheet keeps the
+       layout it had, exactly (its record's own placements), and the pieces that came to it are turned away: the writer moves them on to the next draft of the metal (moveOn). */
+    let noDropKept = false;
+    if (meta.noDrop && Array.isArray(meta.nestInitial) && meta.nestInitial.length) {
+      const had = meta.nestInitial.map(p => String(p.id)), nowIds = new Set(sh.placements.map(p => String(p.id))), hadSet = new Set(had);
+      const dropped = had.filter(id => !nowIds.has(id)), arriving = base.pieces.map(p => String(p.id)).filter(id => !hadSet.has(id)), missed = arriving.filter(id => !nowIds.has(id));
+      if (dropped.length || missed.length) {
+        let recNow = null; try { const sv0 = await db.collection(Nest.SHEETS).doc(ctx.job.sheetId).get(); recNow = sv0.exists ? sv0.data() || {} : null; } catch (_) { recNow = null; }
+        const kept = recNow ? (recNow.placements || []).filter(p => p && hadSet.has(String(p.id))) : [];
+        if (kept.length === had.length) {
+          sh.placements = kept.map(p => Object.assign({}, p)); sh.rejects = arriving.slice(); sh.appendOnly = true;   // (the saved layout held where it lay)
+          for (const k of ["lifted", "mates", "wholeMates"]) if (Array.isArray(whole[k])) whole[k] = [];
+          whole.behind = [];
+          noDropKept = true;
+          notes.push(`NODROP: ${dropped.length ? `making room would have taken ${dropped.length} charm(s) off the sheet` : "the piece did not fit"}: the sheet keeps its layout; ${arriving.length} piece(s) go on to the next draft`);
+        } else if (dropped.length) { status = "error"; error = "NODROP: the sheet changed while it was nested, so its layout could not be kept whole: nothing was changed, it is nested again"; }   // (never a layout that drops a charm)
+      }
+    }
     // the check (the solver's verifier, as the page's geomCheck: the pieces held where they were must still be there; one the unjam moved, or a lifted one, is no longer held)
-    const keptIds = new Set(sh.placements.map(p => p.id)), moved = new Set(((pick.unjam && pick.unjam.moved) || []).map(String));
+    const keptIds = new Set(sh.placements.map(p => p.id)), moved = new Set(noDropKept ? [] : ((pick.unjam && pick.unjam.moved) || []).map(String));
     const vbase = appended ? unpackJob(input.alt) : base, vjob = Object.assign({}, vbase, { lockedPlacements: (vbase.lockedPlacements || []).filter(p => keptIds.has(p.id) && !moved.has(String(p.id))) });
     let verification; try { const v = Solver.verify(vjob, sh.placements, meta.verifyRes || 6); verification = Object.assign(flat(v), Array.isArray(v.cornerIds) ? { cornerIds: v.cornerIds.slice(0, 50).map(String) } : {}, Array.isArray(v.overlappingPairs) ? { overlapPairs: v.overlappingPairs.length } : {}); }
     catch (e) { verification = { ok: false, error: str(e && e.message, 200) }; }
