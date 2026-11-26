@@ -2744,9 +2744,14 @@
       // ART EDIT (Paul, 27 Oct 2026): a piece whose own artwork a person changed (charm-nest-art-edit.js apply) carries its parts marked `artRedraw`: the group of the master they were
       // drawn in is already out of the copied bytes (dropIndices above), and they are written here from their geometry, each in its master layer (artOps). Every other piece takes
       // the line it always took, byte for byte.
-      const artLayers = (c.members || []).some(m => m && m.artRedraw) ? artLayerKeys(out, src) : null;
+      // FRONTINSHEET (Paul, 26 Nov 2026: "The front engravings are not appearing on the downloaded .ai illustrator and .DXF files"): the parts a person ADDED to a piece's front in the Charm Editor
+      // are kept as its artFront since 25 Nov (FRONTLIKEBACK) and no longer among its members, so this writer stopped drawing them and the sheet's .ai and .dxf lost them (a front with no
+      // engraving job of its own has no file to bring them either). A front is engraved ON the piece in the cut run: they are drawn here with the piece's other redrawn parts, exactly as they
+      // were drawn before that day (artOps, after the master's parts). The download leaves out of a front's file any part this drawing already holds (charm-nest-export.js planFronts).
+      const frontArt = Array.isArray(c.artFront) ? c.artFront.filter(m => m && m.kind === "path" && Array.isArray(m.subpaths) && m.subpaths.length).map(m => (m.artRedraw ? m : Object.assign({}, m, { artRedraw: true }))) : [];
+      const artLayers = (c.members || []).some(m => m && m.artRedraw) || frontArt.length ? artLayerKeys(out, src) : null;
       // members the source never held (a welded outline, a ring's hole) are written after the copied bytes, in the same space
-      { const extra = artLayers ? syntheticOps(c.members.filter(m => !(m && m.artRedraw)), n => layerKeyOf(src, n)) + artOps(c.members, artLayers.keyOf) : syntheticOps(c.members || [], n => layerKeyOf(src, n)); if (extra) { const add = new TextEncoder().encode("\n" + extra); const joined = new Uint8Array(bytes.length + add.length); joined.set(bytes, 0); joined.set(add, bytes.length); bytes = joined; } }
+      { const extra = artLayers ? syntheticOps((c.members || []).filter(m => !(m && m.artRedraw)), n => layerKeyOf(src, n)) + artOps((c.members || []).concat(frontArt), artLayers.keyOf) : syntheticOps(c.members || [], n => layerKeyOf(src, n)); if (extra) { const add = new TextEncoder().encode("\n" + extra); const joined = new Uint8Array(bytes.length + add.length); joined.set(bytes, 0); joined.set(add, bytes.length); bytes = joined; } }
       const pad = c.strokePt / 2 + 1;
       const bb = [c.bbox[0] - pad, c.bbox[1] - pad, c.bbox[2] + pad, c.bbox[3] + pad];
       let trimmed = trimResources(out, out.context.lookup(src.resRef), bytes, 0) || src.resRef;
