@@ -48,7 +48,12 @@ async function etsyUsed(db) { try { const s = await db.collection("Charm_World")
 const stampOf = r => Number((r && (r.updated_timestamp || r.update_timestamp)) || 0) || 0;
 const wholeRaw = r => !!(r && r.receipt_id && Array.isArray(r.transactions) && r.transactions.length);
 /* COST: a warm instance keeps the master index it read, under the index's signature (masterList answers it with its first part): read again only when it moved */
-const CACHE = { masterSig: null, masterEntries: null };
+const CACHE = { masterSig: null, masterEntries: null, mirror: new Map(), etsy: null };
+/* READCUT (Paul, 25 Nov 2026: Firestore cost; the read meter: each build read every open receipt twice, ~1,550 copied receipts and ~1,420 kept ones, every two minutes, changed or not):
+   · CACHE.mirror: a copied receipt (EtsyMail_Receipts) as this instance last read it, under its own updated_timestamp: a receipt whose stamp the build already knows (open: the sweep's
+     and the watermark's reading of the very same field) is not read again while the stamp stands. A receipt not open (a run's line only) is read as before.
+   · CACHE.etsy: the kept receipts (Charm_World_Etsy, written by the build alone) as this instance holds them after its own build, under that build's sequence (state.buildSeq): reused only
+     when the build just before was this instance's own (no other build wrote in between); any other case reads them all, as before. */
 /* COST: what moved in the cloud since the last build, for four document reads: the changes feed's shards (every write a page makes moves one: a decision, a
    map, a custom record, a cancel, a run's lines, a piece's place). A build with no Etsy change and no feed move, less than FULL_MS after the last, is skipped. */
 async function feedToken(db) { const ds = await db.getAll(...['library', 'feed-p', 'feed-o', 'feed-x'].map(id => db.collection('Charm_Nest_Rev').doc(id))); return ds.map(d => (d.exists ? String((d.data() || {}).n || 0) : '-')).join('.'); }
@@ -224,7 +229,7 @@ async function build(opts) {
       say(`[world] the copied receipts: ${Object.keys(open).length} open of ${snap.size} not shipped`);
     } else {
       const snap = await db.collection(MIRROR).where("updated_timestamp", ">=", Math.max(0, watermark - 600)).orderBy("updated_timestamp").limit(2000).get();
-      for (const d of snap.docs) { const x = d.data() || {}, id = String(x.receipt_id || d.id), was = open[id]; if (isOpenReceipt(x)) open[id] = stampOf(x); else delete open[id]; if (was !== open[id]) etsyMoved++; watermark = Math.max(watermark, stampOf(x)); if (wholeRaw(x.raw)) mirrored.set(id, x.raw); }
+      for (const d of snap.docs) { const x = d.data() || {}, id = String(x.receipt_id || d.id), was = open[id]; if (isOpenReceipt(x)) open[id] = stampOf(x); else delete open[id]; if (was !== open[id]) etsyMoved++; watermark = Math.max(watermark, stampOf(x)); if (wholeRaw(x.raw)) { mirrored.set(id, x.raw); CACHE.mirror.set(id, { stamp: stampOf(x), raw: x.raw }); } }
     }
   } catch (e) { errors.push("receipts copy: " + String(e.message || e).slice(0, 200)); say("[world] the copied receipts were not read: " + (e.message || e)); if (!Object.keys(open).length) throw e; }
   let mirrorAt = null; try { const ms = await db.doc("EtsyMail_Config/receiptsMirrorState").get(), m = ms.exists ? ms.data() || {} : {}, t = m.lastSyncCompletedAt; mirrorAt = t && t.toMillis ? t.toMillis() : +t || null; } catch (_) { mirrorAt = null; }
@@ -245,10 +250,16 @@ async function build(opts) {
 
   /* 3 · each receipt whole: the copy's own (it holds the items), else one Etsy read, counted against the day's 500 and kept until the receipt changes */
   const want = [...new Set([...Object.keys(open), ...runReceipts])];
-  const kept = new Map();
-  for (let i = 0; i < want.length; i += 300) { const docs = await db.getAll(...want.slice(i, i + 300).map(id => db.collection(ETSY).doc(id))); docs.forEach(d => { if (d.exists) kept.set(d.id, d.data()); }); }
+  const kept = new Map(), seq = +st.buildSeq || 0, ec = CACHE.etsy && CACHE.etsy.seq === seq ? CACHE.etsy.docs : null;   // (READCUT: this instance's own copy, when the last build was its own)
+  const keptAsk = ec ? want.filter(id => !ec.has(id)) : want;
+  if (ec) for (const id of want) { const v = ec.get(id); if (v) kept.set(id, v); }
+  for (let i = 0; i < keptAsk.length; i += 300) { const docs = await db.getAll(...keptAsk.slice(i, i + 300).map(id => db.collection(ETSY).doc(id))); docs.forEach(d => { if (d.exists) kept.set(d.id, d.data()); if (ec) ec.set(d.id, d.exists ? d.data() : null); }); }
+  const etsyDocs = ec || new Map(want.map(id => [id, kept.get(id) || null]));   // (what this build knows of every kept receipt it read: carried to the next build of this instance)
+  CACHE.etsy = null;   // (until this build has saved its state: a build that fails half-way leaves no copy behind)
+  for (const id of want) { const c = CACHE.mirror.get(id); if (!mirrored.has(id) && c && open[id] != null && Number(c.stamp) === Number(open[id])) mirrored.set(id, c.raw); }   // (READCUT: the copy as read under this very stamp)
   const needCopy = want.filter(id => !mirrored.has(id));
-  for (let i = 0; i < needCopy.length; i += 300) { const docs = await db.getAll(...needCopy.slice(i, i + 300).map(id => db.collection(MIRROR).doc(id))); docs.forEach(d => { const x = d.exists ? d.data() || {} : null; if (x && wholeRaw(x.raw)) mirrored.set(d.id, x.raw); }); }
+  for (let i = 0; i < needCopy.length; i += 300) { const docs = await db.getAll(...needCopy.slice(i, i + 300).map(id => db.collection(MIRROR).doc(id))); docs.forEach(d => { const x = d.exists ? d.data() || {} : null; if (x && wholeRaw(x.raw)) { mirrored.set(d.id, x.raw); CACHE.mirror.set(d.id, { stamp: stampOf(x), raw: x.raw }); } }); }
+  if (CACHE.mirror.size > 6000) { const live = new Set(want); for (const k of [...CACHE.mirror.keys()]) if (!live.has(k)) CACHE.mirror.delete(k); }
   for (const id of want) { const raw = mirrored.get(id); if (raw) kept.set(id, Object.assign({}, kept.get(id), { rid: id, raw, stamp: stampOf(raw), via: "copy" })); }
   const stale = want.filter(id => { const k = kept.get(id); return !k || !k.raw || (open[id] != null && k.via !== "copy" && Number(k.stamp) !== Number(open[id])); });
   const locked = stale.length ? await etsyLocked(db) : 0;   // (Etsy refused the shop for the day: the mail sync recorded it; nothing is asked until it resets)
@@ -274,6 +285,7 @@ async function build(opts) {
     kept.set(id, Object.assign({}, kept.get(id), rec));
     if (!rec.open) delete open[id];
     await db.collection(ETSY).doc(id).set(Object.assign({}, JSON.parse(J(rec)), { updatedAt: FV.serverTimestamp() }), { merge: true });
+    etsyDocs.set(id, Object.assign({}, etsyDocs.get(id) || {}, JSON.parse(J(rec))));   // (READCUT: this instance's copy says what it wrote)
   });
   if (etsyRefused) errors.push(`Etsy: today's ${ETSY_DAY_CAP} calls are spent; ${stale.length - etsyCalls} receipt(s) wait for tomorrow or for the mail system's copy`);
 
@@ -290,6 +302,7 @@ async function build(opts) {
     const rows = snap.docs.map(d => { const m = d.data() || {}; const t = m.timestamp; return { senderName: String(m.senderName || "Staff"), text: String(m.text || ""), at: t && t.toMillis ? t.toMillis() : (t && t.seconds ? t.seconds * 1000 : null), imageUrl: m.imageUrl || null }; }).reverse();
     const k = kept.get(id); k.messages = rows; k.messagesAt = now;
     await db.collection(ETSY).doc(id).set({ messages: rows, messagesAt: now }, { merge: true });
+    etsyDocs.set(id, Object.assign({}, etsyDocs.get(id) || {}, { messages: rows, messagesAt: now }));   // (READCUT)
   });
 
   /* 5 · the inputs of the reading, from the cloud's own ops */
@@ -342,13 +355,25 @@ async function build(opts) {
   // Claude's custom readings (Charm_Nest_CustomRead/<line>: reads by hash, latest, the person's decision): the one the run names for the line (crh), else the latest stored,
   // as a page that holds no reading of its own takes the stored one (charm-nest-bridge.js CustomRead); a person's decision always
   const customRead = {}, customDecided = {};
+  /* READCUT (Paul, 25 Nov 2026: Firestore cost): the line records below (Claude's readings, the sends to sheet, the engraving jobs) were read for EVERY live line at every build, ~1,600 each,
+     most of them not even there (a missing document is a read too). When the build just before was this instance's own (state.buildSeq), only what changed since is read: the readings and
+     the engraving jobs written since that build began (their own stamps, updatedAt and at: every write sets one; neither is ever deleted), the sends to sheet only if their revision moved
+     (customSheetGet ifRev), and the lines that build did not have. Any doubt (another instance built, a query fails, too much moved) reads them all, as before. */
+  const LC = CACHE.lines && CACHE.lines.seq === seq ? CACHE.lines : null, NL = { customRead: new Map(), crAt: now, engrave: new Map(), enAt: now, sheet: null, sheetRev: null, sheetLines: null };
+  CACHE.lines = null;   // (until this build has saved its state)
+  const SLACK = 5 * 60000, MOVED_MAX = 1500;
   try {
-    const keys = readable.map(r => r.key), byKey = new Map(readable.map(r => [r.key, r]));
-    for (let i = 0; i < keys.length; i += 300) {
-      const docs = await db.getAll(...keys.slice(i, i + 300).map(k => db.collection("Charm_Nest_CustomRead").doc(k)));
-      for (const d of docs) { if (!d.exists) continue; const x = d.data() || {}, r = byKey.get(d.id), reads = x.reads || {}, h = r && r.crh && reads[r.crh] ? r.crh : x.latest; if (h && reads[h]) customRead[d.id] = reads[h]; if (x.decided && x.decided.kind) customDecided[d.id] = x.decided; }
+    const keys = readable.map(r => r.key), byKey = new Map(readable.map(r => [r.key, r])), crDocs = NL.customRead;
+    let ask = keys;
+    if (LC && LC.customRead) {
+      try {
+        const q = await db.collection("Charm_Nest_CustomRead").where("updatedAt", ">", admin.firestore.Timestamp.fromMillis(Math.max(0, LC.crAt - SLACK))).limit(MOVED_MAX).get();
+        if (q.size < MOVED_MAX) { const moved = new Map(q.docs.map(d => [d.id, d.data() || {}])); ask = []; for (const k of keys) { if (moved.has(k)) crDocs.set(k, moved.get(k)); else if (LC.customRead.has(k)) crDocs.set(k, LC.customRead.get(k)); else ask.push(k); } }
+      } catch (e) { ask = keys; crDocs.clear(); }
     }
-  } catch (e) { errors.push("customRead: " + e.message); }
+    for (let i = 0; i < ask.length; i += 300) { const docs = await db.getAll(...ask.slice(i, i + 300).map(k => db.collection("Charm_Nest_CustomRead").doc(k))); for (const d of docs) crDocs.set(d.id, d.exists ? d.data() || {} : null); }
+    for (const k of keys) { const x = crDocs.get(k); if (!x) continue; const r = byKey.get(k), reads = x.reads || {}, h = r && r.crh && reads[r.crh] ? r.crh : x.latest; if (h && reads[h]) customRead[k] = reads[h]; if (x.decided && x.decided.kind) customDecided[k] = x.decided; }
+  } catch (e) { errors.push("customRead: " + e.message); NL.customRead = new Map(); }
   const listingIds = [...new Set(readable.map(r => String(r.line.listingId || "")).filter(Boolean))];
   const listingSkus = {};
   for (let i = 0; i < listingIds.length; i += 100) { try { const g = await ops.listingSkus({ listingIds: listingIds.slice(i, i + 100), cacheOnly: true }); Object.assign(listingSkus, (g && (g.tables || g.listings)) || {}); } catch (e) { errors.push("listingSkus: " + e.message); break; } }
@@ -356,7 +381,13 @@ async function build(opts) {
   let sentOf = () => null, customSheet = {};
   try {
     const keys = readable.map(r => r.key);
-    for (let i = 0; i < keys.length; i += 1000) { const g = await ops.customSheetGet({ lineKeys: keys.slice(i, i + 1000) }); Object.assign(customSheet, (g && g.records) || {}); }
+    let same = false;
+    if (LC && LC.sheetRev && LC.sheet && LC.sheetLines) {   // (READCUT: the sends to sheet as this instance read them, when their revision has not moved; only the new lines are read)
+      const fresh = keys.filter(k => !LC.sheetLines.has(k));
+      if (fresh.length <= 1000) { const g = await ops.customSheetGet({ lineKeys: fresh, ifRev: LC.sheetRev, wantRev: true }); if (g && !g.error && g.rev === LC.sheetRev && !g.full) { customSheet = Object.assign({}, LC.sheet, g.records || {}); NL.sheetRev = g.rev; same = true; } }
+    }
+    if (!same) for (let i = 0; i < keys.length; i += 1000) { const g = await ops.customSheetGet(Object.assign({ lineKeys: keys.slice(i, i + 1000) }, i === 0 ? { wantRev: true } : {})); Object.assign(customSheet, (g && g.records) || {}); if (i === 0) NL.sheetRev = (g && g.rev) || null; }
+    NL.sheet = customSheet; NL.sheetLines = new Set(keys);
     const idx = new Map(); for (const e of Object.values(customSheet)) if (e && (e.sent || e.sendIntent)) for (const k of Object.keys((e.sent || e.sendIntent).lines || {})) idx.set(k, e);
     sentOf = row => { const e = idx.get(row.key); if (!e) return null; const list = (((e.sent || e.sendIntent).lines || {})[row.key] || []).filter(pc => !(pc && pc.removed)), pc = list[0], F = pc && (e.files || []).find(x => x.id === pc.f); return { metal: (F && F.metal) || null, pieces: list.length, sent: !!e.sent }; };
   } catch (e) { errors.push("customSheet: " + e.message); }
@@ -420,7 +451,16 @@ async function build(opts) {
     const tms = v => { if (v == null || v === "") return 0; if (typeof v === "number") return v > 1e12 ? v : v > 1e9 ? v * 1000 : 0; const n = /^\d+(\.\d+)?$/.test(String(v)) ? tms(+v) : Date.parse(v); return Number.isFinite(n) && n > 0 ? n : 0; };
     const rowOf = new Map(live.map(r => [r.key, r]));
     const ENG_PENDING = new Set(["words", "review", "fitting", "ready", "classify"]), keys = live.filter(r => r.order && r.key).map(r => r.key), set = new Set(), all = [], pend = [];
-    for (let i = 0; i < keys.length; i += 300) for (const d of await db.getAll(...keys.slice(i, i + 300).map(k => db.collection("Charm_Nest_Engrave").doc(k)))) {
+    // (READCUT: the engraving records written since this instance's last build, by their own `at`, and the lines it did not have; else all of them)
+    const enDocs = NL.engrave; let enAsk = keys;
+    if (LC && LC.engrave) {
+      try {
+        const q = await db.collection("Charm_Nest_Engrave").where("at", ">", Math.max(0, LC.enAt - SLACK)).orderBy("at").limit(MOVED_MAX).get();
+        if (q.size < MOVED_MAX) { const moved = new Map(q.docs.map(d => [d.id, d.data() || {}])); enAsk = []; for (const k of keys) { if (moved.has(k)) enDocs.set(k, moved.get(k)); else if (LC.engrave.has(k)) enDocs.set(k, LC.engrave.get(k)); else enAsk.push(k); } }
+      } catch (e) { enAsk = keys; enDocs.clear(); }
+    }
+    for (let i = 0; i < enAsk.length; i += 300) for (const d of await db.getAll(...enAsk.slice(i, i + 300).map(k => db.collection("Charm_Nest_Engrave").doc(k)))) enDocs.set(d.id, d.exists ? d.data() || {} : null);
+    for (const d of keys.map(k => ({ id: k, x: enDocs.get(k) })).filter(e => e.x).map(e => ({ id: e.id, exists: true, data: () => e.x }))) {
       if (!d.exists) continue; let rec = null; try { rec = JSON.parse((d.data() || {}).rec || "null"); } catch (_) { rec = null; }
       if (!rec || !Array.isArray(rec.jobs) || !rec.jobs.some(j => j && !j.archived)) continue;
       all.push(d.id);   // (CLOUDWORLD: the lines whose engraving work the cloud holds: the Design & Engrave tab of every computer lists these, and no line one computer prepared alone)
@@ -509,7 +549,10 @@ async function build(opts) {
     // (CLOUDDRIVE build step 9, P11 / E7: additive, pages ignore them) the mail system's sync this build read, and the receipts still to be read whole (the first 500)
     mirrorBefore, toReadIds: stale.filter(id => !readNow.has(id)).slice(0, 500) };
   await db.collection(WORLD).doc("summary").set(JSON.parse(J(summary)));
-  await stateRef.set({ open, mirrorMark: watermark, sweptAt: st.sweptAt || null, lastBuildAt: now, checkedAt: now, token, toRead: Math.max(0, stale.length - etsyCalls) }, { merge: false });
+  await stateRef.set({ open, mirrorMark: watermark, sweptAt: st.sweptAt || null, lastBuildAt: now, checkedAt: now, token, toRead: Math.max(0, stale.length - etsyCalls), buildSeq: seq + 1 }, { merge: false });
+  CACHE.etsy = { seq: seq + 1, docs: etsyDocs };
+  CACHE.lines = Object.assign(NL, { seq: seq + 1 });   // (READCUT: the line records as this build read them, for this instance's next build)   // (READCUT: the next build reuses it only if it is this instance's and nothing built in between)
+  if (etsyDocs.size > 6000) { const live = new Set(want); for (const k of [...etsyDocs.keys()]) if (!live.has(k)) etsyDocs.delete(k); }
   return Object.assign({}, summary, { sigs: undefined });
 }
 
