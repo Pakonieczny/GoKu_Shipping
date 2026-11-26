@@ -655,12 +655,21 @@ async function tick(env) {
   if (L.state === "running" && Lease.stale(L, now) && run && run.status === "running") why.push("a pass went quiet");
   out.why = why;
   if (!why.length) return out;
+  /* NIGHTQUIET (Paul, 25 Nov 2026: "Why do you need to do the same reads at night time let's say between 9pm to 7am … nobody's really working"): from 9 PM to 7 AM (Toronto) the minute's
+     look still runs (it is a dozen reads and keeps the cloud's carrier alive), but a pass for the run's routine work starts at most every NIGHT_GAP_MS; whatever a person waits on (a press,
+     a request, a label, a release) starts one at once, as by day. A pass that asks for the next one itself goes on as always. */
+  if (nightNow(now) && !why.some(w => NIGHT_URGENT.test(w)) && now - Math.max(num(L.at), num(L.startedAt)) < NIGHT_GAP_MS) { out.night = true; return out; }
   const got = await Lease.dispatch(db, db.collection(DRIVE).doc("lease"), "cron", { heartbeat: true });
   if (got && got.nonce) { out.dispatched = true; out.nonce = got.nonce; if (env.kick) await env.kick(got.nonce); }
   else out.queued = true;
   return out;
 }
 
+/** NIGHTQUIET: 9 PM to 7 AM in Toronto, when nobody works; what a person waits on is never held back. */
+const NIGHT_GAP_MS = 15 * 60000, NIGHT_URGENT = /press waits|request waits|request is under way|label ask|asked again|change of mode|lift|release|a take-off waits|cancel was recorded|engraving file/i;
+function nightNow(t) { const f = String(process.env.CN_NIGHT || "").toLowerCase(); if (f === "on" || f === "off") return f === "on";   // (CN_NIGHT=on|off: a test, or the owner, decides)
+  if (!process.env.AWS_LAMBDA_FUNCTION_NAME && !process.env.NETLIFY) return false;   // (only the live cloud keeps quiet at night: a test runs the same at any hour)
+  try { const h = +new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", hour: "numeric", hourCycle: "h23" }).format(new Date(t || Date.now())); return h >= 21 || h < 7; } catch (_) { return false; } }
 /** POST charmNestDrive-background { nonce } (the cron, driveSoon, a pass that asks again). Best-effort. */
 async function kick(nonce) {
   const fetch = require("node-fetch"), origin = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
@@ -668,5 +677,5 @@ async function kick(nonce) {
   catch (e) { console.warn("[drive] could not start the next pass:", e && e.message); }
 }
 
-module.exports = { pass, tick, kick, kindOf, stopKindOf, autoResumable, stopRead, freshnessGate, recordOf, sizeCheck, archiveFinished, updatePending, workSignature, carrierCheck, stubSteps, defaultSteps, defaultLanes, laneOn,
+module.exports = { pass, tick, kick, nightNow, kindOf, stopKindOf, autoResumable, stopRead, freshnessGate, recordOf, sizeCheck, archiveFinished, updatePending, workSignature, carrierCheck, stubSteps, defaultSteps, defaultLanes, laneOn,
   PASSING, AUTO_WAIT, RETRY_IN_PASS, RUN_STEPS, LANES, LEASE_PATH, CLOUD_FRESH_MS, COMPUTER_FRESH_MS, DISPATCH_STALE_MS };

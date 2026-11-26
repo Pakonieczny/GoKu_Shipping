@@ -398,7 +398,12 @@ async function build(opts) {
   try {
     const ask = rows.filter(r => Array.isArray(r.poolIds) && r.poolIds.length && !["written", "committed", "gone", "skipped"].includes(r.state));
     const ids = [...new Set(ask.flatMap(r => r.poolIds.map(String)))], pool = new Map();
-    for (let i = 0; i < ids.length; i += 300) for (const d of await db.getAll(...ids.slice(i, i + 300).map(id => db.collection("Charm_Pool").doc(id)))) if (d.exists) pool.set(d.id, d.data() || {});
+    // (READCUT: the pieces' records as this instance read them at its last build, while the placement counter has not moved since (every op that may write a piece raises it, after it lands); else all)
+    let pgen = null; try { const g = await db.collection("Charm_Nest_Rev").doc("placement").get(); pgen = g.exists ? Number((g.data() || {}).n) || 0 : null; } catch (_) { pgen = null; }
+    const pc = LC && LC.pool && pgen != null && LC.poolGen === pgen ? LC.pool : null, pAsk = pc ? ids.filter(id => !pc.has(id)) : ids, seen = new Map();
+    if (pc) for (const id of ids) { const v = pc.get(id); if (v !== undefined) { seen.set(id, v); if (v) pool.set(id, v); } }
+    for (let i = 0; i < pAsk.length; i += 300) for (const d of await db.getAll(...pAsk.slice(i, i + 300).map(id => db.collection("Charm_Pool").doc(id)))) { seen.set(d.id, d.exists ? d.data() || {} : null); if (d.exists) pool.set(d.id, d.data() || {}); }
+    NL.pool = seen; NL.poolGen = pgen;
     for (const r of ask) {
       const live = r.poolIds.map(id => pool.get(String(id))).filter(p => p && !["abandoned", "superseded"].includes(String(p.state || "")));
       if (!live.length || live.length !== r.poolIds.length) continue;
