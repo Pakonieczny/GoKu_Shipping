@@ -128,7 +128,12 @@ async function prepare(ctx) {
   pinSaved(!fresh && !whole);
   const word = CutLine.cutWord ? CutLine.cutWord(rec.metal) : "Rose Gold";
   let roseProtected = null; try { roseProtected = protectedOf(rec, saved, word); } catch (e) { return { error: `${name}: ${e.message}: reload it and nest again` }; }
-  const view = Object.assign({ metal: rec.metal, runId: rec.runId || null, sheetId: rec.id, charms, placements: fresh || whole ? (roseProtected ? roseProtected.placements.map(p => Object.assign({}, p)) : []) : saved.slice(), rejects: [],
+  /* KEEPPLACED (Paul, 25 Nov 2026, SS_Nov.25.26_Set-1_Sheet-1: a corrected cheetah sent back to its released sheet moved the charms around it: "the system re-nested the sheet"; INPLACE,
+     Paul 20 Oct 2026: "a sheet that takes a replaced charm ... never moves a charm already on it to make room"). The page kept that rule (sh._keepPlaced); the cloud's nest never set it, so
+     its append could lift the newest charms to make room (the solver's unjam). A sheet released full, in a set, approved or committed, or one that promised its charms stay where they are
+     (appendOnly), never moves a charm already on it: the new piece goes into the room there is, or on to another sheet. Only a draft still filling may make room. */
+  const keepPlaced = !!rec.releaseFull || !!(rec.setId && !rec.draft) || num(rec.committedAt) > 0 || !!rec.approvedAt || rec.appendOnly === true;
+  const view = Object.assign({ metal: rec.metal, runId: rec.runId || null, sheetId: rec.id, charms, placements: fresh || whole ? (roseProtected ? roseProtected.placements.map(p => Object.assign({}, p)) : []) : saved.slice(), rejects: [], _keepPlaced: keepPlaced,
     topup: rec.topup || null, roseCutAt: null, roseProtected, nestFlow: "standard", runSeed: num(job.seed) || Nest.seedOf(job.id) }, plate);
   const env = Nest.planEnv(S, { agent: (scope, kind, text) => ctx.log(`[nest ${job.id}] ${kind}: ${text}`) });
   // the turn of orders this nest places (a big batch on a Gold or Silver sheet: three orders at a time, oldest first; the rest wait their turn on the sheet)
