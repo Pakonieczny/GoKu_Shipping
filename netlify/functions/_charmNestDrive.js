@@ -19,6 +19,8 @@ const Lease = require("./_charmNestLease");
 const Standby = require("./_charmNestStandby");   // (build steps 8 and 15: what the cloud owns, the park's words, the reconcile of a run taken from a closed computer, the hand-over)
 const TakeOff = require("./_charmNestTakeOff");   // (build step 9: the take-off lane and the revalidate step)
 
+/** READMETER: the reads that follow are counted under this name (firebaseAdmin.js); nothing when the meter is not there. */
+const meterTag = t => { try { return global.__readMeter && global.__readMeter.setTag ? global.__readMeter.setTag(t) : ""; } catch (_) { return ""; } };
 const DRIVE = "Charm_Nest_Drive", OPEN = "Charm_Nest_Open", CARRIER = "Charm_Nest_Run_Carrier", RUNS = "Charm_Nest_Runs", CMDS = "Charm_Nest_Run_Cmds";
 const NOW_CMD_TYPES = new Set(["skuonce", "remakeline", "keepsync", "remake", "backhome"]);   // (SKUNOW, Paul 22 Nov 2026: the requests that make order lines again, as _charmNestCmdUnit.js NOW_TYPES)
 const LEASE_PATH = DRIVE + "/lease";
@@ -196,6 +198,7 @@ async function carrierCheck(db, tx, o = {}) {
 
 /** One pass (§1.6). env: { db, Lib, nonce, budgetMs?, steps?, sleep?, renewMs?, log? }. → { ok, again?, yield?, fenced?, refused?, ... } */
 async function pass(env) {
+  meterTag("drive:pass");
   const { db, Lib } = env, say = env.log || (() => {}), sleep = env.sleep || (t => new Promise(r => setTimeout(r, t)));
   const steps = env.steps || defaultSteps(), lanes = env.lanes || defaultLanes(), leaseRef = docAt(db, LEASE_PATH), stateRef = db.collection(DRIVE).doc("state");
   const startedAt = Date.now(), budgetEnd = startedAt + (env.budgetMs || BUDGET_MS);
@@ -247,7 +250,7 @@ async function pass(env) {
     //    (build step 8: only when the cloud OWNS the pull step, listed and built: a stub never opens a run)
     let runId = info.runId;
     if (!runId) {
-      out.releases = await releasesUnit(db, call, say);   // (RELEASEHOLD: a release needs no run: its marks and its timeline step are the order's)
+      meterTag("drive:releases"); out.releases = await releasesUnit(db, call, say);   // (RELEASEHOLD: a release needs no run: its marks and its timeline step are the order's)
       /* (G5, Paul 21 Nov 2026: staff keep full use of every input) the pass items that need no run ("runless": a person's label asks, each answered on its own set's / sheet's
          run's records) run here too, each only while its lane is the cloud's, bounded like a unit; a failure is said and never stops anything; a fence or a hand-back ends the pass */
       for (const item of (env.passItems || []).filter(it => it && it.runless && typeof it.unit === "function" && laneOn(cloudSteps, String(it.lane || it.name)))) {
@@ -302,7 +305,7 @@ async function pass(env) {
       if (out.takeoff && out.takeoff.more) out.again = true;
     }
     // ── releases (§1.6 item 3, before intake; RELEASEHOLD): a Release Hold press releases the hold in the cloud at once (op releaseAsk); one a function left half done is finished here
-    out.releases = await releasesUnit(db, call, say);
+    meterTag("drive:releases"); out.releases = await releasesUnit(db, call, say);
     // ── (NESTNOW, Paul 21 Nov 2026: a Nest press waited while the run stood at another step) a person's Nest / "Nest the rest" (nestStart from a page) is a job queued at once; it used
     //    to start only when the run reached its own "nest" step, so with the run waiting at commit or labels (the Etsy freshness gate) a person's nest never ran. Every pass now starts
     //    the oldest queued job of each free lane and keeps running ones alive (Nest.pumpLanes: one lane per run and metal, as the nest step does). Nothing new is asked here.
@@ -312,7 +315,7 @@ async function pass(env) {
     }
     // ── the intake (§1.6 item 5, build step 4): new orders join the run, and behind the gate (C5) become pool pieces, before the run's own step (_charmNestIntake.js; only for "pull" / "pool" in cloudSteps)
     if (run.status !== "abandoned" && run.status !== "complete" && !ctlDone.stopped) {
-      const ik = await Intake.passIntake({ db, run, runId, drive, cloudSteps, call, read, fence, say, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, Date.now() + UNIT_BUDGET_MS) });
+      meterTag("drive:intake"); const ik = await Intake.passIntake({ db, run, runId, drive, cloudSteps, call, read, fence, say, budgetEnd: Math.min(budgetEnd - PASS_TAIL_MS, Date.now() + UNIT_BUDGET_MS) });
       if (ik) { out.intake = ik.summary; if (ik.more) out.again = true; if (ik.stop && run.status !== "stopped") await stop(ik.stop.why, ik.stop.fix); }
     }
     // ── the files lane (build step 7a): a sheet owed its files, or whose nest ended, gets the one sheet writer (charmNestSheet-background); only while "files" is the cloud's (a stopped run's
@@ -501,7 +504,7 @@ async function pass(env) {
       ctx.say = say;   // (build step 4: a unit that writes a document of its own fences it on this pass's lease and the run's carrier, as Lib.call does: _charmNestIntake.js fencedWrite)
       let res;
       for (let attempt = 0; ; attempt++) {
-        try { res = await beside(() => unit(ctx), step + " unit " + cursor.i); break; }   // (CMDLANE)
+        try { meterTag("drive:" + step + "#" + cursor.i); res = await beside(() => unit(ctx), step + " unit " + cursor.i); break; }   // (CMDLANE)
         catch (e) {
           if (e && (e.fenced || e.yielded || e.fatal)) throw e;
           if (e && e.overBudget) { res = { overBudget: true }; break; }
@@ -592,6 +595,7 @@ async function releasesUnit(db, call, say) {
 /* ── the cron's tick (§1.1): with the drive absent or off, ONE read and nothing else. Otherwise it reads what it needs, keeps the cloud's carrier alive while the cloud
    carries a run (its only write, one transaction a minute: C6), and dispatches a pass when there is something to do. It never dispatches a world build (E1). ── */
 async function tick(env) {
+  meterTag("drive:tick");
   const { db } = env, now = Date.now(), out = { reads: 1, dispatched: false };
   const dv = await db.collection(OPEN).doc("drive").get(), drive = dv.exists ? dv.data() || {} : null, mode = drive && (drive.mode === "standby" || drive.mode === "on") ? drive.mode : "off";
   if (mode === "off") { out.off = true; return out; }

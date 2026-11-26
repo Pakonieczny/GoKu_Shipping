@@ -48,6 +48,7 @@ async function etsyUsed(db) { try { const s = await db.collection("Charm_World")
 const stampOf = r => Number((r && (r.updated_timestamp || r.update_timestamp)) || 0) || 0;
 const wholeRaw = r => !!(r && r.receipt_id && Array.isArray(r.transactions) && r.transactions.length);
 /* COST: a warm instance keeps the master index it read, under the index's signature (masterList answers it with its first part): read again only when it moved */
+const meterTag = t => { try { return global.__readMeter && global.__readMeter.setTag ? global.__readMeter.setTag(t) : ""; } catch (_) { return ""; } };   // (READMETER: each part of the build is counted under its own name)
 const CACHE = { masterSig: null, masterEntries: null, mirror: new Map(), etsy: null };
 /* READCUT (Paul, 25 Nov 2026: Firestore cost; the read meter: each build read every open receipt twice, ~1,550 copied receipts and ~1,420 kept ones, every two minutes, changed or not):
    · CACHE.mirror: a copied receipt (EtsyMail_Receipts) as this instance last read it, under its own updated_timestamp: a receipt whose stamp the build already knows (open: the sweep's
@@ -215,6 +216,7 @@ async function build(opts) {
   /* (CLOUDDRIVE build step 9, P11 / E7; an additive field pages ignore): when the mail system last finished a copy of Etsy's receipts, read BEFORE the copy is read below, so a
      step that waits for a sync after it started knows this build read that sync's copy (the driver's freshness gate: summary.mirrorBefore). mirrorAt below stays as it is. */
   let mirrorBefore = null; try { const ms0 = await db.doc("EtsyMail_Config/receiptsMirrorState").get(), m0 = ms0.exists ? ms0.data() || {} : {}, t0 = m0.lastSyncCompletedAt; mirrorBefore = t0 && t0.toMillis ? t0.toMillis() : +t0 || null; } catch (_) { mirrorBefore = null; }
+  meterTag("world:receipts");
   /* 1 · which receipts are open: from the receipts the mail system copies from Etsy (no Etsy call here) */
   const sweep = opts.sweep || !st.sweptAt || now - st.sweptAt > SWEEP_MS || !Object.keys(open).length;
   let watermark = Number(st.mirrorMark) || 0, etsyMoved = 0;
@@ -242,12 +244,14 @@ async function build(opts) {
     return { skipped: true, at: now, token, errors };
   }
 
+  meterTag("world:run");
   /* 2 · the open run: its lines are in production until it says otherwise (a line Etsy closed stays until our own shipping ships it) */
   let run = null;
   try { const o = await ops.runOpen({ only: "get" }); if (o && o.runId) { const g = await ops.runGet({ runId: o.runId }); run = g && g.run ? g.run : null; } } catch (e) { errors.push("run: " + e.message); }
   const runLines = (run && run.lines) || {};
   const runReceipts = new Set(Object.entries(runLines).filter(([, l]) => l && l.state !== "gone").map(([k]) => String(k).split("_")[0]));
 
+  meterTag("world:etsy");
   /* 3 · each receipt whole: the copy's own (it holds the items), else one Etsy read, counted against the day's 500 and kept until the receipt changes */
   const want = [...new Set([...Object.keys(open), ...runReceipts])];
   const kept = new Map(), seq = +st.buildSeq || 0, ec = CACHE.etsy && CACHE.etsy.seq === seq ? CACHE.etsy.docs : null;   // (READCUT: this instance's own copy, when the last build was its own)
@@ -289,6 +293,7 @@ async function build(opts) {
   });
   if (etsyRefused) errors.push(`Etsy: today's ${ETSY_DAY_CAP} calls are spent; ${stale.length - etsyCalls} receipt(s) wait for tomorrow or for the mail system's copy`);
 
+  meterTag("world:notes");
   /* 4 · notes, messages, completed */
   const rids = want.filter(id => kept.get(id) && kept.get(id).raw);
   let noteMap = new Map();
@@ -305,6 +310,7 @@ async function build(opts) {
     etsyDocs.set(id, Object.assign({}, etsyDocs.get(id) || {}, { messages: rows, messagesAt: now }));   // (READCUT)
   });
 
+  meterTag("world:inputs");
   /* 5 · the inputs of the reading, from the cloud's own ops */
   let entries = null;
   /* READCUT (Paul, 25 Nov 2026: Firestore cost; Query Insights: the library read 500 records at a time, ~725 whole readings a day, ~2.6M reads): the build asked for the first 3,000 records BEFORE it
@@ -350,6 +356,7 @@ async function build(opts) {
   const have = new Set(rows.map(r => r.key));
   for (const [key, rec] of Object.entries(runLines)) if (rec && rec.state !== "gone" && !have.has(key) && !cancelled.has(String(key).split("_")[0])) rows.push(Object.assign({ key, order: null, line: null, fromRecord: true }, runFacts(rec), { etsyOpen: false, inRun: true, _run: runFacts(rec) }));
 
+  meterTag("world:custom");
   /* 7 · readings: Claude's (custom) and the listings' SKU tables, from the stored copies */
   const readable = rows.filter(r => r.order);
   // Claude's custom readings (Charm_Nest_CustomRead/<line>: reads by hash, latest, the person's decision): the one the run names for the line (crh), else the latest stored,
@@ -392,6 +399,7 @@ async function build(opts) {
     sentOf = row => { const e = idx.get(row.key); if (!e) return null; const list = (((e.sent || e.sendIntent).lines || {})[row.key] || []).filter(pc => !(pc && pc.removed)), pc = list[0], F = pc && (e.files || []).find(x => x.id === pc.f); return { metal: (F && F.metal) || null, pieces: list.length, sent: !!e.sent }; };
   } catch (e) { errors.push("customSheet: " + e.message); }
 
+  meterTag("world:pool");
   /* 7b · where each line's pieces are (Charm_Pool: the pieces' own records, which every placement writes): a line whose live pieces are all on a written
      (or committed) set is written (or committed), whatever a run record saved earlier says (RVSAME: the run record of order 4228567858 said "pooled" while its
      piece was on RG_Nov.13.26_Set-1_Sheet-1). Only lines still before that are looked at. */
@@ -412,6 +420,7 @@ async function build(opts) {
     }
   } catch (e) { errors.push("pieces: " + e.message); }
 
+  meterTag("world:read");
   /* 8 · read every line */
   const seen = O.seenSkus ? O.seenSkus(readable.map(r => r.line)) : {};
   const ctx = { optionMaps: maps.optionMaps, aliases: maps.aliases, noDesign: maps.noDesign, customDone, customRead, customDecided, listingSkus, seen,
@@ -422,6 +431,7 @@ async function build(opts) {
     afterRead(row, null, sentOf(row));
   }
 
+  meterTag("world:write");
   /* 9 · write what changed */
   const prevSnap = await db.collection(WORLD).doc("summary").get(), prev = (prevSnap.exists && prevSnap.data()) || {};
   const prevSigs = Object.assign({}, prev.sigs || {});
@@ -448,6 +458,7 @@ async function build(opts) {
   for (const k of Object.keys(prevSigs)) if (!(k in sigs)) { batch.set(db.collection(LINES).doc(k), { gone: true, goneAt: now, at: now, state: "gone" }, { merge: true }); inBatch++; writes++; if (inBatch >= 400) await flush(); }
   await flush();
 
+  meterTag("world:engrave");
   /* 9b · the orders with engraving still to settle (Charm_Nest_Engrave: each line's engraving jobs as every computer saves them, charm-nest-engrave-sync.js), for the Design & Engrave badge:
      a job words / review / fitting / ready / classify, not archived, of a live line (charm-nest-bridge.js Engrave.pendingJobs) */
   let engraving = null, engraveKeys = null, engravePending = null, engraveJobs = null, engraveAt = null;
@@ -477,6 +488,7 @@ async function build(opts) {
     engraving = [...set]; engraveKeys = all.sort(); engravePending = pend.sort();
   } catch (e) { errors.push("engraving: " + e.message); }
 
+  meterTag("world:flow");
   /* 9c · THE FLOW (the left rail and the Orders tab's stages): where each line's pieces are, read as an order's own window reads them (op getOrderPieces: its pool rows and every saved
      sheet that lists them, one snapshot) for EVERY open order, then the page's rules. The reading is kept (Charm_World/place) while nothing a placement is made from moved (the cloud's
      placement counter, Charm_Nest_Rev/placement) and for FULL_MS at most; a line not in it, or whose pieces changed, is read afresh. Plus the steps after the laser every computer learned
@@ -509,6 +521,7 @@ async function build(opts) {
     flowIn = { learnedMap, completedMap, facts };
   } catch (e) { errors.push("flow: " + String(e.message || e).slice(0, 160)); }
 
+  meterTag("world:review");
   /* 10 · Review, built once, here */
   let review = null;
   if (ReviewCore && typeof ReviewCore.build === "function") {
@@ -541,6 +554,7 @@ async function build(opts) {
     } catch (e) { errors.push("review: " + String(e.message || e).slice(0, 200)); }
   }
 
+  meterTag("world:totals");
   /* 10b · the Library's totals (op ping's own count: saved sheets not archived, charms in the library), so the rail's "Library · N sheets · M charms" is the cloud's on every computer, kept current */
   let library = null;
   try { const [sc, cc] = await Promise.all([db.collection("Charm_Nest_Sheets").where("archived", "==", false).count().get(), db.collection("Charm_Nest_Library").count().get()]); library = { sheets: sc.data().count, charms: cc.data().count, at: now }; }
