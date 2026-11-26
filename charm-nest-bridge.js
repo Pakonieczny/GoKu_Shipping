@@ -1990,6 +1990,8 @@ const Orders = window.Orders = (() => {
       // its designs carry no back to engrave; a line with pieces of its own goes on like any other
       if (window.CustomSheet && CustomSheet.sentOf(row) && !row.spec.customDone) {
         row.problems = []; row.spec.engraveCandidate = false; const m0 = CustomSheet.metalOf(row); if (m0) row.spec.material = m0;
+        // (CUSTOMBACK, Paul 26 Nov 2026: a line whose file drew its charms' backs engraves them, from the drawing: it is read by no one, each such piece's back waits for Approve in Design & Engrave)
+        { const nb = CustomSheet.backsOf ? CustomSheet.backsOf(row) : 0; if (nb > 0) { row.spec.customBack = nb; row.spec.engraveCandidate = true; } else delete row.spec.customBack; }
         /* MULTICHARM (25 Nov 2026, Paul: "this order has to be treated as an order with multiple pieces ... correctly processed identified and tracked throughout the system process flow"): the line is
            the pieces its card sent it, not its Etsy quantity (a file of three charms on a quantity-1 line is three pieces): that count is the line's own (spec.pieceCount, which every reader counts by:
            CharmNestOrders.pieceCountOf; spec.customPieces for the readers that count the Etsy quantity first: the order window, Completed), pinned as a pooled line is (O.pinPieces, as Pool.pinPooled
@@ -4688,7 +4690,7 @@ const Pool = window.Pool = (() => {
      PDF document (a writer reads that from the bytes in the worker, as it always did) and without the worker's own key for it (another session's worker numbers its own); a page
      with no worker keeps none. A re-pointed or re-drawn design has another hash, and changed drawing code another name: an old copy is never used. Shared by both worlds: it names
      a file, never a record. KEPT_REV: bump by hand when the reading below changes in a way no ?v= shows. */
-  const KEPT_REV = 1;
+  const KEPT_REV = 2;   // (CUSTOMBACK, 26 Nov 2026: a custom file's back drawn above its charm is read apart now: a reading kept from before would fold it into the charm)
   const keptKey = (path, hash) => (path && hash ? [String(path), String(hash), KEPT_REV, window.CharmNestThumbs && CharmNestThumbs.drawingVersion ? CharmNestThumbs.drawingVersion() : ""].join("|") : "");
   function keepMaster(path, src) {
     const St = window.CharmNestStore, k = keptKey(path, src && src.hash);
@@ -8789,6 +8791,7 @@ const Engrave = window.Engrave = (() => {
     neverEngraves: row => neverEngraves(row), neverWhy: row => neverWhy(row), NEVER_OPEN: j => NEVER_OPEN(j), faceOf: x => faceOf(x),
     trust: () => S.settings.engraveConfidence,   // (Settings' engraving confidence)
     customSent: row => !!(window.CustomSheet && CustomSheet.sentOf && CustomSheet.sentOf(row)),
+    fileBack: j => { const id = j && (j.copies || [])[0], r = id && B.pool && B.pool.rows ? B.pool.rows.get(String(id)) : null; if (r && +r.fileBack > 0) return true; try { const c = id ? Pool.charmOf(String(id)) : null; return !!(c && Array.isArray(c.fileBack) && c.fileBack.length); } catch (_) { return false; } },   // (CUSTOMBACK)
     finished: row => !!(typeof O !== "undefined" && O && O.FINISHED_LINE && O.FINISHED_LINE.has(row.state))
   }));
   /* FOLLOWASK (Paul, 15 Nov 2026): the words lose the instruction text ("on the left side please", "all caps", a web link); the asks stay on the job (job.asks) for applyAsks after the fit (charm-nest-engrave-classify.js takeAsks). */
@@ -11871,7 +11874,8 @@ const Engrave = window.Engrave = (() => {
     const drawn = l => (l.kind !== "text" && isM(l.matrix) && !Mx.isI(l.matrix.map(v => Math.round(v * 1e9) / 1e9)) ? Mx.transformSubpaths(l.subpaths || [], l.matrix) : l.subpaths);
     const moved = l => { const g = was.get(l.id); return !g || !same(l.role, g.role) || !same(l.stroke, g.stroke) || !same(l.fill, g.fill) || !same(l.lwPt, g.lwPt) || (l.subpaths !== g.subpaths || isM(l.matrix)) && !AE.sameSubs(drawn(l), g.subpaths); };
     const kept = new Set(leaves.map(l => l.id)), changed = {}, added = [];
-    for (const l of leaves) { if (!master.has(l.id)) added.push(l); else if (l.changed === true || (touched.has(l.id) && moved(l))) changed[l.id] = l; }
+    const fileIds = new Set(((charm && charm.fileBack) || []).map(m => m && String(m.artMemberId)).filter(Boolean));   // (CUSTOMBACK: the parts of the back the custom file drew stay the file's)
+    for (const l of leaves) { if (fileIds.has(String(l.id))) continue; if (!master.has(l.id)) added.push(l); else if (l.changed === true || (touched.has(l.id) && moved(l))) changed[l.id] = l; }
     const removed = [...master].filter(id => !kept.has(id) && (was.has(id) || (face === "front" && !now.has(id))));
     return { removed, changed, added };
   }
@@ -18016,6 +18020,8 @@ const CustomSheet = window.CustomSheet = (() => {
   // (a piece a cleanup took off its sheet on purpose stays in its line's list, so the copies keep their numbers, marked
   //  `removed`: it is not counted, and the pool never makes it again, Pool.preparePool)
   const piecesOf = row => { const e = sentOf(row); return e ? (decisionLines(e)[row.key] || []).filter(pc => !(pc && pc.removed)).length : 0; };
+  /** CUSTOMBACK (26 Nov 2026): how many pieces of the line are cut from a charm its file drew a back for (the file's charmBacks: each such piece's back is engraved with that drawing, approved in Design & Engrave). */
+  const backsOf = row => { const e = sentOf(row); if (!e) return 0; return (decisionLines(e)[row.key] || []).filter(pc => { if (!pc || pc.removed) return false; const F = (e.files || []).find(x => x.id === pc.f); return !!F && Array.isArray(F.charmBacks) && F.charmBacks.includes(Number.isInteger(pc.i) ? pc.i : 0); }).length; };
   /** Pieces a cleanup took off their sheet on purpose (Cleanups): each marked on the line it was sent for (a pool id is
    *  the line's key and the copy's number). Returns how many were marked. */
   function dropPieces(poolIds, why) {
@@ -18116,6 +18122,8 @@ const CustomSheet = window.CustomSheet = (() => {
       const parsed = await P.parseSource(F.bytes, F.name);
       const g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +S.settings.minPt || 6 });
       if (!g.charms.length) throw new Error("no closed cut outline in it — a piece's outline must be a closed black or grey line");
+      // (CUSTOMBACK, Paul 26 Nov 2026: a charm's BACK drawn above it, the words "Back Engraving" between: never a piece of its own, its drawing that charm's back engraving: charm-nest-pdf.js customBacks)
+      const backs = P.customBacks ? P.customBacks(parsed, g) : { backs: [], notes: [] };
       // loose ink within reach of a piece is part of that piece (as a master's is, Pool.readMasterCharm)
       let loose = 0;   // (MULTICHARM, 25 Nov 2026: ink within reach of no cut outline is not cut; the window says how many parts, F.loose)
       for (const m of g.orphans) {
@@ -18127,7 +18135,7 @@ const CustomSheet = window.CustomSheet = (() => {
       await P.buildSilhouettes(parsed, g.charms, +S.settings.silhouetteRes || 6);
       const charms = g.charms.filter(c => !c.open);
       if (!charms.length) throw new Error("its outlines are not closed — every piece needs a closed cut line");
-      return { parsed, g, charms, loose: loose + (g.charms.length - charms.length) };
+      return { parsed, g, charms, loose: loose + (g.charms.length - charms.length), backs: backs.backs.length, backNotes: backs.notes, charmBacks: charms.map((c, i) => (Array.isArray(c.fileBack) && c.fileBack.length ? i : -1)).filter(i => i >= 0) };
     })();
     geo.set(F.id, task); task.catch(() => geo.delete(F.id));
     return task;
@@ -18173,10 +18181,10 @@ const CustomSheet = window.CustomSheet = (() => {
       if (F.kind === "dxf") { if (!window.CharmNestDXF) throw new Error("the .dxf reader is not loaded — reload the page"); const r = await CharmNestDXF.toPdf(raw, F.name); F.bytes = r.bytes; F.units = r.meta.units; }
       else F.bytes = raw;
       F.hash = await sha256(F.bytes);
-      const { charms, loose } = await read(F);
+      const { charms, loose, backs, backNotes, charmBacks } = await read(F);
       const bb = charms.reduce((a, c) => { const o = outlineBox(c.outline); return [Math.min(a[0], o[0]), Math.min(a[1], o[1]), Math.max(a[2], o[2]), Math.max(a[3], o[3])]; }, [Infinity, Infinity, -Infinity, -Infinity]);
       Object.assign(F, { pieces: charms.length, wMm: (bb[2] - bb[0]) * MM, hMm: (bb[3] - bb[1]) * MM, thumb: thumbOf(charms, 176),
-        maxPt: Math.max(...charms.map(c => Math.max(c.widthPt || 0, c.heightPt || 0))), minPt: Math.max(...charms.map(c => Math.min(c.widthPt || 0, c.heightPt || 0))), maxAreaPt2: Math.max(...charms.map(c => c.areaPt2 || 0)), loose: loose || 0, state: "ready", error: null });
+        maxPt: Math.max(...charms.map(c => Math.max(c.widthPt || 0, c.heightPt || 0))), minPt: Math.max(...charms.map(c => Math.min(c.widthPt || 0, c.heightPt || 0))), maxAreaPt2: Math.max(...charms.map(c => c.areaPt2 || 0)), loose: loose || 0, backs: +backs || 0, backNotes: (backNotes || []).slice(0, 6), charmBacks: (charmBacks || []).slice(0, 400), state: "ready", error: null });   // (CUSTOMBACK: how many of its charms the file drew a back for, and what could not be read)
       // (MULTICHARM, 25 Nov 2026: "one piece per charm in it, whatever the order line's quantity": a file of several charms starts at one of each; a monogram's design keeps its own count)
       startCounts(F, charms.length);
       popThumb.add(F.id);
@@ -18294,7 +18302,7 @@ const CustomSheet = window.CustomSheet = (() => {
   // Only metadata and durable file references cross the API. The original bytes stay in the workspace.
   function cloudRecord(e, phase) {
     const sent=e.sent || e.sendIntent;
-    return {ck:e.ck,rid:String(e.rid),at:e.at || sent.at,phase,files:e.files.map(F=>({id:F.id,name:F.name,kind:F.kind,size:F.size || 0,hash:F.hash || null,cloud:F.cloud?{path:F.cloud.path,url:F.cloud.url}:null,metal:F.metal,qty:F.qty,pieces:F.pieces,wMm:F.wMm || 0,hMm:F.hMm || 0,maxPt:F.maxPt || 0,minPt:F.minPt || 0,maxAreaPt2:F.maxAreaPt2 || 0,state:"ready",thumb:F.thumb || null,...(multiFile(F)?{charmQty:Object.assign({},F.charmQty)}:{})})),sent:{id:sent.id || `custom-sheet:${e.ck}:${sent.at}`,at:sent.at,by:sent.by || "",lines:sent.lines}};
+    return {ck:e.ck,rid:String(e.rid),at:e.at || sent.at,phase,files:e.files.map(F=>({id:F.id,name:F.name,kind:F.kind,size:F.size || 0,hash:F.hash || null,cloud:F.cloud?{path:F.cloud.path,url:F.cloud.url}:null,metal:F.metal,qty:F.qty,pieces:F.pieces,wMm:F.wMm || 0,hMm:F.hMm || 0,maxPt:F.maxPt || 0,minPt:F.minPt || 0,maxAreaPt2:F.maxAreaPt2 || 0,state:"ready",thumb:F.thumb || null,...(multiFile(F)?{charmQty:Object.assign({},F.charmQty)}:{}),...(Array.isArray(F.charmBacks)&&F.charmBacks.length?{charmBacks:F.charmBacks.slice()}:{})})),sent:{id:sent.id || `custom-sheet:${e.ck}:${sent.at}`,at:sent.at,by:sent.by || "",lines:sent.lines}};
   }
   async function saveCloud(e, phase) {
     if (!S.cloud.ok) { e.sendCloudPending=true; return; }
@@ -18721,12 +18729,15 @@ const CustomSheet = window.CustomSheet = (() => {
       Object.assign(c, { name: `${rid} · Custom · ${F.name.replace(ACCEPT, "")}${mine.length > 1 ? ` · ${copy}/${mine.length}` : ""}`, custom: true, customCk: e.ck, order: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}),
         orderInfo: { receiptId: rid, transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", copy, quantity: mine.length, form: sp.form, size: sp.size, custom: true, file: F.name },
         poolId, metal: F.metal, lineKey: row.key, customIndex: pc.i, excluded: false, engravable: false, backKeepOut: null });
+      const fbN = Array.isArray(c.fileBack) ? c.fileBack.length : 0; if (fbN) c.engravable = true;   // (CUSTOMBACK: its file drew its back)
       pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", material: F.metal, size: null, form: sp.form || null, chain: sp.chain || null, copy, quantity: mine.length, charmHash: c.hash, masterHash: null, aiPath: (F.cloud && F.cloud.path) || null, engrave: false, state: "ready", lineKey: row.key, updateTs: row.order.updateTs, custom: true, customFile: F.name, customIndex: pc.i, ...(mineFields || {}) });   // (MULTICHARM, 25 Nov 2026: customIndex, which charm of its file the piece is: the piece is made again from exactly that charm, Pool.ensureBase)
+      if (fbN) pools[pools.length - 1].fileBack = fbN;   // (CUSTOMBACK: the piece's row says its back is drawn in its file: the cloud's engraving reads it so)
       if (mineFields) Object.assign(c, mineFields);   // side, mirror, bodyIndex, groupKey, groupSize: only a piece of an earring pair carries them
       charms.push(c);
     }
     if(!charms.length){row.state="noDesign";row.reason="its sent designs were removed from the sheets";return null;}
-    row.engrave = { needed: false, state: "none", approved: true,seals:CNEngravingSeals.merge(row.engrave) };
+    // (CUSTOMBACK: a line with a back drawn in its file is the engraving's to read: its backs wait for Approve; any other custom line engraves nothing, as before)
+    row.engrave = charms.some(c => Array.isArray(c.fileBack) && c.fileBack.length) ? { needed: true, state: "classify", approved: false, seals: CNEngravingSeals.merge(row.engrave) } : { needed: false, state: "none", approved: true,seals:CNEngravingSeals.merge(row.engrave) };
     return { sp: Object.assign({}, sp, { material: charms[0].metal, quantity: charms.length, designSku: sp.designSku || row.line.sku || "CUSTOM" }), pools, charms, custom: true };
   }
   /* HELDCHARM (Paul, 18 Nov 2026, order 4225100553: "It doesn't matter whether the charm is on hold or not it should still be fully visible and fully accessible and fully approvable inside the engraving menu"):
@@ -18972,7 +18983,10 @@ const CustomSheet = window.CustomSheet = (() => {
     const big = tooBig(F), err = F.state === "error", many = F.state === "ready" && multiFile(F);
     const size = F.state === "ready" ? `${F.wMm.toFixed(1)} × ${F.hMm.toFixed(1)} mm · ${plural(F.pieces, many ? "charm" : "piece")}${F.kind === "dxf" && F.units ? ` · DXF in ${F.units}` : ""}` : "";
     // (MULTICHARM: ink that lies within reach of no cut outline is not cut: said, never dropped without a word)
-    const loose = F.state === "ready" && +F.loose > 0 ? `<span class="warn">${plural(+F.loose, "part")} of the drawing ${+F.loose === 1 ? "lies" : "lie"} outside every cut outline: not cut</span>` : "";
+    const loose = (F.state === "ready" && +F.loose > 0 ? `<span class="warn">${plural(+F.loose, "part")} of the drawing ${+F.loose === 1 ? "lies" : "lie"} outside every cut outline: not cut</span>` : "")
+      // (CUSTOMBACK, 26 Nov 2026: the backs drawn above their charms, each that charm's back engraving, approved in Design & Engrave; what the reading could not take, said)
+      + (F.state === "ready" && +F.backs > 0 ? `<span class="dim">${+F.backs === F.pieces && F.pieces > 1 ? "Every charm has" : plural(+F.backs, "charm") + (+F.backs === 1 ? " has" : " have")} a back engraving from the file: approved in Design &amp; Engrave</span>` : "")
+      + (F.state === "ready" && Array.isArray(F.backNotes) ? F.backNotes.map(t => `<span class="warn">${esc(t)}</span>`).join("") : "");
     return `<div class="cuThumb">${F.thumb ? `<img alt="${esc(F.name)}" src="${F.thumb}">` : F.state === "reading" ? '<span class="spin" aria-hidden="true"></span>' : '<span class="x" aria-hidden="true">!</span>'}</div>` +
       `<div class="cuMeta"><b title="${esc(F.name)}">${esc(F.name)}</b>${F.state === "reading" ? '<span class="dim">Reading the design…</span>' : err ? `<span class="err">${esc(F.error || "could not be read")}</span>` : `<span class="dim">${esc(size)}</span>${big ? `<span class="err">Too big for the ${esc(labelOf(F.metal))} plate</span>` : !F.metal ? '<span class="warn">Pick a metal for it</span>' : ""}${loose}`}</div>` +
       (err ? "" : `<div class="cuMetals" role="radiogroup" aria-label="Metal for ${esc(F.name)}">${chips(F.metal, "")}</div>` +
@@ -19008,7 +19022,7 @@ const CustomSheet = window.CustomSheet = (() => {
     for (const F of files) {
       let n = [...list.children].find(x => x.dataset.id === F.id && !x._leaving); const made = !n;
       if (made) { n = el("div", "cuFile"); n.dataset.id = F.id; if (prev) prev.after(n); else list.prepend(n); if (arriving.has(F.id) && !motionOff()) n.classList.add("arriving"); }
-      const sig = [F.state, F.metal, F.qty, F.thumb ? 1 : 0, F.error, locked, tooBig(F), +F.loose || 0, multiFile(F) ? JSON.stringify(F.charmQty) + ((charmViews.get(F.id) || {}).list ? "v" : "") : ""].join("|");   // (MULTICHARM: a charm's own count, its pictures once drawn)
+      const sig = [F.state, F.metal, F.qty, F.thumb ? 1 : 0, F.error, locked, tooBig(F), +F.loose || 0, +F.backs || 0, (F.backNotes || []).length, multiFile(F) ? JSON.stringify(F.charmQty) + ((charmViews.get(F.id) || {}).list ? "v" : "") : ""].join("|");   // (MULTICHARM: a charm's own count, its pictures once drawn)
       if (n._sig !== sig) { const f = focusOf(n); n.classList.toggle("bad", F.state === "error"); n.innerHTML = rowHtml(F); n._sig = sig; n.querySelectorAll("button").forEach(b=>{if(locked)b.disabled=true;}); refocus(n, f); if (F.thumb && ringNext.delete(F.id)) lit(n.querySelector(".cuThumb"), "cuLanded", 1000); }
       if (made && !calm) Motion.grow(n, { ms: 700 });
       prev = n;
@@ -20109,7 +20123,7 @@ const CustomSheet = window.CustomSheet = (() => {
     }, delay || 0);
     return true;
   }
-  return { touched: () => { ver++; redraw(); }, add, remove, send, prepare, heldCharm, filePieces, planLines, sentOf, decisionOf, sending, recover, load, hydrate, applyRemote, askCarrier, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, sheetStamps, sheetSealsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepResumes: () => true, keepViewerResume, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
+  return { touched: () => { ver++; redraw(); }, add, remove, send, prepare, heldCharm, filePieces, planLines, sentOf, decisionOf, sending, recover, load, hydrate, applyRemote, askCarrier, legacyKeys, piecesOf, backsOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, sheetStamps, sheetSealsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepResumes: () => true, keepViewerResume, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════

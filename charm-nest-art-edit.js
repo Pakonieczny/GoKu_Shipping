@@ -345,6 +345,8 @@
   function applyBack(charm, rec) {
     const base = baseOf(charm), out = Object.assign({}, charm);
     out.artEdit = Object.assign({}, charm.artEdit || {}); delete out.artEdit.back; delete out.artBack;
+    // (CUSTOMBACK, 26 Nov 2026: a custom piece whose file drew its back (charm-nest-pdf.js customBacks: fileBack) keeps that drawing as its back engraving; the editor's back additions are put with it)
+    if (Array.isArray(charm.fileBack) && charm.fileBack.length) out.artBack = charm.fileBack.slice();
     if (emptyRec(rec)) return finish(out, base);
     const note = { at: +rec.at || 0, by: rec.by || null, key: recSig(rec), removed: 0, changed: 0, added: 0, refused: [], stale: [] };
     out.artEdit.back = note;
@@ -358,7 +360,7 @@
       seg.artAdded = true; art.push(seg);
     }
     note.added = art.length;
-    if (art.length) out.artBack = art;
+    if (art.length) out.artBack = (out.artBack || []).concat(art);
     return finish(out, base);
   }
   /** A NEW charm: `charm` (a piece's charm, edited or not) with the record of one face put over its master. A null record takes that face's edit off. Never changes `charm`. */
@@ -557,7 +559,8 @@
       editable: isPath(m) && !(face === "back"), layer: m.layer || null, tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, ...(m.artText ? { text: m.artText } : {}), ...(m.artGroup ? { group: m.artGroup } : {}), ...(m.artWeightMm ? { weightMm: m.artWeightMm } : {}), ...(m.artGrey ? { artGrey: true } : {}) });
     charm.members.forEach((m, i) => { if (!m) return; if (face === "back" && roleOf(m, charm) !== "cut") return; list.push(one(m, ids[i], m.artAdded ? "added" : "master")); });
     // (FRONTLIKEBACK: the parts added to a face are that face's engraving, the charm's artFront or artBack, listed the same way for both faces)
-    for (const m of (face === "back" ? charm.artBack : charm.artFront) || []) list.push(Object.assign(one(m, m.artMemberId, "added"), { editable: true }));
+    // (CUSTOMBACK: the back a custom order's file drew is shown as the file's, locked: it is changed in the file; what the editor adds is put with it)
+    for (const m of (face === "back" ? charm.artBack : charm.artFront) || []) list.push(m && m.fileBack ? Object.assign(one(m, m.artMemberId, "master"), { editable: false, fileBack: true }) : Object.assign(one(m, m.artMemberId, "added"), { editable: true }));
     return list;
   }
 

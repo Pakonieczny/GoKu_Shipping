@@ -1463,6 +1463,82 @@
     return { charms, frame, frames, orphans, markers, sampleText, stray, rule, outlineCount: outlines.length, mergedCount: merged.size };
   }
 
+  /* ═══ 5a″ · CUSTOMBACK: a charm's back drawn above it in a custom order's file ═══
+     Paul, 26 Nov 2026: "The back engraving portion of a given charm will always be above the main charm and will have the words back engraving underneath the back engraving silhouette which will always
+     be above the primary charm. The system will have to be intelligent enough to recognize this and effectively add the back engraving on that particular charm ... and then will need back engraving
+     approval, just like any other engraving approval". So, from top to bottom: the BACK (the charm's outline as seen from the back, its back engraving drawn inside it), the words "Back Engraving"
+     (typed), the CHARM. customBacks(parsed, g) reads a grouping (groupCharms) of such a file: every back outline leaves g.charms (it is never a piece, never cut), and what is drawn inside it becomes the
+     back engraving of the charm under it: charm.fileBack, its paths in that charm's own points as seen from the FRONT (the frame a back's added parts are kept in, charm.artBack: buildBackFile turns
+     them over with the cut), so the drawing is mirrored about the charm's vertical middle (it was drawn as seen from the back). A back a little smaller or larger than its charm is fitted to it (its
+     outline's box, one scale); one far from its size, or words with no outline above or below them, are said in `notes` and nothing is attached. A charm that shares a drawn group with its back
+     redraws that group from its own geometry (as an edited piece does: dropIndices, artRedraw), so the back's outline is never copied into the charm's laser file.
+     → { backs: [{ charm, back, label, parts, scale }], notes: [text] }. A file without the words is read exactly as before (nothing changes). */
+  const BACK_LABEL = /back\s*[-_.]?\s*engrav/i;
+  function customBacks(parsed, g, opts) {
+    const out = { backs: [], notes: [] };
+    if (!parsed || !g || !Array.isArray(g.charms) || g.charms.length < 2) return out;
+    const tol = (opts && +opts.sizeTol) || 0.25;
+    // the words as typed: one run, or a line of runs (Illustrator may write each word, or each letter, as its own run)
+    const texts = [].concat(parsed.segments || [], parsed.nested || []).filter(s => s && s.kind === "text" && Array.isArray(s.bbox) && s.bbox.every(Number.isFinite));
+    const lines = [];
+    for (const t of texts.slice().sort((a, b) => a.bbox[0] - b.bbox[0])) {
+      const th = t.bbox[3] - t.bbox[1];
+      const ln = lines.find(L => { const lh = L.bbox[3] - L.bbox[1], oy = Math.min(L.bbox[3], t.bbox[3]) - Math.max(L.bbox[1], t.bbox[1]); return oy >= 0.5 * Math.min(th, lh) && t.bbox[0] - L.bbox[2] <= 1.5 * Math.max(th, lh); });
+      if (ln) { ln.parts.push(t); ln.str += " " + String(t.str || ""); ln.bbox = [Math.min(ln.bbox[0], t.bbox[0]), Math.min(ln.bbox[1], t.bbox[1]), Math.max(ln.bbox[2], t.bbox[2]), Math.max(ln.bbox[3], t.bbox[3])]; }
+      else lines.push({ parts: [t], str: String(t.str || ""), bbox: t.bbox.slice() });
+    }
+    const labels = lines.filter(L => BACK_LABEL.test(L.str.replace(/\s+/g, " ")));
+    if (!labels.length) return out;
+    const boxOf = c => (c.outline && Array.isArray(c.outline.bbox) ? c.outline.bbox : c.bbox), W = b => b[2] - b[0], H = b => b[3] - b[1], mid = b => [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+    const taken = new Set(), pairs = [], backOutlines = new Set();   // (every outline read as a back leaves the charms, attached or not: it is never a piece)
+    for (const L of labels.sort((a, b) => b.bbox[1] - a.bbox[1])) {
+      const lh = Math.max(1, H(L.bbox)), lx = mid(L.bbox)[0];
+      const across = c => { const b = boxOf(c); return lx >= b[0] - lh && lx <= b[2] + lh; };
+      // (PDF points, y up: the back's outline lies wholly above the words, the charm's wholly below them; the nearest of each)
+      const back = g.charms.filter(c => !taken.has(c) && across(c) && boxOf(c)[1] >= L.bbox[3] - 0.6 * lh).sort((a, b) => boxOf(a)[1] - boxOf(b)[1])[0];
+      const charm = g.charms.filter(c => !taken.has(c) && c !== back && across(c) && boxOf(c)[3] <= L.bbox[1] + 0.6 * lh).sort((a, b) => boxOf(b)[3] - boxOf(a)[3])[0];
+      const where = `"${L.str.trim().slice(0, 40)}"`;
+      if (!back || !charm) { out.notes.push(`The words ${where} have no outline ${!back ? "above" : "below"} them: no back engraving was taken from them`); continue; }
+      const bb = boxOf(back), bc = boxOf(charm), sw = W(bc) / Math.max(1e-6, W(bb)), sh = H(bc) / Math.max(1e-6, H(bb));
+      if (!(sw > 1 - tol && sw < 1 + tol && sh > 1 - tol && sh < 1 + tol)) { taken.add(back); backOutlines.add(back); out.notes.push(`The back drawn above a charm (${(W(bb) * 25.4 / 72).toFixed(1)} × ${(H(bb) * 25.4 / 72).toFixed(1)} mm) is not the size of the charm under it (${(W(bc) * 25.4 / 72).toFixed(1)} × ${(H(bc) * 25.4 / 72).toFixed(1)} mm): it is left out, and that charm has no back engraving from the file`); continue; }
+      taken.add(back); taken.add(charm); backOutlines.add(back); pairs.push({ back, charm, label: L, scale: (sw + sh) / 2 });
+    }
+    if (!backOutlines.size) return out;
+    const cutLike = m => { try { return m === undefined ? false : (geometry() && geometry().isCutLine ? geometry().isCutLine(m) : false); } catch (_) { return false; } };
+    const mapPt = (p, from, to, k) => [to[0] - k * (p[0] - from[0]), to[1] + k * (p[1] - from[1])];   // (turned over: mirrored about the charm's vertical middle)
+    for (const pr of pairs) {
+      const from = mid(boxOf(pr.back)), to = mid(boxOf(pr.charm)), k = pr.scale, parts = [], lost = [];
+      pr.back.members.forEach((m, i) => {
+        if (!m || m === pr.back.outline) return;
+        if (m.kind === "text") { lost.push("typed words"); return; }
+        if (m.kind !== "path" || !Array.isArray(m.subpaths) || !(m.fill || m.stroke)) { if (m.kind === "xobj" || m.kind === "image") lost.push("a picture"); return; }
+        if (!m.fill && cutLike(m)) return;   // (the back's own cut lines, a hole drawn on it: the charm's cut, not its engraving)
+        const subpaths = m.subpaths.map(sub => sub.map(o => o[0] === "h" ? ["h"] : [o[0]].concat(o.slice(1).map(p => mapPt(p, from, to, k)))));
+        let b = null; for (const sub of subpaths) for (const o of sub) for (let j = 1; j < o.length; j++) { const q = o[j]; b = b ? [Math.min(b[0], q[0]), Math.min(b[1], q[1]), Math.max(b[2], q[0]), Math.max(b[3], q[1])] : [q[0], q[1], q[0], q[1]]; }
+        if (!b) return;
+        parts.push({ kind: "path", subpaths, bbox: b, closed: !!m.closed, depth: 0, start: -1, end: -1, synthetic: true, artRedraw: true, fileBack: true, artMemberId: `fb${i}`,
+          artRole: m.fill ? "hatch" : "line", stroke: !!m.stroke, fill: !!m.fill, strokeRGB: (m.strokeRGB || [0, 0, 0]).slice(0, 3), fillRGB: (m.fillRGB || [0, 0, 0]).slice(0, 3),
+          lwPt: (+m.lwPt || 0.25) * k, paintOp: m.paintOp || (m.fill && m.stroke ? "B" : m.fill ? "f" : "S"), ...(m.artGrey ? { artGrey: true } : {}) });
+      });
+      if (lost.length) out.notes.push(`The back of a charm holds ${[...new Set(lost)].join(" and ")}: outline them in Illustrator (Type ▸ Create Outlines, Object ▸ Image Trace) so they are engraved`);
+      if (!parts.length) { out.notes.push("A back drawn above a charm has nothing drawn inside its outline: that charm has no back engraving from the file"); continue; }
+      // (the back's engraving, kept where every reader of a back's engraving looks: artBack, as the Charm Editor's back additions are; fileBack marks the file's own, which an edit never takes off)
+      pr.charm.fileBack = parts; pr.charm.artBack = parts.slice(); pr.charm.fileBackMeta = { count: parts.length, scale: +k.toFixed(4) };
+      // a group of the drawing that holds this charm AND its back (or its words) is not copied whole: the charm's own parts in it are written from their geometry (buildSheet, artOps)
+      const backTops = new Set(pr.back.members.concat(pr.label.parts).map(m => m && (m.parent != null ? m.parent : m.index)).filter(v => v != null));
+      const shared = (pr.charm.topIndices || []).filter(t => backTops.has(t));
+      if (shared.length) {
+        const own = pr.charm.members.filter(m => m && shared.includes(m.parent != null ? m.parent : m.index));
+        if (own.some(m => m.kind !== "path")) out.notes.push("A charm is grouped with its back in the file along with words or a picture of its own: ungroup the back from the charm in Illustrator");
+        else { pr.charm.dropIndices = new Set([...(pr.charm.dropIndices || []), ...shared]); for (const m of own) { m.synthetic = true; m.artRedraw = true; } }
+      }
+      out.backs.push({ charm: pr.charm, back: pr.back, label: pr.label, parts, scale: k });
+    }
+    g.charms = g.charms.filter(c => !backOutlines.has(c));
+    g.customBacks = out;
+    return out;
+  }
+
   /* ═══ 5a′ · sample text ON a piece ════════════════════════════════════
      A master is also the artists' workbook: beside and ON a charm they type the customer's example words (a belt's
      "Taekwondo Black Belt 2015", "Aun así nos levantamos", "Summerfest Milwaukee, WI", a "Your Name" placeholder, a jersey
@@ -3461,7 +3537,7 @@
     }
     return out;
   }
-  root.CharmNestPDF = { scaleSource, closeNearlyClosed, markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, drawFaceArt, shippedMark, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
+  root.CharmNestPDF = { scaleSource, closeNearlyClosed, markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, customBacks, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, drawFaceArt, shippedMark, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
     takeSampleText, sampleTextOf, parseSkuLabel, READER_VERSION, LETTERS_READER_VERSION, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
   // the hoop finder, for the tests and the audit (kept off the long list above so a merge there never touches it)
   root.CharmNestPDF.findHoops = findHoops; root.CharmNestPDF.circleOf = circleOf;

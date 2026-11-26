@@ -336,6 +336,17 @@
       for (const j of jobs) SEALS().keep(j);
       // NO EARRING IS EVER ENGRAVED (ZODNOBACK): nothing is read, nothing is paid for, nothing asks; a job with an approval on it stays as it is
       if (neverEngraves(row)) { for (const j of jobs) if (NEVER_OPEN(j) && j.state !== "none") setNone(j, neverWhy(row)); return job; }
+      /* CUSTOMBACK (Paul, 26 Nov 2026: "this back engraving will have to be recognized inside the system, and then will need back engraving approval, just like any other engraving approval"): a custom order's
+         line whose file drew its charms' backs (charm-nest-pdf.js customBacks; spec.customBack, the pieces that have one) is read by no one and nothing is paid for: each piece's back IS that drawing,
+         no words, and waits for Approve (toWords → EDITOR WORDS: the page's artOnlyPlacement, the cloud's artOnly). A piece whose charm has no back drawn is not engraved; a custom file draws no front. */
+      if (+sp.customBack > 0) {
+        for (const j of jobs) {
+          if (["approved", "written"].includes(j.state)) continue;
+          if (!isFront(j) && (E.fileBack ? E.fileBack(j) : true)) toWords(j, "Back engraving drawn in the custom file: approve it as drawn");
+          else setNone(j, isFront(j) ? "a custom file draws no front engraving" : "no back drawn in the custom file for this charm");
+        }
+        return job;
+      }
       if (!sp.engraveCandidate && !raiseCandidate(row)) { for (const j of jobs) setNone(j, "no personalisation, message or note"); return job; }
       // a person said "no engraving" for this line: it stays so (never the paid reader again)
       const said = FACES() ? FACES().setupOf(row) : null;

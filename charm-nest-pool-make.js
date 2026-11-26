@@ -344,6 +344,8 @@
       const parsed = await P.parseSource(bytes, `${entry.sku}.ai`);
       const g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +S.settings.minPt || 6 });
       if (!g.charms.length) throw new Error(`${entry.sku}: no outline in the master copy`);
+      // (CUSTOMBACK: a custom order's own file (charmnest/custom/...) may draw its charm's back above it: the back is that charm's back engraving, never folded into the charm)
+      if (P.customBacks && /(?:^|\/)charmnest\/(?:sandbox\/)?custom\//i.test(String(filePath || geom.aiPath || ""))) P.customBacks(parsed, g);
       const charm = g.charms.reduce((a, b) => (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]) > (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]) ? b : a);
       if (g.charms.length > 1) { for (const c of g.charms) if (c !== charm) { for (const m of c.members) if (!charm.members.includes(m)) charm.members.push(m); charm.topIndices = [...new Set(charm.topIndices.concat(c.topIndices))]; charm.bbox = [Math.min(charm.bbox[0], c.bbox[0]), Math.min(charm.bbox[1], c.bbox[1]), Math.max(charm.bbox[2], c.bbox[2]), Math.max(charm.bbox[3], c.bbox[3])]; /* the silhouette canvas is cut to the bbox: a merged piece outside it would be drawn but never collide */ } agent({ pool: true }, "warn", `${entry.sku}: the master copy split into ${g.charms.length} pieces — folded back into one charm`); }
       // The sheet draws this charm's whole drawing, cut to its box, so whatever ink the grouping left loose inside that
@@ -585,6 +587,7 @@
         const parsed = src.bytes && src.bytes.length ? await P.parseSource(src.bytes, `${src.sku || "custom"}.pdf`) : src.parsed;
         if (!parsed) return null;
         const g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +S.settings.minPt || 6 });
+        if (P.customBacks) P.customBacks(parsed, g);   // (CUSTOMBACK: a back drawn above its charm is that charm's back engraving, never a charm: the card counted it so, customIndex follows)
         for (const m of g.orphans || []) {
           if (!m.bbox) continue;
           const c = g.charms.find(c => { const b = c.bbox, pad = 2; return m.bbox[0] >= b[0] - pad && m.bbox[1] >= b[1] - pad && m.bbox[2] <= b[2] + pad && m.bbox[3] <= b[3] + pad; });
