@@ -152,7 +152,7 @@ await t('5 liveAsks (the bridge\'s own function): true / false per line from the
 
 /* ── the page's own Engrave pipeline over stand-ins: no browser, no network, nothing paid for ── */
 const W = F.world({ orders: [{ rid: F.rid(4), lines: [{ n: 40, kind: 'single', on: 'sh-gf1' }] }], sheets: [{ id: 'sh-gf1', metal: 'gold', n: 1 }] });
-const SLICE1 = cut('  const SIDES = ', '  function setNone(job'), SLICE2 = cut("  /** The line's effective engraving setup", '  let previewRecovery'), SLICE3 = cut("  /** A line whose setup asks for a front that has no front job yet", '  let classifyPass'), SLICE4 = cut('  function revokeBacks(job)', '  /* ── 7.5 · the review controls');
+const SLICE1 = cut('  const SIDES = ', '  function setNone(job'), SLICE2 = cut("  /** The line's effective engraving setup", '  let previewRecovery'), SLICE3 = cut("  /** A line whose setup asks for a front that has no front job yet", '  let classifyPass'), SLICE4 = cut('  function revokeBacks(job', '  /* ── 7.5 · the review controls');   // (WITHDRAWNSAID, Paul 23 Nov 2026: revokeBacks(job, why) takes the reason now)
 function harness(rows, o = {}) {
   const jobs = new Map(), asked = [], events = [], apiCalls = [], pool = new Map(W.pool.map(p => [p.poolId, p])), byKey = new Map(rows.map(r => [r.key, r]));
   const win = { CharmNestEngraveSides: Sides, CharmNestPair: Pair, CharmNestEngraveFaces: Faces };

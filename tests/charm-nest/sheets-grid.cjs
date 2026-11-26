@@ -55,7 +55,7 @@ const recs = st => st.list('Charm_Nest_Sheets').filter(s => s.metal === M14);
     /* 1 */
     let rows = await page.evaluate(rowsJS);
     const saved0 = recs(st).filter(s => !s.archived).length;
-    if (saved0 < 2 || rows.length < 2 || rows.some(r => !r.pieces)) { console.log('precondition not met:', JSON.stringify({ saved0, rows: rows.length })); await H.close().catch(() => {}); process.exit(3); }
+    if (saved0 < 2 || rows.length < 2 || rows.some(r => !r.pieces)) { console.log('precondition not met:', JSON.stringify({ saved0, rows: rows.length, pages: await page.evaluate(() => CN.pagesOf('gold14k').map(p => [p.page, p.status, (p.placements || []).length, (p.charms || []).length, p.runHold || '', p.problem || '', p.fileBase || '', p.endedBy || ''])).catch(e => String(e)) })); await H.close().catch(() => {}); process.exit(3); }
     say('1a carrier sheetsOf lists >=2 draft sheets with pieces', rows.length >= 2 && rows.every(r => r.pieces > 0), rows);
     if (rows.length < 2) throw new Error('not enough sheets');
     const ens = await page.evaluate(() => Gate.ensureOrder('gold14k'));
@@ -70,7 +70,14 @@ const recs = st => st.list('Charm_Nest_Sheets').filter(s => s.metal === M14);
     two = await otherComputer(H); const p2 = two.page;
     await p2.evaluate(() => { CN.setMode('nest'); RunCtl.setMode('auto'); });
     await p2.waitForFunction(() => allSheets().some(p => p.followed), null, { timeout: 60000 });
-    await p2.waitForFunction(() => { const f = allSheets().filter(p => p.followed); return f.length > 0 && f.every(p => !p.recalled && (p.charms || []).length > 0); }, null, { timeout: 90000, polling: 500 });
+    // (FASTOPEN, 23 Nov 2026, charm-nest-bridge.js makeLive: a computer that follows the run builds only the sheet a person looks at, the Nest card's active sheet of each metal; every other followed sheet stays its
+    //  saved record (p.recalled) until it is opened to be changed (CharmNestCloudSheets.ensureLive). The follower is ready when the gold sheet on screen is built live and every other followed sheet is a saved record or live)
+    const fState = () => p2.evaluate(() => { const f = allSheets().filter(p => p.followed), prim = CN.S.sheets.gold14k, shown = prim && prim.pages[prim.active || 0];
+      return { n: f.length, shown: !!shown && f.includes(shown), shownLive: !!shown && !shown.recalled && (shown.charms || []).length > 0, others: f.filter(p => p !== shown).map(p => [(p.sheetId || '').slice(-6), p.recalled ? 'record' : (p.charms || []).length ? 'live' : 'empty']) }; });
+    await p2.waitForFunction(() => { const f = allSheets().filter(p => p.followed), prim = CN.S.sheets.gold14k, shown = prim && prim.pages[prim.active || 0];
+      return f.length > 0 && !!shown && f.includes(shown) && !shown.recalled && (shown.charms || []).length > 0 && f.every(p => p === shown || !!p.recalled || (p.charms || []).length > 0); }, null, { timeout: 90000, polling: 500 }).catch(() => null);
+    const fs0 = await fState();
+    say('2-pre follower builds the gold sheet on screen live; the other followed sheets stay saved records (FASTOPEN)', fs0.n >= 2 && fs0.shown && fs0.shownLive && fs0.others.every(o => o[1] === 'record'), fs0);
     const fol = () => p2.evaluate(rowsJS);
     const same = (a, b) => JSON.stringify(a.map(r => [r.id, r.name])) === JSON.stringify(b.map(r => [r.id, r.name]));
     let f0 = await until(async () => { const f = await fol(); return f.length === ids0.length ? f : null; }, 30000) || await fol();
@@ -123,9 +130,13 @@ const recs = st => st.list('Charm_Nest_Sheets').filter(s => s.metal === M14);
     const bySize = [...rows].sort((a, b) => a.pieces - b.pieces);
     const piecesBefore = rows.reduce((n, r) => n + r.pieces, 0);
     let src = null, tgt = null, cr = null, tried = [];
-    for (const s0 of bySize) { for (const t0 of rows) { if (t0.id === s0.id || s0.pieces === 0) continue;
+    // (GRIDGAPS, Paul 15 Nov 2026, charm-nest-bridge.js mergeSheets / consolidate: what the target has no room for goes to the next sheets of the order, else onto a NEW sheet, so the source empties
+    //  even when a full target took nothing: the targets with the most room are tried first, so the pair found is one where the target takes them)
+    const fillOf = await page.evaluate(() => Object.fromEntries(Gate.sheetsOf('gold14k').map(r => [r.id, r.pct == null ? 100 : +r.pct])));
+    const byRoom = [...rows].sort((a, b) => ((fillOf[a.id] ?? 100) - (fillOf[b.id] ?? 100)) || (a.pieces - b.pieces));
+    for (const s0 of bySize) { for (const t0 of byRoom) { if (t0.id === s0.id || s0.pieces === 0) continue;
       const r0 = await page.evaluate(([s, t]) => Gate.consolidate(s, t), [s0.id, t0.id]); await until(() => page.evaluate(() => !Gate.mergeFx().live), 20000);
-      const now = await page.evaluate(rowsJS), moved = (now.find(r => r.id === s0.id) || {}).pieces; tried.push([s0.name, s0.pieces, '->', t0.name, t0.pieces, r0 && r0.text, moved]);
+      const now = await page.evaluate(rowsJS), moved = (now.find(r => r.id === s0.id) || {}).pieces; tried.push([s0.name, s0.pieces, '->', t0.name, t0.pieces, fillOf[t0.id], r0 && r0.text, moved, (now.find(r => r.id === t0.id) || {}).pieces, now.length]);
       if (moved === 0) { src = s0; tgt = t0; cr = r0; break; } }
       if (src) break; }
     if (!src) { src = bySize[0]; tgt = rows.find(r => r.id !== src.id); say('4-setup could find two sheets where one fits onto the other', false, tried); }
@@ -146,7 +157,9 @@ const recs = st => st.list('Charm_Nest_Sheets').filter(s => s.metal === M14);
       say('4f the cloud no longer counts it as a live sheet (archived, or retired in the run record)', !rec2 || !!rec2.archived || retired.includes(src.id), { archived: rec2 && rec2.archived, retired });
       say('4h no blank placeholder page left with a name that repeats a real sheet', new Set(rows.map(r => r.name)).size === rows.length, rows.map(r => [r.id.slice(-6), r.name, r.pieces]));
       const fB = await until(async () => { const f = await fol(); return same(f, rows) ? f : null; }, 30000) || await fol();
-      say('4g follower agrees after delete', same(fB, rows), { carrier: rows.map(r => [r.id.slice(-6), r.name]), follower: fB.map(r => [r.id.slice(-6), r.name]) });
+      say('4g follower agrees after delete', same(fB, rows), { carrier: rows.map(r => [r.id.slice(-6), r.name]), follower: fB.map(r => [r.id.slice(-6), r.name]),
+        missing: same(fB, rows) ? [] : rows.filter(r => !fB.some(f => f.id === r.id)).map(r => { const d = st.doc('Charm_Nest_Sheets', r.id); return [r.id.slice(-6), d ? { sameRun: d.runId === runId, archived: !!d.archived, placements: (d.placements || []).length, draftOrder: d.draftOrder } : 'no cloud record']; }),
+        followerPages: same(fB, rows) ? [] : await p2.evaluate(() => CN.pagesOf('gold14k').map(p => [(p.sheetId || '').slice(-6), !!p.followed, !!p.recalled, (p.charms || []).length])) });
     }
 
     /* 5 · runCmdCancel of a command that waits: the carrier cannot read its list while we hold its runCmdList calls back */

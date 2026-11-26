@@ -95,6 +95,13 @@ const xOf = c => Math.round((c.outline ? c.outline.bbox : c.bbox)[0]);
     } else ok('C3 the back file has its cut reference', false, { eng: eng.length, ref: ref.length });
 
     /* ── D · the shared classifier ── */
+    // (found in the sandbox, 26 Nov 2026: a custom line is ONE Etsy unit however many charms its file makes; its pieces were one job and only the first piece's back was looked at)
+    const Sides = require(path.join(ROOT, 'charm-nest-engrave-sides.js'));
+    const six = Array.from({ length: 6 }, (_, i) => `${KEY}_${i + 1}`), sctx = { poolRow: () => null, charmOf: () => null, entryFor: () => null };
+    const plB = Sides.plan(sctx, { key: KEY, line: { quantity: 1 }, spec: { quantity: 1, customBack: 3 }, poolIds: six }, []);
+    ok('D0 a custom line with backs is cut into one engraving job per piece (C1..C6), whatever its Etsy quantity', plB.split === true && JSON.stringify(plB.slots) === JSON.stringify(six.map((_, i) => 'C' + (i + 1))), plB);
+    const plN = Sides.plan(sctx, { key: KEY, line: { quantity: 1 }, spec: { quantity: 1 }, poolIds: six }, []);
+    ok('D0b ... a custom line with no back stays as it was (one job)', plN.split === false, plN);
     const Classify = require(path.join(ROOT, 'charm-nest-engrave-classify.js'));
     const calls = [], jobs = [{ key: KEY + ':C1', slot: 'C1', face: 'back', state: 'classify', copies: [KEY + '_1'], fb: true }, { key: KEY + ':C2', slot: 'C2', face: 'back', state: 'classify', copies: [KEY + '_2'], fb: false }, { key: KEY + ':F', face: 'front', state: 'classify', copies: [KEY + '_1'], fb: true }];
     const C = Classify.make({ items: () => new Map(), ensureJobs: () => jobs, setNone: (j, why) => { calls.push(['none', j.key, why]); j.state = 'none'; return j; }, toWords: (j, why) => { calls.push(['words', j.key, why]); j.state = 'review'; return j; },

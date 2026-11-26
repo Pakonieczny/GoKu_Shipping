@@ -8,7 +8,7 @@
 // in-sheet drag, its fit test, its save). The only stand-in is the nest itself: startNest places what is
 // pinned where it was pinned and saves the sheet the way the real nest saves it.
 //   node tests/charm-nest/sheet-hop-dnd.cjs      (PW_DIR=<dir holding playwright-core>, CHROMIUM=<chrome>, SHOTS=<dir>, REDUCED=1)
-// 1 the docks, once Manual Control is on: the previous and next 10K sheet, never a 14K or GF one; a GF sheet has no Manual Control
+// 1 the docks, once Manual Control is on: the previous and next 10K sheet, never a 14K or GF one; a GF sheet has Manual Control (MCEVERY) but no docks
 // 2 drag a single charm to the next sheet where there is room: Manual Control's in-sheet drag is handed over at the dock (it springs back,
 //   nothing written), it flies, it is moved (pinned near where it was let go), records consistent, a "moved" step on the order's timeline by the person
 // 3 drop on a full sheet (Paul, 27 Oct 2026): moved all the same, pinned where it was let go, red where it overlaps, a note says so; and back to the sheet it came from
@@ -255,12 +255,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       assert.equal(await page.evaluate(() => !!CN.allSheets().find(p => p.sheetId === 'k10-2')._manualHold), false, '10K Draft 2 (nothing moved on it) is let go');
       await until(async () => { const s = await hopState(); return s.docks.prev && s.docks.prev.sheetId === 'k10-2' && s.docks.next && s.docks.next.sheetId === 'k10-4'; }, 5000, 'its docks are its own neighbours');
       await openSheet('gf-1');
-      assert.equal((await mcBtn() || { hidden: true }).hidden, true, 'a GF sheet has no Manual Control'); assert.equal(await page.$('.shpDock'), null, 'and no dock');
+      assert.equal((await mcBtn() || { hidden: true }).hidden, false, 'MCEVERY (25 Nov 2026): a GF sheet has Manual Control too'); assert.equal(await page.$('.shpDock'), null, 'and no dock (no hop for GF)');
       await openSheet('k10-2');
       assert.equal(await page.$('.shpDock'), null, 'off again on 10K Draft 2');
       await manual(true);
       await until(() => page.evaluate(() => document.querySelectorAll('.shpDock').length === 2), 4000, 'docks once Manual Control is on again');
-      pass('1 · with Manual Control on, the previous and next 10K sheet are the docks (no 14K, no GF); a click opens one (Manual Control carries on there, nothing written); a GF sheet has no Manual Control');
+      pass('1 · with Manual Control on, the previous and next 10K sheet are the docks (no 14K, no GF); a click opens one (Manual Control carries on there, nothing written); a GF sheet has Manual Control but no docks');
     } catch (e) { fail('1 · docks', e); }
 
     /* 2 · a single charm to the next sheet where there is room */

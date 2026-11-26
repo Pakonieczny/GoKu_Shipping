@@ -76,7 +76,8 @@ async function interpretTest() {
   let served = { maps: {}, aliases: {}, list: { patterns: [], skus: [], rows: [] } };
   const mk = (id, state, sku, metalKey, variations = []) => ({ key: id + '_t' + id, state, order: { receiptId: id, updateTs: 1, staffNote: '' }, line: { transactionId: 't' + id, listingId: 'L' + id, sku, metalKey, title: sku, quantity: 1, variations }, spec: null, problems: [], poolIds: [] });
   const r1 = mk('1', 'pulled', 'OK', 'silver', [{ name: 'Style', value: 'Dainty' }]), r2 = mk('2', 'pooled', 'SIZED', ''), r3 = mk('3', 'committed', 'DONE', 'gold'), r4 = mk('4', 'gone', 'OK', 'gold');
-  const ctx = { WORKSPACE_SANDBOX: false, window: {}, B: { master: { entries }, orders: { rows: [r1, r2, r3, r4], byKey: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 } },
+  // (LIBREADY, Paul 23 Nov 2026, charm-nest-bridge.js Orders.libLoading: while this page's charm library is loading or never read, the questions it answers are asked of no one; the library here is read)
+  const ctx = { WORKSPACE_SANDBOX: false, window: {}, B: { master: { entries, loadedAt: 1 }, orders: { rows: [r1, r2, r3, r4], byKey: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 } },
     S: { cloud: { ok: true }, settings: {} }, O: Ocount, Master: { entryFor: sku => entries.get(sku) || null, likeFor: () => [], sharedFor: () => null, looseFor: () => '' }, Review: { syncOrderItems() {} },
     api: async (fn, body) => body.op === 'optionMapGet' ? { maps: served.maps } : body.op === 'aliasGet' ? { aliases: served.aliases } : { list: served.list },
     document: { getElementById: () => null }, agent() {}, setTimeout, clearTimeout, ...base() };

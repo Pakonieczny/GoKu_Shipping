@@ -36,7 +36,9 @@ const SEC = 1790000000;            // an order date, s
   const mk = (rid, createTs, extra) => Object.assign({ key: rid + ':1', order: { receiptId: rid, createTs }, state: 'pulled', hold: null }, extra);
   const rows = [mk('A', SEC - 10), mk('B', SEC - 5), mk('C', SEC), mk('REL', SEC + 40, { frontAt: T0 })], seen = [];
   const code = slice(bridge, '  async function addAll(run) {', '  async function addRows(run, rows) {');
-  const ctx = { O, Orders: { interpretAll() {}, rows: () => rows }, recover() {}, window: { Cancelled: { has: () => false } }, placing: new Map(), onSheets: () => false, settle: () => true, due: () => true, lock: () => () => {}, addRows: async (run, list) => { seen.push(...list.map(r => r.order.receiptId)); return list.length; } };
+  const ctx = { O, Orders: { interpretAll() {}, rows: () => rows }, recover() {}, window: { Cancelled: { has: () => false } }, placing: new Map(), onSheets: () => false, settle: () => true, due: () => true, lock: () => () => {}, addRows: async (run, list) => { seen.push(...list.map(r => r.order.receiptId)); return list.length; },
+    // (NOPOOLDONE, Paul 13 Nov 2026: addAll first asks the Design Station's completion record (firebaseOrders dcFor) and logs through agent(): none of these orders is completed there)
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({ success: true, orderNumbers: [] }) }), agent() {} };
   vm.createContext(ctx); vm.runInContext(code + ';this.addAll = addAll;', ctx);
   await ctx.addAll({});
   assert.deepEqual(seen, ['REL', 'A', 'B', 'C'], 'the run pulls the released order first, then the incoming ones oldest first: ' + seen);

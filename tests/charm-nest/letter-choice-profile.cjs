@@ -138,8 +138,9 @@ pass('another listing is unaffected');
 
 /* ── 7 · the rule is data ── */
 { const row = O.CHARM_ONLY_LISTINGS.find(r => r.id === 'letter-charm-only');
-  eq([row.letter, row.listings, row.necklace.base, row.huggie.base + '0' + row.huggie.suffix, row.necklace.names.length], [true, ['1871836213'], 'LETTER_NECKLACE-', 'LETTER_NECKLACE-0 (HUGGIE)', 26], 'one row of the listing table: listing, families, a … z');
-  ok(O.charmOnlyListing({ listingId: '1871836213' }) === row && O.charmOnlyListing({ listingId: '1871836214' }) === null, 'found by its listing number only'); }
+  // (LETTER1698, Paul 12 Nov 2026, charm-nest-orders.js CHARM_ONLY_LISTINGS: listing 1636731698 "Initial Necklace Personalized Jewelry Letter" joined the same row, always a necklace)
+  eq([row.letter, row.listings, row.formOf, row.necklace.base, row.huggie.base + '0' + row.huggie.suffix, row.necklace.names.length], [true, ['1871836213', '1636731698'], { '1636731698': 'necklace' }, 'LETTER_NECKLACE-', 'LETTER_NECKLACE-0 (HUGGIE)', 26], 'one row of the listing table: listings, families, a … z');
+  ok(O.charmOnlyListing({ listingId: '1871836213' }) === row && O.charmOnlyListing({ listingId: '1636731698' }) === row && O.charmOnlyListing({ listingId: '1871836214' }) === null, 'found by its listing number only'); }
 
 global.fetch = realFetch;
 console.log(`letter-choice-profile: ${n} checks passed`);

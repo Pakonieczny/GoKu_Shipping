@@ -23,7 +23,7 @@ require(path.join(ROOT, 'charm-nest-pdf.js'));
 global.CharmNestVector = require(path.join(ROOT, 'charm-nest-vector.js'));
 global.CharmNestGeom = require(path.join(ROOT, 'charm-nest-geom.js'));
 const P = global.CharmNestPDF, G = global.CharmNestGeom, L = global.PDFLib, E = global.CharmNestExport = require(path.join(ROOT, 'charm-nest-export.js'));
-const AE = require(path.join(ROOT, 'charm-nest-art-edit.js'));
+const AE = require(path.join(ROOT, 'charm-nest-art-edit.js')), BF = require(path.join(ROOT, 'charm-nest-back-file.js'));
 let n = 0; const ok = (c, m) => { assert.ok(c, m); n++; }, eq = (a, b, m) => { assert.deepEqual(a, b, m); n++; };
 const near = (a, b, e, m) => { assert.ok(Math.abs(a - b) <= e, `${m}: ${a} vs ${b}`); n++; };
 const sq = (x, y, w, h) => [[['m', [x, y]], ['l', [x + w, y]], ['l', [x + w, y + h]], ['l', [x, y + h]], ['h']]];
@@ -39,7 +39,7 @@ async function formsOf(bytes) {
   for (const [k, ref] of xo.entries()) { const st = ctx.lookup(ref); out[k.toString().slice(1).replace(/-\d+$/, '')] = { content: Buffer.from(L.decodePDFRawStream(st).decode()).toString('latin1'), res: deep(st.dict.get(L.PDFName.of('Resources')), new Set()), bbox: deep(st.dict.get(L.PDFName.of('BBox')), new Set()) }; }
   return out;
 }
-const dxfCount = (txt, type) => (txt.match(new RegExp('\\r\\n0\\r\\n' + type + '\\r\\n', 'g')) || []).length;
+const dxfCount = (txt, type) => (txt.match(new RegExp('\\r\\n *0\\r\\n' + type + '\\r\\n', 'g')) || []).length;   // (the writer pads its group codes: "  0")
 
 (async () => {
   /* ── A · a real per-SKU master ── */
@@ -60,7 +60,7 @@ const dxfCount = (txt, type) => (txt.match(new RegExp('\\r\\n0\\r\\n' + type + '
   ok(mixed.placements[0].layerSig === plain.placements[0].layerSig && mixed.placements[2].layerSig === plain.placements[2].layerSig, 'A their layer signatures (bytes, box, place) are the same');
   ok(f1.Charm1.content !== f0.Charm1.content, 'A the edited piece is written anew');
   ok(/\bDo\b/.test(f0.Charm1.content) && !/\bDo\b/.test(f1.Charm1.content), 'A it no longer copies the master\'s form (the form that held the removed part is out)');
-  ok(/\/OC \/aeL\d+ BDC [^\n]*0 0 1 rg/.test(f1.Charm1.content) && /aeL\d+/.test(f1.Charm1.res), 'A its parts are written in the master\'s layers, named from its own Resources');
+  ok(/\/OC \/aeL\d+ BDC/.test(f1.Charm1.content) && /aeL\d+/.test(f1.Charm1.res), 'A its parts are written in the master\'s layers, named from its own Resources');
   const off = AE.apply(edited, null, 'front'), back0 = await sheet([piece('p1'), off, piece('p3')]);
   ok(Buffer.compare(Buffer.from(back0.bytes), Buffer.from(plain.bytes)) === 0, 'A an edit taken off writes exactly the file of a piece never edited (' + plain.bytes.length + ' bytes)');
   // what the edited piece draws: parsed back from the written sheet
@@ -68,12 +68,15 @@ const dxfCount = (txt, type) => (txt.match(new RegExp('\\r\\n0\\r\\n' + type + '
   eq(forms.length, 3, 'A three pieces on the sheet');
   const layersOf = f => kids(f).map(k => k.layer + (k.fill ? ':F' + k.fillRGB.join(',') : '') + (k.stroke ? ':S' + k.strokeRGB.map(v => +v.toFixed(3)).join(',') : '')).sort();
   eq(layersOf(forms[0]), ['CUT:S0,0,0', 'CUT:S0,0,0', 'ENGRAVE:S1,0,0', 'ENGRAVE:S1,0,0'], 'A a piece never edited: the master\'s four parts');
+  // FRONTLIKEBACK (25 Nov 2026): the red tick and the blue dot a person ADDED are the front's engraving (the charm's artFront). FRONTINSHEET (Paul, 26 Nov 2026: "The front engravings are not
+  // appearing on the downloaded .ai illustrator and .DXF files"): a front is engraved on the piece in the cut run, so the sheet draws them, as it always did
   eq(layersOf(forms[1]), ['CUT:S0,0,0', 'CUT:S0,0,0', 'ENGRAVE:F0,0,1', 'ENGRAVE:S1,0,0', 'ENGRAVE:S1,0,0'], 'A the edited piece: its cut lines, ONE of its two line engravings, the new red tick and the new blue dot, all on the master\'s layers');
+  eq((edited.artFront || []).length, 2, 'A FRONTLIKEBACK: the tick and the dot are the charm\'s artFront');
   { // the parts land where the piece is on the sheet: its placement's matrix over the charm's own points
     const pl = mixed.placements[1], th = -pl.angle * Math.PI / 180, s = pl.scale, c = Math.cos(th) * s, sn = Math.sin(th) * s, e = pl.cxPt - (c * cx - sn * cy), f = SHEET.hPt - pl.cyPt - (sn * cx + c * cy);
     const at = (x, y) => [c * x - sn * y + e, sn * x + c * y + f], dot = kids(forms[1]).find(k => k.fill), want = [at(cx - 1, cy - 1), at(cx + 1, cy - 1), at(cx + 1, cy + 1), at(cx - 1, cy + 1)];
     const wb = [Math.min(...want.map(p => p[0])), Math.min(...want.map(p => p[1])), Math.max(...want.map(p => p[0])), Math.max(...want.map(p => p[1]))];
-    dot.bbox.forEach((v, i) => near(v, wb[i], 1e-3, 'A the dot is where the piece put it, turned 30° with it (' + i + ')'));
+    dot.bbox.forEach((v, i) => near(v, wb[i], 1e-3, 'A FRONTINSHEET: the dot is drawn in the sheet where the piece put it, turned 30° with it (' + i + ')'));
     const gone = base.members[lineAt].bbox, removedThere = kids(forms[1]).some(k => k.stroke && k.strokeRGB[0] === 1 && Math.abs(k.bbox[0] - at(gone[0], gone[1])[0]) < 1e-3 && Math.abs((k.bbox[2] - k.bbox[0]) - (forms[0].children.find(z => z.kind === 'path' && z.stroke && z.strokeRGB[0] === 1 && Math.abs((z.bbox[2] - z.bbox[0]) - ((gone[2] - gone[0]) * s)) < 1e-3) ? (gone[2] - gone[0]) * s : -1)) < 1e-3);
     ok(!removedThere, 'A the removed line engraving is not drawn');
   }
@@ -88,7 +91,8 @@ const dxfCount = (txt, type) => (txt.match(new RegExp('\\r\\n0\\r\\n' + type + '
   const cq = await P.parseSource(calBytes, 'cal-sheet.ai'), cforms = cq.segments.filter(s => s.kind === 'xobj');
   const fillsOf = f => kids(f).filter(k => k.fill);
   eq(kids(cforms[0]).length, 24, 'B the calendar never edited: 24 parts (outline, three letters, twenty squares)');
-  eq(kids(cforms[1]).length, 26, 'B the edited calendar: 24 − 3 letters + 3 new letters + 2 digits');
+  eq(kids(cforms[1]).length, 26, 'B the edited calendar: 24 − 3 letters + 3 new letters + 2 digits (FRONTINSHEET: its front engraving, artFront, is drawn on it in the sheet)');
+  eq((cEd.artFront || []).length, 5, 'B FRONTLIKEBACK: the new month and the date are the charm\'s artFront');
   ok(fillsOf(cforms[1]).every(k => k.fillRGB.join() === '0,0,1' && !k.stroke && k.layer === 'ENGRAVE'), 'B every fill of it is blue hatching on ENGRAVE (the new month, the date)');
   ok(fillsOf(cforms[0]).every(k => k.fillRGB.join() === '0,0,1'), 'B (the master\'s own letters are hatched blue too: hatchCopies)');
   const shift = (cforms[1].bbox[0] + cforms[1].bbox[2]) / 2 - (cforms[0].bbox[0] + cforms[0].bbox[2]) / 2;
@@ -96,7 +100,8 @@ const dxfCount = (txt, type) => (txt.match(new RegExp('\\r\\n0\\r\\n' + type + '
   ok(oldLetters.every(b => !newFills.includes(b)), 'B none of "MAY" is left');
   { // the second calendar is not turned and not scaled: a charm point (x, y) is at (x + e, y + f) on the sheet
     const e = calPl[1].cxPt - cb.centerPt[0], f = SHEET.hPt - calPl[1].cyPt - cb.centerPt[1], on = b => [b[0] + e, b[1] + f, b[2] + e, b[3] + f].map(v => +v.toFixed(3)).join();
-    eq(fillsOf(cforms[1]).map(k => k.bbox.map(v => +v.toFixed(3)).join()).filter(b => [on([dx - 3, dy - 2.5, dx - 0.5, dy + 2.5]), on([dx + 0.5, dy - 2.5, dx + 3, dy + 2.5])].includes(b)).length, 2, 'B the two digits of the date, each where the editor put it');
+    eq((cEd.artFront || []).map(k => k.bbox.map(v => +(v + 0).toFixed(3)).join()).filter(b => [[dx - 3, dy - 2.5, dx - 0.5, dy + 2.5], [dx + 0.5, dy - 2.5, dx + 3, dy + 2.5]].map(q => q.map(v => +v.toFixed(3)).join()).includes(b)).length, 2, 'B the two digits of the date, each where the editor put it');
+    eq(fillsOf(cforms[1]).map(k => k.bbox.map(v => +v.toFixed(3)).join()).filter(b => [on([dx - 3, dy - 2.5, dx - 0.5, dy + 2.5]), on([dx + 0.5, dy - 2.5, dx + 3, dy + 2.5])].includes(b)).length, 2, 'B FRONTINSHEET: and drawn in the sheet there');
     ok(kids(cforms[1]).some(k => k.stroke && !k.fill && k.bbox.map(v => +v.toFixed(3)).join() === on(dayBox)), 'B in the day square they were put in (row 3, column 4), which is kept');
   }
   ok(kids(cforms[1]).some(k => k.layer === 'CUT' && k.stroke && k.closed && !k.fill && G.isCutLine(k)), 'B the cut outline is kept');
@@ -106,15 +111,24 @@ const dxfCount = (txt, type) => (txt.match(new RegExp('\\r\\n0\\r\\n' + type + '
   /* ── C · export and DXF ── */
   const recOf = (s, list) => ({ id: 'sheet-art', fileBase: 'GF_art', metal: 'gold', charms: list.map(c => ({ id: c.id, poolId: c.poolId })), poolIds: list.map(c => c.poolId), placements: s.placements.map((pl, i) => ({ id: list[i].id, n: i + 1, layer: pl.layerName, scale: pl.scale })), backPool: [], outputs: {} });
   reseed(); const made0 = await E.compose(plain.bytes, recOf(plain, [piece('p1'), piece('p2'), piece('p3')]), []);
+  // FRONTINSHEET (Paul, 26 Nov 2026: "The front engravings are not appearing on the downloaded .ai illustrator and .DXF files"): a piece whose front has NO engraving file of its own (no words,
+  // no Approve: "dnc" drawn on a puzzle piece in the Charm Editor) still has its added parts in the download, from the sheet's drawing
   reseed(); const made1 = await E.compose(mixed.bytes, recOf(mixed, [piece('p1'), edited, piece('p3')]), []);
   const lay0 = await P.parseSource(made0.ai, 'x0'), lay1 = await P.parseSource(made1.ai, 'x1');
   const leaves1 = E.leaves(lay1), leaves0 = E.leaves(lay0);
-  eq(leaves1.length, leaves0.length + 1, 'C the production .ai: one part removed, two added (' + leaves0.length + ' → ' + leaves1.length + ')');
-  ok(leaves1.some(p => p.fill && p.fillRGB.join() === '0,0,1' && p.layer === 'ENGRAVE') && !leaves0.some(p => p.fill), 'C the blue dot is in it, on ENGRAVE');
+  eq(leaves1.length, leaves0.length + 1, 'C the production .ai with no front file: one part removed, two added (' + leaves0.length + ' → ' + leaves1.length + ')');
+  ok(leaves1.some(p => p.fill && p.fillRGB.join() === '0,0,1' && p.layer === 'ENGRAVE') && !leaves0.some(p => p.fill), 'C FRONTINSHEET: the blue dot is in it, on ENGRAVE, with no front file');
+  // a front WITH its engraving file (FRONTLIKEBACK: the file carries the same parts): engraved once, from the sheet's drawing; the file's copy is left out
+  const fv = G.backView(edited, { face: 'front', upAngle: 90 }); reseed();
+  const frontOfEdited = (await P.buildBackFile(BF.backSpec({ charm: edited, parsed: real, view: fv, fit: { glyphs: [], weight: 'Regular', size: 0, capMm: 0, angle: 0 }, face: 'front', title: 'p2 front', meta: { poolId: edited.poolId } }))).bytes;
+  reseed(); const made2 = await E.compose(mixed.bytes, recOf(mixed, [piece('p1'), edited, piece('p3')]), [], [{ poolId: edited.poolId, face: 'front', artOnly: true, approvedAt: 1, approvedBy: 'Ana_M', text: '', lines: [], bytes: frontOfEdited }]);
+  const leaves2 = E.leaves(await P.parseSource(made2.ai, 'x2'));
+  eq(leaves2.length, leaves1.length, 'C with its front file too: the same parts, none twice (' + leaves2.length + ')');
+  ok(!leaves2.some(p => /^FRONT \S+ \/ ENGRAVE$/.test(p.layer || '')) && made2.frontLayout[0].placed === true && made2.frontLayout[0].inDrawing === 2, 'C the file\'s two parts are the ones the sheet draws: left out of it (inDrawing ' + made2.frontLayout[0].inDrawing + ')');
   const dxf0 = E.dxf(E.productionPaths(lay0), E.layerNames(lay0)).text, dxf1 = E.dxf(E.productionPaths(lay1), E.layerNames(lay1)).text;
   eq(dxfCount(dxf0, 'HATCH'), 0, 'C the master draws no hatching: its DXF has no HATCH'); eq(dxfCount(dxf1, 'HATCH'), 1, 'C the edited piece\'s dot is one HATCH in the DXF');
   ok(dxfCount(dxf1, 'LWPOLYLINE') === dxfCount(dxf0, 'LWPOLYLINE'), 'C its polylines: one line engraving fewer, the new tick one more');
-  { const i = dxf1.indexOf('\r\n0\r\nHATCH\r\n'), ent = dxf1.slice(i, i + 400); ok(/\r\n8\r\nENGRAVE\r\n/.test(ent), 'C the HATCH is on the master\'s ENGRAVE layer'); }
+  { const i = dxf1.search(/\r\n *0\r\nHATCH\r\n/), ent = dxf1.slice(i, i + 400); ok(/\r\n *8\r\n(?:ENGRAVE|HATCH)\r\n/.test(ent), 'C the HATCH is on an engraving layer (the DXF writer files blue hatching under HATCH)'); }
   reseed(); const madeCal = await E.compose(calBytes, recOf({ placements: calPl }, [calPl[0].charm, cEd]), []);
   const layCal = await P.parseSource(madeCal.ai, 'xc'), dxfCal = E.dxf(E.productionPaths(layCal), E.layerNames(layCal)).text;
   eq(dxfCount(dxfCal, 'HATCH'), 3 + 5, 'C the calendar sheet\'s DXF: the master\'s three letters hatched on the piece never edited, the new month and the date on the edited one');
@@ -131,7 +145,7 @@ const dxfCount = (txt, type) => (txt.match(new RegExp('\\r\\n0\\r\\n' + type + '
   reseed(); const artBackFile = await P.buildBackFile(Object.assign({}, spec, { artBack: both.artBack }));
   const pb = await P.parseSource(artBackFile.bytes, 'back.ai'), all = pb.segments.concat(pb.nested).filter(s => s.kind === 'path');
   const eng = all.filter(s => s.layer === 'ENGRAVE'), cutRef = all.filter(s => /CUT OUTLINE/.test(s.layer || ''));
-  eq(eng.length, 1, 'D the back file\'s ENGRAVE layer carries the added part'); ok(eng[0].fill && !eng[0].stroke && eng[0].fillRGB.join() === '0,0,0', 'D engraved as the words are: a filled path');
+  eq(eng.length, 1, 'D the back file\'s ENGRAVE layer carries the added part'); ok(eng[0].fill && !eng[0].stroke && eng[0].fillRGB.join() === '0,0,1', 'D engraved as the words are: a filled path, in the hatching blue (BLUEBACK, 12 Nov 2026)');
   { // turned over with the cut: its place against the mirrored outline is the mirror of its place against the outline
     const ref = cutRef.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
     const ob = cb.outline.bbox, rel = x => (x - ob[0]) / (ob[2] - ob[0]), relY = y => (y - ob[1]) / (ob[3] - ob[1]);
@@ -162,7 +176,7 @@ const dxfCount = (txt, type) => (txt.match(new RegExp('\\r\\n0\\r\\n' + type + '
     // the round trip: the piece made with the record, its parts as the editor opens them again, decode
     const wed = AE.apply(Object.assign({}, cb, { id: 'cal-3', poolId: '4170000003_1003_1' }), wrec, 'front');
     const reopened = AE.itemsOf(wed, view, 'front'), r1 = reopened.find(i => i.id === 'eight1'), r2 = reopened.find(i => i.id === 'eight2');
-    ok(wed.members.find(m => m.artMemberId === 'eight1').artWeightMm === 0.05 && r1.weightMm === 0.05 && r2.weightMm === -0.03 && !('weightMm' in reopened.find(i => i.id === 'eight0')), 'E opened again, the words say their weight (the piece\'s parts carry it)');
+    ok(wed.members.concat(wed.artFront || []).find(m => m.artMemberId === 'eight1').artWeightMm === 0.05 && r1.weightMm === 0.05 && r2.weightMm === -0.03 && !('weightMm' in reopened.find(i => i.id === 'eight0')), 'E opened again, the words say their weight (the piece\'s parts carry it)');
     ok(AE.decode(wrec, wed, view).added.map(a => a.weightMm).join() === ',0.05,-0.03', 'E decode gives it back too');
     near(reopened.find(i => i.id === thinId).lwPt, 0.142, 1e-9, 'E and the thinned line its width');
     { // a weight changed on words opened again grows their saved outlines by the difference only: 0.05 → 0.08 mm is 0.015 mm more on every edge

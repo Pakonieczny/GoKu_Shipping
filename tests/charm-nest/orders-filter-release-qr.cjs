@@ -31,6 +31,9 @@ FIXTURES.rqRel = mk(ID.released, 'RQ_REL_ONE', 'Released Buyer', 12);
 FIXTURES.rqPrn = mk(ID.printed, 'RQ_PRN_ONE', 'Printed Buyer', 13);
 FIXTURES.rqPlain = mk(ID.plain, 'RQ_PLAIN_ONE', 'Plain Buyer', 14);
 const NAMES = ['rqHeld', 'rqQr', 'rqBoth', 'rqMark', 'rqRel', 'rqPrn', 'rqPlain'];
+// (LIBREADY, Paul 23 Nov 2026: while the page's charm library is still being read, a question the library answers (the Unknown SKU of qr, both) is asked of no one, and the lines seeded then
+//  never raise their Review card; the page's own pull reads the library first (Master.load before Orders.interpretAll): the lines are seeded once it is read, as the pull would)
+const libRead = page => page.waitForFunction(() => B.master.loadedAt > 0 && !B.master.loading, null, { timeout: 20000 }).catch(() => {});
 
 (async () => {
   const w = await world({ viewport: { width: 1500, height: 900 }, facts: false });
@@ -39,8 +42,11 @@ const NAMES = ['rqHeld', 'rqQr', 'rqBoth', 'rqMark', 'rqRel', 'rqPrn', 'rqPlain'
   const sleep = ms => page.waitForTimeout(ms);
   const fb = '#ordFiltersBtn', pop = '#ordFiltersPop', chipSel = v => `${pop} .ordChip[data-f="act"][data-v="${v}"]`;
   // (what the page asks of the fake site by itself, with nothing touched: the agent, the pieces' placement, the cancelled list, the Review tab's live read; the filter may ask for nothing beyond it)
-  const BACKGROUND = new Set(['startAgent', 'getAgent', 'customReadGet', 'customSaveRepair', 'customSavePending', 'getOrderPieces', 'cancelList', 'customGet']);
-  const requests = []; page.on('request', rq => { if (/^(data|blob):/.test(rq.url())) return; let op = ''; try { const b = JSON.parse(rq.postData() || '{}'); op = b.op || b.action || ''; } catch (_) {} requests.push({ method: rq.method(), path: rq.url().replace(/^https?:\/\/[^/]+/, ''), op }); });
+  // (since: the one changes feed (CNSync, 28 Oct 2026: getChanges), the engraving work shared by every computer (ENGRSYNC, 13 Nov: engraveSyncGet), the shared activity log (CLOUDALL S4, 13 Nov:
+  //  activityGet, and activityPut, which sends the page's own Recent activity lines: checked below to carry no line about the filter), the cloud tray (CLOUDTRAY, 14 Nov: trayList), the run followed in
+  //  the cloud (RUNFOLLOW, 13 Nov: runList) and the library's files list read a few seconds after the library (masterListFiles): all on their own timers, none asked by the filter)
+  const BACKGROUND = new Set(['startAgent', 'getAgent', 'customReadGet', 'customSaveRepair', 'customSavePending', 'getOrderPieces', 'cancelList', 'customGet', 'getChanges', 'engraveSyncGet', 'activityGet', 'activityPut', 'trayList', 'runList', 'masterListFiles']);
+  const requests = []; page.on('request', rq => { if (/^(data|blob):/.test(rq.url())) return; let op = '', said = ''; try { const b = JSON.parse(rq.postData() || '{}'); op = b.op || b.action || ''; if (op === 'activityPut') said = (b.rows || []).map(x => x && x.text).join(' | '); } catch (_) {} requests.push({ method: rq.method(), path: rq.url().replace(/^https?:\/\/[^/]+/, ''), op, said }); });
   const rids = () => page.evaluate(() => [...new Set(Orders.walkRows().map(r => String(r.order.receiptId)))].sort());
   const ids = (...names) => names.map(n => ID[n]).sort();
   const sameSet = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -54,7 +60,7 @@ const NAMES = ['rqHeld', 'rqQr', 'rqBoth', 'rqMark', 'rqRel', 'rqPrn', 'rqPlain'
   const pressed = () => page.evaluate(() => [...document.querySelectorAll('#ordFiltersPop .ordChip[data-f="act"]')].filter(c => c.getAttribute('aria-pressed') === 'true').map(c => c.dataset.v || 'any'));
   const clearAll = async () => { await page.evaluate(() => { const O = Orders.view(); O.act = null; O.q = ''; }); await page.evaluate(() => Orders.render()); await sleep(500); };
   try {
-    await seed(page, NAMES);
+    await libRead(page); await seed(page, NAMES);
     await sleep(700);
     // ── put each order in the state its name says (the rows are the page's own: only what happened to them is staged) ──
     await page.evaluate(ID => {
@@ -125,7 +131,7 @@ const NAMES = ['rqHeld', 'rqQr', 'rqBoth', 'rqMark', 'rqRel', 'rqPrn', 'rqPlain'
     await openPanel(); await page.click(pop + ' [data-clear]'); await sleep(550);
     check(await page.evaluate(() => Orders.view().act) === null && await badge() === '' && (await rids()).length === 7, 'Clear, in the panel, lets go of it too');
     await closePanel();
-    { const asked = requests.slice(before).filter(x => !(x.method === 'POST' && BACKGROUND.has(x.op)) && !(x.method === 'HEAD' && /charm-nest-1\.html$/.test(x.path)));   // (the page's own deploy-version check, a HEAD of itself, is background too)
+    { const asked = requests.slice(before).filter(x => !(x.method === 'POST' && BACKGROUND.has(x.op) && !(x.op === 'activityPut' && /Needs action|Release Hold|Print QR|filter/i.test(x.said))) && !(x.method === 'HEAD' && /charm-nest-1\.html$/.test(x.path)));   // (the page's own deploy-version check, a HEAD of itself, is background too; an activity line about the filter is not)
       check(asked.length === 0, 'nothing was read or written for the filter: every request while it was used is one of the page\'s own background asks (' + requests.slice(before).length + ' of them): ' + (asked.map(x => x.method + ' ' + x.path + ' ' + x.op).join(' ; ') || 'no other request')); }
 
     // ═══ 4 · the piles ═══
@@ -194,7 +200,7 @@ const NAMES = ['rqHeld', 'rqQr', 'rqBoth', 'rqMark', 'rqRel', 'rqPrn', 'rqPlain'
   // ═══ 6b · every line has an open action: the group could only do nothing ═══
   const v = await world({ viewport: { width: 1500, height: 900 }, facts: false });
   try {
-    await seed(v.page, ['rqQr']);
+    await libRead(v.page); await seed(v.page, ['rqQr']);
     await v.page.waitForTimeout(700);
     await v.page.click('#ordFiltersBtn').catch(() => {});
     const only = await v.page.evaluate(() => ({ wrap: document.getElementById('ordFilters').hidden, groups: [...document.querySelectorAll('#ordFiltersPop .ordFg h4')].map(h => h.textContent) }));
@@ -206,7 +212,7 @@ const NAMES = ['rqHeld', 'rqQr', 'rqBoth', 'rqMark', 'rqRel', 'rqPrn', 'rqPlain'
   // ═══ 5b · a REAL press of Release hold on the card ═══
   const u = await world({ viewport: { width: 1500, height: 900 }, facts: false });
   try {
-    await seed(u.page, ['rqHeld', 'rqPlain', 'rqQr']);
+    await libRead(u.page); await seed(u.page, ['rqHeld', 'rqPlain', 'rqQr']);
     await u.page.waitForTimeout(700);
     await u.page.evaluate(ID => { const by = rid => Orders.rows().find(r => String(r.order.receiptId) === rid); const p = by(ID.plain); p.problems = []; p.state = 'nested'; p.poolIds = ['pool-plain']; const h = by(ID.held); h.problems = []; h.state = 'held'; h.hold = 'Held by the test'; h.poolIds = []; Review.syncOrderItems(); Orders.render(); }, ID);
     await u.page.waitForTimeout(600);
@@ -219,8 +225,9 @@ const NAMES = ['rqHeld', 'rqQr', 'rqBoth', 'rqMark', 'rqRel', 'rqPrn', 'rqPlain'
     check([...one].sort().join() === [ID.held, ID.qr].sort().join() && !!(await u.page.$(`#ordItems [data-rid="${ID.held}"] .relHold`)), 'the Release Hold filter holds the held order (its own Release hold button) and the unknown-SKU order whose SECOND card has a Release Hold to press: ' + one);
     await u.page.click(`#ordItems [data-rid="${ID.held}"] .relHold`); await u.page.waitForTimeout(2200);
     const gone = await u.page.evaluate(() => ({ rows: [...new Set(Orders.walkRows().map(r => String(r.order.receiptId)))], empty: /Nothing matches these filters/.test(document.getElementById('ordBody').textContent), held: Orders.rows().some(r => Orders.heldNow(r)), relBtn: document.querySelectorAll('#ordItems .relHold:not([data-gate])').length, cardRel: ReviewRelease.of(Review.pieceItemFor(Orders.rows().find(r => String(r.order.receiptId) === '4196000001')).src).how }));
+    // (the list's order is not what is checked: the open orders sort by the day they were ordered since ORDERDATE, Paul 11 Nov 2026, so the set is compared, as for the first check above)
     // (the real release makes the line up again from scratch: the released order is an unknown SKU now, so its Review card has a Release Hold that can be pressed (anyway): it is still a Release Hold order, but no longer a held one)
-    check(!gone.held && !gone.relBtn && gone.cardRel === 'anyway' && gone.rows.join() === [ID.held, ID.qr, ID.plain].sort().join(), 'a REAL press of Release hold: nothing is on hold and its card has no Release hold button any more; the order is in the filter only through its Review card (Release Hold "anyway"), as the other unknown-SKU orders are: ' + JSON.stringify(gone));
+    check(!gone.held && !gone.relBtn && gone.cardRel === 'anyway' && gone.rows.slice().sort().join() === [ID.held, ID.qr, ID.plain].sort().join(), 'a REAL press of Release hold: nothing is on hold and its card has no Release hold button any more; the order is in the filter only through its Review card (Release Hold "anyway"), as the other unknown-SKU orders are: ' + JSON.stringify(gone));
     check(u.errors.length === 0, 'no page errors in the third page: ' + u.errors.join(' | '));
   } catch (e) { check(false, 'the third page failed: ' + (e && e.stack || e)); }
   await u.close();

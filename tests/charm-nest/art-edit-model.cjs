@@ -89,9 +89,10 @@ const sq = (x, y, w, h) => [[['m', [x, y]], ['l', [x + w, y]], ['l', [x + w, y +
   eq(snap(piece), pieceBefore, 'A the piece\'s charm handed in is as it was'); eq(snap({ members: base.members, outline: base.outline, parsed: cal.parsed.segments, nested: cal.parsed.nested, top: base.topIndices, drop: base.dropIndices || null, hash: base.hash }), sharedBefore, 'A the shared master (its members, their points, the parsed segments and forms) is byte for byte as it was');
   ok(base.members.every(m => !m.artRedraw && !m.synthetic && !m.artMemberId), 'A no master part was marked'); ok(ed.members.every(m => !base.members.includes(m)), 'A every member of the edited piece is its own object (deep copies)');
   ok(ed.members.every(m => !m.subpaths || base.members.every(b => b.subpaths !== m.subpaths)), 'A and its points are its own arrays');
-  eq(ed.members.length, base.members.length - 3 + 5, 'D 24 parts − 3 letters + 5 outlines');
+  eq(ed.members.length, base.members.length - 3, 'D 24 parts − 3 letters (FRONTLIKEBACK: the 5 outlines added are the front\'s engraving, artFront, not the drawing)');
+  eq((ed.artFront || []).length, 5, 'D FRONTLIKEBACK: the 5 outlines added are the charm\'s artFront, as a back\'s are its artBack');
   ok(!ed.members.some(m => monthIds.includes(m.artMemberId)), 'D the old month name is gone');
-  const added = ed.members.filter(m => m.artAdded);
+  const added = ed.artFront || [];
   eq(added.map(m => m.artMemberId), ['jun0', 'jun1', 'jun2', 'd1', 'd7'], 'D the new parts, named by the editor\'s ids');
   ok(added.every(m => m.hatchBlue && m.fill && !m.stroke && m.layer === 'ENGRAVE' && m.synthetic && m.artRedraw && m.manufacturingRole === 'hatch' && G.pathRole(m) === 'artwork' && !G.isCutLine(m)), 'D each added outline is blue hatching on the master\'s own ENGRAVE layer, written from its geometry, never a cut');
   const d17 = added.filter(m => m.artGroup === 'date'), box17 = d17.reduce((a, m) => [Math.min(a[0], m.bbox[0]), Math.min(a[1], m.bbox[1]), Math.max(a[2], m.bbox[2]), Math.max(a[3], m.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
@@ -110,7 +111,7 @@ const sq = (x, y, w, h) => [[['m', [x, y]], ['l', [x + w, y]], ['l', [x + w, y +
   // the front view of the edited piece: the words keep off the new month name and the date; the old month's band is free (MARGINS, 28 Oct 2026: that is the rule a placement approved before then is
   // rebuilt with, keepArtClear; every new placement may cross the art, checked last)
   const OLD = { marginMm: 0.3, keepArtClear: true };
-  const v2 = G.backView(ed, { face: 'front', upAngle: 60, res: 6 }), m1 = G.engraveMask(front, OLD), m2 = G.engraveMask(v2, OLD);
+  const v2 = G.backView(ed, { face: 'front', upAngle: 60, res: 6 }), m1 = G.engraveMask(front, OLD), m2 = G.engraveMask(v2, Object.assign({}, OLD, { avoid: ed.artFront || [] }));   // (FRONTLIKEBACK: the app hands a face's added parts in as avoid, either face)
   const vc = p => G.ap(G.mul(front.M, front.R), p[0], p[1]);
   const inN = vc(cal.at(44, 74));   // (inside the new "N", clear of every old letter)
   ok(G.at(m1, ...inN) && !G.at(m2, ...inN), 'D the front\'s mask keeps the words off the new month name');
@@ -120,7 +121,7 @@ const sq = (x, y, w, h) => [[['m', [x, y]], ['l', [x + w, y]], ['l', [x + w, y +
     ok(G.at(n1, ...inN) && G.at(n2, ...inN) && G.at(n1, ...inA) && G.at(n2, ...inA) && G.area(n2) === G.area(n1), 'D MARGINS: by the rule new placements are made with, the words may cross the new month name and the old one alike'); }
   // the editor reads it back
   const items = AE.itemsOf(ed, front, 'front');
-  eq(items.map(x => x.id), AE.memberIds(ed), 'D itemsOf: one item a part, by its id'); ok(items.filter(x => x.origin === 'added').length === 5 && items.filter(x => x.origin === 'master').length === 21, 'D the master\'s parts and the added ones told apart');
+  eq(items.map(x => x.id), AE.memberIds(ed).concat((ed.artFront || []).map(m => m.artMemberId)), 'D itemsOf: one item a part, by its id (the drawing\'s, then the face\'s added ones)'); ok(items.filter(x => x.origin === 'added').length === 5 && items.filter(x => x.origin === 'master').length === 21, 'D the master\'s parts and the added ones told apart');
   const back2 = AE.decode(saved, piece, front), rec2 = AE.encode(back2, { charm: piece, view: front, face: 'front' });
   eq(rec2.added.map(x => x.d), rec.added.map(x => x.d), 'D decode → encode gives the same paths'); eq(rec2.removed, rec.removed, 'D and the same removals');
   ok(AE.encode(back2, { charm: ed, view: front, face: 'front' }).baseKey === rec.baseKey, 'D the edited piece is read as its master (baseOf)');

@@ -24,7 +24,7 @@ global.CharmNestVector = require(path.join(ROOT, 'charm-nest-vector.js'));
 global.CharmNestGeom = require(path.join(ROOT, 'charm-nest-geom.js'));
 const P = global.CharmNestPDF, E = global.CharmNestExport = require(path.join(ROOT, 'charm-nest-export.js'));
 const AE = require(path.join(ROOT, 'charm-nest-art-edit.js')), IM = require(path.join(ROOT, 'charm-nest-ce-image.js')), T = require(path.join(ROOT, 'charm-nest-ce-trace.js'));
-const D = require(path.join(ROOT, 'charm-nest-designs.js'));
+const D = require(path.join(ROOT, 'charm-nest-designs.js')), BF = require(path.join(ROOT, 'charm-nest-back-file.js'));
 const Q = require('./ce-trace-quality.cjs'), assets = require(path.join(ROOT, 'netlify/functions/_charmNestAsset.js'));
 const { start } = require('./bridge-server.cjs');
 let n = 0; const ok = (c, m) => { assert.ok(c, m); n++; console.log('  ok   ' + m); };
@@ -95,28 +95,31 @@ const opsOfD = d => (String(d).match(/[MLCZ]/g) || []).length, opsOfSubs = sps =
     const inFile = rec.added.filter(e => e.bi != null), inline = rec.added.filter(e => e.d != null);
     say(`saved in ${saveMs.toFixed(0)} ms: the record ${(recBytes / 1000).toFixed(0)} KB (${inline.length} small greys in it), the picture's file ${(file.buf.length / 1e6).toFixed(2)} MB gzipped (${inFile.length} greys, ${rec.blob.ops} operators, ${(rec.blob.n / 1e6).toFixed(2)} MB of path); the biggest call sent ${(page.sent / 1e6).toFixed(2)} MB`);
     ok(recBytes < 600000 && inFile.length >= 1 && rec.blob.ops + inline.reduce((a, e) => a + opsOfD(e.d), 0) === groupOps && page.sent < 6e6, `C saved: the record within what one record holds (${(recBytes / 1000).toFixed(0)} KB), the paths beside it, every operator kept (${groupOps}), each call under a function's 6 MB`);
-    ok(saved.charm.members.filter(m => m.artGrey).reduce((a, m) => a + opsOfSubs(m.subpaths), 0) === groupOps, 'C this page\'s piece carries every path at once (its own paths put back, nothing read)');
+    // (FRONTLIKEBACK, 25 Nov 2026: a picture traced onto the FRONT is the front's engraving, the charm's artFront, as one traced onto a back is its artBack)
+    ok(saved.charm.members.concat(saved.charm.artFront || []).filter(m => m.artGrey).reduce((a, m) => a + opsOfSubs(m.subpaths), 0) === groupOps, 'C this page\'s piece carries every path at once (its own paths put back, nothing read)');
     // another computer: nothing held
     AE.forget(); page.reads.length = 0;
     const fresh = Object.assign({}, cb, { id: 's:' + PID, poolId: PID, pinned: null });
     t = now(); const made = await AE.piece(fresh, PID, { poolId: PID, artEdit: { front: rec.at } }); const readMs = now() - t;
-    const madeOps = made.members.filter(m => m.artGrey).reduce((a, m) => a + opsOfSubs(m.subpaths), 0);
+    const madeOps = made.members.concat(made.artFront || []).filter(m => m.artGrey).reduce((a, m) => a + opsOfSubs(m.subpaths), 0);
     ok(madeOps === groupOps && page.reads.join() === 'artList', `C read again (artList and the file through the asset door, ${readMs.toFixed(0)} ms): the piece is made with every path (${madeOps} operators)`);
     const dec = AE.decode(AE.cached(PID, 'front'), made, view), decOps = dec.added.filter(i => i.artGrey).reduce((a, i) => a + opsOfSubs(i.subpaths), 0);
     ok(decOps === groupOps && dec.added.filter(i => i.artGrey).length === g.children.length, `C the editor opened on it again (decode): its ${g.children.length} greys, every path whole`);
     // the laser's files
     const SHEET = { wPt: 120, hPt: 130 };
     t = now(); const pl = [{ charm: made, angle: 0, cxPt: 60, cyPt: 65, scale: 1 }], sheetBytes = await P.buildSheet({ sheet: SHEET, placements: pl, sources: new Map([[made.sourceId, cal.parsed]]), title: 'cat' }); const pdfMs = now() - t;
-    const parsed = await P.parseSource(new Uint8Array(sheetBytes), 'sheet.ai'), forms = parsed.segments.filter(s => s.kind === 'xobj');
-    const greyKids = forms[0].children.filter(k => k.kind === 'path' && k.fill && k.fillRGB[0] === k.fillRGB[1] && k.fillRGB[1] === k.fillRGB[2] && !(k.fillRGB[0] === 0 && k.fillRGB[2] === 1));
+    // FRONTLIKEBACK: the front's engraving file holds the picture (charm-nest-pdf.js buildBackFile writes the face's added parts, a grey in its grey), as a back's file holds a back's
+    const fview = global.CharmNestGeom.backView(made, { face: 'front', upAngle: 90 });
+    t = now(); const frontBytes = (await P.buildBackFile(BF.backSpec({ charm: made, parsed: cal.parsed, view: fview, fit: { glyphs: [], weight: 'Regular', size: 0, capMm: 0, angle: 0 }, face: 'front', title: 'cat front', meta: { poolId: PID } }))).bytes; const frontMs = now() - t;
+    const greyKids = E.leaves(await P.parseSource(frontBytes, 'front.ai')).filter(k => /^ENGRAVE$/i.test(k.layer || '') && k.fill && k.fillRGB && k.fillRGB[0] === k.fillRGB[1] && k.fillRGB[1] === k.fillRGB[2] && !(k.fillRGB[0] === 0 && k.fillRGB[2] === 1));
     const sheetOps = greyKids.reduce((a, k) => a + opsOfSubs(k.subpaths), 0);
-    say(`the sheet's .pdf / .ai (buildSheet): ${(sheetBytes.length / 1e6).toFixed(2)} MB, written in ${pdfMs.toFixed(0)} ms, ${greyKids.length} grey fills holding ${sheetOps} operators`);
-    ok(sheetOps >= groupOps * 0.99 && greyKids.length === g.children.length, 'C the sheet\'s laser file holds the picture at its full detail, each grey its own fill');
+    say(`the sheet's .pdf / .ai (buildSheet): ${(sheetBytes.length / 1e6).toFixed(2)} MB in ${pdfMs.toFixed(0)} ms · the front's engraving file: ${(frontBytes.length / 1e6).toFixed(2)} MB in ${frontMs.toFixed(0)} ms, ${greyKids.length} grey fills holding ${sheetOps} operators`);
+    ok(sheetOps >= groupOps * 0.99 && greyKids.length === g.children.length, 'C the front\'s engraving file holds the picture at its full detail, each grey its own fill');
     const recOf = list => ({ id: 'sheet-cat', fileBase: 'GF_cat', metal: 'gold', charms: list.map(c => ({ id: c.id, poolId: c.poolId })), poolIds: list.map(c => c.poolId), placements: pl.map((p, i) => ({ id: list[i].id, n: i + 1, layer: p.layerName, scale: p.scale })), backPool: [], outputs: {} });
-    t = now(); const prod = await E.compose(sheetBytes, recOf([made]), []); const aiMs = now() - t;
+    t = now(); const prod = await E.compose(sheetBytes, recOf([made]), [], [{ poolId: PID, face: 'front', artOnly: true, approvedAt: 1, approvedBy: 'Ana_M', text: '', lines: [], bytes: frontBytes }]); const aiMs = now() - t;   // (FRONTLIKEBACK: laid on its charm from the front's file)
     const lay = await P.parseSource(prod.ai, 'prod.ai'); t = now(); const dxf = E.dxf(E.productionPaths(lay), E.layerNames(lay)).text; const dxfMs = now() - t;
     const prodOps = E.leaves(lay).filter(p => p.fill && p.fillRGB && p.fillRGB[0] === p.fillRGB[1] && p.fillRGB[1] === p.fillRGB[2] && p.fillRGB[0] < 0.999).reduce((a, p) => a + opsOfSubs(p.subpaths || []), 0);
-    const hatches = (dxf.match(/\r\n0\r\nHATCH\r\n/g) || []).length;
+    const hatches = (dxf.match(/\r\n *0\r\nHATCH\r\n/g) || []).length;   // (the writer pads its group codes: "  0")
     say(`the production .ai (compose): ${(prod.ai.length / 1e6).toFixed(2)} MB in ${aiMs.toFixed(0)} ms, ${prodOps} operators in its greys · the .dxf: ${(dxf.length / 1e6).toFixed(2)} MB in ${dxfMs.toFixed(0)} ms, ${hatches} HATCH entities`);
     ok(prodOps >= groupOps * 0.99 && hatches >= g.children.length, 'C the production .ai and the .dxf hold it in full too');
 

@@ -49,8 +49,12 @@ async function main() {
     page.on('pageerror', e => { errors.push(e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.CN && window.Orders && window.OrderWin && window.CustomerMail && CN.S.cloud.ok === true, null, { timeout: 60000 });
+    // (LIBREADY, Paul 23 Nov 2026: while the page's charm library is still being read, a question the library answers (here a2's Unknown SKU) is asked of no one; the page's own pull reads the
+    //  library first (Master.load before Orders.interpretAll), so the lines put in below are read once it is read, as the pull would)
+    await page.waitForFunction(() => B.master.loadedAt > 0 && !B.master.loading, null, { timeout: 20000 }).catch(() => {});
     await page.evaluate(async orders => {
       await Orders.loadMaps(true);
+      if (B.master.loading) await B.master.loading.catch(() => {});
       for (const order of orders) for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
       Orders.interpretAll(); CN.setMode('orders'); Orders.render();
     }, [order(A, 'Hannah Whitford', 'Old note'), order(B2, 'Ava Patel')]);

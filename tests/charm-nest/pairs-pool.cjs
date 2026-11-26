@@ -76,6 +76,9 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
   const src = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
   const a = src.indexOf('const Pool = window.Pool = (() => {'), b = src.indexOf('\n/* Carry-forward is keyed', a);
   assert(a > 0 && b > a, 'the Pool module is where the test expects it');
+  // (SHEETCHOICE, cloud plan v2 build step 5, 20 Nov 2026: the sheet each piece goes on is chosen by charm-nest-place.js through the bridge's placeRules() host, which sits just above the Pool now)
+  const ra = src.indexOf('let placeRulesMade = null;'), rb = src.indexOf('/* ═══ 20 · Pool', ra);
+  assert(ra > 0 && rb > ra && rb < a, 'the placeRules host is where the test expects it');
   const MM = 25.4 / 72;
   function world(designs, rowsSeed, PairMod) {
     const logs = [], calls = [], pages = { gold: { metal: 'gold', charms: [], placements: [], status: 'idle', sheetId: null } };
@@ -103,7 +106,8 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
     c.P.groupCharmsAsync = async () => ({ charms: [structuredClone(F.charmOf(c.__sku))], orphans: [] });
     const realLoad = null; void realLoad;
     require('./_poolMake.cjs')(c);   // (PMAKE: the piece maker the Pool is host of, loaded as the page loads it)
-    vm.runInContext(src.slice(a, b), c);
+    require('./_place.cjs')(c);   // (SHEETCHOICE: the sheet choice, loaded as the page loads it, before the bridge)
+    vm.runInContext(src.slice(ra, rb) + src.slice(a, b), c);
     return { c, logs, calls, pages, Pool: c.window.Pool, entries, use(sku) { c.__sku = sku; } };
   }
   const lineRow = (rid, tid, sku, qty, extra) => ({ key: `${rid}_${tid}`, state: 'pulled', order: { receiptId: rid, createTs: 1791500000, updateTs: 1791500001 }, line: { transactionId: tid, listingId: '1', sku }, spec: Object.assign({ designSku: sku, material: 'gold', quantity: qty, size: null, form: 'earrings', chain: null }, extra || {}), problems: [], poolIds: [], engrave: null, arrivedAt: 0 });

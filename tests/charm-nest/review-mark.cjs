@@ -29,7 +29,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  - no playwright-core: not run'); return; }
   const srv = await start({ receipts: [] });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || (fs.existsSync('/opt/pw-browsers/chromium-1194/chrome-linux/chrome') ? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' : '/opt/pw-browsers/chromium'), args: ['--no-sandbox'] });
-  const errors = [], outside = [];
+  const errors = [], outside = [], softFails = [];
+  const soft = (cond, what) => { if (!cond) { softFails.push(what); console.error('  FAIL (kept, the test goes on):', what); } };
   const js = body => ({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin', 'Access-Control-Allow-Origin': '*' }, body });
   async function client(name, o = {}) {
     const context = o.context || await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -44,7 +45,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const page = await context.newPage(), c = { name, context, page, ops: [] };
     page.setDefaultTimeout(30000 * K);
     page.on('pageerror', e => { errors.push(name + ': ' + e.message); console.error(name, 'page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
-    page.on('request', rq => { if (!/charmNestLibrary/.test(rq.url()) || rq.method() !== 'POST') return; let b = {}; try { b = JSON.parse(rq.postData() || '{}'); } catch (_) {} c.ops.push(b.op + (b.action ? ':' + b.action : '')); });
+    page.on('request', rq => { if (!/charmNestLibrary/.test(rq.url()) || rq.method() !== 'POST') return; let b = {}; try { b = JSON.parse(rq.postData() || '{}'); } catch (_) {} c.ops.push(b.op + (b.action ? ':' + b.action : '')); if (b.op === 'reads' && Array.isArray(b.reads)) for (const x of b.reads) c.ops.push(String(x && x.op)); });   // (FASTOPEN, 23 Nov 2026: the page's small reads go side by side in one { op: "reads", reads: [...] })
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CharmNestReviewMark && CN.S.cloud.ok === true, null, { timeout: 90000 });
     c.load = async (mode = 'review') => page.evaluate(async ({ orders, skus, mode }) => {
@@ -55,7 +56,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       for (const order of orders) for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: at, spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
       Orders.interpretAll(); Review.syncOrderItems(); CN.setMode(mode); Review.render();
     }, { orders: ORDERS, skus: SKUS, mode });
-    c.rows = () => page.evaluate(() => [...document.querySelectorAll('#rvList .reviewListRow')].map(n => ({ rid: n.dataset.rid, mkey: n.dataset.mkey, kind: (n.querySelector('.purchaseLabel') || {}).textContent, slots: n.querySelectorAll('.rvMarkSlot').length, ok: !!n.querySelector('[data-rv-markok], [data-a="markok"]'), rel: !!n.querySelector('[data-rel-hold]'), why: (n.querySelector('.rowExcerpt') || {}).textContent, by: (n.querySelector('.by') || {}).textContent })));
+    // (ONECARD, Paul 23 Nov 2026, charm-nest-bridge.js orderCards / issueSections: every question of an order is a section of that order's ONE card; a card of several questions is labelled
+    //  "N issues" and names each section (.rvIssueK): the mark is the card's "Marked" section, its words that section's points)
+    c.rows = () => page.evaluate(() => [...document.querySelectorAll('#rvList .reviewListRow')].map(n => { const secs = [...n.querySelectorAll('.rvIssue')].map(x => ({ k: ((x.querySelector('.rvIssueK') || {}).textContent || '').trim(), t: [...x.querySelectorAll('li')].map(l => l.textContent).join(' ') })), mk = secs.find(x => x.k === 'Marked');
+      return { rid: n.dataset.rid, mkey: n.dataset.mkey, kind: mk ? 'Marked' : (n.querySelector('.purchaseLabel') || {}).textContent, label: (n.querySelector('.purchaseLabel') || {}).textContent, secs: secs.map(x => x.k), slots: n.querySelectorAll('.rvMarkSlot').length, ok: !!n.querySelector('[data-rv-markok], [data-a="markok"]'), rel: !!n.querySelector('[data-rel-hold]'), why: (n.querySelector('.rowExcerpt') || {}).textContent || (mk ? mk.t : secs.length === 1 ? secs[0].t : ''), by: (n.querySelector('.by') || {}).textContent }; }));
     c.seg = async s => { await page.click(`#reviewView .rvSeg [data-cseg="${s}"]`); await page.waitForFunction(s => Review.view().cseg === s, s); };
     c.counts = () => page.evaluate(() => ({ open: +(document.querySelector('#reviewView .rvSeg [data-cseg="open"] b') || {}).textContent, done: +(document.querySelector('#reviewView .rvSeg [data-cseg="done"] b') || {}).textContent }));
     c.is = rid => page.evaluate(rid => CharmNestReviewMark.isMarked(rid), rid);
@@ -73,25 +77,30 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     /* ── 1 · mark ── */
     const t0 = Date.now(), opsBefore = Bc.ops.length;
     const r1 = await A.page.evaluate(rid => CharmNestReviewMark.mark(rid), R1);
-    assert.deepEqual(r1, { ok: true, already: false, rid: R1 }); log('mark answered in', Date.now() - t0, 'ms');
+    // (OUTBOX, Paul 28 Oct 2026, charm-nest-review-mark.js write(): "nothing he presses may wait for the cloud": the press is kept in the outbox and answers at once
+    //  { ok, pending, rid, mid }; the cloud's document follows when the outbox is drained)
+    assert.equal(r1.ok, true); assert.equal(r1.rid, R1); assert.ok(!r1.already, 'a first mark is not "already"'); assert.ok(r1.pending === true && r1.mid, 'answered at once from the outbox (pending, with its mutation id): ' + JSON.stringify(r1)); log('mark answered in', Date.now() - t0, 'ms');
     assert.equal(await A.is(R1), true, 'marked at once');
     assert.deepEqual(await A.page.evaluate(() => CharmNestReviewMark.markedRids()), [R1]);
     assert.equal(await A.page.evaluate(rid => CharmNestReviewMark.reasonOf(rid), R1), 'Order held by Name Alpha');
+    for (let i = 0; i < 100 && !(rec(R1) && writes().length >= 1); i++) await sleep(100);   // (the outbox sends it soon)
     const d = rec(R1);
     assert.ok(d, 'one document in the custom-order records'); assert.equal(d.review.state, 'open'); assert.equal(d.review.markedBy, 'Name Alpha'); assert.equal(d.kind, 'reviewMark'); assert.equal(d.state, 'open');
     assert.ok(!d.stamps && !d.completedAt && !d.printedAt && !d.history, 'no seal, no completion, no print, no history');
     assert.equal(writes().length, 1, 'ONE write');
     let rows = await A.rows(), mine = rows.find(r => r.rid === R1 && r.kind === 'Marked');
-    assert.ok(mine, 'the order is a row in Review under Marked: ' + JSON.stringify(rows.map(r => [r.rid, r.kind])));
-    assert.equal(mine.slots, 1, 'one slot for the one line'); // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): no Mark OK on the row; Release Hold is there instead
+    assert.ok(mine, 'the order is a row in Review under Marked: ' + JSON.stringify(rows.map(r => [r.rid, r.kind, r.label, r.secs])));
+    // (kept failing, not hidden: on ONECARD's joined card (its kind the most pressing question's, here "Options · metal") the bridge calls CharmNestReviewMark.decorateRow / fillMarkSlots only
+    //  when the CARD's kind is reviewMark (charm-nest-bridge.js reviewRow), so the Marked section has no slot for its suggested charms (REVSUGGEST); recorded, and the rest still runs)
+    soft(mine.slots === 1, 'one slot for the one line (the Marked section of the order\'s one card): ' + JSON.stringify(mine)); // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): no Mark OK on the row; Release Hold is there instead
     assert.equal(mine.ok, false, 'no Mark OK on the row'); assert.equal(mine.rel, true, 'Release Hold on the row'); assert.match(mine.why, /^Order held by Name A/);
     // pressing again, and two presses together: nothing more is written
     assert.deepEqual(await A.page.evaluate(rid => CharmNestReviewMark.mark(rid), R1), { ok: true, already: true, rid: R1 });
     const both = await A.page.evaluate(rid => Promise.all([CharmNestReviewMark.mark(rid), CharmNestReviewMark.mark(rid)]), R2);
-    assert.ok(both[0].ok && both[1].ok, 'both answer ok'); assert.equal(writes().length, 2, 'a double press on a new order is one write (one for R1, one for R2)');
+    assert.ok(both[0].ok && both[1].ok, 'both answer ok'); for (let i = 0; i < 100 && !rec(R2); i++) await sleep(100); await sleep(Math.round(1500 * K)); assert.equal(writes().length, 2, 'a double press on a new order is one write (one for R1, one for R2)');
     // (no Marked chip since RVRESOLVED, Paul 18 Oct 2026: the marked order is a plain card in all of Open)
     if (process.env.SHOT) { await A.page.waitForTimeout(800); await A.page.screenshot({ path: process.env.SHOT }); }
-    rows = await A.rows(); assert.equal(rows.find(r => r.rid === R2 && r.kind === 'Marked').slots, 2, 'a two-line order has a slot for each line');
+    rows = await A.rows(); { const r2 = rows.find(r => r.rid === R2 && r.kind === 'Marked'); assert.ok(r2, 'R2 is marked on its card'); soft(r2.slots === 2, 'a two-line order has a slot for each line: ' + JSON.stringify(r2)); }
     // the order's timeline gets one plain line (a note), never a seal
     const tlEvents = () => srv.st.calls.filter(c => c.name === 'charmNestLibrary' && c.body && c.body.op === 'timelineAdd').flatMap(c => Array.isArray(c.body.events) ? c.body.events : []);
     for (let i = 0; i < 60 && !tlEvents().some(e => /Order held by Name Alpha/.test(e.text || '')); i++) await sleep(100);
@@ -104,18 +113,39 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const tB = Date.now();
     await waitFor(Bc, rid => CharmNestReviewMark.isMarked(rid), R1, 'B holding the mark');
     log('B holds the mark', Date.now() - tB, 'ms after A wrote it; ops B made meanwhile:', [...new Set(Bc.ops.slice(opsBefore))].join(','));
-    assert.ok(Bc.ops.slice(opsBefore).includes('customGet') && !Bc.ops.slice(opsBefore).some(o => /reviewMark/.test(o)), 'B learned of it from the existing changes feed (customGet); it made no call of its own for it');
+    // (FEED, Paul 28 Oct 2026, charm-nest-review-live.js: the computer's changes feed (getChanges, charm-nest-sync-worker.js) names the record written and the Review loop reads it once (customGet))
+    assert.ok(Bc.ops.slice(opsBefore).some(o => o === 'customGet' || o === 'getChanges') && !Bc.ops.slice(opsBefore).some(o => /reviewMark/.test(o)), 'B learned of it from the existing changes feed (getChanges / customGet); it made no call of its own for it');
     await waitFor(Bc, () => [...document.querySelectorAll('#rvList .reviewListRow')].some(n => n.dataset.rid === '4100000001' && /Marked/.test(n.textContent)), null, 'B drawing the row');
     assert.deepEqual((await Bc.counts()).open >= 2, true);
 
     /* ── 3 · Release Hold on B ── */
     // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): Release Hold (CharmNestReviewMark.resolve how "other", then its release record) replaces Mark OK (how "ok")
     assert.equal(await Bc.page.$$eval(`#rvList .reviewListRow[data-rid="${R1}"] [data-rv-markok], #rvList .reviewListRow[data-rid="${R1}"] [data-a="markok"]`, l => l.length), 0, 'no Mark OK on B either');
-    await Bc.page.click(`#rvList .reviewListRow[data-rid="${R1}"] [data-rel-hold]`);
+    const pressRel = async () => {
+      await Bc.page.click(`#rvList .reviewListRow[data-rid="${R1}"] [data-rel-hold]`);
+      // (NESTASK, Paul 23 Nov 2026 + RELASK, Paul 25 Nov 2026, charm-nest-bridge.js choose / askOf: a marked order's charm on no sheet is asked about first: "Nest it" is the default answer)
+      const asked = await Bc.page.waitForSelector('dialog.naDlg[open] [data-na="nest"]', { timeout: Math.round(4000 * K) }).then(() => true, () => false);
+      if (asked) { await Bc.page.click('dialog.naDlg[open] [data-na="nest"]'); log('the Release Hold pop-up asked about the charm: Nest it'); }
+    };
+    const toastsB = () => Bc.page.evaluate(() => [...document.querySelectorAll('.toast')].map(n => n.textContent.replace(/✕$/, '').trim()).filter(Boolean));
+    let wPress = writes().length;
+    await pressRel();
+    // (kept failing, not hidden: the order's ONE card (ONECARD, 23 Nov 2026) is led by its "Options · metal" question (CARD_RANK), so its Release Hold is that question's "anyway" release
+    //  (charm-nest-bridge.js releaseOf / releaseRun): the toast says the order was released, and the mark is never resolved: the order stays held in Review)
+    const resolvedAtOnce = await Bc.page.waitForFunction(rid => !CharmNestReviewMark.isMarked(rid), R1, { timeout: Math.round(9000 * K) }).then(() => true, () => false);
+    if (!resolvedAtOnce) {
+      soft(false, 'ONE Release Hold press on the order\'s card resolves its mark (B resolving): still marked after the press; the page said ' + JSON.stringify([...new Set(await toastsB())]) + '; card ' + JSON.stringify((await Bc.rows()).find(r => r.rid === R1)));
+      await Bc.page.waitForSelector(`#rvList .reviewListRow[data-rid="${R1}"] [data-rel-hold]:not([aria-busy="true"])`, { timeout: Math.round(15000 * K) });
+      log('writes of that first press:', JSON.stringify(writes().slice(wPress).map(c => c.body.action)));
+      wPress = writes().length; await pressRel();   // (so the checks after it still run: the card, its other question set aside, is the mark's now)
+    }
     await waitFor(Bc, rid => !CharmNestReviewMark.isMarked(rid), R1, 'B resolving');
     assert.equal(rec(R1).review.state, 'done'); assert.equal(rec(R1).review.doneBy, 'Name Beta'); assert.equal(rec(R1).review.how, 'other');
-    for (let i = 0; i < 60 && writes().length < 4; i++) await sleep(100);
-    assert.deepEqual(writes().map(c => c.body.action), ['mark', 'mark', 'resolve', 'release'], 'the resolve and the release record Release Hold keeps, nothing more');
+    for (let i = 0; i < 60 && writes().length < wPress + 2; i++) await sleep(100);
+    await sleep(Math.round(1000 * K));
+    assert.deepEqual(writes().slice(0, 2).map(c => c.body.action), ['mark', 'mark']);
+    assert.deepEqual(writes().slice(wPress).map(c => c.body.action), ['resolve', 'release'], 'the resolve and the release record Release Hold keeps, nothing more');
+    if (resolvedAtOnce) assert.deepEqual(writes().map(c => c.body.action), ['mark', 'mark', 'resolve', 'release'], 'the resolve and the release record Release Hold keeps, nothing more');
     await waitFor(A, rid => !CharmNestReviewMark.isMarked(rid), R1, 'A learning of it');
     assert.equal((await A.rows()).some(r => r.rid === R1 && r.kind === 'Marked'), false, 'gone from A\'s Open list');
     await A.seg('done'); rows = await A.rows(); const dn = rows.find(r => r.rid === R1);
@@ -131,11 +161,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
     /* ── 4 · again, and a failed write ── */
     assert.equal((await A.page.evaluate(rid => CharmNestReviewMark.mark(rid), R1)).ok, true);
+    for (let i = 0; i < 100 && rec(R1).review.state !== 'open'; i++) await sleep(100);   // (OUTBOX: the cloud's record follows the press)
     assert.equal(rec(R1).review.state, 'open'); assert.equal(rec(R1).review.earlier.length, 1, 'the earlier cycle is kept'); assert.equal(rec(R1).review.earlier[0].doneBy, 'Name Beta');
-    srv.st.fail.charmNestLibrary = true;
+    // (OUTBOX, Paul 28 Oct 2026: a 5xx or no network is "no answer yet" and the press is tried again (charm-nest-sync-worker.js refusedBy); a failed write is the cloud's
+    //  refusal in words, a 4xx: the press answers at once, then the refusal puts the order back, as outbox.cjs E3 does)
+    const refuse = /\/\.netlify\/functions\/charmNestLibrary/;
+    await A.page.route(refuse, q => (/reviewMarkPut/.test(q.request().postData() || '') && /4100000003/.test(q.request().postData() || '') ? q.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'forced refusal' }) }) : q.continue()));
     const bad = await A.page.evaluate(rid => CharmNestReviewMark.mark(rid), R3);
-    srv.st.fail.charmNestLibrary = false;
-    assert.equal(bad.ok, false); assert.equal(await A.is(R3), false, 'a failed write puts the order back'); assert.ok(!rec(R3));
+    await waitFor(A, rid => !CharmNestReviewMark.isMarked(rid), R3, 'the refusal putting the order back');
+    await A.page.unroute(refuse);
+    assert.ok(bad.ok === false || bad.pending === true, 'refused, or kept in the outbox until the cloud refuses it: ' + JSON.stringify(bad)); assert.equal(await A.is(R3), false, 'a failed write puts the order back'); assert.ok(!rec(R3));
     assert.equal((await A.rows()).some(r => r.rid === R3 && r.kind === 'Marked'), false);
     const unknown = await A.page.evaluate(() => CharmNestReviewMark.mark('4999999999'));
     assert.equal(unknown.ok, false, 'an order that is not in the list is not marked');
@@ -155,12 +190,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await S.load();
     assert.equal(await S.page.evaluate(() => WORKSPACE_SANDBOX), true);
     assert.equal((await S.page.evaluate(rid => CharmNestReviewMark.mark(rid), R3)).ok, true);
+    for (let i = 0; i < 100 && !srv.st.doc('Sandbox_' + CUSTOM, R3 + '_review'); i++) await sleep(100);   // (OUTBOX: sent soon after the press)
     assert.ok(srv.st.doc('Sandbox_' + CUSTOM, R3 + '_review'), 'the sandbox keeps its own copy'); assert.ok(!rec(R3), 'production has none');
     assert.equal(JSON.stringify(srv.st.list(CUSTOM)), prodBefore, 'production records untouched by the sandbox page');
     assert.equal((await S.rows()).some(r => r.rid === R3 && r.kind === 'Marked'), true, 'a sandbox order is in the sandbox Review tab');
     log('sandbox: Sandbox_Charm_Custom_Orders only; production unchanged');
 
     assert.deepEqual(errors, [], 'no page error'); assert.deepEqual(outside, [], 'no Etsy / AI call');
+    assert.deepEqual(softFails, [], 'checks that failed on the way');
     console.log('PASS review-mark');
   } finally { await browser.close(); srv.close && srv.close(); }
 })().catch(e => { console.error('FAIL review-mark:', e && e.stack || e); process.exit(1); });

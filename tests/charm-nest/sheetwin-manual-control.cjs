@@ -81,7 +81,7 @@ const root = path.join(__dirname, '../..');
     const sw = () => page.evaluate(() => { const b = document.querySelector('.sheetWin [data-r=manual]'); return b ? { hidden: b.hidden, pressed: b.getAttribute('aria-pressed'), disabled: b.getAttribute('aria-disabled'), why: b.dataset.why || '', text: b.innerText.trim() } : null; });
     const openSheet = async id => { await page.evaluate(id => SheetWin.open(id), id); await until(() => page.evaluate(id => { const W = SheetWin._W; return W.id === id && !!W.rec && W.geom && !W.flying; }, id), 30000, 'the sheet window on ' + id); await page.waitForTimeout(300); };
     await openSheet('gold-mc-gf');
-    assert.equal((await sw()).hidden, true, 'no Manual Control on a Gold-filled sheet');
+    assert.equal((await sw()).hidden, false, 'MCEVERY (25 Nov 2026): Manual Control is offered on a Gold-filled sheet too');
     await openSheet('gold10k-mc-away');
     let s = await until(async () => { const v = await sw(); return /drawing could not be read in this page/.test(v.why) ? v : null; }, 8000, 'the switch on a record whose charm has no design'); assert.equal(s.hidden, false); assert.equal(s.disabled, 'true');   // (MCLIBRARY, 9 Nov 2026: a sheet with no run here is loaded from its record; this record's charm has no design to draw it from)
     await openSheet('gold14k-mc-lined');

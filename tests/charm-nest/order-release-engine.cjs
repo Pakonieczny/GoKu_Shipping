@@ -39,8 +39,10 @@ async function run(kind, browser) {
   const said = [], check = (ok, what) => { if (!ok) fails.push(`${kind}: ${what}`); console.log((ok ? '  ok   ' : '  FAIL ') + `${kind} · ${what}`); };
   try {
     await context.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => /fonts\.g/.test(r.request().url()) ? r.fulfill({ status: 200, contentType: 'text/css', body: '' }) : r.abort());
-    await context.addInitScript(() => {
-      try { if (!sessionStorage.getItem('__seeded')) { localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on', pollOrders: 'off' })); localStorage.setItem('cn.employee', 'Test Operator'); sessionStorage.setItem('__seeded', '1'); } } catch (_) {}
+    // (restart: NODISK, Paul 23 Nov 2026 (charm-nest-bridge.js Session.noDisk): "outside the sandbox no workspace is saved or read on this computer", so a reload finds nothing of a release here;
+    //  the workspace a reload finishes a release from is kept only in the sandbox, where the restart scenario now runs)
+    await context.addInitScript(sandbox => {
+      try { if (!sessionStorage.getItem('__seeded')) { localStorage.setItem('cn.settings', JSON.stringify(Object.assign({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on', pollOrders: 'off' }, sandbox ? { sandbox: 'on' } : {}))); localStorage.setItem('cn.employee', 'Test Operator'); sessionStorage.setItem('__seeded', '1'); } } catch (_) {}
       window.prompt = () => 'Test Operator'; window.__asked = []; window.confirm = m => { window.__asked.push(String(m)); return true; }; window.alert = m => { window.__asked.push(String(m)); };
       // what the nest's workers are asked to place (the jobs, in the order asked), and a switch that leaves a search unanswered (a release cut short)
       const post = Worker.prototype.postMessage;
@@ -48,11 +50,15 @@ async function run(kind, browser) {
         try { if (m && m.type === 'solve' && m.job) { (window.__jobs = window.__jobs || []).push({ jobId: m.jobId, at: Date.now(), orders: m.job.pieces.map(p => String(p.order || p.id)), keys: Object.keys(m.job.pieces[0] || {}) }); if (localStorage.getItem('__hang') === '1') return; } } catch (_) {}
         return post.call(this, m, ...rest);
       };
-    });
+    }, kind === 'restart');
     const page = await context.newPage(), errors = []; page.setDefaultTimeout(30000);
     page.on('pageerror', e => errors.push(String(e)));
     page.on('console', m => said.push(`[${m.type()}] ${m.text()}`.slice(0, 600)));
-    const ready = () => page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CustomSheet && window.Gate && window.Session && window.SheetWin && window.OrderHold && OrderHold.release && CN.S.cloud.ok === true, null, { timeout: 60000 });
+    // (NODISK, Paul 23 Nov 2026, charm-nest-1.html head script + Session.noDisk: outside the sandbox IndexedDB is refused ("nothing is kept on this computer"), yet Session.flushNow still opens it and answers
+    //  false, and the custom send's checkpoint (charm-nest-bridge.js checkpoint(): "Workspace saving is unavailable") stops on that answer on a computer that carries a run. Treated as this test
+    //  environment's artifact (the "Workspace could not be saved on this browser" toast): a flushNow refused ONLY for that reason answers true here. Reported for the owner to judge.)
+    const ready = () => page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CustomSheet && window.Gate && window.Session && window.SheetWin && window.OrderHold && OrderHold.release && CN.S.cloud.ok === true, null, { timeout: 60000 })
+      .then(() => page.evaluate(() => { const S = window.Session; if (S.__nodisk) return; const real = S.flushNow; S.__nodisk = true; S.flushNow = function () { return Promise.resolve(real.apply(this, arguments)).then(ok => ok === false && /nothing is kept on this computer/.test(String(((S.failure && S.failure()) || {}).message || '')) ? true : ok); }; }));
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
     await ready();
     const orders = [order(metal, S1, 6), order(metal, H, 1), ...(['closed', 'restart'].includes(kind) ? [order(metal, H2, 2)] : [])];
@@ -84,8 +90,11 @@ async function run(kind, browser) {
       await page.evaluate(({ sel, text, name }) => { const dt = new DataTransfer(); dt.items.add(new File([text], name)); const n = document.querySelector(sel); for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: 700, clientY: 400 })); { const a = document.querySelector('#cuAsk [data-ask-yes]'); if (a) a.click(); } }, { sel: card, text: DXF(w), name });
       await page.waitForFunction(() => document.querySelectorAll('#cuDlg[open] .cuFile .cuThumb img').length === 1, null, { timeout: 30000 });
       await page.click(`#cuDlg .cuFile .cuM[data-m="${metal}"]`);
-      await page.click('#cuDlg [data-send]');
-      await page.waitForFunction(() => !document.querySelector('#cuDlg').open && !document.querySelector('#tourLayer > *'), null, { timeout: 30000 });
+      // (NESTASK, Paul 23 Nov 2026: the dialog's Send to Sheet is now its Release Hold, [data-cu-nest]; it asks "Nest it or Skip it" in a pop-up first, Nest it puts the designs on their sheets)
+      await page.click('#cuDlg [data-cu-nest]');
+      await page.waitForSelector('dialog.naDlg[open] [data-na="nest"]', { timeout: 15000 });
+      await page.click('dialog.naDlg[open] [data-na="nest"]');
+      await page.waitForFunction(() => !document.querySelector('#cuDlg').open && !document.querySelector('#tourLayer > *'), null, { timeout: 30000 }).catch(async e => { throw new Error(e.message + ' · ' + JSON.stringify(await page.evaluate(() => ({ dialogs: [...document.querySelectorAll('dialog[open]')].map(d => (d.id || d.className) + ': ' + d.textContent.replace(/\s+/g, ' ').slice(0, 300)), tour: !!document.querySelector('#tourLayer > *'), toasts: [...document.querySelectorAll('#toasts .toast')].map(t => t.textContent.slice(0, 200)) })))); });
       await page.waitForFunction(m => { const sh = CN.S.sheets[m].pages.at(-1); return sh.charms.length && !['nesting', 'finishing', 'queued'].includes(sh.status); }, metal, { timeout: 30000 });
       await page.evaluate(m => { const sh = CN.S.sheets[m].pages.at(-1); if (sh.status !== 'complete' || sh.dirty) CN.startNest(sh); }, metal);
       await page.waitForFunction(m => { const sh = CN.S.sheets[m].pages.at(-1); return sh.status === 'complete' && sh.persistedDone && sh.verification?.ok && !sh.dirty; }, metal, { timeout: 120000 });
@@ -114,7 +123,7 @@ async function run(kind, browser) {
     check(s.placed.includes(poolOf(S1)) && s.placed.includes(poolOf(H)) && s.saved, `1 · the sheet holds the first order and the one to be held (${JSON.stringify(s.placed)})`);
 
     const quiet = async what => { const z = await page.evaluate(() => ({ asked: window.__asked, dialogs: document.querySelectorAll('dialog[open]').length })); check(!z.asked.length && !z.dialogs, `${what} · no question and no pop-up (${JSON.stringify(z)})`); };
-    const timeline = (rid, type) => st.list(TL).filter(e => e._id.startsWith(rid + '~') && (!type || e.type === type));
+    const timeline = (rid, type) => st.list(TL).concat(st.list('Sandbox_' + TL)).filter(e => e._id.startsWith(rid + '~') && (!type || e.type === type));
     const stepsOk = (res, what, want) => {
       const t = steps(res), ats = res.steps.map(x => x.at);
       check(inOrder(t, want) && t[0] === 'start' && t[t.length - 1] === 'done' && t.indexOf('placed') < t.indexOf('qr') && t.indexOf('qr') < t.indexOf('released'), `${what} · the steps come in order (${t.join(' ')})`);

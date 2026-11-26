@@ -103,11 +103,16 @@ async function main() {
       Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('review'); Review.render();
     }, { orders: ORDERS });
     // the Review tab stays on screen behind the order window, so what it shows is read as it is drawn
-    await page.waitForFunction(() => document.querySelectorAll('#rvList .reviewListRow').length >= 5, null, { timeout: 20000 });
+    // (ONECARD, Paul 23 Nov 2026: "The system is not allowed under any circumstances to create multiple cards for a given order": ALPHA CHAIN and BETA CHAIN, two Unknown SKU lines of 4170837260,
+    //  are ONE card of that order now (rvo:4170837260), so Open shows four cards: CABLE CHAIN ONLY, 4170837260's, LONGER CHAIN 5682, CHAIN ONLY 5601; it showed five, one per line)
+    await page.waitForFunction(() => document.querySelectorAll('#rvList .reviewListRow').length >= 4, null, { timeout: 20000 });
 
     const shot = async name => { if (shots) { await page.waitForTimeout(900); await page.screenshot({ path: path.join(shots, name + '.png') }); } };
     const closeWin = async () => { await page.evaluate(() => OrderWin.isOpen() && OrderWin.close()); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 5000 }); };
     const rec = key => srv.st.doc('Charm_Custom_Orders', key);
+    // (OUTBOX, Paul 28 Oct 2026: "nothing he presses may wait for the cloud": a print or a completion is stamped on the page at once, pending, and its customPut is sent from this computer's
+    //  outbox after it; the cloud's record is read once that write has landed, a few seconds at most)
+    const cloudSays = async (key, f, ms = 15000) => { for (const t0 = Date.now(); Date.now() - t0 < ms; await page.waitForTimeout(200)) { const r = rec(key); if (r && f(r)) return true; } return false; };
     const puts = () => srv.st.calls.filter(c => c.name === 'charmNestLibrary' && c.op === 'customPut').length;
     // each row of "Its pieces", as drawn
     const rows = () => page.evaluate(() => [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => {
@@ -224,6 +229,7 @@ async function main() {
     await page.waitForFunction(p0 => (window.__printed || 0) > p0, p0, { timeout: 30000 });
     await page.waitForFunction(k => { const r = B.maps.customDone[k]; return r && r.prints === 1; }, cable, { timeout: 30000 });
     await page.waitForFunction(k => /Print again/.test(document.querySelector(`#owPcSum [data-piece="${k}"] .pcAct`).textContent) && !document.querySelector('#owPcSum .cuStat'), cable, { timeout: 15000 });
+    await cloudSays(cable, r => r.prints === 1);
     assert.equal(puts() - pb, 1, 'one write for the print');
     const r1 = rec(cable);
     assert(r1 && r1.state === 'completed' && r1.prints === 1 && r1.printedBy === 'Test Operator', 'the cloud record says completed by its print, by whom: ' + JSON.stringify(r1));
@@ -266,6 +272,7 @@ async function main() {
     await idle(); await page.click(`#owPcSum [data-piece="${cable}"] [data-cu-print]`);
     await page.waitForFunction(p1 => (window.__printed || 0) > p1, p1, { timeout: 30000 });
     await page.waitForFunction(k => B.maps.customDone[k] && B.maps.customDone[k].prints === 2, cable, { timeout: 30000 });
+    await cloudSays(cable, r => r.prints === 2);
     assert.deepEqual(recStamps(cable).map(s => s.how), ['print', 'print'], 'a second seal; none replaced'); assert(uniqueStamps(cable));
     assert.deepEqual(await page.evaluate(k => Seal.list(B.maps.customDone[k]).filter(s => s.how !== 'button').map(s => s.n), cable), [1, 2], 'print 1 and print 2 (as the seals number them)');
     await page.waitForFunction(k => !document.querySelector('#owPcSum .cuStat, #owPcSum .working'), cable, { timeout: 15000 });
@@ -278,6 +285,7 @@ async function main() {
     await page.waitForFunction(k => !B.maps.customDone[k] && B.maps.customKept[k], cable, { timeout: 30000 });
     await openWin(cable);
     await page.waitForFunction(k => { const r = document.querySelector(`#owPcSum [data-piece="${k}"] .pcAct`); return r && r.querySelector('[data-rel-hold]') && !r.querySelector('[data-cu-done]'); }, cable, { timeout: 15000 });
+    await cloudSays(cable, r => r.state === 'open');
     assert.equal(rec(cable).state, 'open', 'the cloud record is open again'); assert.equal(recStamps(cable).length, 2, 'its seals are kept for good'); assert(uniqueStamps(cable));
     R = await rows(); assert.deepEqual(core(R[0].btns), ['Print QR label', 'Release Hold'], JSON.stringify(R[0].btns)); assert(R[0].seals >= 1, 'the kept seals rest on its buttons: ' + JSON.stringify(R[0]));
     assert(await noBar(), 'no bar, open again');
@@ -290,6 +298,7 @@ async function main() {
     // completed once more (its Print QR label: RELHOLD): one more seal (the 3rd), not two
     await idle(); await page.click(`#owPcSum [data-piece="${cable}"] [data-cu-print]`);
     await page.waitForFunction(k => B.maps.customDone[k] && B.maps.customDone[k].prints === 3, cable, { timeout: 30000 });
+    await cloudSays(cable, r => r.prints === 3);
     assert.equal(recStamps(cable).length, 3, 'the second completion adds one seal'); assert(uniqueStamps(cable));
     await page.waitForFunction(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-done]`), cable, { timeout: 15000 });
     await layout('completed-again');
@@ -316,6 +325,7 @@ async function main() {
     await layout('name-asked', [[390, 844]]);
     await page.fill('.cnNameBar[data-kind="ask"] input', pinOf(srv.st, 'Test Operator')); await page.press('.cnNameBar[data-kind="ask"] input', 'Enter');
     await page.waitForFunction(k => B.maps.customDone[k] && B.maps.customDone[k].prints === 1, beta, { timeout: 30000 });
+    await cloudSays(beta, r => r.prints === 1);
     assert(rec(beta).printedBy === 'Test Operator' && rec(beta).state === 'completed', JSON.stringify(rec(beta))); assert.equal(rec(alpha), undefined, 'ALPHA is untouched'); assert.equal(recStamps(beta).length, 1);
     await page.waitForFunction(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-done]`), beta, { timeout: 15000 });
     R = await rows(); assert(R.find(r => r.key === alpha).btns.join() === 'Print QR label,Release Hold', 'ALPHA still has its own open buttons: ' + JSON.stringify(R[0].btns));
@@ -327,6 +337,7 @@ async function main() {
       await idle();   // (while a seal is being stamped the page lets no press through: the stamp is never cut short)
       await page.click(undoBtn);
       await page.waitForFunction(k => !B.maps.customDone[k] && B.maps.customKept[k], beta, { timeout: 30000 });
+      await cloudSays(beta, r => r.state === 'open');
       assert.equal(rec(beta).state, 'open'); assert.equal(recStamps(beta).length, 1, 'its seal is kept');
       await page.waitForFunction(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-rel-hold]`), beta, { timeout: 15000 });
     }
@@ -338,6 +349,7 @@ async function main() {
     await idle(); await page.click(`#owPcSum [data-piece="${beta}"] [data-cu-print]`);
     await page.waitForFunction(p0 => (window.__printed || 0) > p0, pp0, { timeout: 30000 });
     await page.waitForFunction(([k, n]) => B.maps.customDone[k] && B.maps.customDone[k].prints === n, [beta, betaPrints + 1], { timeout: 30000 });
+    await cloudSays(beta, r => +r.prints === betaPrints + 1);
     assert.equal(recStamps(beta).length, betaStamps + 1, 'the print adds one seal to the one kept'); assert(uniqueStamps(beta)); assert.equal(rec(beta).state, 'completed');
     assert.equal(rec(alpha), undefined, 'ALPHA is untouched by BETA\'s print');
     const stamped = await page.evaluate(() => __stamps);
@@ -349,6 +361,7 @@ async function main() {
     const betaNow = JSON.stringify(recStamps(beta));
     await idle(); await page.click(`#owPcSum [data-piece="${alpha}"] [data-cu-print]`);
     await page.waitForFunction(k => B.maps.customDone[k] && B.maps.customDone[k].prints === 1, alpha, { timeout: 30000 });
+    await cloudSays(alpha, r => r.prints === 1);
     assert(rec(alpha).printedBy === 'Test Operator' && recStamps(alpha).length === 1, JSON.stringify(rec(alpha))); assert.equal(JSON.stringify(recStamps(beta)), betaNow, 'BETA unchanged');
     await closeWin();
 
@@ -393,6 +406,7 @@ async function main() {
     await page.waitForFunction(k => B.maps.customDone[k], solo, { timeout: 20000 });
     await page.waitForFunction(k => document.querySelector(`#owPcSum [data-pc-act="${k}"] [data-cu-done]`), solo, { timeout: 15000 });
     R = await rows(); assert.deepEqual(core(R[0].btns), ['Completed', 'Print QR label'], JSON.stringify(R[0].btns));
+    await cloudSays(solo, r => r.state === 'completed');
     assert.equal(rec(solo).state, 'completed'); assert.equal(recStamps(solo).length, 1);
     await layout('solo-completed');
     const s0 = await page.evaluate(() => window.__printed || 0);

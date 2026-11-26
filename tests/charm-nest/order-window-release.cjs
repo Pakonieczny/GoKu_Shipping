@@ -16,7 +16,8 @@ const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '../..');
 const fails = []; let passed = 0;
 const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.log((ok ? '  ok   ' : '  FAIL ') + what); };
-check(/charm-nest-bridge\.js\?v=[^"]*-rw2/.test(fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8')), 'source: the bridge\'s cache token carries -rw2');
+// (the -rw2 suffix went stale as the bridge's token was bumped since: any ?v= cache token on the bridge's script tag)
+check(/charm-nest-bridge\.js\?v=[^"&]+/.test(fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8')), 'source: the bridge\'s script tag carries a ?v= cache token');
 
 (async () => {
   const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
@@ -27,6 +28,11 @@ check(/charm-nest-bridge\.js\?v=[^"]*-rw2/.test(fs.readFileSync(path.join(root, 
   const w = await W.open('production', { reducedMotion: 'reduce' });
   if (!w) { console.log('order-window-release: no browser, the page part is skipped'); return done(); }
   const { page } = w, st = w.srv.st;
+  // (the fake Firestore's transaction answers tx.get(doc) with a snapshot that has no .ref (bridge-server.cjs docRef.get), which a real DocumentSnapshot always has; releaseAsk
+  //  (RELEASEHOLD, Paul 20 Nov 2026: every release starts in the cloud) writes the order's held pool rows back through it (_charmNestHoldRelease.js: tx.set(s.ref, ...)), and failed here with
+  //  "Cannot read properties of undefined (reading 'path')". The snapshot is given its ref, as Firestore's has it, until the shared fake does so itself)
+  { const db = st.db, realTx = db.runTransaction.bind(db), withRef = (r, x) => { if (r && !r.docs && !r.ref && x && x.path) r.ref = x; return r; };
+    db.runTransaction = (fn, o) => realTx(tx => fn(Object.assign({}, tx, { get: async x => withRef(await tx.get(x), x), getAll: async (...refs) => { const rs = await tx.getAll(...refs), rr = refs.filter(x => x && typeof x.get === 'function'); return rs.map((r, i) => withRef(r, rr[i])); } })), o); }
   const until = async (f, ms, what) => { const t = Date.now() + ms; for (;;) { const v = await f(); if (v) return v; if (Date.now() > t) throw new Error('timed out: ' + what); await page.waitForTimeout(250); } };
   const keysOf = rid => page.evaluate(r => Orders.rows().filter(x => String(x.order.receiptId) === r).map(x => x.key), rid);
   const closeWin = async () => { await page.evaluate(() => OrderWin.isOpen() && OrderWin.close()); await W.settle(page, 400); };
@@ -44,8 +50,12 @@ check(/charm-nest-bridge\.js\?v=[^"]*-rw2/.test(fs.readFileSync(path.join(root, 
   const realEngine = () => page.evaluate(() => { if (window.__real) window.OrderHold = window.__real; });
   const holdOrder = async key => { await openWin(key); await page.click('#owPcSum .revSendBtn[data-rev-host]'); const rid = key.split('_')[0]; await page.waitForFunction(r => CharmNestReviewMark.isMarked(r) && !ReviewSend.busy(r) && !HoldUI.busy(r), rid, { timeout: 30000 }); await W.settle(page, 600); };
   /** the line(s) and pool rows as the sheet window's "Take off and hold" leaves them (the line held, its piece's pool row abandoned and held by the person) */
+  // (RELEASEHOLD, Paul 20 Nov 2026: a release is made IN THE CLOUD (releaseAsk), and "an order the cloud does not hold on hold gets no 'released' step" (_charmNestHoldRelease.js): a hold staged on
+  //  this page's rows alone was released with no step. The take-off's pool row, abandoned and held by the person, is put in the cloud too, as the comment above always said)
   const sheetHold = async (keys, who) => {
-    await page.evaluate(({ keys, who }) => { for (const row of Orders.rows()) if (keys.includes(row.key)) { row.state = 'held'; row.hold = row.reason = `Taken off GF Sheet 2 by ${who}`; row.heldAt = Date.now(); row.holdSeen = false; } Review.syncOrderItems(); Orders.render(); }, { keys, who });
+    const at = Date.now();
+    const lines = await page.evaluate(({ keys, who, at }) => { const out = []; for (const row of Orders.rows()) if (keys.includes(row.key)) { out.push({ key: row.key, rid: String(row.order.receiptId), tid: String(row.line.transactionId), sku: row.line.sku, pid: (row.poolIds || [])[0] || row.key + '_1' }); row.state = 'held'; row.hold = row.reason = `Taken off GF Sheet 2 by ${who}`; row.heldAt = at; row.holdSeen = false; } Review.syncOrderItems(); Orders.render(); return out; }, { keys, who, at });
+    for (const l of lines) st.put('Charm_Pool', l.pid, Object.assign({ poolId: l.pid, orderId: l.rid, transactionId: l.tid, lineKey: l.key, sku: l.sku, material: 'gold', copy: 1, quantity: 1, createdAt: at - 3600e3 }, st.doc('Charm_Pool', l.pid), { state: 'abandoned', sheetId: null, setId: null, heldBy: who, heldReason: `Taken off GF Sheet 2 by ${who}`, heldAt: at, updatedAt: at }));
   };
   const cloudHold = async (nm, who) => {
     const pid = W.poolIdOf(nm); st.put('Charm_Pool', pid, Object.assign({}, st.doc('Charm_Pool', pid), { state: 'abandoned', sheetId: null, setId: null, heldBy: who, heldReason: 'on hold', heldAt: Date.now() }));
@@ -56,15 +66,19 @@ check(/charm-nest-bridge\.js\?v=[^"]*-rw2/.test(fs.readFileSync(path.join(root, 
   const press = async (rid, idx) => {
     const t0 = Date.now();
     await page.locator('#owPcSum .owPcRow').nth(idx).locator('[data-rel-hold],[data-cu-release]').first().click();
+    // (NESTASK, Paul 23 Nov 2026 + RELASK, Paul 25 Nov 2026: Release Hold first asks "Put this charm on a sheet?" when a released line has a charm on no sheet, a marked order's made-but-unplaced piece
+    // included; the default, Nest, is answered here, as a person would)
+    const asked = await until(() => page.evaluate(() => !!document.querySelector('dialog.naDlg[open]')).then(d => d ? 'asked' : st.list('Order_Timeline').some(e => String(e.orderId) === rid && e.type === 'released' && +((e.data || {}).sealAt) >= t0 - 1000) ? 'none' : ''), 15000, `the Release Hold pop-up of ${rid}`).catch(() => 'none');
+    if (asked === 'asked') { await page.click('dialog.naDlg[open] [data-na="nest"]'); await until(() => page.evaluate(() => !document.querySelector('dialog.naDlg[open]')), 5000, 'the pop-up closed').catch(() => null); }
     const ev = await until(() => st.list('Order_Timeline').find(e => String(e.orderId) === rid && e.type === 'released' && e.data && e.data.seal === 'releaseHold' && +e.data.sealAt >= t0 - 1000), 60000, `the released step of ${rid}`).catch(() => null);
     await until(() => page.evaluate(r => Orders.rows().filter(x => String(x.order.receiptId) === r).every(x => !Orders.heldNow(x)) && !CharmNestReviewMark.isMarked(r), rid), 30000, `${rid} no longer held`).catch(() => null);
     await W.settle(page, 1500);
     const after = await page.evaluate(r => ({ held: Orders.rows().filter(x => String(x.order.receiptId) === r).filter(x => Orders.heldNow(x)).length, marked: CharmNestReviewMark.isMarked(r), seals: (OrderWin.seals() || []).map(s => s.kind) }), rid);
-    return { ev, after, rows: await rows(), ms: Date.now() - t0 };
+    return { ev, after, asked, rows: await rows(), ms: Date.now() - t0 };
   };
   const shownOk = (rs, n) => rs.length === n && rs.every(r => r.rel.length === 1 && r.rel[0].t === 'Release Hold' && r.rel[0].on);
   const releasedOk = res => !!res.ev && res.ev.by === 'Test Operator' && res.after.held === 0 && !res.after.marked && res.after.seals.includes('release') && res.rows.every(r => !r.rel.length) && res.rows.some(r => r.btns.includes('Hold Order'));
-  const say = res => JSON.stringify({ ev: res.ev && { text: res.ev.text, seal: res.ev.data.seal }, after: res.after, rows: res.rows.map(r => r.btns), s: Math.round(res.ms / 100) / 10 });
+  const say = res => JSON.stringify({ asked: res.asked, ev: res.ev && { text: res.ev.text, seal: res.ev.data.seal }, after: res.after, rows: res.rows.map(r => r.btns), s: Math.round(res.ms / 100) / 10 });
   try {
     await W.addOrders(w, ['alone', 'matched', 'two', 'half']);
     await W.seedSheet(w, { id: 'sh-ow1', orders: ['sheeted', 'mate'] });

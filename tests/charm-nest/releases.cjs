@@ -52,6 +52,7 @@ const CN={sheetFileBase:sh=>'Set-'+sh.seq+'-'+sh.metal+'-'+sh.sheetIndex,persist
 const Sets={onSheetSaved:async(sh)=>{writes.push(sh.fileBase);const set=[...B.sets.values()][0];if(!set.sheetIds.includes(sh.sheetId))set.sheetIds.push(sh.sheetId);if(!set.materials.includes(sh.metal))set.materials.push(sh.metal);},labelsReady:()=>true,ofRun:()=>[...B.sets.values()],save:async()=>{},ensure:async(runId,group,o)=>{if(o.roseOnly&&seq%2) return null;allocations++;const s={runId,group,seq:seq++,day:today(),setId:'set-'+allocations,sheetIds:[],labelFiles:[],materials:[],orders:{}};B.sets.set(s.setId,s);return s}};
 const page=(metal,full=false)=>({metal,runId:B.run.runId,sheetId:metal+'-id',draft:true,outputs:{},persistedDone:true,placements:[{}],verification:{ok:true},releaseFull:full,charms:[],status:'complete'});
 `,c);
+require('./_gateCore.cjs')(c);   // (GATECORE, Paul 20 Nov 2026: the page's Gate asks charm-nest-assembly-core.js for every set decision; the page loads it before charm-nest-bridge.js)
 vm.runInContext(part('Gate','/* ═══ 21'),c);
 (async()=>{
  // Exercise the actual cloud reconstruction path, including a run with no set yet.

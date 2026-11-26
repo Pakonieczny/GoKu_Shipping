@@ -14,7 +14,8 @@
 //    6  the NEXT order of the same listing is matched by the saved link at once, with nothing in Review; and after a page reload
 //    7  the saved link survives the sandbox Reset and the history Purge (a new order after each is still matched by it)
 //    8  an order on a saved sheet keeps its place (no record of the sheet, its pieces or its set changes) and the sheet is held
-//    9  the Library names the order holding the sheet (card, '!' list, Approve line) and one tap opens it in Review; nothing else is named
+//    9  the Library shows the sheet held back (back In progress, Approve grey, its '!' list names the order) and one tap opens it in Review; nothing else is named
+//       (NOHELDLINE, Paul 13 Nov 2026: the "Held by order … in Review" line on the card and beside its Approve is no longer drawn; the button's aria-label still names the order)
 //   10  the server refuses to complete the held sheet too
 //   11  resolving the review releases the sheet at once (no extra press), the notes clear, and the server accepts it
 // Every step is reported with the owner it belongs to (REVBTN, REVMARK, REVSUGGEST, REVLINK, REVHOLD, REVLIB); a later step that needs an earlier one says so when it is skipped.
@@ -46,7 +47,7 @@ const PAGE = {
   mark: (w, rid) => w.page.evaluate(rid => { const M = window.CharmNestReviewMark; return M ? { is: M.isMarked(rid), info: M.info(rid), open: M.openRids() } : null; }, rid),
   hold: (w, sid) => w.page.evaluate(sid => { const H = window.CharmNestReviewHold; return H ? { held: H.isHeld(sid), by: H.heldBy(sid), why: H.reasonFor(sid) } : null; }, sid),
   sheetState: (w, sid) => w.page.evaluate(sid => { const x = LaserReview.explain('sheet', sid); return x ? { ready: x.ready, step: x.step, steps: Object.fromEntries(x.steps.map(s => [s.key, { state: s.state, detail: s.detail }])), next: x.nextText } : null; }, sid),
-  libCard: (w, sid) => w.page.evaluate(sid => { const f = document.querySelector(`[data-flow-for="sheet:${sid}"]`), c = f && (f.closest('article') || f.closest('.libCard') || f.parentElement); const box = document.querySelector(`.approveBox[data-approve-for="sheet:${sid}"]`), btn = box && box.querySelector('[data-approve-btn]'); return c ? { text: c.innerText.replace(/\s+/g, ' ').trim(), approve: btn ? { disabled: btn.getAttribute('aria-disabled') === 'true', why: (box.querySelector('[data-approve-why]') || {}).textContent || '', label: btn.textContent.trim() } : null, bang: !!c.querySelector('[data-issues-open]') } : null; }, sid),
+  libCard: (w, sid) => w.page.evaluate(sid => { const f = document.querySelector(`[data-flow-for="sheet:${sid}"]`), c = f && (f.closest('article') || f.closest('.libCard') || f.parentElement); const box = document.querySelector(`.approveBox[data-approve-for="sheet:${sid}"]`), btn = box && box.querySelector('[data-approve-btn]'); return c ? { text: c.innerText.replace(/\s+/g, ' ').trim(), approve: btn ? { disabled: btn.getAttribute('aria-disabled') === 'true', why: (box.querySelector('[data-approve-why]') || {}).textContent || '', label: btn.textContent.trim(), aria: btn.getAttribute('aria-label') || '' } : null, bang: !!c.querySelector('[data-issues-open]'), area: (f.closest('[data-laser-area]') || { dataset: {} }).dataset.laserArea || '', orders: ((f.querySelector('.flowDot[data-step="orders"]') || { getAttribute: () => '' }).getAttribute('data-tip') || '').split('\n').slice(0, 3).join(' | ') } : null; }, sid),
   libOpen: async (w, sid) => {
     const mark = w.srv.st.calls.length; await w.page.evaluate(() => CN.setMode('library'));
     try { await w.page.waitForSelector(`[data-flow-for="sheet:${sid}"]`, { timeout: 30000 }); }
@@ -296,16 +297,19 @@ async function scenario(mode) {
       ok(String(now.steps.orders.detail + ' ' + now.next).includes(rid) || /Review/.test(now.steps.orders.detail + now.next), 'the step says it is the review: ' + J(now.steps.orders));
     });
 
-    await step('9', 'REVLIB', 'the Library says exactly which order holds the sheet, with one tap to open it in Review', ['8'], async () => {
+    await step('9', 'REVLIB', 'the Library shows the sheet held back (Approve grey, its \'!\' names the order), with one tap to open it in Review', ['8'], async () => {
       const rid = cR('sheeted'), mateRid = cR('mate');
       await PAGE.libOpen(w, sh.id);
-      const card = await until(async () => { const c = await PAGE.libCard(w, sh.id); return c && c.text.includes(rid) ? c : null; }, 8000);
-      ok(card, 'the sheet\'s card names the order holding it: ' + J(await PAGE.libCard(w, sh.id)));
-      ok(/Held by order/i.test(card.text) && /in Review/i.test(card.text), 'in plain words (Held by order ... in Review): ' + card.text.slice(0, 400));
-      const heldText = (card.text.match(/Held by orders? [^.]*? in Review/i) || [''])[0];
-      ok(heldText.includes(rid) && !heldText.includes(mateRid), 'it names this order and not the other one on the sheet: ' + heldText);
+      // (NOHELDLINE, Paul 13 Nov 2026: "Remove this text from the UI from all sets of sheets" (charm-nest-bridge.js holdCase, charm-nest-library-review-hold.js decorate): the "Held by order … in Review"
+      //  line, beside the Approve button and under the rail, is not drawn; the sheet stays held back: back In progress, its Approve grey (quiet: the button's aria-label names the order), its rail's
+      //  Order check not done and its '!' list naming the order)
+      const card = await until(async () => { const c = await PAGE.libCard(w, sh.id); return c && c.approve && c.approve.disabled && c.bang ? c : null; }, 8000);
+      ok(card, 'the sheet\'s card shows it held back once the Library is opened (In progress, Approve grey, \'!\' on the rail): ' + J(await PAGE.libCard(w, sh.id)));
+      ok(!/Held by order/i.test(card.text) && !card.text.includes(rid), 'no "Held by order … in Review" line on the card (NOHELDLINE): ' + card.text.slice(0, 400));
+      ok(card.area === 'pending' && !/Done/.test(card.orders), 'it is back In progress, its Order check step not done: ' + J({ area: card.area, orders: card.orders }));
       ok(card.approve && card.approve.disabled, 'the Approve button is grey: ' + J(card.approve));
-      ok(card.approve.why.includes(rid), 'the Approve button\'s reason line names the order: ' + J(card.approve));
+      ok(!card.approve.why.trim(), 'with no reason line beside it (NOHELDLINE): ' + J(card.approve));
+      ok(card.approve.aria.includes(rid) && /in Review/i.test(card.approve.aria) && !card.approve.aria.includes(mateRid), 'the button itself still names this order, and not the other one on the sheet, for a screen reader: ' + J(card.approve));
       ok(card.bang, 'the \'!\' is on the rail');
       await w.page.click(`[data-issues-open][data-issues-id="${sh.id}"]`);
       const panel = await until(() => PAGE.panel(w), 4000);

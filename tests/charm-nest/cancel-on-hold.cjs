@@ -149,7 +149,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       assert(Math.abs(k.h[0] - k.h[1]) <= 1, `the same height as Release Hold: ${k.h}`); assert.equal(k.radius[0], k.radius[1], 'the same corners');
       assert.notEqual(k.bg, k.relBg, 'plain, not the orange of Release Hold'); assert(/\bbtn\b/.test(k.cls) && /\bsm\b/.test(k.cls) && /\bghost\b/.test(k.cls), k.cls);
     }
-    assert(got.c.length >= 1 && got.c.every(k => k.n === 0), 'an order that is not held: no Cancel Order on its card(s): ' + JSON.stringify(got.c));
+    // (CANCELHELD, Paul 11 Nov 2026: an order sent to Review with Hold Order is on hold too: C is marked, not held, and its card has Cancel Order; every order of this world with a Review card is held or marked)
+    assert(got.c.length >= 1 && got.c.every(k => k.n === 1), 'an order sent to Review (marked, not held): one Cancel Order on its card (CANCELHELD): ' + JSON.stringify(got.c));
     await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); Orders.renderNow(); });
     await page.waitForFunction(() => document.querySelectorAll('#ordItems > [data-rid]').length >= 6);
     assert.equal(await page.evaluate(() => document.querySelectorAll('#ordersView .cnCancelBtn').length), 0, 'no Cancel Order anywhere in the Orders tab (its held cards keep Release Hold)');
@@ -185,8 +186,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const c0 = await counts(page);
     await sampler(page); await sealWatch(page);
     await press(page, A);
-    const waiting = await page.evaluate(A => { const n = document.querySelector(`#rvList > [data-rid="${A}"]`); return { busy: CancelUI.busy(A), lifted: n.classList.contains('cnBusy'), spin: !!n.querySelector('.cnCancelBtn .spin'), name: !!document.querySelector('.cnNameBar') }; }, A);
-    assert(waiting.busy && waiting.lifted && waiting.spin, 'kept, the card lifts, the spinner: ' + JSON.stringify(waiting)); assert.equal(waiting.name, false);
+    const waiting = await page.evaluate(A => { const n = document.querySelector(`#rvList > [data-rid="${A}"]`); const b = n.querySelector('.cnCancelBtn'); return { busy: CancelUI.busy(A), lifted: n.classList.contains('cnBusy'), said: b && b.textContent.trim(), off: !!(b && b.disabled), name: !!document.querySelector('.cnNameBar') }; }, A);
+    // (INSTANT, Paul 23 Nov 2026: the press shows its result at once: the button reads "Cancelled" (greyed) while the cloud keeps it, no spinner)
+    assert(waiting.busy && waiting.lifted && waiting.said === 'Cancelled' && waiting.off, 'kept, the card lifts, the button says Cancelled at once: ' + JSON.stringify(waiting)); assert.equal(waiting.name, false);
     await shot(page, '3-pressed');
     await gone(page, A);
     await page.waitForFunction(() => document.querySelector('.mNote'), null, { timeout: 8000 });
@@ -269,8 +271,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(calls('cancelRestore', B2).length, 1, 'cancelRestore once'); assert.equal(st.doc('Charm_Nest_Cancelled', B2), undefined, 'out of Cancelled');
     assert.equal(await page.evaluate(B2 => B.orders.rows.filter(r => r.order.receiptId === B2 && r.state === 'held' && r.hold).length, B2), 2, 'both lines held again');
     assert.equal(await rvCards(page, B2), 1, 'its card is back in Review'); assert.equal((await counts(page)).open, c0.open, 'and Review counts it again');
-    const flew = s.s.filter(x => x.ghosts.length); assert(flew.length >= 10, 'the card flew back: ' + flew.length);
-    const first = flew[0].ghosts[0], last = flew[flew.length - 1].ghosts[0], tab = flew[0].tab;
+    // (the order's own card: another card of the list may slide while the list makes room, a ghost of its own)
+    const mine = g => g.key === 'ord:rvm:' + B2, flew = s.s.filter(x => x.ghosts.some(mine)); assert(flew.length >= 10, 'the card flew back: ' + flew.length);
+    const first = flew[0].ghosts.find(mine), last = flew[flew.length - 1].ghosts.find(mine), tab = flew[0].tab;
     assert(Math.hypot(first.x - tab.x, first.y - tab.y) < Math.hypot(last.x - tab.x, last.y - tab.y), 'out of the Orders tab, back into Review');
     assert(s.props.every(p => ['transform', 'opacity'].includes(p)), 'only transform and opacity: ' + JSON.stringify(s.props));
     assert(s.s.some(x => x.notes.some(n => /Order 4174601820 is back on hold/.test(n))), 'a note says it is back on hold');

@@ -5,7 +5,8 @@
 //   3 "Just this order" on a following computer is asked of the cloud (runCmdPut skuonce, the row and the charm) and answered; with the carrying computer not answering it is queued, never refused
 //   4 the carrying computer does it in the asker's name, and keeps what a person asked for hours (a release, a one-order charm) while any other request is "too old" after ten minutes
 //   5 the cloud takes a skuonce command with its charm
-//   6 Release Hold asked while the carrier answers but never starts: it is queued after 30 s, not a failure
+//   6, 7 Release Hold on a following computer (RELEASEHOLD, Paul 20 Nov 2026, charm-nest-order-release.js askCloud/doRelease): made in the cloud at once (op releaseAsk), whatever the carrier does;
+//     the old relay to the carrier, its 30 s "queued" answer and its long wait (RELWAIT) are gone
 // Real sorter in Chromium against the repo's fake site; nothing live.   PW_DIR=... CHROMIUM=... node tests/charm-nest/anywhere-requests.cjs
 if (process.argv[2]) process.env.PW_DIR = process.argv[2];
 const { open } = require('./day-sim/harness.cjs');
@@ -115,41 +116,42 @@ const RUN = 'run-any-t', LID = '1697972740';
   const put = await page.evaluate(([RUN]) => CN.api('charmNestLibrary', { op: 'runCmdPut', runId: RUN, dev: 'dtestfoll02', by: 'Michelle_R', cmd: { type: 'skuonce', ids: ['4237444149_5301'], sku: 'basketball (huggie)' } }).then(r => r, e => ({ error: String(e.message || e) })), [RUN]);
   say('5 the cloud takes a skuonce command with the row and the charm (upper case)', put && put.ok && put.cmd.type === 'skuonce' && put.cmd.args.sku === 'BASKETBALL (HUGGIE)' && JSON.stringify(put.cmd.args.ids) === JSON.stringify(['4237444149_5301']), put);
 
-  // 6 ── a carrier that answers but never starts
+  // 6 ── a carrier that answers, then stops answering: the release does not wait on it (RELEASEHOLD: made in the cloud at once)
   const stuck = await page.evaluate(async ([RUN]) => {
-    const realApi = CN.api, realState = CharmNestRunFollow.state, realDev = CharmNestRunFollow.dev, out = {}; let checks = 0;
+    const realApi = CN.api, realState = CharmNestRunFollow.state, realDev = CharmNestRunFollow.dev, out = { calls: [] }; let checks = 0;
     B.run = null; CharmNestRunFollow.state = () => ({ runId: RUN }); CharmNestRunFollow.dev = () => 'dtestfoll02';
     const row = { key: '4999000002_1', order: { receiptId: '4999000002' }, state: 'held', hold: 'x', problems: [] };
     const realRows = Orders.rows; Orders.rows = () => [row];
     CN.api = async (fn, body) => {
+      if (/^(runCarrier|runCmdPut|runCmdList|releaseAsk)$/.test(body.op)) out.calls.push(body.op);
       if (body.op === 'runCarrier') { checks++; return checks <= 1 ? { ok: true, alive: true, mine: false, carrier: { by: 'Paul_K', dev: 'dcarrier01' } } : { ok: true, alive: false, mine: false, carrier: { by: 'Paul_K', dev: 'dcarrier01' } }; }
       if (body.op === 'runCmdPut') return { ok: true, id: 'cW1' };
       if (body.op === 'runCmdList') return { cmds: [{ id: 'cW1', state: 'waiting' }] };
-      return __origApi(fn, body);
+      return __origApi(fn, body);   // (releaseAsk: the fake site's real handler)
     };
-    try { const t0 = Date.now(); const r = await OrderHold.release('4999000002', { name: 'Michelle_R' }); out.r = { ok: r.ok, queued: r.queued, released: r.released, error: r.error, ms: Date.now() - t0 }; }
+    try { const t0 = Date.now(); const r = await OrderHold.release('4999000002', { name: 'Michelle_R' }); out.r = { ok: r.ok, queued: r.queued, released: r.released, via: r.via, error: r.error, ms: Date.now() - t0 }; }
     finally { CN.api = realApi; CharmNestRunFollow.state = realState; CharmNestRunFollow.dev = realDev; Orders.rows = realRows; }
     return out;
   }, [RUN]);
-  say('6 asked while the carrier answers, then it stops answering before it starts: after about 30 s it is "queued" (kept in the cloud), not a failure', stuck.r.queued === true && stuck.r.released !== true && !/was not released/.test(stuck.r.error || '') && /stopped answering/.test(stuck.r.error || '') && stuck.r.ms >= 29000 && stuck.r.ms < 60000, stuck.r);
+  say('6 asked while the carrier answers, then stops answering: nothing waits on it; released in the cloud at once (asked of the cloud only, not "queued", not a failure)', stuck.r.ok === true && stuck.r.released === true && stuck.r.via === 'cloud' && !stuck.r.queued && !stuck.r.error && stuck.r.ms < 15000 && JSON.stringify(stuck.calls) === JSON.stringify(['releaseAsk']), stuck);
 
-  // 7 ── a release that takes longer than this page used to wait (RELWAIT: order 4237522021, 158 s against a wait of 150 s)
+  // 7 ── a release the run's computer would take long to place (RELWAIT: order 4237522021, 158 s): the press no longer waits for it; the cloud's release is the answer
   const long = await page.evaluate(async ([RUN]) => {
-    const realApi = CN.api, realState = CharmNestRunFollow.state, realDev = CharmNestRunFollow.dev, realRows = Orders.rows, out = { steps: [] }; let n = 0;
+    const realApi = CN.api, realState = CharmNestRunFollow.state, realDev = CharmNestRunFollow.dev, realRows = Orders.rows, out = { steps: [], calls: [] }; let n = 0;
     B.run = null; CharmNestRunFollow.state = () => ({ runId: RUN }); CharmNestRunFollow.dev = () => 'dtestfoll02';
     const row = { key: '4999000003_1', order: { receiptId: '4999000003' }, state: 'held', hold: 'x', problems: [] }; Orders.rows = () => [row];
-    OrderHold.relayPollMs = 200; OrderHold.relayNoticeMs = 1500; OrderHold.relayLimitMs = 20000;
     CN.api = async (fn, body) => {
+      if (/^(runCarrier|runCmdPut|runCmdList|releaseAsk)$/.test(body.op)) out.calls.push(body.op);
       if (body.op === 'runCarrier') return { ok: true, alive: true, mine: false, carrier: { by: '', dev: 'dcarrier01' } };
       if (body.op === 'runCmdPut') return { ok: true, id: 'cL1' };
       if (body.op === 'runCmdList') { n++; const at = n * 200; return { cmds: [{ id: 'cL1', state: at < 800 ? 'waiting' : at < 3600 ? 'running' : 'done', step: at < 2000 ? 'Its place at the front is saved · 1 s' : 'Placing on GF Draft 2… · 4 s', text: 'Order 4999000003 released from hold and placed on GF Draft 2' }] }; }
-      return __origApi(fn, body);
+      return __origApi(fn, body);   // (releaseAsk: the fake site's real handler)
     };
-    try { const t0 = Date.now(); const r = await OrderHold.release('4999000003', { name: 'Michelle_R', onStep: s => out.steps.push(s.text || s.type) }); out.r = { ok: r.ok, released: r.released, queued: r.queued, error: r.error, ms: Date.now() - t0 }; }
-    finally { CN.api = realApi; CharmNestRunFollow.state = realState; CharmNestRunFollow.dev = realDev; Orders.rows = realRows; delete OrderHold.relayPollMs; delete OrderHold.relayNoticeMs; delete OrderHold.relayLimitMs; }
+    try { const t0 = Date.now(); const r = await OrderHold.release('4999000003', { name: 'Michelle_R', onStep: s => out.steps.push(s.text || s.type) }); out.r = { ok: r.ok, released: r.released, queued: r.queued, via: r.via, error: r.error, ms: Date.now() - t0 }; out.hold = row.hold; }
+    finally { CN.api = realApi; CharmNestRunFollow.state = realState; CharmNestRunFollow.dev = realDev; Orders.rows = realRows; }
     return out;
   }, [RUN]);
-  say('7 a release that takes a long time is waited for to its end: released (not queued, not a failure), with what the run\'s computer is doing said on the way', long.r.ok === true && long.r.released === true && !long.r.queued && long.r.ms >= 3000 && long.steps.some(s => /Its place at the front is saved/.test(s)) && long.steps.some(s => /Placing on GF Draft 2/.test(s)) && long.steps.some(s => /busy/.test(s)), long);
+  say('7 the press is answered by the cloud\'s release, not by the run\'s placing: released (not queued, not a failure), with "Releasing the hold in the cloud" said on the way and no relay asked', long.r.ok === true && long.r.released === true && long.r.via === 'cloud' && !long.r.queued && long.r.ms < 15000 && long.steps.some(s => /Releasing the hold in the cloud/.test(s)) && long.steps.includes('released') && long.steps.includes('done') && JSON.stringify(long.calls) === JSON.stringify(['releaseAsk']) && !long.hold, long);
 
   // 8, 9 ── RVSAME: the run's decisions reach a following computer; an unmatched line is read under its Etsy SKU
   const same = await page.evaluate(async ([RUN]) => {

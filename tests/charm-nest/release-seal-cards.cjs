@@ -32,7 +32,8 @@ try {
   check(!/fetch\(|api\(|setTimeout|setInterval|requestAnimationFrame|addEventListener|onSnapshot|OrderTimeline|ensureSeals|loadSeals/.test(code(row) + code(eg)), 'source: the seals row and the Engraving rows\' lookup read what the page holds: no read, timer or listener');
   const place = fn(bridge, 'function renderPlacementRows(', 'function quietRow('), mono = fn(bridge, 'function monoPlacementRow(grp) {', 'function monoStep(');
   check(/rel\.html\(\)\+\(told\?/.test(place) && /"\|"\+rel\.sig|\+"\|"\+rel\.sig/.test(place) && /rel\.html\(\) \+ \(window\.CNMonogramSeals/.test(mono) && /"\|" \+ rel\.sig/.test(mono), 'source: the Engraving tab\'s engraved row and monogram row draw the seal first in their seals cell, and keep its signature in the cell\'s stamp');
-  check(/\.ordSealsRow\{/.test(html) && !/\.relSealAt\{[^}]*nowrap/.test(html) && /charm-nest-bridge\.js\?v=[^"]*-rc1/.test(html), 'source: the seals row has its CSS, the date and time wrap (they were cut at the card\'s edge), the bridge\'s cache token carries -rc1');
+  // (a cache token goes stale with every bump of the bridge: -rc1 was RELSEAL's; what is checked now is that the bridge is loaded with a ?v= token at all)
+  check(/\.ordSealsRow\{/.test(html) && !/\.relSealAt\{[^}]*nowrap/.test(html) && /charm-nest-bridge\.js\?v=[^"&]+"/.test(html), 'source: the seals row has its CSS, the date and time wrap (they were cut at the card\'s edge), the bridge is loaded with a cache token (?v=...)');
 } catch (e) { fails.push('source: ' + e.message); console.log('  FAIL source: ' + e.message); }
 
 // ═══ the real page ═══
@@ -106,7 +107,9 @@ try {
       await until(() => page.evaluate(k => Orders.rows().some(r => r.order.receiptId === k && r.releaseHold), RID(n)), 20000, 'its press kept on its lines: ' + n);
     }
     await page.waitForTimeout(1200);
-    check(!(await page.evaluate(() => window.__toasts.filter(t => t[0] === 'bad'))).length, '1 · three orders pressed Release Hold on their Review cards, no failure toast');
+    // (the fake site keeps no workspace on the browser: "Workspace could not be saved on this browser" is that, never the release's)
+    const bad1 = await page.evaluate(() => window.__toasts.filter(t => t[0] === 'bad' && !/Workspace could not be saved on this browser/.test(t[1])));
+    check(!bad1.length, `1 · three orders pressed Release Hold on their Review cards, no failure toast (${JSON.stringify(bad1)})`);
 
     // ── 2 · Orders, cards ──
     const cards = await orders(page, 'cards');
@@ -164,8 +167,13 @@ try {
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => window.CN && window.Orders && window.Engrave && CN.S.cloud.ok === true, null, { timeout: 60000 });
     await page.waitForFunction(() => !window.Session || !Session.ready || Session.ready(), null, { timeout: 30000 }).catch(() => {});
-    await page.evaluate(async () => { try { await Master.load(true); await Orders.loadMaps(true); } catch (e) { console.warn(e); } });
-    await until(() => page.evaluate(n => Orders.rows().length >= n && [...Engrave.items().values()].length >= 4, 7), 60000, 'the workspace restored after the reload');
+    await page.evaluate(async () => { try { await Master.load({ force: true, fresh: true }); await Orders.loadMaps(true); } catch (e) { console.warn(e); } });
+    // (NODISK, Paul 23 Nov 2026, charm-nest-bridge.js Session noDisk: "The computer is not allowed to hold any information": outside the sandbox no workspace is saved or read on this computer, so a reload
+    //  brings back no line and no Engrave job from the browser. The page holds the orders again as a fresh page does (here: the real intake again, R.build); the seals come from the cloud)
+    const kept6 = await until(() => page.evaluate(n => Orders.rows().length >= n && [...Engrave.items().values()].length >= 4, 7), 15000, 'the workspace restored after the reload').then(() => true, () => false);
+    check(!kept6 && await page.evaluate(() => Orders.rows().length === 0), '6 · NODISK: the reload restores nothing from this computer (no line, no job)');
+    if (!kept6) { const again = await R.build(w, NAMES); check(NAMES.every(n => again[n].jobs.length === made[n].jobs.length), `6 · the orders and their Engrave jobs are made again by the real intake (${NAMES.map(n => n + ':' + again[n].jobs.length)})`); }
+    await until(() => page.evaluate(n => Orders.rows().length >= n && [...Engrave.items().values()].length >= 4, 7), 60000, 'the orders held again after the reload');
     const released = [...BY_CARD, LIVE_ENG, LIVE_ORD];
     const o6 = { cards: await orders(page, 'cards'), list: await orders(page, 'list') }, e6 = await engrave(page);
     for (const n of released) check(seeSeal(o6.cards[RID(n)], WHO) && seeSeal(o6.list[RID(n)], WHO), `6 · after a reload: ${n}: its Orders card and list row show the seal, who and when (rebuilt from the lines' record and the cloud, no press on this page)`);
@@ -183,7 +191,7 @@ try {
     const p2 = await context.newPage(); p2.setDefaultTimeout(30000);
     await p2.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
     await p2.waitForFunction(() => window.CN && window.Orders && CN.S.cloud.ok === true, null, { timeout: 60000 });
-    await p2.evaluate(async () => { await Master.load(true); await Orders.loadMaps(true); });
+    await p2.evaluate(async () => { await Master.load({ force: true, fresh: true }); await Orders.loadMaps(true); });   // (fresh: a read already on its way began before; load(true) hands that back)
     await p2.waitForFunction(() => !window.Session || !Session.ready || Session.ready(), null, { timeout: 30000 }).catch(() => {});
     await p2.evaluate(({ fixtures, orderSrc }) => {
       B.orders.rows = []; B.orders.byKey = new Map();

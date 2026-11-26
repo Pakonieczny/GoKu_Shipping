@@ -103,9 +103,9 @@ async function partA(kit) {
   const words = { id: 'w1', kind: 'path', role: 'hatch', source: 'added', fill: true, subpaths: [[['m', [cx - 2, cy - 20]], ['l', [cx + 2, cy - 20]], ['l', [cx + 2, cy - 16]], ['l', [cx - 2, cy - 16]], ['h']]] };
   const out = M.exportItems(M.prepIn(items, ['cut']).concat([grp, words]), geo), diff = M.diffFace(M.exportItems(M.prepIn(items, ['cut']), geo), out);
   const rec = AE.encode(diff, { charm: cb, view, face: 'front', placed: true });
-  const greyRec = rec.added.filter(e => e.artGrey), ed = AE.apply(cb, Object.assign({ at: 1, by: 'Test' }, rec), 'front');
-  const segs = ed.members.filter(s => s.artGrey), plain = ed.members.find(s => s.artMemberId === 'w1');
-  const ops = P.artOps(ed.members, null);
+  const greyRec = rec.added.filter(e => e.artGrey), ed = AE.apply(cb, Object.assign({ at: 1, by: 'Test' }, rec), 'front'); const faceParts = ed.members.concat(ed.artFront || []);   // (FRONTLIKEBACK, 25 Nov 2026: a front's added parts are its artFront, not its drawing)
+  const segs = faceParts.filter(s => s.artGrey), plain = faceParts.find(s => s.artMemberId === 'w1');
+  const ops = P.artOps(faceParts, null);
   check(`A8 encode keeps each grey part grey (${greyRec.map(e => e.fill[0]).join(', ')}: artGrey, even-odd) and apply makes it a grey FILL (fillRGB, no blue hatching), which artOps writes as its grey; a hatched part with no mark is blue as before`,
     greyRec.length === 3 && greyRec.every(e => e.role === 'hatch' && e.even && e.fill[0] === e.fill[1] && e.fill[1] === e.fill[2] && IM.parseCode(e.group).src === 'imgRec') && segs.length === 3 && segs.every(s => !s.hatchBlue && s.fill && !s.stroke && s.fillRGB[0] === s.fillRGB[2] && s.manufacturingRole === 'hatch' && /f\*$/.test(s.paintOp))
       && greyRec.every(e => { const v = String(Math.round(e.fill[0] * 1000) / 1000); return ops.includes(`${v} ${v} ${v} rg`); }) && !!plain && plain.hatchBlue && !plain.artGrey && rec.added.find(e => e.id === 'w1').fill.join() === '0,0,1' && /q 0 0 1 rg/.test(ops),

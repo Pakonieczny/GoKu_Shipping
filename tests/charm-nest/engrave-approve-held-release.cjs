@@ -42,7 +42,8 @@ const Q = '#egQueue .rvItem[data-kind=placement]';
   const holdOrder = rid => page.evaluate(async rid => { const row = Orders.rows().find(r => r.order.receiptId === rid); const r = await ReviewSend.press(rid, row); return JSON.parse(JSON.stringify(r)); }, rid);
   // (HOLDSTAYS, 28 Oct 2026: Hold Order no longer takes a piece off its sheet. An order held BEFORE that, its piece taken off by the old Hold's engine, is still in the shop's data: made here the way it was made then)
   const legacyHold = rid => page.evaluate(async rid => { const row = Orders.rows().find(r => r.order.receiptId === rid); const r = await ReviewSend.press(rid, row); const off = await HoldUI.takeOff(rid, { name: B.employee || 'Test Operator' }); return JSON.parse(JSON.stringify(Object.assign({}, r, { off: off && off.off }))); }, rid);
-  const releaseHold = rid => page.evaluate(async rid => { try { Review.syncOrderItems(); } catch (_) {} const it = ReviewRelease.itemOf(rid); const how = ReviewRelease.of(it); const ok = await ReviewRelease.press(it); return { ok, kind: it.kind, how: how && how.how }; }, rid);
+  // (NESTASK, Paul 23 Nov 2026: Release Hold first asks "Put this charm on a sheet?" for a released line whose charm is on no sheet; Nest, its default, is answered, as Paul's release put it back on a sheet)
+  const releaseHold = rid => page.evaluate(async rid => { try { Review.syncOrderItems(); } catch (_) {} const it = ReviewRelease.itemOf(rid); const how = ReviewRelease.of(it); let asked = 0; const answer = setInterval(() => { const b = document.querySelector('dialog.naDlg[open] [data-na="nest"]'); if (b) { asked++; b.click(); } }, 100); let ok; try { ok = await ReviewRelease.press(it); } finally { clearInterval(answer); } return { ok, kind: it.kind, how: how && how.how, asked }; }, rid);
   try {
     await R.build(w, ['back', 'front', 'both']);
     // an open run (the release places the order at once, as on Paul's sorter), the sheet in it

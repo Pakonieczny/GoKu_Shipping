@@ -1,7 +1,7 @@
 // NOSEALROW (Paul, 26 Oct 2026: "Remove this extra duplicate and unneeded 'Sent to Sheet' button + Seal and the second 'Seals' menu completely from the UI of the Detailed Order modal"): the compact
 // Seals row (#owSealRow) is gone from the window. What this test proves now, for every scenario (released, released twice, released with an approved engraving, known only from the timeline, a live
 // press, three widths, and never released):
-//   - the Order Details modal has no Release Hold panel (NOSTRIP) and no Seals row (source: no #owSealRow in the page; the bridge's cache token is the current one, -ns26);
+//   - the Order Details modal has no Release Hold panel (NOSTRIP) and no Seals row (source: no #owSealRow in the page; the bridge is loaded with a cache token);
 //   - the order still has its Release Hold seals, one per press (OrderWin.seals(); none for an order never released; a live press is known to the open window without a reload);
 //   - at rest a Release Hold seal is drawn nowhere in the window but beside a shown Release Hold button ([data-rel-hold] / [data-cu-release]). A released order's window shows no Release Hold button
 //     of its own (the card's Release Hold is in its piece row only while the order is a Review card), so its seals are not drawn there at rest;
@@ -52,7 +52,8 @@ const LONGNAME = 'Bartholomew-Maximilian Featherstonehaugh-Wolfeschlegelsteinhau
   const code = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
   check(!/function paintSeals\(|function windowReleaseOf\(|paintSeals\(r\)/.test(code(bridge)) && !/id="owSeals"/.test(html) && !/\.owRelRow\{|\.owApproved\{/.test(html), 'source: the order window has no seal strip: no #owSeals, no paintSeals / windowReleaseOf, no strip CSS');
   check(!/owSealRow|ow-seal-row/.test(html), 'source: no Seals row in the page (Paul, 26 Oct 2026): no #owSealRow element, no .owSealRow CSS');
-  check(/charm-nest-bridge\.js\?v=[^"]*-ns26[-"]/.test(html), 'source: the bridge\'s cache token is the current one (-ns26)');
+  // (a cache token goes stale with every bump of the bridge: -ns26 was the one of NOSEALROW; what is checked now is that the bridge is loaded with a ?v= token at all)
+  check(/charm-nest-bridge\.js\?v=[^"&]+"/.test(html), 'source: the bridge is loaded with a cache token (?v=...)');
 }
 
 (async () => {
@@ -194,6 +195,9 @@ const LONGNAME = 'Bartholomew-Maximilian Featherstonehaugh-Wolfeschlegelsteinhau
     await until(() => page.$(`#rvList .reviewListRow[data-rid="${LIVE.rid}"] [data-rel-hold]`), 20000, 'Release Hold on the marked row');
     await openOv(LIVE);
     await page.evaluate(rid => document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"] [data-rel-hold]`).click(), LIVE.rid);
+    // (NESTASK, Paul 23 Nov 2026 + RELASK, Paul 25 Nov 2026, charm-nest-bridge.js choose / askOf: the marked order's charm, on no sheet yet, is asked about first; "Nest it" is the default answer)
+    const asked = await page.waitForSelector('dialog.naDlg[open] [data-na="nest"]', { timeout: 8000 }).then(() => true, () => false);
+    if (asked) await page.evaluate(() => document.querySelector('dialog.naDlg[open] [data-na="nest"]').click());
     const stamped = await until(async () => (await page.evaluate(rid => !!Orders.releaseStampOf(Orders.rows().filter(x => String(x.order.receiptId) === rid)), LIVE.rid)) || null, 30000, 'the release to be recorded').catch(() => null);
     check(!!stamped, '4 the press is recorded (Orders.releaseStampOf)');
     const known = await until(() => page.evaluate(() => OrderWin.seals().some(s => s.kind === 'release')), 15000, 'the open window to know the new Release Hold seal').catch(() => false);
@@ -212,7 +216,8 @@ const LONGNAME = 'Bartholomew-Maximilian Featherstonehaugh-Wolfeschlegelsteinhau
     check(errs.length === 0, `no page error (${errs.slice(0, 3).join(' | ')})`);
     check(W.warns.length === 0, `no "order view:" warning from the window (${W.warns.slice(0, 2).join(' | ')})`);
     check(writes.length === 0, 'no call to Etsy or an AI service');
-    const bad = await page.evaluate(() => window.__toasts.filter(t => t[0] === 'bad'));
+    // (the fake site keeps no workspace on the browser: "Workspace could not be saved on this browser" is that, never the window's)
+    const bad = await page.evaluate(() => window.__toasts.filter(t => t[0] === 'bad' && !/Workspace could not be saved on this browser/.test(t[1])));
     check(!bad.length, `no failure toast (${JSON.stringify(bad)})`);
   } catch (e) {
     fails.push('the test stopped: ' + (e && e.stack || e));

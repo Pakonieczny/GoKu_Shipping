@@ -67,15 +67,20 @@ async function partS() {
       { placements: after.placements, filesOwed: after.filesOwed, layoutRev: after.layoutRev, contentRev: after.contentRev, c1: charmOf(ids[1]) });
     ok('S3 ... the cloud\'s nest input key changes with the pin (a nest asked before it is stale and asked again)', key0 !== await keyOf(Object.assign({ id: SH }, after), 'fresh'));
     let n = await nestOf('fresh');
-    ok('S4 the cloud\'s next nest of the sheet (afresh) holds the pinned charm exactly where it is, and frees the others',
-      !!n.out && !n.out.error && !n.out.stale && n.by(ids[0]) && n.by(ids[0]).hold === true && n.by(ids[0]).pinned && n.by(ids[0]).pinned.cxPt === 40.25 && n.by(ids[0]).pinned.cyPt === 60.5 && n.by(ids[1]) && n.by(ids[1]).hold === false && n.by(ids[1]).pinned === null,
-      { err: n.out && (n.out.error || n.out.stale), p0: n.by(ids[0]) && { hold: n.by(ids[0]).hold, pinned: n.by(ids[0]).pinned }, p1: n.by(ids[1]) && { hold: n.by(ids[1]).hold, pinned: n.by(ids[1]).pinned } });
+    // (ONEPIECE, Paul 21 Nov 2026: "they go on one piece at a time", and PAIRTOGETHER, 22 Nov 2026: the unit of a nest is ONE ORDER (_charmNestNestSlot.js prepare): a nest afresh places the oldest
+    //  order and the others wait for the next nests (feedWait), one order at a time; NOWHOLE, Paul 21 Nov 2026: "You must remove that rule": no Gold Filled sheet is laid out whole again, so
+    //  there is no second slot that appends (altJob) any more: the nest that keeps the layout IS the one that appends)
+    const metaOf = (x, id) => ((x.out && x.out.input && x.out.input.meta && x.out.input.meta.charms) || []).find(c => c && String(c.id) === id) || null;
+    ok('S4 the cloud\'s next nest of the sheet (afresh) holds the pinned charm exactly where it is; the others are free: not pinned, they wait for the next nests, one order at a time',
+      !!n.out && !n.out.error && !n.out.stale && n.by(ids[0]) && n.by(ids[0]).hold === true && n.by(ids[0]).pinned && n.by(ids[0]).pinned.cxPt === 40.25 && n.by(ids[0]).pinned.cyPt === 60.5
+        && !n.by(ids[1]) && (n.out.feedWait || []).includes(ids[1]) && (n.out.feedWait || []).includes(ids[2]) && metaOf(n, ids[1]) && metaOf(n, ids[1]).pinned === null,
+      { err: n.out && (n.out.error || n.out.stale), p0: n.by(ids[0]) && { hold: n.by(ids[0]).hold, pinned: n.by(ids[0]).pinned }, p1: n.by(ids[1]) && { hold: n.by(ids[1]).hold, pinned: n.by(ids[1]).pinned }, feedWait: n.out && n.out.feedWait, m1: metaOf(n, ids[1]) });
     n = await nestOf('auto');
-    // (NQ, 21 Nov 2026: a GF sheet in no set is laid out whole by "Nest the rest" too: the person's pin is held for good, the others are free; the slot that appends to the saved
-    //  layout holds them by the run's pin only (may be lifted): cloud-nest-quality.cjs)
-    ok('S5 ... and its nest that keeps the layout holds it for good (a person\'s pin); the others are laid out again, and pinned by the run only (may be lifted) in the slot that appends',
-      n.by(ids[0]) && n.by(ids[0]).hold === true && n.by(ids[1]) && n.by(ids[1]).hold === false && n.by(ids[1]).pinned === null && n.alt(ids[0]) && n.alt(ids[0]).hold === true && n.alt(ids[1]) && n.alt(ids[1]).hold === false && !!n.alt(ids[1]).pinned,
-      { p0: n.by(ids[0]) && n.by(ids[0]).hold, p1: n.by(ids[1]) && [n.by(ids[1]).hold, n.by(ids[1]).pinned], a1: n.alt(ids[1]) && [n.alt(ids[1]).hold, n.alt(ids[1]).pinned] });
+    // (NQ, 21 Nov 2026, then NOWHOLE the same day: a GF sheet in no set is no longer laid out whole by "Nest the rest": the pieces on it stay where they lie, the person's pin held for good,
+    //  the others pinned by the run only (may be lifted), in the one nest that appends to the saved layout: cloud-nest-quality.cjs)
+    ok('S5 ... and its nest that keeps the layout holds it for good (a person\'s pin); the others stay where they lie, pinned by the run only (may be lifted); no second slot (NOWHOLE)',
+      n.by(ids[0]) && n.by(ids[0]).hold === true && n.by(ids[1]) && n.by(ids[1]).hold === false && !!n.by(ids[1]).pinned && n.by(ids[1]).pinned.cxPt === 110 && n.by(ids[1]).pinned.cyPt === 60 && !n.out.altJob,
+      { p0: n.by(ids[0]) && n.by(ids[0]).hold, p1: n.by(ids[1]) && [n.by(ids[1]).hold, n.by(ids[1]).pinned], alt: !!(n.out && n.out.altJob) });
     r = await P({ op: 'sheetLayoutPatch', id: SH, by: 'Michelle', pins: { [ids[0]]: { pinned: false } }, dev: PAGE, cv: CV });
     c0 = charmOf(ids[0]); n = await nestOf('fresh');
     ok('S6 Unpin from a viewer takes the mark and the pin off the record, and the next nest frees that charm',

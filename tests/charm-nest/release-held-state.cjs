@@ -11,7 +11,10 @@ const rows = [];
 const repooled = [];
 globalThis.Orders = { rows: () => rows, heldNow: r => !!r.hold || r.state === 'held' || r.cloudHold === true };
 globalThis.Review = { repool: async r => { repooled.push(r.key); r.hold = null; r.state = 'pooled'; r.problems = []; } };
-globalThis.B = { run: null };
+// (RELEASEHOLD, Paul 20 Nov 2026: every release is asked of the cloud first (op releaseAsk); the computer that CARRIES the run then makes the lines up at once, which is what is checked here)
+const asked = [];
+globalThis.CN = { api: async (fn, body) => { if (body && body.op === 'releaseAsk') { asked.push(body.orderId); return { ok: true, frontAt: Date.now(), lines: {} }; } return {}; } };
+globalThis.B = { run: { runId: 'run-held-t', status: 'running', step: 'nest' } };
 require(path.join(__dirname, '../../charm-nest-order-release.js'));
 
 (async () => {
@@ -22,6 +25,7 @@ require(path.join(__dirname, '../../charm-nest-order-release.js'));
   let r = await globalThis.OrderHold.release(rid, { name: 'Paul' });
   ok(!/not on hold/.test(String(r.error || '')), 'pressing Release hold on it no longer says "This order is not on hold": ' + JSON.stringify({ ok: r.ok, e: r.error }));
   ok(repooled.includes('dragon'), 'the line is made up again like any released line (Review says what is still wrong with it)');
+  ok(asked.includes(rid), 'the release was asked of the cloud first (RELEASEHOLD)');
 
   // a hold only the cloud knows (no flag, no held state on the line): the same
   rows.length = 0; repooled.length = 0; rows.push(row('cloud', { cloudHold: true }));
@@ -37,7 +41,7 @@ require(path.join(__dirname, '../../charm-nest-order-release.js'));
   plan = globalThis.OrderHold.releasePlan(rid);
   ok(plan.canRelease === false && plan.blockedWhy === 'This order is not on hold.', 'an order that is really not on hold still says so: ' + plan.blockedWhy);
   r = await globalThis.OrderHold.release(rid, { name: 'Paul' });
-  ok(r.ok === false && /not on hold/.test(r.error) && !repooled.length, 'and its release does nothing');
+  ok(r.ok === false && /not on hold/.test(r.error) && !repooled.length && asked.length === 1, 'and its release does nothing (the cloud is not asked either)');
 
   console.log('release-held-state OK ·', n, 'checks');
   process.exit(0);

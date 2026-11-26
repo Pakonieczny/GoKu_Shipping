@@ -4,8 +4,9 @@
 //   2  Custom Send to Sheet refused when the cloud's beat was late ("not open right now"): in mode on it is put in the cloud regardless (as CNRelayAsk); with no run open, true words.
 //   3  Merge sheets hidden on viewers: offered for the followed run's sheets and sent to the cloud (consolidate / renest).
 //   4  artSheetWrite's putSheet { filesOwed: null } after the cloud took the files: refused every time, silently. Not sent when the cloud writes the files (its writer clears it).
+//      (CESAVE, 23 Nov 2026: artSheetWrite is gone; after a Charm Editor save the page writes nothing: artPut marks the sheet and starts the cloud's writer, which seats the cut line and clears the marks)
 //   V  charm-nest-viewer.js, the real file in a bare context (fake api and timers)       A  askCarrier, the real source      M  s4Merge, the real source
-//   F  artSheetWrite, the real source        C  the cloud (offline, _cloudFakes.cjs): the ops these presses send are taken from a viewer in mode on; the writer clears filesOwed itself
+//   F  the art-edit host's changed(), the real source        C  the cloud (offline, _cloudFakes.cjs): the ops these presses send are taken from a viewer in mode on; the writer clears filesOwed itself
 //   H  charm-nest-1.html: the card's S4 lines, stopNest's route, the inline scripts parse, the ?v= tokens
 // Offline only: no Etsy, no live write. Made-up names.   NODE_PATH=<deps> node tests/charm-nest/viewer-s4.cjs
 'use strict';
@@ -169,33 +170,35 @@ async function partM() {
     && /if \(!spec && s4Run\(\)\) return s4Merge\(m, kind, plan, st\);/.test(gate) && /s4Run\(\) \? s4Words\(plan, st\.ask\) : mergeWords\(plan, st\.ask\); q\("go"\)/.test(gate));
 }
 
-/* ═══ F · artSheetWrite (the real source) ═══ */
+/* ═══ F · after a Charm Editor save the page writes no sheet (the art-edit host, the real source) ═══
+   (CESAVE, Paul 23 Nov 2026: "those changes should be reflective on the original charm on the original sheet": artPut itself marks the sheet (filesOwed, artOwed, cutCheck) and starts the cloud's
+    writer, which seats a changed cut line and clears the marks (charmNestLibrary.js op_artPut, _charmNestFinish.js). The page's artSheetWrite, with its putSheet { filesOwed: null, cutCheck: null },
+    is gone: the art-edit host's changed() only fits the engraving again, says it and draws the card, in every mode) */
 async function partF() {
-  const a = BRIDGE.indexOf('const ART_SHEET_WRITES = new WeakMap();'), b = BRIDGE.indexOf('window.artSheetWrite = artSheetWrite;');
-  const src = BRIDGE.slice(a, BRIDGE.indexOf('\n}\n', BRIDGE.indexOf('function artSheetWrite(sh)', a)) + 3);
-  void b;
+  const a = BRIDGE.indexOf('const SAVED_CHARMS = window.CharmNestSavedCharms = new Map();'), b = BRIDGE.indexOf('\n/* ── THUMBSYNC', a);
+  ok('F0 the art-edit host is in the bridge, and artSheetWrite is gone from it (CESAVE)', a > 0 && b > a && !/artSheetWrite|ART_SHEET_WRITES/.test(BRIDGE), { a, b });
   const run = async o => {
-    const calls = [];
-    const w = { console: { warn() {}, log() {} }, Promise, Date, JSON, WeakMap, Object };
-    w.window = w; w.cutHeld = () => !!o.cut; w.allSheets = () => [];
+    const calls = [], logs = [], cards = [], writes = [];
+    const sheet = { sheetId: 'sh-art', metal: 'gold', fileBase: 'GF Sheet 3', outputs: { ai: { url: 'x' } } };
+    const w = { console: { warn() {}, log() {} }, Promise, Date, JSON, Map, WeakMap, Object, Set };
+    w.window = w; w.allSheets = () => [sheet]; w.B = { pool: { rows: new Map() } }; w.Session = { schedule() {} }; w.employeeName = () => 'Michelle';
     w.api = async (fn, body) => { calls.push(body); return { ok: true }; };
+    w.agent = (...x) => logs.push(x.slice(2).join(' ')); w.renderCard = sh => cards.push(sh.sheetId);
+    w.writeAsPlaced = async sh => { writes.push(sh.sheetId); return true; };
+    w.Engrave = { artChanged: () => 1 }; w.Pool = { sheetOf: () => (o.onSheet ? sheet : null), charmOf: () => null };
     w.CNViewer = o.mode ? { mode: () => o.mode, on: () => o.mode === 'on' } : undefined;
-    w.writeAsPlaced = async sh => { if (o.gateCloud) sh._filesCloudSaid = Date.now(); return true; };
-    vm.runInContext(src + '\nthis.artSheetWrite = artSheetWrite;', vm.createContext(w));
-    const sh = { sheetId: 'sh-art', metal: 'gold' };
-    const res = await w.artSheetWrite(sh); await settle();
-    return { res, puts: calls.filter(c => c.op === 'putSheet').map(c => c.sheet) };
+    let host = null; w.CharmNestArtEdit = { setHost: h => { host = h; } };
+    vm.runInContext(BRIDGE.slice(a, b), vm.createContext(w));
+    await host.changed('4250000001_42500000011_1', 'front', { charm: {}, record: { by: 'Michelle', at: 1 }, sheetId: o.onSheet ? 'sh-art' : null, filesOwed: o.onSheet ? 5 : null, cutChanged: !!o.cut, cut: !!o.cut });
+    await settle();
+    return { calls, writes, cards, logs };
   };
-  let r = await run({ mode: 'on' });
-  ok('F1 a viewer in mode on: no putSheet { filesOwed } is sent (the cloud writes the files and clears it); the cut lines\' check is still told', r.res === true && r.puts.length === 1 && !('filesOwed' in r.puts[0]) && r.puts[0].cutCheck === null, r);
-  r = await run({ mode: 'standby', gateCloud: true });
-  ok('F2 standby, the files gate handed them to the cloud: no filesOwed clear either', r.puts.every(s => !('filesOwed' in s)), r);
-  r = await run({ mode: 'on', cut: true });
-  ok('F3 mode on, a cut line that does not fit: nothing written, nothing sent', r.res === false && r.puts.length === 0, r);
-  r = await run({ mode: 'off' });
-  ok('F4 mode off: as before, the page clears filesOwed and the cut check itself', r.puts.length === 1 && r.puts[0].filesOwed === null && r.puts[0].cutCheck === null, r);
-  r = await run({});
-  ok('F4 no viewer module at all: as before', r.puts.length === 1 && r.puts[0].filesOwed === null, r);
+  for (const [name, o] of [['F1 a viewer in mode on', { mode: 'on', onSheet: true }], ['F2 standby', { mode: 'standby', onSheet: true }], ['F3 mode on, its cut line changed', { mode: 'on', onSheet: true, cut: true }], ['F4 mode off', { mode: 'off', onSheet: true, cut: true }], ['F4 no viewer module at all', { onSheet: true }]]) {
+    const r = await run(o);
+    ok(`${name}: the page sends no putSheet (no filesOwed, no cutCheck) and writes no files itself; the card is drawn again and the log says the cloud writes the sheet`, !r.calls.some(c => c && c.op === 'putSheet') && !r.writes.length && r.cards.join() === 'sh-art' && r.logs.some(t => /the cloud writes GF Sheet 3 again/.test(t)), r);
+  }
+  const r = await run({ mode: 'on', onSheet: false });
+  ok('F5 a piece on no sheet: nothing is sent, no card drawn', !r.calls.length && !r.writes.length && !r.cards.length, r);
 }
 
 /* ═══ C · the cloud takes these presses from a viewer in mode on; its writer clears filesOwed ═══ */
@@ -219,15 +222,18 @@ async function partC() {
     ok('C2 (why the page no longer sends it) putSheet { filesOwed: null } from a viewer is refused in mode on', old.http === 409 && old.cloudCarries === true && (old.fields || []).includes('filesOwed') && (F.doc('Charm_Nest_Sheets/sh-s4') || {}).filesOwed === T0 - 5000, old);
     const cc = await P({ op: 'putSheet', sheet: { id: 'sh-s4', cutCheck: null }, cv: CV, dev: DEV });
     const rec = F.doc('Charm_Nest_Sheets/sh-s4') || {};
-    ok('C2 the cut lines\' check alone (putSheet { cutCheck: null }) is taken from a viewer; filesOwed stays for the cloud\'s writer', cc.http === 200 && rec.cutCheck == null && rec.filesOwed === T0 - 5000, { cc, cutCheck: rec.cutCheck, filesOwed: rec.filesOwed });
+    // (CESAVE, Paul 23 Nov 2026: a changed cut line is seated by the cloud's writer, which clears cutCheck itself (_charmNestFinishOps.js finishSeat): the page no longer sends it, and a viewer's is refused with the rest)
+    ok('C2 the cut lines\' check alone (putSheet { cutCheck: null }) from a viewer is refused in mode on too; cutCheck and filesOwed stay for the cloud\'s writer', cc.http === 409 && cc.cloudCarries === true && (cc.fields || []).includes('cutCheck') && rec.cutCheck && rec.cutCheck.p1 && rec.filesOwed === T0 - 5000, { cc, cutCheck: rec.cutCheck, filesOwed: rec.filesOwed });
+    const fo = fs.readFileSync(path.join(ROOT, 'netlify/functions/_charmNestFinishOps.js'), 'utf8');
+    ok('C2 the writer clears the cut lines\' check itself once it has seated them (finishSeat: compare-and-clear on each piece\'s mark)', /left = Object\.assign\(\{\}, s\.cutCheck\); for \(const \[k, at\] of Object\.entries\(checked\)\) if \(left\[k\] && num\(left\[k\]\.at\) === num\(at\)\) delete left\[k\];/.test(fo) && /cutCheck: Object\.keys\(left\)\.length \? left : null/.test(fo));
     F.seed('Charm_Nest_Run_Carrier/' + R, { runId: R, carrier: { dev: 'cloud', by: 'Cloud', at: T0 - 600e3, since: T0 - 3600e3 } });
     for (const cmd of [{ type: 'consolidate', metal: 'gold14k', sourceId: 'sh-b', targetId: 'sh-a', label: 'Merge sheets: Sheet 2 onto Sheet 1' }, { type: 'renest', metal: 'gold14k', sheetId: 'sh-a', label: 'Re-nest Sheet 1' }, { type: 'customsend', ck: 'card:4250000001_42500000011', ids: ['4250000001_42500000011'] }]) {
       const p = await P({ op: 'runCmdPut', runId: R, dev: DEV, by: 'Michelle', cmd, cv: CV });
       ok(`C3 a viewer's ${cmd.type} request is put in the cloud in mode on, whatever the cloud's beat`, p.http === 200 && !!p.id && p.cmd.type === cmd.type && (cmd.type !== 'consolidate' || (p.cmd.args.sourceId === 'sh-b' && p.cmd.args.targetId === 'sh-a')), p);
     }
     const fin = fs.readFileSync(path.join(ROOT, 'netlify/functions/_charmNestFinish.js'), 'utf8');
-    ok('C4 the cloud\'s sheet writer clears filesOwed itself once the files are written (its final putSheet, compare-and-clear on the owed mark)',
-      /op: "putSheet", sheet: \{ id: X\.sheetId, saving: false, filesOwed: null, filesJob: null \}, contentBase: job\.written\.contentRev, filesOwedBase: job\.owedAt/.test(fin));
+    ok('C4 the cloud\'s sheet writer clears filesOwed (and, CESAVE, artOwed) itself once the files are written (its final putSheet, compare-and-clear on the owed mark)',
+      /op: "putSheet", sheet: \{ id: X\.sheetId, saving: false, filesOwed: null,(?: artOwed: null,)? filesJob: null \}, contentBase: job\.written\.contentRev, filesOwedBase: job\.owedAt/.test(fin));
   } finally { console.log = quiet[0]; console.warn = quiet[1]; }
 }
 

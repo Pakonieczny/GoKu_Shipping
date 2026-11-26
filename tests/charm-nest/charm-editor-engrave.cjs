@@ -59,13 +59,13 @@ async function partA(kit) {
   check('A2 the editor hands the words back as outlines already placed in the face and the curve with its own matrix (about the tight box, which its control points\' box is not)',
     diff.added.map(a => a.id).join() === 'arc1,g1' && Array.isArray(out.find(i => i.id === 'arc1').matrix) && out.find(i => i.id === 'g1').children[0].subpaths.length > 0 && Math.abs((ctrl[1] + ctrl[3]) / 2 - (tb[1] + tb[3]) / 2) > 1,
     JSON.stringify({ added: diff.added.map(a => a.id), ctrl, tb }));
-  const rec = AE.encode(diff, { charm: cb, view, face: 'front', placed: true }), ed = AE.apply(cb, Object.assign({ at: 1 }, rec), 'front');
+  const rec = AE.encode(diff, { charm: cb, view, face: 'front', placed: true }), ed = AE.apply(cb, Object.assign({ at: 1 }, rec), 'front'); const faceParts = ed.members.concat(ed.artFront || []);   // (FRONTLIKEBACK, 25 Nov 2026: a front's added parts are its artFront, not its drawing)
   const asItem = segs => segs.flatMap(m => m.subpaths.map(sp => sp.map(o => (o[0] === 'h' ? ['h'] : [o[0]].concat(o.slice(1).map(fr.toItem))))));
   const worst = (a, b) => (a && b ? Math.max(...a.map((v, i) => Math.abs(v - b[i]))) : Infinity);
-  const oArc = out.find(i => i.id === 'arc1'), drawnArc = M.bboxOf(M.transformSubpaths(oArc.subpaths, oArc.matrix)), gotArc = M.bboxOf(asItem(ed.members.filter(m => m.artMemberId === 'arc1')));
-  const drawnW = M.bboxOf(out.find(i => i.id === 'g1').children[0].subpaths), gotW = M.bboxOf(asItem(ed.members.filter(m => m.artMemberId === 'w1')));
+  const oArc = out.find(i => i.id === 'arc1'), drawnArc = M.bboxOf(M.transformSubpaths(oArc.subpaths, oArc.matrix)), gotArc = M.bboxOf(asItem(faceParts.filter(m => m.artMemberId === 'arc1')));
+  const drawnW = M.bboxOf(out.find(i => i.id === 'g1').children[0].subpaths), gotW = M.bboxOf(asItem(faceParts.filter(m => m.artMemberId === 'w1')));
   check('A3 encode → apply puts the turned curve and the words in the turned group on the piece exactly where the editor drew them (to the record\'s 0.001 pt)',
-    worst(drawnArc, gotArc) < 0.003 && worst(drawnW, gotW) < 0.003 && ed.members.filter(m => m.artMemberId === 'w1').every(m => m.hatchBlue && m.fill && !m.stroke) && ed.members.find(m => m.artMemberId === 'arc1').stroke,
+    worst(drawnArc, gotArc) < 0.003 && worst(drawnW, gotW) < 0.003 && faceParts.filter(m => m.artMemberId === 'w1').every(m => m.hatchBlue && m.fill && !m.stroke) && faceParts.find(m => m.artMemberId === 'arc1').stroke,
     JSON.stringify({ arc: worst(drawnArc, gotArc), words: worst(drawnW, gotW) }));
   // (what that agreement is worth: the same curve read by its tx..rot about the box of its control points, as encode read every path before, lands elsewhere)
   const old = AE.encode({ added: [Object.assign({}, oArc, { matrix: undefined })] }, { charm: cb, view, face: 'front' }), oldGot = M.bboxOf(asItem(AE.apply(cb, Object.assign({ at: 2 }, old), 'front').members.filter(m => m.artMemberId === 'arc1')));

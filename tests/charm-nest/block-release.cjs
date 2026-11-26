@@ -111,11 +111,15 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
   const keyWorld = require('./_keyWorld.cjs')(root);
   const { DESIGNS, world, lineRow } = keyWorld;
   DESIGNS.DRAGON11 = () => F.charmOf('ONE-PENDANT'); DESIGNS.SECOND = () => F.charmOf('PAIR-STUD'); DESIGNS.THIRD = () => F.charmOf('PAIR-HOOP');
-  const worldOf = (list, patch) => { const w = world(list || ['DRAGON11']); w.c.P.parseSource = async (_b, name) => ({ name }); w.c.P.groupCharmsAsync = async parsed => ({ charms: [structuredClone(DESIGNS[String(parsed.name).replace(/\.ai$/, '').replace(/^.*\//, '')]())], orphans: [] }); for (const [k, v] of Object.entries(patch || {})) Object.assign(w.entries[k], v); return w; };
+  // (SHEETCHOICE, cloud plan v2 step 5, 20 Nov 2026: the Pool asks the page's placeRules() for the sheet, charm-nest-place.js made by the bridge's host just above the Pool: both run here as the page loads them)
+  const PR0 = keyWorld.src.indexOf('let placeRulesMade = null;'), PR1 = keyWorld.src.indexOf('\n/* ═══ 20 · Pool', PR0);
+  const withPlace = w => { if (PR0 > 0 && PR1 > PR0) { require('./_place.cjs')(w.c); vm.runInContext(keyWorld.src.slice(PR0, PR1), w.c); } return w; };
+  const worldOf = (list, patch) => { const w = withPlace(world(list || ['DRAGON11'])); w.c.P.parseSource = async (_b, name) => ({ name }); w.c.P.groupCharmsAsync = async parsed => ({ charms: [structuredClone(DESIGNS[String(parsed.name).replace(/\.ai$/, '').replace(/^.*\//, '')]())], orphans: [] }); for (const [k, v] of Object.entries(patch || {})) Object.assign(w.entries[k], v); return w; };
   const rowOf = over => Object.assign(lineRow('4193111740', '5247356127', 'DRAGON11', 1, { material: 'gold' }), { line: { transactionId: '5247356127', listingId: '1700000001', sku: 'DRAGON11', title: 'Dragon Stud Earrings', quantity: 1 } }, over || {});
   const poolCalls = w => w.calls.filter(c => c.body && c.body.op === 'poolPut').length;
   // (the intake's own pass, Pool.addAll: it also writes the line's retry signature, which reads the release)
-  const addAll = async (w, rows) => { const c = w.c; c.Orders.rows = () => rows; c.Orders.lineRecord = r => [r.key, {}]; c.Gate.plan = async () => ({ wait: new Map() }); c.Gate.afterPool = async () => {}; c.Review.syncOrderItems = () => {}; for (const f of ['renderRail', 'updateTopSub', 'refreshAllCards']) c[f] = () => {}; c.RunCtl.save = async () => {}; return w.Pool.addAll({ runId: 'r', lines: {} }); };
+  // (NOPOOLDONE, Paul 13 Nov 2026: addAll first asks the Design Station's completion record, firebaseOrders?dcFor=, and places nothing when it cannot be read: these orders were never completed there)
+  const addAll = async (w, rows) => { const c = w.c; c.fetch = async url => { assert(/firebaseOrders\?dcFor=/.test(String(url)), 'the pass asks only the completion record: ' + url); return { ok: true, status: 200, json: async () => ({ success: true, orderNumbers: [] }) }; }; c.Orders.rows = () => rows; c.Orders.lineRecord = r => [r.key, {}]; c.Gate.plan = async () => ({ wait: new Map() }); c.Gate.afterPool = async () => {}; c.Review.syncOrderItems = () => {}; for (const f of ['renderRail', 'updateTopSub', 'refreshAllCards']) c[f] = () => {}; c.RunCtl.save = async () => {}; return w.Pool.addAll({ runId: 'r', lines: {} }); };
   const tryPool = async (patch, over) => { const w = worldOf(['DRAGON11'], { DRAGON11: patch }), row = rowOf(over); await addAll(w, [row]); return { w, row }; };
   { const { w, row } = await tryPool({ blocked: EXACT });
     eq([row.state, row.problems.length, poolCalls(w)], ['pooled', 0, 1], 'makePool: a flip-only block does not hold the line: it is pooled'); }
@@ -195,7 +199,13 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
       const sp = O.interpretLine({ receiptId: rid, updateTs: 1 }, dragon(), Object.assign(ctx(), r.blockOverride ? { blockOverride: r.blockOverride } : {}));
       r.spec = sp; r.problems = sp.problems.slice(); r.state = r.problems.length ? 'held' : 'pooled'; r.reason = r.problems.length ? 'SKU blocked: ' + r.problems[0].reason : null; r.poolIds = r.problems.length ? [] : [rid + '_1_1'];
     } };
-    globalThis.B = { run: null };
+    // (RELEASEHOLD, Paul 20 Nov 2026: every release is asked of the cloud first, op releaseAsk; a computer that does not carry the run is done then (via the cloud, no line made up here).
+    //  The engine's own make-up, what is checked below, runs on the computer that CARRIES the run: here one whose intake has not reached the pool step, so nothing is placed and the order
+    //  waits at the front of the queue, as the old "no run is open" path did)
+    const asked = [];
+    globalThis.CN = { api: async (fn, body) => { if (body && body.op === 'releaseAsk') { asked.push(body.orderId); return { ok: true, frontAt: Date.now(), lines: {} }; } return {}; } };
+    globalThis.CharmNestOrders = O;   // (the run's step is read through it, as on the page)
+    globalThis.B = { run: { runId: 'run-blockrel', status: 'running', step: 'pull' } };
     require(path.join(root, 'charm-nest-order-release.js'));
     const OH = globalThis.OrderHold;
     // the owner's orders: the flip message only. The line was held by the OLD code (its state is "held", problems from the old reading); the page now reads it with no question.
@@ -205,7 +215,7 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
     let res = await OH.release(rid, { name: 'Paul' });
     ok(res.ok === true && res.released === true && !res.error, 'Release hold on a line held only by the flip message ends in SUCCESS: ' + JSON.stringify({ ok: res.ok, e: res.error }));
     eq([repooled, rows[0].state, rows[0].problems.length], [['dragon'], 'pooled', 0], 'the line was made up again, is pooled and asks nothing'); ok(rows[0].releasing === undefined, 'and the release mark is cleared');
-    ok(rows[0].frontAt > 0, 'at the front of the queue');
+    ok(rows[0].frontAt > 0, 'at the front of the queue'); ok(asked.includes(rid), 'the release was asked of the cloud first (RELEASEHOLD)');
     ok(res.steps.some(s => s.type === 'released') && res.steps.some(s => s.type === 'done') && !res.steps.some(s => s.type === 'error'), 'the steps end in released and done, with no error');
     // a line a re-reading has already turned "held" → "pulled" (the page stopped holding it) is made up again too
     rows.length = 0; repooled.length = 0; rows.push(mk('dragon', { state: 'held' }));
@@ -248,13 +258,14 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
     const c = {
       console, Date, JSON, Set, Map, Array, Object, String, Number, Promise, Error, window: {},
       B: { run: { lines: {} } }, RunCtl: { save: async () => { calls.saved++; }, poke() {} },
-      O: { shownText: x => String(x) }, isCustomRow: r => !!(r.spec && r.spec.special),   // (RELEASE, Paul 19 Oct 2026: what the set-aside words read)
+      O: { shownText: x => String(x), releaseOnly: s => O.releaseOnly(s) }, isCustomRow: r => !!(r.spec && r.spec.special),   // (RELEASE, Paul 19 Oct 2026: what the set-aside words read)
       Orders: { rows: () => rowsAll, releaseAway: r => ((r.problems || []).some(p => p.kind === 'unmatchedSku') ? 'no design' : ''), heldNow: r => !!r.hold || r.state === 'held', lineRecord: r => [r.key, { state: r.state, blockOverride: r.blockOverride || null }], render() {} },
       toast: (m, k) => { calls.toasts.push([k || '', m]); }, agent: (...x) => { calls.agent.push(x.slice(1).join(' ')); },
       by: () => 'Paul', answered: (it, type, say, detail, who) => { calls.answers.push({ kind: it.kind, type, say, detail, who }); },
       problemText: p => (p.kind === 'blockedSku' ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind), syncOrderItems: () => { calls.synced++; },
       repool: async r => { calls.repooled.push(r.key); r.state = 'pooled'; r.problems = []; }, acceptChange: async it => { calls.accepted.push(it.key); },
       items: () => c.__items || [], rowsOf: it => (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).filter(r => r.state !== 'gone'), document: {},
+      actOf: () => null,   // (NESTASK, Paul 23 Nov 2026: releaseOf asks ownOf whether the card has its own designs to send, through actOf, outside this block: no Custom Orders card here, so none)
       mkeyOf: it => String(it.key), DONE_SW: '#done', TL: { rec: e => { (calls.tl = calls.tl || []).push(e); } }   // (RELHOLD: the press's flight and its timeline step)
     };
     c.window.OrderHold = { release: async (rid, o) => { calls.released.push([rid, o.name, rowsAll.filter(r => r.order.receiptId === rid).map(r => !!r.blockOverride)]); calls.otherMarked.push(rowsAll.filter(r => r.order.receiptId !== rid && /^o[12]_/.test(r.key)).map(r => !!r.blockOverride)); for (const r of rowsAll.filter(x => x.order.receiptId === rid)) { r.state = 'pooled'; r.problems = []; } return { ok: true, released: true, placed: true, sheets: [{ label: 'RG Sheet 2' }] }; } };
@@ -264,7 +275,9 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
     const R = it => { const r = c.releaseOf(it); return [r.how, r.why]; };
     // what each kind says
     const dragon1 = mkRow('a_1', '4193111740'); rowsAll.push(dragon1);
-    eq(R(item('blockedSku', dragon1))[0], 'override', 'a blocked SKU can be released'); ok(/Cut DRAGON11 although the master blocks it \(open outline\)/.test(c.releaseOf(item('blockedSku', dragon1)).title) && /this piece goes to the front of the queue and onto the next sheet/.test(c.releaseOf(item('blockedSku', dragon1)).title), 'and its title says what it does: ' + c.releaseOf(item('blockedSku', dragon1)).title);
+    eq(R(item('blockedSku', dragon1))[0], 'override', 'a blocked SKU can be released');
+    // (RELONLY, 25 Nov 2026: SKU ADD_6663 is always a blocked SKU, released only by a person's Nest it at Release Hold: its title says so)
+    { const ext = mkRow('x_1', '4193111749', { problems: [{ kind: 'blockedSku', sku: 'ADD_6663', reason: O.releaseOnly('ADD_6663') }] }); const r = c.releaseOf(item('blockedSku', ext)); ok(r.how === 'override' && /held until a person chooses to nest it/.test(r.title), 'a release-only SKU is released by its own words: ' + r.title); } ok(/Cut DRAGON11 although the master blocks it \(open outline\)/.test(c.releaseOf(item('blockedSku', dragon1)).title) && /this piece goes to the front of the queue and onto the next sheet/.test(c.releaseOf(item('blockedSku', dragon1)).title), 'and its title says what it does: ' + c.releaseOf(item('blockedSku', dragon1)).title);
     const none = mkRow('n_1', '4193111741', { problems: [{ kind: 'blockedSku', sku: 'DRAGON11', reason: 'its design has no outline to cut', noOutline: true }] });
     // (RELEASE, Paul 19 Oct 2026: was "a design with no outline cannot [be released]": it is released with nothing to place now, its reason a note)
     ok(R(item('blockedSku', none))[0] === 'anyway' && /Releasing anyway: its design has no outline to cut/.test(c.releaseOf(item('blockedSku', none)).title), 'a design with no outline is released anyway, nothing to place: ' + c.releaseOf(item('blockedSku', none)).title);

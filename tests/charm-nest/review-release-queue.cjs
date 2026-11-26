@@ -37,6 +37,9 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
   const { page, srv } = W, st = srv.st;
   const saw = []; page.on('console', m => saw.push(`[${m.type()}] ${m.text()}`.slice(0, 500)));
   const until = async (f, ms, what) => { const t = Date.now() + ms; for (;;) { const v = await f(); if (v) return v; if (Date.now() > t) throw new Error('timed out: ' + what); await page.waitForTimeout(300); } };
+  // (NESTASK, Paul 23 Nov 2026 + RELASK, Paul 25 Nov 2026, charm-nest-bridge.js choose / askOf: a Release Hold press whose lines show a charm on no sheet yet asks first, "Put this charm on a sheet?";
+  //  "Nest it" is the default answer, the one a person gives to send it on to the sheets as this test means)
+  const answerNest = async what => { const asked = await page.waitForSelector('dialog.naDlg[open] [data-na="nest"]', { timeout: 8000 }).then(() => true, () => false); if (asked) { await page.click('dialog.naDlg[open] [data-na="nest"]'); console.log(`  ·    ${what}: the Release Hold pop-up asked; answered "Nest it"`); } return asked; };
   const shot = async name => { if (!shots) return; try { fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, name + '.png') }); } catch (_) {} };
   try {
     // the master library (real drawings), then the two blocks: COMET_9427 only by the flip check's message, SCHRODINGER CAT 2 for a real reason (an open outline)
@@ -46,8 +49,13 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     put('SCHRODINGER CAT 2', { blocked: 'open outline', open: true });
     put('SCHRODINGER CAT 1', { blocked: 'open outline', open: true });
     st.put('Charm_Option_Map', '1890000106', { listingId: '1890000106', map: { style: { 'stud earrings': { field: 'form', value: 'earrings', by: 'Test', at: 1 } } } });
-    await page.evaluate(async () => { await Master.load(true); await Orders.loadMaps(true); if (window.Engrave) await Engrave.loadFonts(); });
-    check(await page.evaluate(() => { const a = Master.entryFor('COMET_9427'), b = Master.entryFor('SCHRODINGER CAT 2'); return !!a.blocked && !!b.blocked && b.open === true; }), '0 · the master holds both blocks as the owner\'s did');
+    // (stale harness: load(true) hands back a read already on its way from before the seeding, with no masters in it; fresh waits for it and reads again, as _engraveRealWorld.cjs world() does)
+    await page.evaluate(async () => { await Master.load({ force: true, fresh: true }); for (let i = 0; i < 4 && !(Master.entryFor('COMET_9427') && Master.entryFor('COMET_9427').blocked); i++) await Master.load({ force: true, fresh: true }); await Orders.loadMaps(true); if (window.Engrave) await Engrave.loadFonts(); });
+    // (HELDRECHECK, Paul 19 Oct 2026, charm-nest-bridge.js heldRecheck: once after a page is loaded, as soon as it holds the library, a line held for a design's reason ("SKU blocked: ...") is checked again and
+    //  made up by itself. That pass is let run here BEFORE the old-rule hold of step 1 is staged, so the hold is still there for the person's Release hold press, as the test means it)
+    await page.waitForFunction(() => window.Session && Session.ready && Session.ready() && !B.resuming && B.master.loadedAt > 0 && B.master.entries.size > 0, null, { timeout: 30000 });
+    await page.evaluate(async () => { if (Review.heldRecheckNow) await Review.heldRecheckNow(); });
+    check(await page.evaluate(() => { const a = Master.entryFor('COMET_9427'), b = Master.entryFor('SCHRODINGER CAT 2'); return !!a && !!b && !!a.blocked && !!b.blocked && b.open === true; }), '0 · the master holds both blocks as the owner\'s did');
 
     await page.evaluate(() => {
       window.__toasts = []; const was = window.toast; window.toast = (m, k, ms) => { window.__toasts.push([k || '', String(m)]); return was && was(m, k, ms); };
@@ -79,6 +87,7 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     await shot('01-on-hold');
     const t1 = Date.now();
     await page.click(relBtn);
+    await answerNest('1 · the earrings');
     await until(() => page.evaluate(rid => !OrderHold.releaseStatus(rid).running && !HoldUI.busy(rid), EAR.rid), 360000, 'the release to end');
     await page.waitForTimeout(1500);
     const e1 = await rowOf(EAR);
@@ -118,12 +127,15 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     const master0 = await page.evaluate(() => Master.entryFor('SCHRODINGER CAT 2').blocked);
     const t3 = Date.now();
     await page.click(rowSel(CAT2) + ' [data-rv-release]');
+    await answerNest('3 · the blocked SKU');
     await until(() => page.evaluate(rid => !OrderHold.releaseStatus(rid).running, CAT2.rid), 360000, 'the release to end');
     await page.waitForTimeout(1500);
     const c1 = await rowOf(CAT2), toasts3 = await page.evaluate(() => window.__toasts.slice());
     check(c1.state === 'pooled' && !c1.problems.length && c1.override && c1.override.sku === 'SCHRODINGER CAT 2' && c1.override.by === 'Test Operator' && c1.override.at >= t3 - 1000, `3 · the line carries the release { sku, by, at } and is pooled (${JSON.stringify(c1)})`);
     check(c1.frontAt >= t3 - 1000 && !c1.releasing, `3 · it went to the front of the queue (frontAt ${c1.frontAt})`);
-    check(!toasts3.some(t => t[0] === 'bad'), `3 · no failure toast (${JSON.stringify(toasts3.filter(t => t[0] === 'bad'))})`);
+    // (the fake site keeps no workspace on the browser: "Workspace could not be saved on this browser" is that, never the release's)
+    const bad3 = toasts3.filter(t => t[0] === 'bad' && !/Workspace could not be saved on this browser/.test(t[1]));
+    check(!bad3.length, `3 · no failure toast (${JSON.stringify(bad3)})`);
     check(toasts3.some(t => t[0] === 'ok' && /Order 4290000131 released to the nesting queue: first in line, placed on /.test(t[1])), `3 · the page says where it went (${JSON.stringify(toasts3.slice(-2))})`);
     at = await until(async () => { const p = await placeOf(CAT2.rid); return p.length >= 1 && p.every(x => x.placed) && p; }, 240000, 'the cat necklace placed on a sheet');
     check(at.length === 1 && at[0].metal === 'gold' && at[0].placed, `3 · the necklace is placed on a gold sheet next to the earrings or on the next one (${JSON.stringify(at)})`);
@@ -153,6 +165,7 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     check(mk && mk.how === 'mark' && /\brelHoldBtn\b/.test(mk.cls) && mk.disabled === null && /Take this order out of Review/.test(mk.title), `4 · the marked order has the button, enabled (${JSON.stringify(mk && [mk.how, mk.title])})`);
     await shot('04-review-mark');
     await page.click(rowSel(MARKED) + ' [data-rv-release]');
+    await answerNest('4 · the marked order');
     await until(() => page.evaluate(rid => !CharmNestReviewMark.isMarked(rid), MARKED.rid), 30000, 'the mark to be resolved');
     const info = await page.evaluate(rid => CharmNestReviewMark.info(rid), MARKED.rid);
     check(info && info.state === 'done' && info.how === 'other' && info.doneBy === 'Test Operator', `4 · the mark is resolved by the button (${JSON.stringify(info)})`);

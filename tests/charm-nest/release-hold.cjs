@@ -45,7 +45,9 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
   }, rid);
   try {
     R.seedMaster(st);
-    await page.evaluate(async () => { await Master.load(true); await Orders.loadMaps(true); });
+    // (stale harness: load(true) hands back a read already on its way from before the seeding, with no masters in it; fresh waits for it and reads again, as _engraveRealWorld.cjs world() does)
+    const loadLib = pg => pg.evaluate(async () => { await Master.load({ force: true, fresh: true }); for (let i = 0; i < 4 && !Master.entryFor('COMET_9427'); i++) await Master.load({ force: true, fresh: true }); await Orders.loadMaps(true); });
+    await loadLib(page);
     await page.evaluate(() => {
       window.__toasts = []; const was = window.toast; window.toast = (m, k, ms) => { window.__toasts.push([k || '', String(m)]); return was && was(m, k, ms); };
       window.__stamps = []; const so = Seal.stampOn; Seal.stampOn = (host, spec) => { try { const s = spec && (spec.stamp || spec); window.__stamps.push({ how: s && s.how, by: s && s.by, at: s && s.at, btn: typeof spec.btn === 'string' ? spec.btn : '', label: spec.label || '' }); } catch (_) {} return so(host, spec); };
@@ -82,6 +84,10 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     // ── 2 · the press ──
     const t0 = Date.now();
     await page.click(rowSel(MARKED) + ' [data-rel-hold]');
+    // (NESTASK, Paul 23 Nov 2026 + RELASK, Paul 25 Nov 2026, charm-nest-bridge.js choose / askOf: the marked order's charm, on no sheet yet, is asked about first; "Nest it" is the default)
+    const asked = await page.waitForSelector('dialog.naDlg[open] [data-na="nest"]', { timeout: 8000 }).then(() => true, () => false);
+    check(asked, '2 · the press asks first whether to nest the charm on a sheet (the Release Hold pop-up)');
+    if (asked) await page.click('dialog.naDlg[open] [data-na="nest"]');
     await until(() => page.evaluate(rid => !CharmNestReviewMark.isMarked(rid) && !Review.items().some(i => i.kind === 'reviewMark' && i.rid === rid), MARKED.rid), 30000, 'the order to leave Review');
     const left2 = await until(async () => !(await page.$(rowSel(MARKED))), 10000, 'the row to go').then(() => null, async () => page.evaluate(sel => { const n = document.querySelector(sel); return { q: n && n.querySelector('.queueLabel') && n.querySelector('.queueLabel').textContent, items: Review.items().filter(i => (i.rows || [i.row]).some(r => r && String(r.order.receiptId) === '4290000233')).map(i => i.kind), seg: Review.view().cseg, busy: Seal.busy() }; }, rowSel(MARKED)));
     check(!left2, `2 · the order left Review Open (its mark resolved, its row gone) ${JSON.stringify(left2)}`);
@@ -94,7 +100,8 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     check(cloud.release.by === 'Test Operator' && cloud.release.at === r2.mine.at && cloud.review && cloud.review.state === 'done', `2 · the cloud keeps it on the order's Review document, beside its resolved mark (${JSON.stringify({ release: cloud.release, review: cloud.review && cloud.review.state })})`);
     const ev = await until(() => st.list(TL).find(e => String(e._id).startsWith(MARKED.rid + '~') && e.type === 'released' && e.data && e.data.seal === 'releaseHold'), 30000, 'the released step on the timeline').catch(() => null);
     check(ev && ev.by === 'Test Operator' && +ev.data.sealAt === r2.mine.at, `2 · the timeline's "released" step carries the seal (${JSON.stringify(ev && { text: ev.text, by: ev.by, data: ev.data })})`);
-    const t2 = await page.evaluate(() => window.__toasts.filter(t => t[0] === 'bad'));
+    // (the fake site keeps no workspace on the browser: "Workspace could not be saved on this browser" is that, never the release's)
+    const t2 = await page.evaluate(() => window.__toasts.filter(t => t[0] === 'bad' && !/Workspace could not be saved on this browser/.test(t[1])));
     check(!t2.length, `2 · no failure toast (${JSON.stringify(t2)})`);
 
     // ── 3 · the Orders tab ──
@@ -111,7 +118,7 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     const p2 = await context.newPage(); p2.setDefaultTimeout(30000);
     await p2.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
     await p2.waitForFunction(() => window.CN && window.Orders && CN.S.cloud.ok === true, null, { timeout: 60000 });
-    await p2.evaluate(async () => { await Master.load(true); await Orders.loadMaps(true); });
+    await loadLib(p2);
     // (the same browser restores this page's workspace: its rows go, so the order is pulled afresh and nothing of the press is on its lines; only the cloud can say it)
     await p2.waitForFunction(() => !window.Session || !Session.ready || Session.ready(), null, { timeout: 30000 }).catch(() => {});
     await p2.evaluate(() => { B.orders.rows = []; B.orders.byKey = new Map(); });

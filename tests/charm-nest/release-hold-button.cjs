@@ -44,6 +44,7 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
   // (the name bar asks "Laser or Design?" once, after the first name is used: answered, as a person would, so it never covers a button)
   const calm = async () => { await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Laser' && x.getClientRects().length); if (b) b.click(); }); await page.waitForTimeout(300); };
   // (a press as a person makes it: when the list has stopped moving; a click that lands while the page redraws the list under the pointer is lost, as it would be for a person, who presses again: `took` says whether it took)
+  let asked = 0;
   const press = async (sel, took) => {
     for (let n = 0; n < 5; n++) {
       await calm(); let last = '';
@@ -56,7 +57,9 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
       // (a press that did not take: the button's own handler, the code a person's press runs. Playwright's guard can be left armed on the window by an earlier page.click and stop every
       //  event there, the page's own included; the handler itself is what this test checks)
       else await page.evaluate(sel => { const b = document.querySelector(sel); if (b && typeof b.onclick === 'function') b.onclick({ stopPropagation() {}, preventDefault() {}, target: b, currentTarget: b }); }, sel).catch(() => {});
-      for (let i = 0; i < 24; i++) { if (await took()) return true; await page.waitForTimeout(250); }
+      // (NESTASK, Paul 23 Nov 2026 + RELASK, Paul 25 Nov 2026, charm-nest-bridge.js choose / askOf: a press whose lines show a charm on no sheet yet asks first, "Put this charm on a sheet?":
+      //  answered "Nest it", the default, as a person sends it on to the sheets; asked = how many presses asked)
+      for (let i = 0; i < 24; i++) { if (await page.evaluate(() => { const b = document.querySelector('dialog.naDlg[open] [data-na="nest"]'); if (b) b.click(); return !!b; })) asked++; if (await took()) return true; await page.waitForTimeout(250); }
     }
     return false;
   };
@@ -64,7 +67,8 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
   try {
     R.seedMaster(st);
     await page.evaluate(async () => { await Master.load({ force: true, fresh: true }); await Orders.loadMaps(true); });   // (fresh: a load already under way began before the library was seeded)
-    await until(() => page.evaluate(() => !!Master.entryFor('COMET_9427')), 20000, 'the seeded library');
+    // (stale harness: one fresh load can still hand back a read that began before the seeding; the library is read again until it holds the seeded masters, as _engraveRealWorld.cjs world() does)
+    await until(() => page.evaluate(async () => { if (Master.entryFor('COMET_9427')) return true; await Master.load({ force: true, fresh: true }); return !!Master.entryFor('COMET_9427'); }), 20000, 'the seeded library');
     await page.evaluate(() => {
       window.__toasts = []; const was = window.toast; window.toast = (m, k, ms) => { window.__toasts.push([k || '', String(m)]); return was && was(m, k, ms); };
       window.__stamps = []; const so = Seal.stampOn; Seal.stampOn = (host, spec) => { try { const s = spec && (spec.stamp || spec); window.__stamps.push({ how: s && s.how, by: s && s.by, at: s && s.at }); } catch (_) {} return so(host, spec); };
@@ -81,7 +85,8 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     await seedRows(ALL);
     const rowOf = key => page.evaluate(k => { const r = B.orders.byKey.get(k); return r && { state: r.state, hold: r.hold || null, reason: r.reason || '', problems: r.problems.map(p => p.kind), pool: (r.poolIds || []).length, ra: r.releaseAnyway || null, rh: r.releaseHold || null, frontAt: r.frontAt || 0 }; }, key);
     const taken = key => async () => { const r = await rowOf(key); return !!(r && r.ra); };
-    const bad = () => page.evaluate(() => window.__toasts.filter(t => t[0] === 'bad'));
+    // (the fake site keeps no workspace on the browser: "Workspace could not be saved on this browser" is that, never the release's)
+    const bad = () => page.evaluate(() => window.__toasts.filter(t => t[0] === 'bad' && !/Workspace could not be saved on this browser/.test(t[1])));
     const rowSel = fx => `#rvList .reviewListRow[data-rid="${fx.rid}"]`;
     const look = sel => page.evaluate(sel => {
       const n = document.querySelector(sel); if (!n) return null; const b = n.querySelector('[data-rv-release]'); if (!b) return { none: true };
@@ -184,13 +189,20 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     const planC = await page.evaluate(rid => OrderHold.releasePlan(rid).then(p => ({ can: p.canRelease, nothing: p.nothing, effects: p.effects })), HELDC.rid);
     check(planC.can === true && planC.nothing.length === 1 && planC.effects.some(t => /nothing to place/.test(t)), `5 · the held chain's plan: nothing to place (${JSON.stringify(planC)})`);
     // the necklace: no run is open here, so it waits at the front of the queue (the placement itself is the engine's own, order-release-engine.cjs)
+    // (RELEASEHOLD, Paul 20 Nov 2026, charm-nest-order-release.js askCloud / netlify/functions/_charmNestHoldRelease.js: a page that carries no run is done once the CLOUD has released the hold, and
+    //  the cloud writes the 'released' step only for a hold it holds. A hold lives in the cloud's run (the open run's lines; "a run is made by the cloud, never by a page"), so the fake cloud is
+    //  given this page's run as its open run, with the lines as the page holds them (held): a hold on this page only, which the cloud never heard of, is not what a person's hold is)
+    const run5 = await page.evaluate(() => { const r = JSON.parse(JSON.stringify(Object.assign({}, B.run, { lines: Object.fromEntries(Orders.rows().map(Orders.lineRecord)) }))); return r; });
+    st.put('Charm_Nest_Runs', run5.runId, run5);
+    st.put('Charm_Nest_Open', 'run', Object.assign({}, st.doc('Charm_Nest_Open', 'run') || {}, { runId: run5.runId }));
     await page.evaluate(() => { window.__run = B.run; B.run = null; });
     check(await press(card(HELDN.rid), async () => { const a = await rowOf(keyOf(HELDN)); return !!a && (!a.hold || !!a.ra); }), '5 · the press took');
     await until(async () => { const r = await rowOf(keyOf(HELDN)); return r && !r.hold && r.ra && r.frontAt > 0 && !r.problems.length; }, 45000, 'the held necklace to be released');
     const r5 = await rowOf(keyOf(HELDN));
     check(r5.ra && r5.ra.kinds.includes('needsMapping') && !r5.hold && r5.frontAt > 0, `5 · the held necklace is released at the front of the queue with the question set aside (${JSON.stringify(r5)})`);
     const ev5 = await until(() => st.list(TL).find(e => String(e._id).startsWith(HELDN.rid + '~') && e.type === 'released'), 30000, 'the released step').catch(() => null);
-    check(ev5 && Array.isArray(ev5.data.anyway) && /not mapped/.test(ev5.data.anyway[0]) && /released anyway/.test(ev5.text), `5 · its timeline step says what was set aside (${JSON.stringify(ev5 && { text: ev5.text, data: ev5.data })})`);
+    // (RELEASEHOLD: released by the cloud (this page carries no run), the step is the cloud's: what was set aside rides in its words, the note "released anyway: ..." (_charmNestHoldRelease.js step 4))
+    check(ev5 && ((Array.isArray(ev5.data.anyway) && /not mapped/.test(ev5.data.anyway[0])) || (ev5.data.cloud === true && /not mapped/.test(ev5.text))) && /released anyway/.test(ev5.text), `5 · its timeline step says what was set aside (${JSON.stringify(ev5 && { text: ev5.text, data: ev5.data })})`);
     // (every release a press allows records the release seal: who and when on the lines, in the cloud's Review record, on the timeline step)
     const rh5 = await until(async () => { const r = await rowOf(keyOf(HELDN)); return r && r.rh && r; }, 30000, 'the seal on the held necklace line').catch(() => null);
     const cloud5 = await until(() => { const d = st.doc('Charm_Custom_Orders', HELDN.rid + '_review'); return d && d.release && d.release.at && d; }, 20000, 'the cloud record').catch(() => null);

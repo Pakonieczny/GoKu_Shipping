@@ -30,8 +30,10 @@ const say = (name, ok, seen) => { if (!ok) fails++; console.log(`${ok ? 'OK  ' :
     } finally { CN.api = realApi; Recall.rebuild = realRebuild; MT.refreshSoon = realRefresh; }
     return out;
   });
-  say('1a a background reload asks for a background rebuild and redraws no thumbnails', r1.opts[0] === '{"background":true}' && r1.afterBg === 0, r1);
-  say('1b a person\'s own reload is a normal rebuild and redraws the thumbnails', r1.opts[1] === 'none' && r1.afterPerson === 1, r1);
+  // (NOSTORE, Paul 23 Nov 2026, charm-nest-cloud-sheets.js reload / Recall.rebuild: the sheet is drawn from the cloud's answer it read and nothing else, so every reload hands Recall.rebuild { answer: rec } beside its own options)
+  const o1 = r1.opts.map(x => { try { return x === 'none' ? null : JSON.parse(x); } catch (_) { return null; } }), only = (o, keys) => !!o && Object.keys(o).sort().join() === keys.slice().sort().join() && !!o.answer && o.answer.id === 'qsheet1';
+  say('1a a background reload asks for a background rebuild (drawn from the record it read) and redraws no thumbnails', only(o1[0], ['answer', 'background']) && o1[0].background === true && r1.afterBg === 0, r1);
+  say('1b a person\'s own reload is a normal rebuild (no background, drawn from the record it read) and redraws the thumbnails', only(o1[1], ['answer']) && r1.afterPerson === 1, r1);
 
   // 2 ── the bar
   const r2 = await page.evaluate(async () => {

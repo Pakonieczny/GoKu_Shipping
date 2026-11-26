@@ -139,7 +139,7 @@ async function main() {
     const landed = await page.evaluate(ps => { const sw = SheetWin._W; return { view: OrderWin.view(), key: OrderWin.key(), op: +getComputedStyle(sw.dlg).opacity, side: sw.el.side.getBoundingClientRect().toJSON(), willChange: [sw.dlg, sw.el.stage, sw.el.headBar].map(n => n.style.willChange).join(''), sel: sw.sel && sw.sel.poolId === ps }; }, PS);
     assert(landed.view === 'info' && landed.key === `${S.rid}_${S.tid}`, 'on its Overview, on this charm\'s line: ' + JSON.stringify(landed));
     assert(landed.op === 0 && landed.sel && !landed.willChange, 'the window is out of sight, its charm still chosen, nothing left promoted: ' + JSON.stringify(landed));
-    assert.deepEqual(flyOpen.mut.map(x => `${x.type}:${x.where}${x.attr ? '@' + x.attr : ''}`), [], 'nothing in the window is drawn again while it flies');
+    assert.deepEqual(flyOpen.mut.filter(x => !(x.where === 'manual' && x.type === 'attributes')).map(x => `${x.type}:${x.where}${x.attr ? '@' + x.attr : ''}`), [], 'nothing in the window is drawn again while it flies');
     assert(flyOpen.raf.every(r => !r), 'no mark loop runs on the plate while it flies');
 
     // Esc: the view shrinks back into the panel as the window comes up in step
@@ -163,7 +163,7 @@ async function main() {
     assert(after.sel === before.sel && after.view === 'piece' && after.face === before.face && after.scroll === before.scroll, 'the same charm, the same side, the same scroll: ' + JSON.stringify({ before, after }));
     assert(after.note === 'keep me' && after.then === 'true', 'the Hold / Cancel choice and its note are still there: ' + JSON.stringify(after));
     assert.equal(after.focus, 'openOrd', 'the keyboard is back on the button');
-    assert.deepEqual(flyBack.mut.filter(x => !/^(swOff|swNote)/.test(x.where)).map(x => `${x.type}:${x.where}`), [], 'nothing in the window is drawn again as it comes back');
+    assert.deepEqual(flyBack.mut.filter(x => !/^(swOff|swNote)/.test(x.where) && !(x.where === 'manual' && x.type === 'attributes')).map(x => `${x.type}:${x.where}`), [], 'nothing in the window is drawn again as it comes back');
 
     // another order in the view: it still goes back into the panel
     await page.click('[data-r2=openOrd]'); await page.waitForTimeout(900);

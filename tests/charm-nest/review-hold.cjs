@@ -229,7 +229,8 @@ const A = '9100000001', B = '9100000002';
     for (const state of ['review']) {
       const w = worldOf(), row = rowOf(), id = placed(w, row, true); doneHow.delete(rid); unmark(rid); w.Pool.pinPooled(row); assert.equal(row.repoolChanged, true, 'offered first');
       if (state === 'review') mark(rid); else doneHow.set(rid, 'pick');
-      const src = keyWorld.src, a = src.indexOf('async function repoolLine(row) {'), b = src.indexOf('\n  const by = () => employeeName()', a); assert(a > 0 && b > a, 'repoolLine is where the test expects it');
+      // (HOMEAGAIN, Paul 16 Nov 2026: repoolLine first reads the line's last home sheet, lastHomeOf, defined just above it with homeAgain: the real ones are taken along)
+      const src = keyWorld.src, a0 = src.indexOf('async function repoolLine(row) {'), h = src.indexOf('const lastHomeOf = (row, force) =>'), a = h > 0 && h < a0 ? h : a0, b = src.indexOf('\n  const by = () => employeeName()', a0); assert(a0 > 0 && b > a0, 'repoolLine is where the test expects it');
       const updates = []; Object.assign(w.c, { CNListActivity: { touch() {} }, syncOrderItems() {}, renderRail() {}, updateTopSub() {}, refreshAllCards() {}, OrderWin: { isOpen: () => false }, toast: m => w.toasts.push(m), sheetName: sh => sh.fileBase, add() {}, RunCtl: { poke() {} }, Orders: { interpretAll() {}, render() {}, keepRest() {} } });
       w.c.Pool = Object.assign({}, w.Pool, { update: async (ids, patch) => { updates.push({ ids, patch }); } });
       w.c.window.Pool = w.c.Pool; w.c.B.run = null; w.c.Sets = { ofRun: () => [] }; w.c.Gate = { modern: () => false }; w.c.allSheets = () => Object.values(w.pages);
