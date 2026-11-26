@@ -1488,8 +1488,54 @@
       else lines.push({ parts: [t], str: String(t.str || ""), bbox: t.bbox.slice() });
     }
     const labels = lines.filter(L => BACK_LABEL.test(L.str.replace(/\s+/g, " ")));
-    if (!labels.length) return out;
     const boxOf = c => (c.outline && Array.isArray(c.outline.bbox) ? c.outline.bbox : c.bbox), W = b => b[2] - b[0], H = b => b[3] - b[1], mid = b => [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+    /* the outline of `a` against `b` turned over (mirrored about its vertical middle), both brought to the same box: the share of a 24 × 24 grid inside both (1: the same shape) */
+    const shapeMatch = (a, b, mirror) => {
+      try {
+        const G = geometry(); if (!G || !G.flatten || !G.pointInPolys) return 0;
+        const pa = G.flatten(a.outline, 8), pb = G.flatten(b.outline, 8), ba = boxOf(a), bb = boxOf(b), n = 24; let both = 0, any = 0;
+        for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+          const u = (i + 0.5) / n, v = (j + 0.5) / n;
+          const ina = G.pointInPolys(ba[0] + u * W(ba), ba[1] + v * H(ba), pa), inb = G.pointInPolys(bb[0] + (mirror ? 1 - u : u) * W(bb), bb[1] + v * H(bb), pb);
+          if (ina && inb) both++; if (ina || inb) any++;
+        }
+        return any ? both / any : 0;
+      } catch (_) { return 0; }
+    };
+    const sameSize = (a, b, t) => { const x = boxOf(a), y = boxOf(b); return Math.abs(W(x) / W(y) - 1) < t && Math.abs(H(x) / H(y) - 1) < t; };
+    const overCharm = (back, charm) => { const x = boxOf(back), y = boxOf(charm), gap = x[1] - y[3]; return gap > 0 && gap < 3 * H(y) && Math.abs(mid(x)[0] - mid(y)[0]) < 0.5 * W(y); };
+    // (CUSTOMBACK, an outlined label: the words turned into shapes in Illustrator can not be read, so a back is known by its shape instead: the charm's outline turned over, its size, right above it,
+    //  and one line of small filled letter shapes between the two ("Back Engraving": 10 to 45 outlines, holes counted, about one to four charms wide). A charm and its mirror image with no such row (the two ears of a pair) are never read as a back)
+    {
+      const smalls = [].concat(g.orphans || [], (g.stray || []).map(t => (t && t.seg ? t.seg : t))).filter(m => m && m.kind === "path" && m.fill && Array.isArray(m.bbox));   // (letter shapes are loose ink, or "stray": { seg, charm, why }, outlined letters the grouping set aside)
+      const labelled = new Set();   // (a charm or back a typed label already names is not looked at again)
+      for (const L of labels) for (const c of g.charms) { const b = boxOf(c); if (Math.abs(mid(b)[0] - mid(L.bbox)[0]) < W(b) && (b[1] >= L.bbox[3] - 3 || b[3] <= L.bbox[1] + 3) && Math.min(Math.abs(b[1] - L.bbox[3]), Math.abs(L.bbox[1] - b[3])) < 2 * H(b)) labelled.add(c); }
+      for (const back of g.charms) for (const charm of g.charms) {
+        if (back === charm || labelled.has(back) || labelled.has(charm) || !overCharm(back, charm) || !sameSize(back, charm, 0.12)) continue;
+        const x = boxOf(back), y = boxOf(charm), inGap = m => m && m.kind === "path" && m.fill && Array.isArray(m.bbox) && m.bbox[1] >= y[3] - 1 && m.bbox[3] <= x[1] + 1 && H(m.bbox) < 0.5 * H(y) && Math.abs(mid(m.bbox)[0] - mid(y)[0]) < 1.5 * W(y);
+        // (and letters the grouping took into one of the two as its ink (all of them one compound shape, near enough to it): they lie between the two outlines, never inside either)
+        const row = [...new Set(smalls.filter(inGap).concat(back.members.filter(m => m !== back.outline && inGap(m)), charm.members.filter(m => m !== charm.outline && inGap(m))))];
+        const letters = row.reduce((n, m) => n + (Array.isArray(m.subpaths) ? m.subpaths.length : 1), 0), rw = row.length ? Math.max(...row.map(m => m.bbox[2])) - Math.min(...row.map(m => m.bbox[0])) : 0;
+        if (letters < 10 || letters > 45 || rw < 0.6 * W(y) || rw > 4 * W(y)) continue;   // (each letter its own shape, or all of them one compound shape: their outlines are counted, holes too)
+        const top = Math.min(...row.map(m => m.bbox[3])), bot = Math.max(...row.map(m => m.bbox[1])); if (bot > top) continue;   // (one line of letters: they all share a band)
+        if (shapeMatch(back, charm, true) < 0.85) continue;
+        const bx = row.reduce((a, m) => [Math.min(a[0], m.bbox[0]), Math.min(a[1], m.bbox[1]), Math.max(a[2], m.bbox[2]), Math.max(a[3], m.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
+        labels.push({ parts: row, str: "Back Engraving (outlined)", bbox: bx, outlined: true }); labelled.add(back); labelled.add(charm);
+        for (const c of [back, charm]) if (c.members.some(m => row.includes(m))) { c.members = c.members.filter(m => !row.includes(m)); const keep = new Set(c.members.map(m => (m.parent != null ? m.parent : m.index)).filter(v => v != null)); if (Array.isArray(c.topIndices)) c.topIndices = c.topIndices.filter(t => keep.has(t) || t === (c.outline.parent != null ? c.outline.parent : c.outline.index)); c.bbox = c.members.reduce((a, m) => (m && m.bbox ? [Math.min(a[0], m.bbox[0]), Math.min(a[1], m.bbox[1]), Math.max(a[2], m.bbox[2]), Math.max(a[3], m.bbox[3])] : a), c.outline.bbox.slice()); }   // (the label's letters leave the piece that took them, its box with them)
+        g.orphans = (g.orphans || []).filter(m => !row.includes(m)); if (Array.isArray(g.stray)) g.stray = g.stray.filter(t => !row.includes(t && t.seg ? t.seg : t));   // (the label's letters are not ink of any piece)
+      }
+    }
+    // (no label at all: a charm drawn right above another of its size, its mirror image, is said: it would be cut as a charm of its own)
+    {
+      const named = new Set(); for (const L of labels) for (const c of g.charms) { const b = boxOf(c); if (Math.abs(mid(b)[0] - mid(L.bbox)[0]) < W(b) && Math.min(Math.abs(b[1] - L.bbox[3]), Math.abs(L.bbox[1] - b[3])) < 2 * H(b)) named.add(c); }
+      for (const back of g.charms) for (const charm of g.charms) {
+        if (back === charm || named.has(back) || named.has(charm) || !overCharm(back, charm) || !sameSize(back, charm, 0.08) || shapeMatch(back, charm, true) < 0.9) continue;
+        const sym = shapeMatch(back, charm, false) >= 0.9;
+        out.notes.push(`A charm is drawn right above another of its size${sym ? "" : ", turned over"}: if it is meant as that charm's back, type the words "Back Engraving" between them. As it is, it is cut as a charm of its own`);
+        break;
+      }
+      if (!labels.length) return out;
+    }
     const taken = new Set(), pairs = [], backOutlines = new Set();   // (every outline read as a back leaves the charms, attached or not: it is never a piece)
     for (const L of labels.sort((a, b) => b.bbox[1] - a.bbox[1])) {
       const lh = Math.max(1, H(L.bbox)), lx = mid(L.bbox)[0];
@@ -1520,8 +1566,9 @@
           artRole: m.fill ? "hatch" : "line", stroke: !!m.stroke, fill: !!m.fill, strokeRGB: (m.strokeRGB || [0, 0, 0]).slice(0, 3), fillRGB: (m.fillRGB || [0, 0, 0]).slice(0, 3),
           lwPt: (+m.lwPt || 0.25) * k, paintOp: m.paintOp || (m.fill && m.stroke ? "B" : m.fill ? "f" : "S"), ...(m.artGrey ? { artGrey: true } : {}) });
       });
+      { const bb = boxOf(pr.back); if (texts.some(t => t.bbox[0] >= bb[0] - 0.5 && t.bbox[2] <= bb[2] + 0.5 && t.bbox[1] >= bb[1] - 0.5 && t.bbox[3] <= bb[3] + 0.5 && String(t.str || "").trim())) lost.push("typed words"); }   // (the grouping keeps typed words out of every piece: looked for in the back's box)
       if (lost.length) out.notes.push(`The back of a charm holds ${[...new Set(lost)].join(" and ")}: outline them in Illustrator (Type ▸ Create Outlines, Object ▸ Image Trace) so they are engraved`);
-      if (!parts.length) { out.notes.push("A back drawn above a charm has nothing drawn inside its outline: that charm has no back engraving from the file"); continue; }
+      if (!parts.length) { if (!lost.length) out.notes.push("A back drawn above a charm has nothing drawn inside its outline: that charm has no back engraving from the file"); continue; }
       // (the back's engraving, kept where every reader of a back's engraving looks: artBack, as the Charm Editor's back additions are; fileBack marks the file's own, which an edit never takes off)
       pr.charm.fileBack = parts; pr.charm.artBack = parts.slice(); pr.charm.fileBackMeta = { count: parts.length, scale: +k.toFixed(4) };
       // a group of the drawing that holds this charm AND its back (or its words) is not copied whole: the charm's own parts in it are written from their geometry (buildSheet, artOps)
