@@ -18974,18 +18974,20 @@ const CustomSheet = window.CustomSheet = (() => {
     for (let i = 0; i < n; i++) {
       const v = views && views[i], q = charmQtyOf(F, i), name = `charm ${i + 1} of ${esc(F.name)}`;
       out.push(`<div class="cuCharm${q ? "" : " off"}"><span class="cuCt">${v && v.thumb ? `<img alt="" src="${v.thumb}">` : views ? "" : '<span class="spin" aria-hidden="true"></span>'}</span>` +
-        `<span class="cuCn">Charm ${i + 1}<i>${v ? `${v.wMm.toFixed(1)} × ${v.hMm.toFixed(1)} mm` : ""}${q ? "" : `${v ? " · " : ""}left out`}</i></span>` +
+        `<span class="cuCn">Charm ${i + 1}<i>${v ? `${v.wMm.toFixed(1)} × ${v.hMm.toFixed(1)} mm` : ""}${q ? "" : `${v ? " · " : ""}left out`}</i>${Array.isArray(F.charmBacks) && F.charmBacks.includes(i) ? `<i class="cuBack" title="Its back is drawn in the file: its back engraving, approved in Design &amp; Engrave">Back engraving ✓</i>` : ""}</span>` +   // (CUSTOMBACK: which charms carry a back, at a glance)
         `<span class="cuQty" role="group" aria-label="How many of ${name} to cut"><button type="button" data-q="-1" data-ci="${i}" aria-label="Cut one fewer of ${name}"${q <= 0 ? " disabled" : ""}>−</button><b aria-live="polite">× ${q}</b><button type="button" data-q="1" data-ci="${i}" aria-label="Cut one more of ${name}"${q >= 99 ? " disabled" : ""}>+</button></span></div>`);
     }
     return `<div class="cuCharms" role="group" aria-label="How many of each charm in ${esc(F.name)} to cut">${out.join("")}</div>`;
   }
+  /** CUSTOMBACK: the open card's order is one the shop never engraves (earrings: charm-nest-engrave-faces.js neverOf) */
+  const customNever = () => { try { const row = D.it ? linesOf(D.it)[0] : null, Fc = window.CharmNestEngraveFaces; return !!(row && Fc && Fc.neverOf && Fc.neverOf(row)); } catch (_) { return false; } };
   function rowHtml(F) {
     const big = tooBig(F), err = F.state === "error", many = F.state === "ready" && multiFile(F);
     const size = F.state === "ready" ? `${F.wMm.toFixed(1)} × ${F.hMm.toFixed(1)} mm · ${plural(F.pieces, many ? "charm" : "piece")}${F.kind === "dxf" && F.units ? ` · DXF in ${F.units}` : ""}` : "";
     // (MULTICHARM: ink that lies within reach of no cut outline is not cut: said, never dropped without a word)
     const loose = (F.state === "ready" && +F.loose > 0 ? `<span class="warn">${plural(+F.loose, "part")} of the drawing ${+F.loose === 1 ? "lies" : "lie"} outside every cut outline: not cut</span>` : "")
       // (CUSTOMBACK, 26 Nov 2026: the backs drawn above their charms, each that charm's back engraving, approved in Design & Engrave; what the reading could not take, said)
-      + (F.state === "ready" && +F.backs > 0 ? `<span class="dim">${+F.backs === F.pieces && F.pieces > 1 ? "Every charm has" : plural(+F.backs, "charm") + (+F.backs === 1 ? " has" : " have")} a back engraving from the file: approved in Design &amp; Engrave</span>` : "")
+      + (F.state === "ready" && +F.backs > 0 ? (customNever() ? `<span class="warn">This order is earrings, which are never engraved (the shop's rule): the back${+F.backs === 1 ? "" : "s"} drawn in the file ${+F.backs === 1 ? "is" : "are"} not engraved</span>` : `<span class="dim">${+F.backs === F.pieces && F.pieces > 1 ? "Every charm has" : plural(+F.backs, "charm") + (+F.backs === 1 ? " has" : " have")} a back engraving from the file: approved in Design &amp; Engrave</span>`) : "")
       + (F.state === "ready" && Array.isArray(F.backNotes) ? F.backNotes.map(t => `<span class="warn">${esc(t)}</span>`).join("") : "");
     return `<div class="cuThumb">${F.thumb ? `<img alt="${esc(F.name)}" src="${F.thumb}">` : F.state === "reading" ? '<span class="spin" aria-hidden="true"></span>' : '<span class="x" aria-hidden="true">!</span>'}</div>` +
       `<div class="cuMeta"><b title="${esc(F.name)}">${esc(F.name)}</b>${F.state === "reading" ? '<span class="dim">Reading the design…</span>' : err ? `<span class="err">${esc(F.error || "could not be read")}</span>` : `<span class="dim">${esc(size)}</span>${big ? `<span class="err">Too big for the ${esc(labelOf(F.metal))} plate</span>` : !F.metal ? '<span class="warn">Pick a metal for it</span>' : ""}${loose}`}</div>` +
