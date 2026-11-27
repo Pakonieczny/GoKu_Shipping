@@ -8497,7 +8497,7 @@ const Engrave = window.Engrave = (() => {
    *  whose form is huggie or earring has no engraving on either face. Every door that could make one asks THIS: the intake's candidate flag, the classifier, the words card, the ready step, a person's pick
    *  (the setup control, applyEngraving), "ask again", "send back", the approval. A job that is already APPROVED or WRITTEN is left as it is (its seals are permanent); everything still open is put away as "no engraving". */
   const neverEngraves = row => { const r = row && (row.parentRow || row), F = FACES(); return F && F.neverOf ? F.neverOf(r) : (r && r.spec && r.spec.engraveNever) || null; };
-  const NEVER_OPEN = j => !["approved", "written"].includes(j.state);   // (the jobs the rule may put away: not the ones with an approval on them)
+  const NEVER_OPEN = j => !["approved", "written"].includes(listState(j));   // (the jobs the rule may put away: not the ones with an approval on them)
   const NEVER_WHY = "Earrings are never engraved (the shop's rule)";
   /** The verdict's own words for a line that never engraves (an earring's, or a letter key's: charm-nest-orders.js sections 3d, 3d'); the earrings' sentence when it says none. */
   const neverWhy = row => { const v = neverEngraves(row); return (v && v.why) || NEVER_WHY; };
@@ -8531,13 +8531,13 @@ const Engrave = window.Engrave = (() => {
       const S = SIDES(); if (!S) return null;
       const jobs = jobsOf(row); if (!jobs.length) return null;
       if (which) { const slot = SLOT_PROBE.includes(which) || S.isSlot(which) ? which : S.slotOfId(sidesCtx, row, which); return items().get(slotKey(row, slot)) || null; }
-      return jobs.find(j => !DECIDED.includes(j.state) && j.state !== "none") || jobs[0];
+      return jobs.find(j => !DECIDED.includes(listState(j)) && j.state !== "none") || jobs[0];
     }
     const S = SIDES(), jobs = jobsOf(row); if (!jobs.length) return null;
     let cands = jobs;
     if (which) { const slot = SLOT_PROBE.includes(which) || (S && S.isSlot(which)) ? which : (S ? S.slotOfId(sidesCtx, row, which) : null); cands = jobs.filter(j => (j.slot || null) === (slot || null)); }
     if (face) return cands.find(j => faceOf(j) === face) || null;
-    return cands.find(j => !DECIDED.includes(j.state) && j.state !== "none") || cands.find(j => faceOf(j) === "back") || cands[0] || null;
+    return cands.find(j => !DECIDED.includes(listState(j)) && j.state !== "none") || cands.find(j => faceOf(j) === "back") || cands[0] || null;
   };
   const newJob = (key, row) => ({ key, row, lineGap:.216, state: "classify", text: null, lines: [], source: null, quote: null, confidence: null, requests: null, questions: [], decision: null, fit: null, view: null, mask: null, claude: null, approvedBy: null, approvedAt: null, backs: [], copies: [], reason: null, t: Date.now() });
   /** One job of a line for (slot, face), made when missing. A front job always has a side row of its own; so does the back of a line that has a front (`linked`): their records and seals never mix. */
@@ -8627,7 +8627,7 @@ const Engrave = window.Engrave = (() => {
     for (const j of jobsOf(row, { all: true })) {
       if (!j.slot) continue;
       if (live.has(j.slot)) { if (j.archived) delete j.archived; continue; }
-      if (DECIDED.includes(j.state) || j.state === "none") { if (!j.archived) j.archived = Date.now(); }
+      if (DECIDED.includes(listState(j)) || j.state === "none") { if (!j.archived) j.archived = Date.now(); }
       else if (items().get(j.key) === j) { items().delete(j.key); Review.remove("eng:" + j.key); }
     }
   }
@@ -8686,7 +8686,7 @@ const Engrave = window.Engrave = (() => {
     const slot = SIDES().slotOfId(sidesCtx, lineOf(row), poolId) || null;
     const mine = js.filter(j => (j.slot || null) === slot), pool = mine.length ? mine : js;
     if (face) return pool.find(j => faceOf(j) === face) || null;
-    return pool.find(j => !DECIDED.includes(j.state) && j.state !== "none") || pool.find(j => faceOf(j) === "back") || pool[0];
+    return pool.find(j => !DECIDED.includes(listState(j)) && j.state !== "none") || pool.find(j => faceOf(j) === "back") || pool[0];
   }
   /** The front and the back job that hold one piece (by pool id), for the sheet window's piece card and the order card: { front, back } (a null for a face the piece has no job for). */
   const jobsOfPiece = poolId => { const out = { front: null, back: null }; for (const j of items().values()) if (!j.editingBack && (j.copies || []).includes(poolId)) { const f = faceOf(j); out[f] = out[f] || j; } return out; };
@@ -8737,11 +8737,15 @@ const Engrave = window.Engrave = (() => {
   const pendingCount = () => [...items().values()].filter(j => !j.editingBack && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone" && !unplacedPre(j)).length;   // (ENGPRE: the run's Engrave step waits for the engraving of pieces in the run; a line not nested yet is the Engrave tab's own list, counted by pendingRows)
   /** How many placements have already been settled in this run — the numerator of "3 of 9" on the card. */
   const accepted = j => !!(j && !j.editingBack && j.state === "review" && j.approving && j.approving.cloud);   // (ACCEPTED, Paul 23 Nov 2026: the cloud holds this approval: it reads approved at once; charm-nest-engraving-seals.js accepted)
-  const DECIDED = ["approved", "written", "skipped"];                    // the pieces that are decided: listed after the ones still to settle, and opened in the same detail card (NODECIDED)
+  const DECIDED = ["approved", "written", "skipped"];
+  /* KEPTLIST (Paul, 27 Nov 2026, screen recording of Design & Engrave: Placements 249 → 250 and Approved 303 → 302 and back, every few seconds): an approved piece whose words are placed again only to be
+     drawn here (charm-nest-engrave-sync.js fitOne and its take: "ready", then "fitting", for a third of a second, and its state put back) keeps what it IS in keptState, which Approve and the dots read; the
+     lists and their counts read the state alone, so the piece left Approved for Placements and came back. Every list and count reads what a piece is (keptState while it is placed again), never that pass. */
+  const listState = j => (j && j.keptState) || (j && j.state);                    // the pieces that are decided: listed after the ones still to settle, and opened in the same detail card (NODECIDED)
   // (NONEKEPT, Paul 12 Nov 2026: "the actual order disappears somewhere": a piece a person approved with None (takeAway: state "none", decision.removed) is decided too: it stays in the list, under Approved, with its
   //  "no engraving" seal, and opens in the same card, where Front / Back puts its words back)
   const personNone = j => !!(j && j.state === "none" && j.decision && j.decision.removed);
-  const decidedJobs = () => [...items().values()].filter(j => (DECIDED.includes(j.state) || accepted(j) || personNone(j)) && j.row.state !== "gone" && j.copies.length);
+  const decidedJobs = () => [...items().values()].filter(j => (DECIDED.includes(listState(j)) || accepted(j) || personNone(j)) && j.row.state !== "gone" && j.copies.length);   // (KEPTLIST)
   /** A recalled set's engraving: each back written on its sheets becomes a decided job on the line it belongs to, with
    *  its words, who approved it and the file, so the Decided list reads the same for a set from March as for today's. */
   function fromRecall() {
@@ -8968,8 +8972,8 @@ const Engrave = window.Engrave = (() => {
     for (const j of rec.keep) if (!["skipped", "none"].includes(j.state)) { await skip(j, by); out.skipped.push(j.key); }
     if (now.mode === "none") for (const j of jobsOf(row)) {
       if (isFront(j) || j.state === "none") continue;
-      if (["approved", "written"].includes(j.state)) { await skip(j, by); out.skipped.push(j.key); }
-      else if (!DECIDED.includes(j.state)) { const t = j.text; setNone(j, `no engraving — decided by ${by}`); j.decision = { by, at, none: true }; wordsEvent(j, by, t, "none"); }
+      if (["approved", "written"].includes(listState(j))) { await skip(j, by); out.skipped.push(j.key); }
+      else if (!DECIDED.includes(listState(j))) { const t = j.text; setNone(j, `no engraving — decided by ${by}`); j.decision = { by, at, none: true }; wordsEvent(j, by, t, "none"); }
     }
     // 2 · an undecided face whose words (or font word) changed is read from the setup again
     const sig = (st, f) => JSON.stringify(st[f] || null);
@@ -8981,7 +8985,7 @@ const Engrave = window.Engrave = (() => {
       const changed = !wasJ.faces.includes(f) || sig(wasJ, f) !== sig(nowJ, f);
       if (!changed) continue;
       if (j.state === "none") { Object.assign(j, { state: "classify", fit: null, verify: null, view: null, mask: null, decision: null, lineInput: null, wantSize: null, reason: null, missing: null }); j.row.engrave = { needed: false, state: "classify", seals: CNEngravingSeals.merge(j.row.engrave, j) }; Review.remove("eng:" + j.key); continue; }   // (a person's setup is the newer word over a plain decision)
-      if (DECIDED.includes(j.state) || j.state === "none") { out.kept.push(j.key); continue; }
+      if (DECIDED.includes(listState(j)) || j.state === "none") { out.kept.push(j.key); continue; }
       if (typeof holdDrawing === "function") holdDrawing(j);   // (REFIT: drawn, dimmed, while its new words are read and fitted)
       Object.assign(j, { state: "classify", fit: null, verify: null, view: null, mask: null, decision: null, lineInput: null, wantSize: null, reason: null, missing: null }); Review.remove("eng:" + j.key);
     }
@@ -9014,7 +9018,7 @@ const Engrave = window.Engrave = (() => {
   //  anything is cut; a job with no words, or with a character no font has (job.missing), still waits for a person. This undoes WORDSWAIT, same day.)
   const needsPreview = job => job.row.state !== "gone" && !isWorking(job) && job.lines?.length && !job.missing?.length &&
     (job.state === "words" || (["ready", "fitting"].includes(job.state) && canFit(job)));
-  const queuedJobs = jobs => jobs.filter(j => ["review", "words", "blocked", "classify", "ready", "fitting"].includes(j.state) && !accepted(j));
+  const queuedJobs = jobs => jobs.filter(j => ["review", "words", "blocked", "classify", "ready", "fitting"].includes(listState(j)) && !accepted(j));   // (KEPTLIST)
   async function prepareWaitingPreviews() {
     if (previewRecovery) return;
     const owner = items();
@@ -9865,7 +9869,7 @@ const Engrave = window.Engrave = (() => {
         { const now = j ? j.key + ":" + j.state + ":" + (j.fit ? 1 : 0) : ""; if (now !== seen) { seen = now; step("face", !j ? `Making the ${f} engraving…` : OPENREAD.includes(j.state) ? `Reading the ${f} words…` : ["words", "blocked"].includes(j.state) ? `Keeping the ${f} words…` : ["ready", "fitting"].includes(j.state) ? `Placing the ${f} words on the charm…` : `The ${f} words are placed…`); } }   // (a face moving on is progress: APPROVESTEP, the wait ends only after STAGE_MS with nothing moving)
         if (!j) { if (Date.now() > until()) { why = `the ${f} could not be made here (nothing moved for ${minutesOf(silence)})`; break; } await wait(60); continue; }
         jobs[f] = j;
-        if (["approved", "written"].includes(j.state)) break;
+        if (["approved", "written"].includes(listState(j))) break;
         if (j.state === "review" && j.fit && j._placeAt && !lateTasks.has(j) && !isWorking(j)) { const pc = j._placeAt; delete j._placeAt; if (j.view && !j.fit.artOnly) { const c = viewPointOf(j.view, pc); try { if (c && moveTo(j, c)) j.nudged = true; } catch (_) { /* the system's place stands */ } } const lk = j._placeLook; delete j._placeLook; if (lk) applyLook(j, lk); }   // (fitted by another path than prepareLate: the dragged place is put on it here)
         if (j.state === "review" && j.fit && !isWorking(j) && !lateTasks.has(j) && !j._placeAt && !fitTasks.get(j)) { const p0 = placing.get(j); if (p0 && !p0.done) { await wait(60); continue; } if (p0 && p0.res && p0.res.moved) why = `the ${f} words were placed in a new spot. Look at them, then press Approve`; break; }   // (PLACEFIRST: never approved where nobody looked)
         /* PLACEFIRST (Paul, 23 Nov 2026, order 4242795385 piece 3: "Not approved: the back words were not placed: nothing moved for 4 minutes"): a face to check whose words have NO placement on this page (a
@@ -9909,12 +9913,12 @@ const Engrave = window.Engrave = (() => {
     if (pin) EG.opened = pin;
     for (const f of on) {
       const j = mine(f) || jobs[f]; if (!j) return { ok: false, message: `Not approved: the ${f} could not be made here.`, approved };
-      if (["approved", "written"].includes(j.state)) { approved.push(j.key); continue; }
+      if (["approved", "written"].includes(listState(j))) { approved.push(j.key); continue; }
       // (APPROVESTEP: an approval of this face still finishing (its file, its save: an earlier press) is waited for while it moves, never met with "Still approving" and reported as a failure)
       { const busyNow = () => !!(j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving); let sig = "";
         while (busyNow() && Date.now() < until()) { const now = [j.state, j.approvalPreparing ? 1 : 0, j.backSaving ? 1 : 0, j.stamping ? 1 : 0, (j.backs || []).length].join(":"); if (now !== sig) { sig = now; step("tail", `Letting the ${f} approval before this one finish…`); } await wait(100); }
         if (busyNow()) return { ok: false, message: `Not approved: the ${f} approval before this one did not finish (nothing moved for ${minutesOf(silence)}). Press Approve to try again.`, approved, failed: j.key };
-        if (["approved", "written"].includes(j.state)) { approved.push(j.key); continue; } }
+        if (["approved", "written"].includes(listState(j))) { approved.push(j.key); continue; } }
       step("approve", `Checking the ${f} placement…`);
       // (the face is approved the moment its state says so: the rest of the approval (its back file for the sheets, its save) goes on behind it, as after any Approve; the commit does not wait for it)
       // (APPROVESTEP: every step the approval makes, its file, its upload, its record in the cloud, is told to this commit while it runs: j._onStep)
@@ -9923,11 +9927,11 @@ const Engrave = window.Engrave = (() => {
       finally { delete j._onStep; }
       step("approved", `The ${f} is approved…`);   // (the stamp on the panel's own anchor: the live Approve is never the approval's button)
       if (j.approving && j.approving.cloud) { approved.push(j.key); continue; }   // (CLOUDLANE step 11, dormant: the press went to the cloud, which saves the file and then seals it)
-      if (!["approved", "written"].includes(j.state)) { const w = APPROVE_WHY.get(j.key); return { ok: false, message: (w && w.text) || `Not approved: the ${f} is still to approve.`, approved, failed: j.key, said: !!w }; }   // (said: the approval already told the person why)
+      if (!["approved", "written"].includes(listState(j))) { const w = APPROVE_WHY.get(j.key); return { ok: false, message: (w && w.text) || `Not approved: the ${f} is still to approve.`, approved, failed: j.key, said: !!w }; }   // (said: the approval already told the person why)
       approved.push(j.key);
     }
     // (every engraved face approved, read again now: a face that went back to review under the commit (approved before, its words changed) is never left behind with the card looking calm)
-    { const left = on.filter(f => { const j = mine(f); return !j || (!["approved", "written"].includes(j.state) && !(j.approving && j.approving.cloud)); }); if (left.length) return { ok: false, message: `Not approved: the ${left.join(" and ")} ${left.length > 1 ? "are" : "is"} still to approve. Press Approve again.`, approved }; }
+    { const left = on.filter(f => { const j = mine(f); return !j || (!["approved", "written"].includes(listState(j)) && !(j.approving && j.approving.cloud)); }); if (left.length) return { ok: false, message: `Not approved: the ${left.join(" and ")} ${left.length > 1 ? "are" : "is"} still to approve. Press Approve again.`, approved }; }
     void mark; return { ok: true, approved, moveOn: pin };
   }
   /** ENGSTAGE (coordinator 30 Oct 2026: "when a commit ends, move on ONLY if the piece's draft is clean (nothing staged on top, no commit waiting) ... A deferred move-on must re-check this at the moment it
@@ -12245,7 +12249,7 @@ const Engrave = window.Engrave = (() => {
   async function charmEditRevive(poolId) {
     let pj = {}; try { pj = jobsOfPiece(poolId) || {}; } catch (_) { pj = {}; }
     for (const j of [pj.front, pj.back]) {
-      if (!j || (j.fit && j.view) || !j.writtenFit || !["approved", "written"].includes(j.state)) continue;
+      if (!j || (j.fit && j.view) || !j.writtenFit || !["approved", "written"].includes(listState(j))) continue;
       try { if (!F_.ok) await loadFonts(); if (F_.ok && !fontSetOf(j)) await loadFontSet(fontIdOf(j)); } catch (_) { /* opened with no words for that face */ }
       try { reviveShelved(j); } catch (e) { console.warn("charm edit: the written words", e); }
     }
@@ -12392,7 +12396,7 @@ const Engrave = window.Engrave = (() => {
     const invalid = new Set();
     for (const j of items().values()) {
       if (j.editingBack && j.state !== "written") continue;
-      if (!j.approvedAt || !["approved", "written"].includes(j.state)) { j.copies.forEach(id => invalid.add(recKeyFor(id, j))); continue; }
+      if (!j.approvedAt || !["approved", "written"].includes(listState(j))) { j.copies.forEach(id => invalid.add(recKeyFor(id, j))); continue; }
       records.push(...(j.backs || []));
       if (!(j.view && j.fit) && F_.ok && hasPlacement(j) && j.copies.some(id=>owned.has(id) && !(j.backs || []).some(b=>b.poolId===id && b.approvedAt===j.approvedAt))) { try { restoreWritten(j); } catch (_) { /* written when it can be (writeBacks says why) */ } }
       if (j.view && j.fit && j.copies.some(id=>owned.has(id) && !(j.backs || []).some(b=>b.poolId===id && b.approvedAt===j.approvedAt))) {
@@ -12817,13 +12821,13 @@ const Engrave = window.Engrave = (() => {
      the rows that hold an approved piece (an approved or "Saved to sheet" engraving, an approved monogram), drawn by the same renderPlacementRows from the same decidedSelect() (so the search and the date chips apply, and a row is told as it is in Placements). A piece cut
      plain (skipped) is decided but not approved: a row of only those is in Placements alone. The chip's number is the rows it shows (approvedRows). Nothing is read, stored or waited on for it. */
   const onApproved = () => EG.tab === "approved";
-  const isApprovedJob = j => j.state === "approved" || j.state === "written" || accepted(j) || personNone(j);   // (NONEKEPT)
+  const isApprovedJob = j => listState(j) === "approved" || listState(j) === "written" || accepted(j) || personNone(j);   // (KEPTLIST)   // (NONEKEPT)
   const approvedSelect = () => decidedSelect().filter(isApprovedJob);
   const approvedRows = () => listRows(approvedSelect());
   const ordersIn = rows => new Set((rows || []).map((r, i) => ridOfJob(r && r.lead) || '~' + i)).size;   // (ONEORDER: the cards a set of rows makes)
   const shownList = () => (onApproved() ? approvedSelect() : shownQueue().concat(decidedSelect()));   // (APPTAB: Back / Next stop at what the open tab lists, and at the rest of the piece's own order)
   const listUniverse = () => { const q = queueUniverse(); return q.concat(decidedAll().filter(j => !q.includes(j))); };
-  const rowPending = r => !!r && r.jobs.some(j => !DECIDED.includes(j.state) && !accepted(j));
+  const rowPending = r => !!r && r.jobs.some(j => !DECIDED.includes(listState(j)) && !accepted(j));
   function listRows(selected) {
     let rows = rowsIn(selected, listUniverse());
     const a = rows.filter(rowPending), b = rows.filter(r => !rowPending(r)), E = EO(), ix = lineIndexFn();
@@ -12837,7 +12841,7 @@ const Engrave = window.Engrave = (() => {
      every computer; a line one computer prepared alone in the background, and never sent, is not listed there. null: no cloud world (the page lists what it holds, as before). */
   const cloudEngraveKeys = () => { try { const CW = window.CloudWorld, rv = CW && CW.wanted && CW.wanted() && CW.review ? CW.review() : null; return rv && Array.isArray(rv.engraveKeys) ? (rv._engSet && rv._engSet.src === rv.engraveKeys ? rv._engSet.set : (rv._engSet = { src: rv.engraveKeys, set: new Set(rv.engraveKeys.map(String)) }).set) : null; } catch (_) { return null; } };
   const inCloudEngrave = j => { const keys = cloudEngraveKeys(); if (!keys) return true; const r = j && j.row; if (!r) return false; return keys.has(String(r.key)) || !!(r.parentRow && keys.has(String(r.parentRow.key))) || keys.has(String(j.rowKey || "")); };
-  const pendingJobs = () => tabItems().filter(j => !j.editingBack && !accepted(j) && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row && j.row.state !== "gone");
+  const pendingJobs = () => tabItems().filter(j => !j.editingBack && !accepted(j) && ["words", "review", "fitting", "ready", "classify"].includes(listState(j)) && j.row && j.row.state !== "gone");   // (KEPTLIST: the rail's count too)
   const pendingRows = () => { const p = pendingJobs(); return rowsIn(p, p).length; };
   /** CNT1 (Paul, 9 Nov 2026): the ORDERS with engraving still to settle (the same pieces pendingRows counts, by order number): the rail's Design & engrave step reads it (Orders.flowNow). */
   const pendingOrderIds = () => { const out = new Set(); for (const j of pendingJobs()) { const r = j.row.parentRow || j.row, id = r && r.order && r.order.receiptId; if (id != null && id !== "") out.add(String(id)); } return out; };
@@ -12996,9 +13000,9 @@ const Engrave = window.Engrave = (() => {
     const job = E.jobOf(P, face);
     if (!job) { const line = P.piece && P.piece.row; if (line && !o.retried) Promise.resolve(early(line)).then(() => openPiece(rid, pieceKey, face, Object.assign({}, o, { retried: true }))).catch(() => {}); return false; }
     if (items().get(job.key) !== job || job.row.state === "gone") return false;
-    if (!DECIDED.includes(job.state) && !queuedJobs([job]).length) return false;
+    if (!DECIDED.includes(listState(job)) && !queuedJobs([job]).length) return false;
     { const here = EG.cardKey && items().get(EG.cardKey); if (here && here !== job && o.card && o.card === EG.card) goes(here, { enter: "fade", quick: true }, o.card);
-      Object.assign(EG, { tab: "place", focus: job.key, opened: job.key, pin: DECIDED.includes(job.state) ? null : job.key, list: false, chosen: true }); }   // (NODECIDED: a decided piece opens in the same detail card)
+      Object.assign(EG, { tab: "place", focus: job.key, opened: job.key, pin: DECIDED.includes(listState(job)) ? null : job.key, list: false, chosen: true }); }   // (NODECIDED: a decided piece opens in the same detail card)
     EG.card = null; EG.cardKey = null; render(); return true;
   }
 
