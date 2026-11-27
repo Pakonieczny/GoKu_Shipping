@@ -65,7 +65,7 @@ function cleanBody(v) { return Array.isArray(v) && v.length === 2 && v.every(x =
 /** REPOEDIT: the mark the Charm Editor's "Update repository charm" leaves on an entry: { at, by, from (the hash it drew), to (the hash it draws), size, n (how many times) }. */
 function cleanEdited(v) {
   if (!v || typeof v !== "object" || !v.to) return null;
-  return { at: num(v.at) || null, by: String(v.by || "").slice(0, 80), from: String(v.from || "").slice(0, 80), to: String(v.to || "").slice(0, 80), size: v.size ? String(v.size).slice(0, 12) : null, n: num(v.n) || 1 };
+  return { at: num(v.at) || null, by: String(v.by || "").slice(0, 80), from: String(v.from || "").slice(0, 80), to: String(v.to || "").slice(0, 80), size: v.size ? String(v.size).slice(0, 12) : null, n: num(v.n) || 1, ...(Array.isArray(v.was) && v.was.length ? { was: v.was.slice(-20).map(h => String(h).slice(0, 80)) } : {}) };
 }
 function slimEntry(d) {
   if (!d) return null;
@@ -231,8 +231,13 @@ async function editorPut(deps, body) {
   let aiUrl = "", thumbUrl = "";
   if (typeof deps.tokenUrl === "function") { try { [aiUrl, thumbUrl] = await Promise.all([deps.tokenUrl(aiPath), thumbPath ? deps.tokenUrl(thumbPath) : ""]); } catch (_) { /* withLinks makes them at the next read */ } }
   const ref = db.collection(INDEX).doc(sku), now = Date.now();
+  /* SAMEFILE (Paul 27 Nov 2026: "When Saving or Updating the repository inside the charm editor, those changes do not always propagate throughout the system"): several SKUs can be ONE drawing (the Library's card is one per
+     file); an update of one of them left the others drawing the old file, so their orders, sheets and pictures never changed. The SKUs the page names as the same drawing (siblings: the same file, the same charm, one
+     size, no pair) are updated with it in the same transaction; one that no longer draws that file is left as it is, and said. */
+  const sibs = size ? [] : [...new Set((Array.isArray(b.siblings) ? b.siblings : []).map(x => String(x || "").trim().toUpperCase()).filter(x => isSku(x) && x !== sku))].slice(0, 24), sibRefs = sibs.map(x => db.collection(INDEX).doc(x));
   const out = await db.runTransaction(async tx => {
     const sn = await tx.get(ref); if (!sn.exists) return no("missing", sku + " is not in the charm repository");
+    const sibSnaps = sibRefs.length ? await Promise.all(sibRefs.map(r => tx.get(r))) : [];
     const d = sn.data() || {}, sizes = d.sizes && typeof d.sizes === "object" ? d.sizes : null;
     if (size && !(sizes && sizes[size])) return no("missing-size", sku + " has no size " + size + " in the charm repository");
     if (!size && sizes && Object.keys(sizes).length && !d.charmHash) return no("needs-size", sku + " is drawn in sizes: the size was not said");
@@ -243,8 +248,11 @@ async function editorPut(deps, body) {
     if (was === hash) return { ok: true, same: true, sku, size: size || null, was };
     const geom = { charmHash: hash, widthPt: num(e.widthPt), heightPt: num(e.heightPt), areaPt2: num(e.areaPt2), members: num(e.members), holes: num(e.holes), aiPath, thumbPath, aiUrl: str(aiUrl, 900), thumbUrl: str(thumbUrl, 900), open: false, bodyPt: FV.delete(), drawnPt: cleanBody(e.drawnPt) || FV.delete() };   // (TRUESIZE: the new drawing's size as drawn, or none: never the old drawing's)
     if (num(e.readerV)) geom.readerV = num(e.readerV);
+    const geom0 = Object.assign({}, geom);   // (SAMEFILE: the drawing alone, before the patch below (which is this same object when no size is named) takes this SKU's own angle and marks)
     const oldHashes = [d.charmHash].concat(Object.values(sizes || {}).map(z => z && z.charmHash)).filter(Boolean).map(String);
-    const edited = { at: now, by, from: was, to: hash, size: size || null, n: (num(d.edited && d.edited.n) || 0) + 1 };
+    // (EVERYOLD, 27 Nov 2026: every drawing an update ever replaced is kept (was, the last twenty), so a piece still cut from the FIRST drawing after a second update is found and made again, not only one cut from the last)
+    const wasOf = ed => [...new Set((ed && Array.isArray(ed.was) ? ed.was : []).concat(ed && ed.from ? [ed.from] : []).map(String))];
+    const edited = { at: now, by, from: was, to: hash, size: size || null, n: (num(d.edited && d.edited.n) || 0) + 1, was: [...new Set(wasOf(d.edited).concat([was]))].filter(h => h && h !== hash).slice(-20) };
     const patch = Object.assign(size ? { sizes: { [size]: geom } } : geom, { edited, indexedAt: FV.serverTimestamp(), indexedAtMs: now, sizeMoved: FV.delete(), conflict: FV.delete() });
     if (!size && d.upSource !== "operator" && e.upAngle !== undefined) { patch.upAngle = e.upAngle == null ? null : num(e.upAngle); patch.upSource = str(e.upSource || "index", 20); }
     if (b.keepPlaced === true) { const had = cleanSizeFix(d.sizeFix); patch.sizeFix = { from: [...new Set((had ? had.from : []).concat(oldHashes))].slice(-20), at: now }; }
@@ -252,9 +260,25 @@ async function editorPut(deps, body) {
     tx.set(ref, patch, { merge: true });
     tx.set(db.collection(EDITS).doc(), { sku, size: size || null, by, at: now, atTs: FV.serverTimestamp(), from: was, to: hash, fromAi: str(slot.aiPath, 600) || null, fromThumb: str(slot.thumbPath, 600) || null, toAi: aiPath, toThumb: thumbPath || null,
       fromSize: [num(slot.widthPt), num(slot.heightPt)], toSize: [geom.widthPt, geom.heightPt], masterHash: d.masterHash || null, masterName: d.masterName || null, keepPlaced: b.keepPlaced === true, piece: str(b.piece, 80) || null, order: str(b.order, 40) || null });
-    return { ok: true, sku, size: size || null, was };
+    // (SAMEFILE: each sibling that still draws the very file and charm this one drew takes the new drawing too, its own angle kept when a person set it)
+    const withIt = [], leftOut = [];
+    sibSnaps.forEach((s2, i) => {
+      const x = sibs[i], d2 = s2.exists ? s2.data() || {} : null, z2 = d2 && d2.sizes && typeof d2.sizes === "object" ? Object.keys(d2.sizes).length : 0;
+      if (!d2 || z2 || cleanPair(d2.pair) || str(d2.aiPath, 600) !== str(slot.aiPath, 600) || str(d2.charmHash, 80) !== was) { leftOut.push(x); return; }
+      const p2 = Object.assign({}, geom0, { edited: Object.assign({}, edited, { n: (num(d2.edited && d2.edited.n) || 0) + 1, with: sku, was: [...new Set(wasOf(d2.edited).concat([was]))].filter(h => h && h !== hash).slice(-20) }), indexedAt: FV.serverTimestamp(), indexedAtMs: now, sizeMoved: FV.delete(), conflict: FV.delete() });
+      if (d2.upSource !== "operator" && e.upAngle !== undefined) { p2.upAngle = e.upAngle == null ? null : num(e.upAngle); p2.upSource = str(e.upSource || "index", 20); }
+      if (b.keepPlaced === true) { const had = cleanSizeFix(d2.sizeFix); p2.sizeFix = { from: [...new Set((had ? had.from : []).concat([was]))].slice(-20), at: now }; } else if (d2.sizeFix) p2.sizeFix = FV.delete();
+      tx.set(sibRefs[i], p2, { merge: true });
+      tx.set(db.collection(EDITS).doc(), { sku: x, size: null, by, at: now, atTs: FV.serverTimestamp(), from: was, to: hash, fromAi: str(d2.aiPath, 600) || null, fromThumb: str(d2.thumbPath, 600) || null, toAi: aiPath, toThumb: thumbPath || null,
+        fromSize: [num(d2.widthPt), num(d2.heightPt)], toSize: [geom.widthPt, geom.heightPt], masterHash: d2.masterHash || null, masterName: d2.masterName || null, keepPlaced: b.keepPlaced === true, with: sku, piece: str(b.piece, 80) || null, order: str(b.order, 40) || null });
+      withIt.push(x);
+    });
+    return { ok: true, sku, size: size || null, was, siblings: withIt, ...(leftOut.length ? { siblingsLeft: leftOut } : {}) };
   });
-  if (out && out.ok && !out.same) { try { const sn = await ref.get(); out.entry = slimEntry(sn.data()); } catch (_) { /* the page reads it */ } }
+  if (out && out.ok && !out.same) {
+    try { const sn = await ref.get(); out.entry = slimEntry(sn.data()); } catch (_) { /* the page reads it */ }
+    if ((out.siblings || []).length) { try { out.siblingEntries = (await db.getAll(...out.siblings.map(x => db.collection(INDEX).doc(x)))).filter(s2 => s2.exists).map(s2 => slimEntry(s2.data())); } catch (_) { /* the page reads them */ } }
+  }
   return out;
 }
 

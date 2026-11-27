@@ -103,7 +103,7 @@ module.exports = function (d) {
       const sd = sref ? await tx.get(sref) : null, s = sd && sd.exists ? Object.assign({}, sd.data(), { id: sheetId }) : null;
       const live = !!(s && !s.archived), out = { ok: true, orderId: rid, sheetId, kind, removed: [], extended: [], kept: [], onSheet: [] };
       const want = new Set(ids), at = FV.serverTimestamp();
-      let rows = [], sheetUpd = null, setRef = null, setOrders = null, backRows = [], backOf = new Map(), writeRows = [];
+      let rows = [], sheetUpd = null, setRef = null, setOrders = null, setRevNow = 0, backRows = [], backOf = new Map(), writeRows = [];
       if (live) {
         out.label = Placement.labelOf(s) || ""; out.setId = s.draft ? null : s.setId || null; out.metal = s.metal || null;
         // the laser's mark (the sheet's, or its set's) alone keeps a piece on its sheet (Placement.editable). An order shipped or completed, found by the cloud itself, also leaves what a recorded cut or a set sent to the station holds
@@ -149,7 +149,7 @@ module.exports = function (d) {
           if (s.label) { if (s.draft && !(s.label && s.label.own)) sheetUpd.label = null; sheetUpd.labelOwed = now; }
           out.removed = t.removed; out.layoutRev = sheetUpd.layoutRev; out.contentRev = sheetUpd.contentRev; out.left = charms.length;
           // the copies leave its set's order list (dropFromSets); a set already released has its labels, manifest and files made again (the lane asks for them)
-          if (s.setId && !s.draft && d.isId(s.setId)) { setRef = col(N.SETS).doc(String(s.setId)); const ss = await tx.get(setRef), sx = ss.exists ? ss.data() || {} : null; if (sx) { setOrders = setOrdersWithout(sx.orders, take); if (released(sx, s)) out.refile = s.setId; } }
+          if (s.setId && !s.draft && d.isId(s.setId)) { setRef = col(N.SETS).doc(String(s.setId)); const ss = await tx.get(setRef), sx = ss.exists ? ss.data() || {} : null; if (sx) { setOrders = setOrdersWithout(sx.orders, take); setRevNow = Number(sx.setRev) || 0; if (released(sx, s)) out.refile = s.setId; } }
           // the pieces' engraving records leave the sheet too (their approval stays: TAKEOFFSOLID G4)
           const refs = []; for (const id of t.removed) for (const face of ["back", "front"]) { const k = Faces.recKey(id, face); if (!backOf.has(k)) { backOf.set(k, sheetId); refs.push(col(N.BACK).doc(k)); } }
           backRows = refs.length ? await txGetAll(tx, refs, ["sheetId"]) : [];
@@ -174,7 +174,7 @@ module.exports = function (d) {
       for (const r of rows) { const prev = r.exists ? r.data() || {} : null; seen.set(r.id, prev && !prev.sheetId && s ? Object.assign({}, prev, { sheetId: s.id, sheetName: s.fileBase || s.folder || null, setId: prev.setId || s.setId || null, material: prev.material || s.metal || null }) : prev); }
       for (const id of writeRows) tx.set(col(N.POOL).doc(id), Object.assign({}, patch, { updatedAt: at, [Placement.REPOOLED]: null }), { merge: true });
       if (sheetUpd) tx.update(sref, sheetUpd);
-      if (setRef && setOrders) tx.update(setRef, { orders: setOrders, updatedAt: at });
+      if (setRef && setOrders) tx.update(setRef, { orders: setOrders, setRev: setRevNow + 1, updatedAt: at });   // (FRESHWRITE, 27 Nov 2026: the set's revision moves with its order list, so a cloud look planned before this take-off is refused, never written over it)
       for (const r of backRows) if (r.exists && (r.data() || {}).sheetId && (r.data() || {}).sheetId === backOf.get(r.id)) tx.set(col(N.BACK).doc(r.id), { sheetId: null, updatedAt: at }, { merge: true });
       if (job) {
         const k = sheetId || "pool", was = jd && jd.jobs && jd.jobs[job] && jd.jobs[job].sheets ? jd.jobs[job].sheets[k] : null;

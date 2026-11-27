@@ -102,6 +102,10 @@ function create(o) {
   async function charmOf(rc, pool, rec) {
     if (!rc.poolId) throw new Error("a piece that is no order's (dropped on a page by hand) is nested on a computer");
     if (!pool) throw new Error(`its piece record ${rc.poolId} is not in the cloud`);
+    // (OWNROW, Paul 27 Nov 2026: an OCTOPUS 4 seated on GF Sheet 3 by a Change SKU lay over a custom piece: the piece maker reads which charm of a custom file of several a piece is (customIndex) and
+    //  which body (bodyOf) from the host's rows, and only rebuild() put them there: a piece drawn alone (_charmNestSeatNow.js, its neighbours) was drawn as the whole file folded into one, two copies
+    //  tall, and the octopus was seated in the gap between them. Every piece drawn here is drawn with its own row, as rebuild draws it)
+    rows.set(String(rc.poolId), pool);
     // (a custom design is in no master file: it is made from its own file, the one its sheet was cut from: the record's sources)
     let own = pool.custom || rc.custom ? PoolPieces.ownSource(rec, rc, pool) : null;
     const sku = String(pool.sku || rc.sku || "").trim().toUpperCase();

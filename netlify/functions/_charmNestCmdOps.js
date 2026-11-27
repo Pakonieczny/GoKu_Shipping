@@ -336,7 +336,7 @@ module.exports = function make(d) {
       carryBacks(tx, bKeys, t, now);
       if (gapSet) {   // (the set's order list takes the new copies, as it does when a sheet joins it: what dropFromSets takes away at a take-off)
         const st = Core.asSet(gapSet); Core.addCopies(st, { sheetId: t.id, fileBase: t.fileBase || t.id, charms: moving.map(m => m.c), placements: moving.map(m => ({ id: m.c.id })) }, id => gapRows.get(String(id)) || {});
-        tx.update(col(SETS).doc(String(gapSet.setId)), { orders: Core.setPatch(st).orders, updatedAt: FV.serverTimestamp() });
+        tx.update(col(SETS).doc(String(gapSet.setId)), { orders: Core.setPatch(st).orders, setRev: num(gapSet.setRev) + 1, updatedAt: FV.serverTimestamp() });   // (FRESHWRITE: the set's revision moves with its order list)
       }
       const tName = t.fileBase || null;
       for (const m of moving) tx.set(col(POOL).doc(String(m.c.poolId)), Object.assign({ sheetId: t.id, movedFrom: m.from.id, movedTo: t.id, movedBy: by, movedAt: now, movedHow: gap ? "gapfill" : fill ? "fill" : free ? "hand-free" : "hand", updatedAt: FV.serverTimestamp() }, tName ? { sheetName: tName } : {}), { merge: true });
@@ -382,7 +382,7 @@ module.exports = function make(d) {
       }
       const after = SetEdit.setAfter(set, { leave, join: [], members, skus: {}, sides: {}, by, at: now });
       const entry = { id: `edit-${now}-${setId}`, at: now, by, type: "setEdit", out: leave.map(r => r.id), in: [], note: `${leave.map(nameOf).join(", ")} taken out` };
-      const patch = { sheetIds: after.sheetIds, materials: after.materials, orders: after.orders, labelFiles: after.labelFiles, labels: null, setEdit: { at: now, by }, flowHistory: (Array.isArray(set.flowHistory) ? set.flowHistory : []).concat([entry]).slice(-100), updatedAt: FV.serverTimestamp() };
+      const patch = { sheetIds: after.sheetIds, materials: after.materials, orders: after.orders, labelFiles: after.labelFiles, labels: null, setEdit: { at: now, by }, setRev: num(set.setRev) + 1, flowHistory: (Array.isArray(set.flowHistory) ? set.flowHistory : []).concat([entry]).slice(-100), updatedAt: FV.serverTimestamp() };
       if (after.committed) patch.committed = after.committed;
       if (after.committedOut) patch.committedOut = after.committedOut;
       tx.update(col(SETS).doc(setId), patch);   // (update: each field named replaces the stored one whole, as flowApply's set edit writes it; a merge would keep the order lines of the sheets that left)
@@ -418,6 +418,9 @@ module.exports = function make(d) {
       if ([r].concat(sets.map(x => x.data())).some(x => num(x.laserDoneAt) > 0)) return keep("is marked laser cut");
       if (!old.size) return words(409, `${n} no longer holds this line`, { gone: true });
       if (poses.length && num(r.layoutRev) !== num(b.layoutBase)) return words(409, `${n} changed while its new piece was seated`, { conflict: true });
+      // (FRESHWRITE, Paul 27 Nov 2026: a move by hand (Manual Control) changes the placements and the content revision, not layoutRev: poses seated on the sheet before it could land on a piece a person just moved;
+      //  the request says the content it seated on too (contentBase), and is seated again on the sheet as it is now)
+      if (poses.length && b.contentBase != null && Number.isFinite(+b.contentBase) && num(r.contentRev) !== num(b.contentBase)) return words(409, `${n} was changed by hand while its new piece was seated`, { conflict: true });
       const all = [...new Set([...old, ...ids])], rows = await txGetAll(tx, all.map(id => col(POOL).doc(id)));
       if (ids.length) { const q = await tx.get(col(SHEETS).where("poolIds", "array-contains-any", ids.slice(0, 30))); if (q.docs.some(x => x.id !== sheetId && !x.data().archived)) return keep("shares this line with another sheet"); }
       const seat = poses.length && poses.length === ids.length ? new Map(poses.map(p => [String(p.poolId), p])) : null, w = without(r, old), was = new Map(w.going.map(c => [String(c.poolId), c]));
@@ -438,7 +441,7 @@ module.exports = function make(d) {
       for (const id of old) if (!ids.includes(id)) tx.set(col(POOL).doc(id), { state: "superseded", sheetId: null, supersededAt: now, supersededBy: by, vacatedFrom: r.id, updatedAt: FV.serverTimestamp() }, { merge: true });
       for (const x of sets) { const set = Object.assign({ setId: x.id }, x.data()), left = setOrdersWithout(set.orders, old); if (!left) continue;   // (its order list names the pieces as they are now)
         const st = Core.asSet(Object.assign(set, { orders: left })); if (ids.length) Core.addCopies(st, { sheetId: r.id, fileBase: r.fileBase || r.id, charms, placements: charms.map(c => ({ id: c.id })) }, id => pools.find(p => String(p.poolId) === String(id)) || {});
-        tx.update(x.ref, { orders: Core.setPatch(st).orders, updatedAt: FV.serverTimestamp() }); }
+        tx.update(x.ref, { orders: Core.setPatch(st).orders, setRev: num(set.setRev) + 1, updatedAt: FV.serverTimestamp() }); }   // (FRESHWRITE, 27 Nov 2026: a look of the cloud planned before this change is refused and planned again: setBase)
       return { ok: true, sheetId, name: n, runId, seated: seat ? ids.length : 0, here: !!seat && poses.every(p => p.here === true), ...(seat && poses.some(p => p.size) ? { size: Math.min(...poses.map(p => num(p.size) || 1)) } : {}), off: old.size, setId: r.draft ? "" : str(r.setId, 100), layoutRev: next.layoutRev, ...(dropped.length ? { backsDropped: [...new Set(dropped.map(z => String(z.poolId)))] } : {}) };
     });
     if (out && out.ok) { revTouch(b, ["s:" + sheetId].concat(out.setId ? ["t:" + out.setId] : [])); feedOrders(b, [[rid]]); const id = `swap-${lineKey}-${now}`, ev = (type, text, k, n) => ({ orderId: rid, type, at: now + (type === "placed" ? 1 : 0), by, station: "sorter", device: "cloud", sheetId, sheet: str(out.name, 80), setId: out.setId, lineKey, text, id: `${id}-${k}`, data: { copies: n, poolIds: ids.slice(0, 40), swap: true } });
@@ -705,7 +708,7 @@ module.exports = function make(d) {
       // the set: without the emptied sheet, its copies now on the target (each copy keeps what it says: its ear, its back)
       const onT = c => (String(c.sheetId) === f.id ? Object.assign({}, c, { sheetId: t.id, sheet: t.fileBase || t.folder || tn }) : c), so = {};
       for (const [rid, o] of Object.entries(set.orders || {})) { const ls = o && o.lines, map = l => Object.assign({}, l, { copies: (l.copies || []).map(onT) }); so[rid] = Object.assign({}, o, { lines: Array.isArray(ls) ? ls.map(map) : Object.fromEntries(Object.entries(ls || {}).map(([k, l]) => [k, map(l)])) }); }
-      tx.update(setRef, { sheetIds: (set.sheetIds || []).filter(i => String(i) !== f.id), orders: so, labelFiles: (set.labelFiles || []).filter(x => !(x && String(x.sheetId) === f.id)), labels: null, setEdit: { at: now, by },
+      tx.update(setRef, { setRev: num(set.setRev) + 1, sheetIds: (set.sheetIds || []).filter(i => String(i) !== f.id), orders: so, labelFiles: (set.labelFiles || []).filter(x => !(x && String(x.sheetId) === f.id)), labels: null, setEdit: { at: now, by },
         flowHistory: history(set).concat([{ id: `merge-${now}-${setId}`, at: now, by, type: "setEdit", out: [f.id], in: [], note: `${fn}'s pieces moved onto ${tn}: one Rose Gold sheet` }]).slice(-100), updatedAt: FV.serverTimestamp() });
       carryBacks(tx, bKeys, t, now);
       for (const id of ids) tx.set(col(POOL).doc(id), Object.assign({ sheetId: t.id, movedFrom: f.id, movedTo: t.id, movedBy: by, movedAt: now, movedHow: "merge", updatedAt: FV.serverTimestamp() }, t.fileBase ? { sheetName: t.fileBase } : {}), { merge: true });

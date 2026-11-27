@@ -122,9 +122,15 @@ async function sweepsUnit(ctx) {
       const a = await put({ op: "putSheet", sheet: { id: sh.id, setDay: set.day, fileBase: want, folder: want, filesOwed: now } }, `name|${sh.id}|${want}`); if (err(a)) continue;
       n++;
       // the set's record lists each piece with its sheet's name: told the new one
-      let moved = 0; const orders = JSON.parse(JSON.stringify(set.orders || {}));
-      for (const o of Object.values(orders)) for (const l of (Array.isArray(o && o.lines) ? o.lines : Object.values((o && o.lines) || {}))) for (const c of (l && l.copies) || []) if (c && c.sheetId === sh.id && c.sheet !== want) { c.sheet = want; moved++; }
-      if (moved) await put({ op: "setUpdate", setId: set.setId, patch: { orders } }, `name|set|${set.setId}|${sh.id}|${want}`);
+      // (FRESHWRITE, 27 Nov 2026: the order list is written whole from this read: it carries the set's revision (setBase); a set changed meanwhile is read again and renamed as it is now)
+      for (let t = 0, cur = set; t < 3 && cur; t++) {
+        let moved = 0; const orders = JSON.parse(JSON.stringify(cur.orders || {}));
+        for (const o of Object.values(orders)) for (const l of (Array.isArray(o && o.lines) ? o.lines : Object.values((o && o.lines) || {}))) for (const c of (l && l.copies) || []) if (c && c.sheetId === sh.id && c.sheet !== want) { c.sheet = want; moved++; }
+        if (!moved) break;
+        const r = await put({ op: "setUpdate", setId: set.setId, patch: { orders }, setBase: num(cur.setRev) }, `name|set|${set.setId}|${sh.id}|${want}|${num(cur.setRev)}`);
+        if (!(r && r.conflict)) break;
+        const s2 = await ctx.db.collection("Charm_Nest_Sets").doc(set.setId).get(); cur = s2.exists ? Object.assign({ setId: s2.id }, s2.data()) : null;
+      }
     }
     return n ? `${n} sheet(s) that shared another sheet's name are written again under their own` : "";
   });

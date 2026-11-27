@@ -160,6 +160,20 @@ function answerBudget(began = Date.now(), maxBytes = ANSWER_BYTES) {
 }
 const docOrder = () => admin.firestore.FieldPath.documentId();
 
+/* BUSYFLAGS (Paul, 27 Nov 2026: "I did not see any feedback to the user when a sheet is being altered"): what a sheet's list entry says of the cloud changing the sheet now, small and cleaned, from fields the
+   list reads already (SLIM_SHEET; nestOwed added to its mask, the same documents read): no new read. owedMs: a mark kept as a time, a Timestamp or an object { at, … } → its time in ms, or null. */
+const owedMs = v => { if (v == null || v === false) return null; if (typeof v === "number") return v > 0 ? v : null; if (v instanceof Date) return v.getTime() > 0 ? v.getTime() : null; if (typeof v === "object") { const t = typeof v.toMillis === "function" ? v.toMillis() : owedMs(v.at); return t > 0 ? t : null; } return null; };
+/** The nest the sheet's record names, as { status, at } only (its id, attempt and the rest stay on the record). */
+const busyJob = j => (j && typeof j === "object" && !Array.isArray(j) ? { status: str(j.status, 20) || null, at: owedMs(j.at) } : null);
+/** Whether the sheet is being nested again to fit a piece coming back to it NOW (REFIT, _charmNestNest.js): the rule charm-nest-refit.js reads on the page (the nest it asked still runs, or its new
+    files are not written yet; never past 45 minutes, never once that nest ended without a layout), so a refit long done is never said. */
+function refitNow(d) {
+  const r = d && d.refit; if (!r || typeof r !== "object" || !(num(r.at) > 0) || Date.now() - num(r.at) > 45 * 60000) return false;
+  const nj = d.nestJob && typeof d.nestJob === "object" ? d.nestJob : null, same = !!nj && String(nj.id || "") === String(r.jobId || "");
+  if (same && ["queued", "running", "starting"].includes(String(nj.status || "queued"))) return true;
+  if (same && ["error", "stopped", "stale"].includes(String(nj.status || ""))) return false;
+  return num(d.previewAt) < num(r.at);
+}
 function slim(d) {
   return {
     id: d.id, roseStockId:d.roseStockId || null, roseCutAt:d.roseCutAt || null, rosePlanHash:d.rosePlanHash || null, solidIncluded:d.solidIncluded == null ? null : !!d.solidIncluded, draft: !!d.draft, releaseFull: !!d.releaseFull, folder: d.folder || null, fileBase: d.fileBase || d.folder || null, saving: !!d.saving, metal: d.metal, metalLabel: d.metalLabel, day: d.day, status: d.status, endedBy: d.endedBy,
@@ -170,6 +184,8 @@ function slim(d) {
     ...(d.previewAt ? { previewAt: num(d.previewAt) } : {}), ...(d.shippedOut ? { shippedOut: d.shippedOut } : {}),   // (SHIPPEDSTAYS)
     // (PICTUREREV, Paul 17 Nov 2026: "what I see in the previews is not what opens when I open the detailed view of the sheet"): the layout's revision the picture was drawn for, and the layout's revision now: a picture behind its layout is drawn again by the computer that carries the run
     ...(d.layoutRev != null ? { layoutRev: num(d.layoutRev) } : {}), ...(d.previewRev != null ? { previewRev: num(d.previewRev) } : {}),
+    // (BUSYFLAGS, 27 Nov 2026: the cloud at work on the sheet, beside saving / status / layoutRev / previewRev / previewAt: its nest's state and time, when its files and a nest were asked, a refit under way)
+    nestJob: busyJob(d.nestJob), filesOwed: owedMs(d.filesOwed), nestOwed: owedMs(d.nestOwed), refit: refitNow(d),
     // the four files a recalled card offers, so recalling a set is one read of this list and nothing more
     outputs: d.outputs ? Object.fromEntries(["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k] && d.outputs[k].url).map(k => [k, d.outputs[k].url])) : {},
     stock: d.stock || null, poolIds: d.poolIds || [], engraving:d.engraving || {}, orderReadiness:d.orderReadiness || {}, laser:d.laser || null,
@@ -191,7 +207,7 @@ function slim(d) {
 /* The fields of a sheet record that its list entry (slim) and its laser readiness (Readiness.sheet) read, and the lists
    filter on. A list reads only these: the rest of a record (its charms with their outlines, its placements) is most of
    its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
-const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit", "releasedChange", "filesOwed", "cutCheck", "draftOrder", "_w", "layoutRev", "previewRev", "laserOverride", "shippedOut", "refit", "nestJob"];   // (REFIT: a sheet being nested again to fit a piece coming back to it, shown on its card; nestJob: whether that nest still runs)   // (releasedChange: a set changed after it was released or approved for laser cutting, said on its Library card, Paul 27 Oct 2026)
+const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit", "releasedChange", "filesOwed", "cutCheck", "draftOrder", "_w", "layoutRev", "previewRev", "laserOverride", "shippedOut", "refit", "nestJob", "nestOwed"];   // (REFIT: a sheet being nested again to fit a piece coming back to it, shown on its card; nestJob: whether that nest still runs; nestOwed: BUSYFLAGS, a nest asked of the cloud)   // (releasedChange: a set changed after it was released or approved for laser cutting, said on its Library card, Paul 27 Oct 2026)
 /** What the Library's live read (op_laserStatus) reads of a sheet: SLIM_SHEET, and the sheet's own number (readiness labels a sheet that is in no set by it). */
 const LASER_SHEET = SLIM_SHEET.filter(f => f !== "sources").concat(["seq", "sourcesLite"]);
 /** What decides whether a sheet is on the Library's Current list (op_listSheets with excludeDone): archived, completed, its set (filingRecords), the filters and the order. */
@@ -1966,7 +1982,7 @@ async function withLinks(e) { if (!e) return e; const jobs = []; if (e.aiPath) j
 
 // ── master index ──
 async function op_masterPutIndex(b) { const r = await Master.putIndex(db, FV, b); return Object.assign({ ok: true }, r); }
-async function op_masterEditorPut(b) { const r = await Master.editorPut({ db, FV, tokenUrl, bucket: admin.storage().bucket() }, b); if (r && r.entry) r.entry = await withLinks(r.entry); return r; }   // REPOEDIT: the Charm Editor's "Update repository charm" (repo upload token; one entry, one transaction)
+async function op_masterEditorPut(b) { const r = await Master.editorPut({ db, FV, tokenUrl, bucket: admin.storage().bucket() }, b); if (r && r.entry) r.entry = await withLinks(r.entry); if (r && Array.isArray(r.siblingEntries)) r.siblingEntries = await Promise.all(r.siblingEntries.map(e => withLinks(e))); return r; }   // REPOEDIT: the Charm Editor's "Update repository charm" (repo upload token; one entry, one transaction)
 async function op_masterGet(b) {
   const sku = String(b.sku || "").trim().toUpperCase(); if (!Master.isSku(sku)) return { entry: null, error: "bad sku" };
   const s = await db.collection(Master.INDEX).doc(sku).get();
@@ -3615,8 +3631,8 @@ async function op_setAllocate(b) {
   // (NEXTSETFRESH, Paul 13 Nov 2026: "Why is GF and SS draft One sheets still not part of a set": the cloud handed back Set-4 as the set after Set-5, because Set-5 had reused the record of the day's first set and the answer remembered for that record was Set-4): a set remembered for this ask that already holds sheets, is committed or was superseded is never handed back as the NEXT set (the page refuses it and no set can form): a fresh number is given
   const used = d => !!(d && (d.committedAt || (Array.isArray(d.sheetIds) && d.sheetIds.length) || /^superseded/.test(String(d.status || ""))));
   let usedUp = false;
-  if (runId) { const ex = await col(SETS).where("key", "==", key).limit(10).get(); const keep = after ? ex.docs.map(x => x.data()).find(d => !used(d)) : (ex.empty ? null : ex.docs[0].data()); if (keep) { const d = keep; return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; } if (after && !ex.empty) usedUp = true;
-    if (!group && !after) { const ex2 = await col(SETS).where("runId", "==", runId).limit(1).get(); if (!ex2.empty) { const d = ex2.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; } } }
+  if (runId) { const ex = await col(SETS).where("key", "==", key).limit(10).get(); const keep = after ? ex.docs.map(x => x.data()).find(d => !used(d)) : (ex.empty ? null : ex.docs[0].data()); if (keep) { const d = keep; return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true, setRev: setRevOf(d) }; } if (after && !ex.empty) usedUp = true;   // (FRESHWRITE: the revision of a set handed back, read with it)
+    if (!group && !after) { const ex2 = await col(SETS).where("runId", "==", runId).limit(1).get(); if (!ex2.empty) { const d = ex2.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true, setRev: setRevOf(d) }; } } }
   const res = await db.runTransaction(async t => {
     if (FENCE) await fenceTx(t);   // (CLOUDDRIVE P7/C7)
     const allocation = runId ? col(COUNTERS).doc("allocation-" + require("crypto").createHash("sha256").update(key).digest("hex").slice(0, 40)) : null;
@@ -3636,14 +3652,22 @@ async function op_setAllocate(b) {
   if (res && res.setId && !res.deferred) revTouch(b, ["t:" + res.setId]);   // COST (Oct 2026): a new set record (or none, revTouch above) and its counters, which the Library does not read
   return Object.assign({ ok: true, day }, res);
 }
+/* FRESHWRITE (Paul, 27 Nov 2026: "I have also seen sheets update and reverse back to their previous incorrect state"): the cloud's set assembly and labels unit read a set at the start of a look
+   and wrote its order lines, label files and labels back whole a minute later, while a person's Change SKU (cmdSwapLine, in its own process) had rewritten the same set's order lines in between:
+   the line moved to another sheet came back on its old sheet's set. A set's content revision, setRev, moves by one with every write of the set (this op, a Change SKU, a take-out, a set edit,
+   a merge: each in its own transaction); a write that says which revision it was planned on (setBase) and finds another is refused (409, conflict) and nothing is written: the unit plans its
+   look again on the set as it is now. A write without setBase (a page) is taken as before. The answer says the revision now (setRev), so a unit's next write of the same look chains on it. */
+const setRevOf = d => num(d && d.setRev);
 async function op_setUpdate(b) {
   const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" };
-  const ref=col(SETS).doc(id);
-  let wrote = true;
-  await db.runTransaction(async tx=>{
+  const ref=col(SETS).doc(id), base = typeof b.setBase === "number" && Number.isFinite(b.setBase) ? b.setBase : null;
+  let wrote = true, rev = 0;
+  const refused = await db.runTransaction(async tx=>{
     wrote = true;
     if (FENCE) await fenceTx(tx);   // (CLOUDDRIVE P7/C7)
-    const old=await tx.get(ref),patch=await withoutTakenOff(tx,old.exists?old.data():null,await keepListed(tx,id,old.exists?old.data():null,await withoutOwnerOut(tx,id,keepEditedSheets(old.exists?old.data():null,withoutCleared(old.exists?old.data():null,b.patch || {}))))),next={...(old.exists?old.data():{}),...patch};
+    const old0 = await tx.get(ref); rev = setRevOf(old0.exists ? old0.data() : null);
+    if (base !== null && base !== rev) { wrote = false; return { error: `${str(old0.exists && old0.data().name, 80) || "The set"} was changed since this save was planned (a person's change, or another of the cloud's): nothing was overwritten, it is planned again on the set as it is now`, status: 409, conflict: true, setRev: rev }; }   // (FRESHWRITE)
+    const old=old0,patch=await withoutTakenOff(tx,old.exists?old.data():null,await keepListed(tx,id,old.exists?old.data():null,await withoutOwnerOut(tx,id,keepEditedSheets(old.exists?old.data():null,withoutCleared(old.exists?old.data():null,b.patch || {}))))),next={...(old.exists?old.data():{}),...patch};
     // the numbers a set has given out (`sheetNos`, the highest of each metal) only go up: a page holding an older copy cannot lower them (charm-nest-sheet-name.js)
     // (SETSTAYSCLOSED, Paul 16 Nov 2026: "why this sheet was allowed to be added to an existing set"): the time a set formed is kept for good: the earliest one wins, and no page takes it back
     { const was=old.exists?+old.data().formedAt||0:0, now=+patch.formedAt||0; if(was>0||now>0){ const keep=was>0&&now>0?Math.min(was,now):(was||now); patch.formedAt=keep; next.formedAt=keep; } else delete patch.formedAt; }
@@ -3659,12 +3683,15 @@ async function op_setUpdate(b) {
     delete doc.flowHistory; delete doc.laserOverride;   // (OVERRIDE: the owner's alone, behind his password)
     // COST (Oct 2026): the current flag is the server's (CURRENT_MARK): a set made here has no laser mark, so it is current
     delete doc.current; if(!old.exists)doc.current=true;
+    delete doc.setRev;   // (FRESHWRITE: the revision is the server's alone)
     if(old.exists && !/^complete/.test(String(next.status || '')) && setSame(old.data(),doc)){ wrote=false; return; }   // (SETNOOP: the very record it already is; a completed set is saved as it always was)
+    rev = rev + 1; doc.setRev = rev;   // (FRESHWRITE)
     if(old.exists)tx.update(ref,doc);else tx.set(ref,doc);
   });
+  if (refused) { revTouch(b, []); PLACE_QUIET = true; return refused; }   // (FRESHWRITE: refused, nothing written, nothing named)
   if (wrote) revTouch(b, ["t:" + id]);   // COST (Oct 2026): it writes this set record alone
   else { revTouch(b, []); PLACE_QUIET = true; }   // (SETNOOP: nothing was written: it names nothing (an empty list, never the "*" an op that named nothing gets) and the placement counter stays)
-  return { ok: true, ...(wrote ? {} : { same: true }) };
+  return { ok: true, setRev: rev, ...(wrote ? {} : { same: true }) };
 }
 /** A set's completion rules (op_setUpdate's, moved here unchanged so the cloud can ask them first): every sheet ready (engraving, back and front files, QR labels),
     the GF/SS principle and the cardinal rule. Throws the refusal, in words; a set already committed or completed is never refused afterwards. */
@@ -6143,26 +6170,31 @@ async function op_runCmdPut(b) {
   if (c.type === "seat" && (!args.sheetId || !args.partialId)) return { error: "a seat names the sheet and the physical sheet" };
   const ref = col(CMDS).doc(runId), now = Date.now(), id = "c" + now.toString(36) + Math.random().toString(36).slice(2, 6).padEnd(4, "0");
   const cmd = { id, type: c.type, args, by, dev, at: now, state: "waiting" };
+  /* ONEHOLD (Paul, 27 Nov 2026: a Change SKU waited ~3 minutes behind the pass's own work): the kick of a request's own process (its key, Charm_Nest_Cmd_Hold/<id>) was written after the request, and over
+     whatever was there (a set without merge): a pass that saw the request in between took it, and the kick then wiped that pass's hold, so two processes did it. It is written now IN the request's own
+     transaction (a new document: the request's id is new), so no process can see the request without its kick. Never while the drive is off; never in the sandbox. */
+  let kick = null; try { if (NOW_CMDS.has(c.type) && !PREFIX && driveModeOf(await driveDoc()) !== "off") kick = { key: require("crypto").randomBytes(16).toString("hex") }; } catch (_) { kick = null; }
   await db.runTransaction(async tx => {
     const d = await tx.get(ref), cmds = Object.assign({}, (d.exists && d.data().cmds) || {}); cmds[id] = cmd;
     // (CLOUDWORLD stage E, Paul 20 Nov 2026: a request never disappears silently): every request still waiting or running is kept, whatever their number; only the finished ones are trimmed to the newest 30
     const all = Object.values(cmds).sort((x, y) => (num(y.at) || 0) - (num(x.at) || 0)), open = all.filter(k => k.state === "waiting" || k.state === "running").slice(0, 400), done = all.filter(k => k.state !== "waiting" && k.state !== "running").slice(0, 30), out = {}; for (const k of open.concat(done)) out[k.id] = k;
     tx.set(ref, { runId, cmds: out, expireAt: new Date(now + 30 * 86400000) });
+    if (kick) tx.set(db.collection(CMD_HOLD).doc(id), { runId, key: kick.key, by: null, at: 0, state: "", kickedAt: now, expireAt: new Date(now + 2 * 86400000) });   // (ONEHOLD)
   });
   revTouch(b, ["r:" + runId]);
-  if (NOW_CMDS.has(c.type) && !PREFIX) await cmdKick(runId, id);   // (CMDFAST: done now, in a process of its own)
+  if (kick) await cmdKick(runId, id, kick.key);   // (CMDFAST: done now, in a process of its own)
   return { ok: true, id, cmd };
 }
-/* CMDFAST: the kinds _charmNestCmdUnit.js NOW_TYPES; its process is started with the request's own key (Charm_Nest_Cmd_Hold/<id>); one that could not be started is the pass's, as before. Never while the drive is off; at most 0.9 s of the press */
-const NOW_CMDS = new Set(["skuonce", "remakeline", "keepsync", "remake", "backhome", "customsend"]);
-async function cmdKick(runId, id) {
+/* CMDFAST: the kinds _charmNestCmdUnit.js NOW_TYPES; its process is started with the request's own key (Charm_Nest_Cmd_Hold/<id>, written with the request by op_runCmdPut); one that could not be started is the pass's, as before. At most 0.9 s of the press */
+const NOW_CMDS = new Set(["skuonce", "remakeline", "keepsync", "remake", "backhome", "customsend"]), CMD_HOLD = "Charm_Nest_Cmd_Hold";
+async function cmdKick(runId, id, key) {
   try {
-    if (driveModeOf(await driveDoc()) === "off") return false;
-    const key = require("crypto").randomBytes(16).toString("hex"), ref = db.collection("Charm_Nest_Cmd_Hold").doc(id), fetch = require("node-fetch"), origin = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
-    await ref.set({ runId, key, by: null, at: 0, kickedAt: Date.now(), expireAt: new Date(Date.now() + 2 * 86400000) });
-    let started = false;
-    await Promise.race([fetch(`${String(origin).replace(/\/+$/, "")}/.netlify/functions/charmNestDrive-background`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cmd: id, runId, key }) }).catch(() => null), new Promise(r => setTimeout(r, 900))]).then(r => { started = !!(r && r.status >= 200 && r.status < 300); });
-    if (!started) await ref.set({ kickedAt: 0 }, { merge: true }).catch(() => {});
+    const ref = db.collection(CMD_HOLD).doc(id), fetch = require("node-fetch"), origin = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
+    let answered = false, started = false;
+    await Promise.race([fetch(`${String(origin).replace(/\/+$/, "")}/.netlify/functions/charmNestDrive-background`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cmd: id, runId, key }) }).then(r => { answered = true; started = !!(r && r.status >= 200 && r.status < 300); }, () => { answered = true; }), new Promise(r => setTimeout(r, 900))]);
+    // (ONEHOLD, 27 Nov 2026: a kick that was refused or failed is the pass's at once; one not answered within 0.9 s may still be starting: its kick mark keeps it for KICK_MS (_charmNestCmdUnit.js), and the
+    //  pass does it once that lapses with no process begun. It used to be given to the pass at 0.9 s, and the process that began a moment later found the pass holding it and waited for nothing)
+    if (answered && !started) await ref.set({ kickedAt: 0 }, { merge: true }).catch(() => {});
     return started;
   } catch (_) { return false; }
 }
@@ -6815,7 +6847,7 @@ async function applySetMembers(step, by, device, via) {
       for (const j of join) { j.sheetIndex = SetEdit.indexFor(j, taken, nos, n => OrderRules.sheetName(j.metal, S.doc.day, S.doc.seq, n)); j.fileBase = OrderRules.sheetName(j.metal, S.doc.day, S.doc.seq, j.sheetIndex); j.label = null; j.draft = false; j.setId = id; nos = SheetName.raise(nos, [j]); taken.push(j); }
       const after = SetEdit.setAfter(S.doc, { leave, join, members: S.members, skus, sides, by, at });
       const stay = S.members.filter(x => !leave.some(l => l.id === x.id)).concat(join);
-      const patch = { sheetIds: after.sheetIds, materials: after.materials, orders: after.orders, labelFiles: after.labelFiles, labels: null, setEdit: { at, by }, updatedAt: FV.serverTimestamp() };
+      const patch = { sheetIds: after.sheetIds, materials: after.materials, orders: after.orders, labelFiles: after.labelFiles, labels: null, setEdit: { at, by }, setRev: setRevOf(S.doc) + 1, updatedAt: FV.serverTimestamp() };   // (FRESHWRITE: a person's set edit moves the set's revision: a look planned before it is planned again)
       if (Object.keys(nos).length) patch.sheetNos = nos;
       if (after.committed) patch.committed = after.committed;
       if (after.committedOut) patch.committedOut = after.committedOut;
@@ -6877,7 +6909,9 @@ async function applySetFiles(step, by) {
   const r = await db.runTransaction(async tx => {
     const ref = col(SETS).doc(setId), s = await tx.get(ref); if (!s.exists) return { error: "There is no such set", status: 404 };
     const d = s.data(); if (!SetEdit.committedSet(d)) return { error: "A set's files are remade here only after it was committed", status: 409 };
-    const own = new Set((d.sheetIds || []).map(String)), patch = { updatedAt: FV.serverTimestamp() };
+    // (FRESHWRITE, 27 Nov 2026: the cloud's labels unit says the set revision its files were made from: a set edited since keeps its own lists, and the files are made again from it)
+    if (typeof step.setBase === "number" && Number.isFinite(step.setBase) && step.setBase !== setRevOf(d)) return { error: `${str(d.name, 80) || "The set"} was changed since its files were made: nothing was overwritten, they are made again`, status: 409, conflict: true, setRev: setRevOf(d) };
+    const own = new Set((d.sheetIds || []).map(String)), patch = { updatedAt: FV.serverTimestamp(), setRev: setRevOf(d) + 1 };
     if (Array.isArray(step.labelFiles)) patch.labelFiles = step.labelFiles.filter(f => f && own.has(str(f.sheetId, 80))).map(file).slice(0, 600);
     if (step.labels && typeof step.labels === "object") {
       const L = step.labels, pdf = link(L.pdf), manifest = link(L.manifest), json = link(L.json);
@@ -6885,9 +6919,9 @@ async function applySetFiles(step, by) {
     }
     patch.setEdit = Object.assign({}, d.setEdit || {}, { filesAt: Date.now(), filesBy: by });
     tx.update(ref, patch);
-    return { ok: true };
+    return { ok: true, setRev: patch.setRev };
   });
-  return r.error ? r : { ok: true, applied: [{ id: setId, type: "setFiles" }], process: [], added: [], at: Date.now() };
+  return r.error ? r : { ok: true, applied: [{ id: setId, type: "setFiles" }], process: [], added: [], at: Date.now(), setRev: r.setRev };
 }
 async function op_flowApply(b) {
   const by = str(b.by, 80).trim();

@@ -89,11 +89,11 @@ module.exports = function (d) {
         if (s.pieceSides && typeof s.pieceSides === "object") { const ps = Object.assign({}, s.pieceSides); for (const id of take) delete ps[id]; upd.pieceSides = ps; }
         Object.assign(upd, RoseStockMod.lineKeeps(s, new Set((s.charms || []).filter(c => c && take.has(String(c.poolId))).map(c => String(c.id)))));   // (THELINE)
         if (s.label) { if (s.draft && !s.label.own) upd.label = null; upd.labelOwed = now; }
-        let setRef = null, setOrders = null, setWas = null;
-        if (s.setId && !s.draft && d.isId(s.setId)) { setRef = col(N.SETS).doc(String(s.setId)); const ss = await tx.get(setRef), sx = ss.exists ? ss.data() || {} : null; if (sx) { setOrders = setOrdersWithout(sx.orders, take); if (setOrders) setWas = sx.orders; } }
+        let setRef = null, setOrders = null, setWas = null, setRevNow = 0;
+        if (s.setId && !s.draft && d.isId(s.setId)) { setRef = col(N.SETS).doc(String(s.setId)); const ss = await tx.get(setRef), sx = ss.exists ? ss.data() || {} : null; if (sx) { setOrders = setOrdersWithout(sx.orders, take); setRevNow = num(sx.setRev); if (setOrders) setWas = sx.orders; } }
         const backRefs = []; for (const id of t.removed) for (const face of ["back", "front"]) backRefs.push(col(N.BACK).doc(Faces.recKey(id, face)));
         const backRows = backRefs.length ? await txGetAll(tx, backRefs, ["sheetId"]) : [];
-        edits.push({ s, label, upd, setRef, setOrders, backRows, removed: t.removed, setWas });
+        edits.push({ s, label, upd, setRef, setOrders, backRows, removed: t.removed, setWas, setRevNow });
       }
       /* G7 (Paul 21 Nov 2026): where each piece was, kept on its row (customDoneFrom), so an Undo can put it back exactly there: the sheet and its revision after the Done, the piece's
          charm(s) and placement(s) as they stood, its pair side, engraving back, the rejects / feed-turn entries and the set's order entries the Done took out. */
@@ -116,7 +116,7 @@ module.exports = function (d) {
       for (const id of want) tx.set(col(N.POOL).doc(id), Object.assign({}, patch, { updatedAt: ts, [Placement.REPOOLED]: null, customDoneFrom: fromOf.get(id) || null }), { merge: true });
       for (const e of edits) {
         tx.update(col(N.SHEETS).doc(e.s.id), e.upd);
-        if (e.setRef && e.setOrders) tx.update(e.setRef, { orders: e.setOrders, updatedAt: ts });
+        if (e.setRef && e.setOrders) tx.update(e.setRef, { orders: e.setOrders, setRev: num(e.setRevNow) + 1, updatedAt: ts });   // (FRESHWRITE: the set's revision moves with its order list)
         for (const r of e.backRows) if (r.exists && (r.data() || {}).sheetId === e.s.id) tx.set(col(N.BACK).doc(r.id), { sheetId: null, updatedAt: ts }, { merge: true });
       }
       return { ok: true, removed: list, sheets: edits.map(e => ({ id: e.s.id, label: e.label, pieces: e.removed.length, layoutRev: e.upd.layoutRev })), before };
@@ -213,7 +213,7 @@ module.exports = function (d) {
         Object.assign(upd, { dirty: true, filesOwed: back, layoutRev: num(s.layoutRev) + 1, contentRev: num(s.contentRev) + 1 });
         if (s.label) upd.labelOwed = back;
         tx.update(col(N.SHEETS).doc(s.id), upd);
-        if (m.setOrders && x.setNow) tx.update(col(N.SETS).doc(String(x.setNow.id)), { orders: Object.assign({}, x.setNow.orders || {}, m.setOrders), updatedAt: ts });
+        if (m.setOrders && x.setNow) tx.update(col(N.SETS).doc(String(x.setNow.id)), { orders: Object.assign({}, x.setNow.orders || {}, m.setOrders), setRev: num(x.setNow.setRev) + 1, updatedAt: ts });   // (FRESHWRITE: the set's revision moves with its order list)
         for (const r of x.backRows) if (r.exists && !(r.data() || {}).sheetId) tx.set(col(N.BACK).doc(r.id), { sheetId: s.id, updatedAt: ts }, { merge: true });
         for (const w of x.list) tx.set(col(N.POOL).doc(w.id), { state: w.from.state || "nested", sheetId: s.id, sheetName: w.from.sheetName || s.fileBase || null, setId: s.setId || null, [Placement.REPOOLED]: back, coveredBy: w.coveredBy, customDoneFrom: null, updatedAt: ts }, { merge: true });
         out.back.push({ ids: ids2, sheetId: s.id, label: m.label || Placement.labelOf(s) || "its sheet", placed: m.placements.length > 0, layoutRev: upd.layoutRev });

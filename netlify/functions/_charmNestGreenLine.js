@@ -66,11 +66,14 @@ async function include(ctx, p, set, o = {}) {
 }
 async function undoInclude(ctx, rec, set, was) {
   // (the set first: it lists the sheet, and the server never changes the membership of a sheet an open set lists; then the sheet, a draft, its own tick as it was)
-  const s = await ctx.db.collection("Charm_Nest_Sets").doc(set.setId).get(), d = s.exists ? Core.asSet(Object.assign({ setId: s.id }, s.data())) : null;
-  if (d && (d.sheetIds || []).includes(rec.id)) {
+  // (FRESHWRITE, 27 Nov 2026: the whole set is written from this read: it carries the revision it was read at (setBase), and a set changed meanwhile (a Change SKU, a take-off) is read again and the undo done on it as it is now)
+  for (let t = 0; t < 3; t++) {
+    const s = await ctx.db.collection("Charm_Nest_Sets").doc(set.setId).get(), d = s.exists ? Core.asSet(Object.assign({ setId: s.id }, s.data())) : null;
+    if (!(d && (d.sheetIds || []).includes(rec.id))) break;
     d.sheetIds = d.sheetIds.filter(x => x !== rec.id); d.labelFiles = (d.labelFiles || []).filter(f => f && f.sheetId !== rec.id); d.labels = null;
     for (const [rid, od] of Object.entries(d.orders || {})) { for (const [tid, l] of Object.entries(od.lines || {})) { l.copies = (l.copies || []).filter(c => c.sheetId !== rec.id); if (!l.copies.length) delete od.lines[tid]; } if (!Object.keys(od.lines || {}).length) delete d.orders[rid]; }
-    await ctx.call({ op: "setUpdate", setId: set.setId, patch: Core.setPatch(d) }, `green-undo-set|${set.setId}|${rec.id}`);
+    const r = await ctx.call({ op: "setUpdate", setId: set.setId, patch: Core.setPatch(d), setBase: num(s.data().setRev) }, `green-undo-set|${set.setId}|${rec.id}|${num(s.data().setRev)}`);
+    if (!(r && r.conflict)) break;
   }
   const pick = rec.metal === "rose" ? (was.pick === true ? true : null) : was.pick === true;
   await ctx.call({ op: "putSheet", sheet: { id: rec.id, draft: true, setId: null, setSeq: null, sheetIndex: null, label: null, solidIncluded: pick } }, `green-undo-sheet|${rec.id}|${set.setId}`);

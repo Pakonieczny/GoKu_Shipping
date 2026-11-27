@@ -103,12 +103,16 @@ async function drawSheet(ctx, V, sh, set) {
   }
   const label = { files: files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, ecc: f.ecc, label: f.label, ...(f.notes ? { notes: f.notes } : {}) })), orders: plan.ids, sig: hashOf(files.map(f => [f.payload, f.notes || []])), by: "cloud", at: Date.now() };
   // (the label and its orders only: the sheet's membership is the assembly's and already saved; the server refuses a cloud call that names the membership of a sheet an open set lists)
-  const r1 = await ctx.call({ op: "putSheet", sheet: { id: sh.sheetId, label, orders: plan.ids, runId: sh.runId } }, `label|${sh.sheetId}|${label.sig}`);
+  // (FRESHWRITE, Paul 27 Nov 2026: "sheets update and reverse back to their previous incorrect state": the label and its order list are of the pieces the view read; a person's Change SKU written
+  //  since (its contentRev moved) is never written over: the server refuses it (contentBase), and the label is drawn again from the sheet as it is now)
+  const rec0 = V.records && V.records.get(sh.sheetId), base = rec0 ? { contentBase: num(rec0.contentRev) } : {};
+  const r1 = await ctx.call(Object.assign({ op: "putSheet", sheet: { id: sh.sheetId, label, orders: plan.ids, runId: sh.runId } }, base), `label|${sh.sheetId}|${label.sig}`);
+  if (Assembly.moved(r1)) throw Assembly.replan(sh.fileBase || sh.sheetId, r1);
   if (!r1 || r1.status >= 400) throw new Error(`${sh.fileBase}: its QR label was made but not saved on its record: ${words(r1)}`);
   sh.label = label;
   set.labelFiles = (set.labelFiles || []).filter(f => f.sheetId !== sh.sheetId).concat(files.map(f => Object.assign({ sheetId: sh.sheetId }, f)));
   set.labels = null;
-  const r2 = await ctx.call({ op: "setUpdate", setId: set.setId, patch: { labelFiles: Core.setPatch(set).labelFiles, labels: null } }, `label-set|${set.setId}|${sh.sheetId}|${label.sig}`);
+  const r2 = await Assembly.setWrite(ctx, set, { labelFiles: Core.setPatch(set).labelFiles, labels: null }, `label-set|${set.setId}|${sh.sheetId}|${label.sig}`);   // (FRESHWRITE: setBase)
   if (!r2 || r2.status >= 400) throw new Error(`${set.name}: the label list was not saved: ${words(r2)}`);
   const events = qrEvents(sh, plan.ids, files, { set: set.name, setId: set.setId });
   for (let i = 0; i < events.length; i += 200) await ctx.call({ op: "timelineAdd", events: events.slice(i, i + 200) }, `qr-events|${sh.sheetId}|${label.sig}|${i}`).catch(() => null);
@@ -128,7 +132,8 @@ async function ownLabel(ctx, rec) {
     files.push({ path: up.path, url: up.url, sheet: name, part: i + 1, parts: parts.length, orders: slice, payload, ecc: img.ecc, label });
   }
   const made = { files, orders: ids, own: true, at: Date.now() };
-  const r = await ctx.call({ op: "putSheet", sheet: { id: rec.id, label: made } }, `own-label|${rec.id}|${hashOf(files.map(f => f.payload))}`);
+  const r = await ctx.call({ op: "putSheet", sheet: { id: rec.id, label: made }, contentBase: num(rec.contentRev) }, `own-label|${rec.id}|${hashOf(files.map(f => f.payload))}`);   // (FRESHWRITE: of the pieces read)
+  if (Assembly.moved(r)) throw Assembly.replan(name, r);
   if (!r || r.status >= 400) throw new Error(`${name}: its own QR label was not saved: ${words(r)}`);
   const events = qrEvents(Object.assign({ sheetId: rec.id }, rec), ids, files, { own: true });
   if (events.length) await ctx.call({ op: "timelineAdd", events: events.slice(0, 200) }, `own-events|${rec.id}`).catch(() => null);
@@ -233,11 +238,13 @@ async function finalize(ctx, V, set, o = {}) {
   set.labels = made; set.backCount = backCount;
   if (set.committedAt) {
     // (a committed set's files are written as the Library's edit of a committed set writes them: flowApply's setFiles step, applySetFiles; its status stays)
-    const r = await ctx.call({ op: "flowApply", steps: [{ type: "setFiles", setId: set.setId, labelFiles: Core.setPatch(set).labelFiles, labels: made }], device: "cloud", via: "cloud labels" }, `set-files|${set.setId}|${hashOf(made.files)}`);
+    const r = await ctx.call({ op: "flowApply", steps: [{ type: "setFiles", setId: set.setId, labelFiles: Core.setPatch(set).labelFiles, labels: made, setBase: num(set.setRev) }], device: "cloud", via: "cloud labels" }, `set-files|${set.setId}|${hashOf(made.files)}`);   // (FRESHWRITE: setBase)
+    if (Assembly.moved(r)) throw Assembly.replan(set.name || set.setId, r);
     if (!r || r.status >= 400) throw new Error(`${set.name}: its files were made but not recorded: ${words(r)}`);
+    if (Number.isFinite(+r.setRev)) set.setRev = +r.setRev;
   } else {
     if (!o.keepStatus) set.status = "labelled";
-    const patch = Core.setPatch(set), r = await ctx.call({ op: "setUpdate", setId: set.setId, patch: { labels: made, labelFiles: patch.labelFiles, status: set.status, backCount, orders: patch.orders } }, `set-labelled|${set.setId}|${hashOf([made.files, set.status, backCount])}`);
+    const patch = Core.setPatch(set), r = await Assembly.setWrite(ctx, set, { labels: made, labelFiles: patch.labelFiles, status: set.status, backCount, orders: patch.orders }, `set-labelled|${set.setId}|${hashOf([made.files, set.status, backCount])}`);   // (FRESHWRITE: the files and order lines of the set as the view read it, refused when it moved since)
     if (!r || r.status >= 400) throw new Error(`${set.name}: its files were made but not recorded: ${words(r)}`);
   }
   say("cloud", `${set.name}: ${files.length} label(s) collected in labels/${set.name}_labels.pdf · manifest and set.json saved`);
@@ -349,6 +356,8 @@ async function doAsk(ctx0, ask) {
     return answer(ctx, ask, { state: "done", doneAt: Date.now() });
   } catch (e) {
     if (e && (e.fenced || e.yielded || e.overBudget)) throw e;
+    // (FRESHWRITE, 27 Nov 2026: a record a person changed while this ask was drawn is never written over, nor the ask refused for it: it is asked again, and the next pass draws it from the records as they are now)
+    if (e && e.replan) { say("ok", `${ask.kind} ${ask.setId || ask.sheetId || ask.key}: ${String(e.message || "").slice(0, 300)}`); await answer(ctx, ask, { state: "asked", why: "" }); return { more: true }; }
     await answer(ctx, ask, { state: "refused", why: String((e && e.message) || e).slice(0, 500), doneAt: Date.now() });
     return { refused: true };
   }
@@ -368,13 +377,18 @@ async function passUnit(ctx) {
   for (const set of V.sets.filter(s => !s.committedAt && (s.sheetIds || []).length)) for (const sh of sheetsOf(V, set)) {
     if (labelsReady(V, sh, set)) continue;
     if (Date.now() > ctx.budgetEnd) return { more: true };
-    await drawSheet(ctx, V, sh, set); drawn++;
+    try { await drawSheet(ctx, V, sh, set); drawn++; }
+    catch (e) { if (e && e.replan) { say("ok", String(e.message || "").slice(0, 300)); return { more: true, drew: drawn }; } throw e; }   // (FRESHWRITE: drawn again in the next pass, from the records as they are then)
   }
   return drawn ? { drew: drawn } : undefined;
 }
 
 /* ── the run's "labels" step (RunCtl.doStep "labels"): behind the freshness gate, each open set's release check and its files, or its deferral in words ── */
 async function stepUnit(ctx) {
+  // (FRESHWRITE, 27 Nov 2026: a set or sheet a person changed while this look was made is never written over: the look stops there and the driver runs it again at once, on the records as they are then)
+  try { return await stepLook(ctx); } catch (e) { if (e && e.replan) { say("ok", String(e.message || "").slice(0, 300)); return { more: true }; } throw e; }
+}
+async function stepLook(ctx) {
   ctx = Assembly.passKeyed(ctx);
   const run = ctx.run; if (!run || run.releasePolicy !== 2) return undefined;
   const V = await viewOf(ctx, run), G = Core.gate(V), sets = V.sets.filter(s => (s.sheetIds || []).length && !s.committedAt);   // (G5: an open set's sheets of another run, from their own run's records)
@@ -390,14 +404,14 @@ async function stepUnit(ctx) {
     const issue = await releaseIssue(ctx, V, G, set);
     if (issue) {
       deferred[set.setId] = issue;
-      if (set.status !== "awaiting review") { const r = await ctx.call({ op: "setUpdate", setId: set.setId, patch: { status: "awaiting review" } }, `defer|${set.setId}|${hashOf(issue)}`); if (r && r.status < 400) set.status = "awaiting review"; }
+      if (set.status !== "awaiting review") { const r = await Assembly.setWrite(ctx, set, { status: "awaiting review" }, `defer|${set.setId}|${hashOf(issue)}`); if (r && r.status < 400) set.status = "awaiting review"; }   // (FRESHWRITE: setBase)
       continue;
     }
     // (a set whose files say what they would say now (its labels, its orders, the orders it holds back) is not written again at every pass: labelsSig, kept with the set)
     const sig = hashOf([(set.labelFiles || []).map(f => [f.path, f.url]), Object.keys(set.orders).sort(), Object.entries(evaluate(set, V.run).held).sort()]);
     if (set.status === "labelled" && set.labels && set.labels.pdf && set.labelsSig === sig) continue;
     await finalize(ctx, V, set, {});
-    await ctx.call({ op: "setUpdate", setId: set.setId, patch: { labelsSig: sig, labelsAt: Date.now() } }, `labels-sig|${set.setId}|${sig}`);
+    await Assembly.setWrite(ctx, set, { labelsSig: sig, labelsAt: Date.now() }, `labels-sig|${set.setId}|${sig}`);   // (FRESHWRITE: chained on the files' own write)
   }
   run.deferredSets = deferred;
   await ctx.call({ op: "runPut", run: { runId: run.runId, deferredSets: deferred }, merge: true }, `deferred|${run.runId}|${hashOf(deferred)}`);

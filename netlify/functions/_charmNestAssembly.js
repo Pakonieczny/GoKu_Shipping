@@ -58,6 +58,22 @@ async function poolRows(db, ids) {
 }
 const placedOf = p => { const byId = new Map((p.charms || []).map(c => [c.id, c])); return (p.placements || []).map(x => byId.get(x.id)).filter(Boolean); };
 const answerWords = r => String((r && (r.error || r.why)) || "no answer").slice(0, 300);
+/* FRESHWRITE (Paul, 27 Nov 2026: "The Library sheets are NOT updating to the latest versions from the cloud. I have also seen sheets update and reverse back to their previous incorrect state"): a look
+   read the run's sheets and sets once, then wrote a set's order lines, label files and labels (and a sheet's label and its orders) back WHOLE up to a minute later. A person's Change SKU done
+   meanwhile in its own process (cmdSwapLine) was written over, and the line it moved came back on its old sheet and set. Every write a look makes of a record it planned from now says the
+   revision it read (a set: setBase = its setRev; a sheet: contentBase = its contentRev); the server refuses it in its own transaction when the record moved since (409, conflict), nothing is
+   written, and the look is planned again on the records as they are now (replan: the unit answers { more: true }, so the driver runs it again at once, never a stop of the run). Chosen over
+   deriving the lists inside the server's transaction: a label's drawing, a set's labels PDF and its order lines are made from the look's whole view (pair notes, the other sheets, the pool
+   rows), which a transaction cannot make again; a refusal keeps every field of the newer record exactly as the person's change left it. */
+const moved = r => !!(r && +r.status === 409 && r.conflict);
+const replan = (what, r) => Object.assign(new Error(`${what} changed since this look read it (${answerWords(r)}): it is planned again on the record as it is now`), { replan: true });
+/** A look's write of a set: carries the set revision the look read (setBase); the answer's revision is kept on the set, so the look's next write of it chains on its own. Refused: replan. */
+async function setWrite(ctx, set, patch, unit, more) {
+  const r = await ctx.call(Object.assign({ op: "setUpdate", setId: set.setId, patch, setBase: num(set.setRev) }, more || {}), unit);
+  if (moved(r)) throw replan(set.name || set.setId, r);
+  if (r && r.status < 400 && Number.isFinite(+r.setRev)) set.setRev = +r.setRev;
+  return r;
+}
 
 /** The writes the core asks for, made through the driver's ctx.call. */
 function cloudIo(ctx, V, rowsCache) {
@@ -73,7 +89,7 @@ function cloudIo(ctx, V, rowsCache) {
       if (!r || r.status >= 400) throw new Error("The next set could not be numbered: " + answerWords(r));
       if (r.deferred) return null;
       const known = V.sets.find(s => s.setId === r.setId); if (known) return known;
-      const set = Core.asSet({ setId: r.setId, seq: r.seq, day: r.day || V.today, runId, group: "dispatch", name: O.setLabel(r.seq), folder: O.setFolder(r.day || V.today, r.seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], sheetNos: {}, status: "open" });
+      const set = Core.asSet({ setId: r.setId, seq: r.seq, day: r.day || V.today, runId, group: "dispatch", name: O.setLabel(r.seq), folder: O.setFolder(r.day || V.today, r.seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], sheetNos: {}, status: "open", setRev: num(r.setRev) });   // (FRESHWRITE: a set handed back says its revision)
       V.sets.push(set);
       run.setIds = [...new Set((run.setIds || []).concat([set.setId]))]; run.setId = run.setId || set.setId;
       say("cloud", `${set.name} allocated for ${set.day} → ${set.folder}`);
@@ -120,7 +136,7 @@ function cloudIo(ctx, V, rowsCache) {
     async leave(p, set) {
       // (the set first: it no longer lists the sheet; then the sheet's record, a draft; then its pieces and lines. The server's keepListed lets it go, its record no longer being in the set)
       const after = Object.assign({}, set, { sheetIds: (set.sheetIds || []).filter(id => id !== p.sheetId), labelFiles: (set.labelFiles || []).filter(f => f && f.sheetId !== p.sheetId) });
-      const r1 = await ctx.call({ op: "setUpdate", setId: set.setId, patch: Core.setPatch(after) }, `leave-set|${set.setId}|${p.sheetId}`);
+      const r1 = await setWrite(ctx, set, Core.setPatch(after), `leave-set|${set.setId}|${p.sheetId}`);   // (FRESHWRITE)
       if (!r1 || r1.status >= 400) throw new Error(`${p.fileBase || p.sheetId} could not leave ${set.name}: ${answerWords(r1)}`);
       set.sheetIds = after.sheetIds; set.labelFiles = after.labelFiles;
       // (tendSet's own save: solidIncluded is the sheet's tick after it left, false for a 10K / 14K sheet a person took out, nothing for every other metal)
@@ -135,7 +151,7 @@ function cloudIo(ctx, V, rowsCache) {
     },
     async saveSet(set) {
       const patch = Core.setPatch(set);
-      const r = await ctx.call({ op: "setUpdate", setId: set.setId, patch }, `set-save|${set.setId}`);
+      const r = await setWrite(ctx, set, patch, `set-save|${set.setId}`);   // (FRESHWRITE: refused when a person changed the set since this look read it: the look is made again)
       if (!r || r.status >= 400) throw new Error(`${set.name || set.setId} was not saved: ${answerWords(r)}`);
     }
   };
@@ -158,16 +174,23 @@ async function saveJournal(ctx, V, G, extra) {
 async function assemblyUnit(ctx, o) {
   ctx = passKeyed(ctx);
   const run = ctx.run; if (!run || run.releasePolicy !== 2) return undefined;   // (a run that is not modern is the page's legacy path: the driver refuses such a run for the cloud)
-  const V = await loadView({ db: ctx.db, run, now: Date.now() }), G = Core.gate(V), rows = new Map();
-  // (G3, Paul 21 Nov 2026: a person's Library drop of a sheet on an open set, asked from a viewer: that set is the sheet's hand set for this look, as the page's joinSet marks it
-  //  (sh.handSet): the core lets the set a person chose take it, by every other rule as before; the core forgets it at the end of the look)
-  if (o && o.hand && o.hand.sheetId && o.hand.setId) { const p = V.pages.find(q => q.sheetId === String(o.hand.sheetId)); if (p) p.handSet = String(o.hand.setId); }
-  // (RGTWO: a person's own Include / Cut Sheet press on this sheet: it may be a set's second partial Rose Gold sheet, charm-nest-assembly-core.js rgSecond; forgotten at the end of the look)
-  if (o && o.press && o.press.sheetId) { const p = V.pages.find(q => q.sheetId === String(o.press.sheetId)); if (p) p.rgPress = true; }
-  const io = cloudIo(ctx, V, rows);
-  const out = await G.assemble(io);
-  await saveJournal(ctx, V, G, { lastLook: { at: V.now, formed: out.formed || 0, sets: out.sets || [], heldSheets: num(out.heldSheets) } });
-  return out.deferred ? { wait: "task", why: "The next set's number was deferred: the sets wait for the next look" } : undefined;
+  // (FRESHWRITE, 27 Nov 2026: a look whose write the server refused because a person changed the record since (replan) is made again at once on the records as they are now, at most three
+  //  times; every write of a look is idempotent by key, so the look made again finishes what the refused one began. Still refused: { more: true }, the driver runs it again)
+  for (let look = 0; look < 3; look++) {
+    const V = await loadView({ db: ctx.db, run, now: Date.now() }), G = Core.gate(V), rows = new Map();
+    // (G3, Paul 21 Nov 2026: a person's Library drop of a sheet on an open set, asked from a viewer: that set is the sheet's hand set for this look, as the page's joinSet marks it
+    //  (sh.handSet): the core lets the set a person chose take it, by every other rule as before; the core forgets it at the end of the look)
+    if (o && o.hand && o.hand.sheetId && o.hand.setId) { const p = V.pages.find(q => q.sheetId === String(o.hand.sheetId)); if (p) p.handSet = String(o.hand.setId); }
+    // (RGTWO: a person's own Include / Cut Sheet press on this sheet: it may be a set's second partial Rose Gold sheet, charm-nest-assembly-core.js rgSecond; forgotten at the end of the look)
+    if (o && o.press && o.press.sheetId) { const p = V.pages.find(q => q.sheetId === String(o.press.sheetId)); if (p) p.rgPress = true; }
+    const io = cloudIo(ctx, V, rows);
+    let out;
+    try { out = await G.assemble(io); }
+    catch (e) { if (e && e.replan) { say("ok", `the set look is made again: ${String(e.message || "").slice(0, 300)}`); continue; } throw e; }
+    await saveJournal(ctx, V, G, { lastLook: { at: V.now, formed: out.formed || 0, sets: out.sets || [], heldSheets: num(out.heldSheets) } });
+    return out.deferred ? { wait: "task", why: "The next set's number was deferred: the sets wait for the next look" } : undefined;
+  }
+  return { more: true, replan: true };
 }
 
 /* ── SHADOW (m:C7): the cloud plans the look a computer is carrying out, writes nothing but its own notes, and says how long its plan has agreed with what the computer did ── */
@@ -200,4 +223,4 @@ async function shadow(o) {
   return { differs: differs.length, at: now };
 }
 
-module.exports = { loadView, cloudIo, assemblyUnit, shadow, saveJournal, poolRows, placedOf, passKeyed };
+module.exports = { loadView, cloudIo, assemblyUnit, shadow, saveJournal, poolRows, placedOf, passKeyed, setWrite, moved, replan };

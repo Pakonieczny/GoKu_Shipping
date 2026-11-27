@@ -96,6 +96,18 @@ const inOrder = list => list.slice().sort((x, y) => (orderOf(x) - orderOf(y)) ||
 /** The cloud's own write, with a unit key of its own (the mid: a replay writes once). */
 const put = (x, body, key) => x.ctx.call(body, `${x.ctx.runId}|cmd|${x.cmd.id}|${key}`);
 const err = r => (r && r.status >= 400 ? str(r.error || "refused", 300) : "");
+/* STEPSAID (Paul, 27 Nov 2026: "I did not see any feedback to the user when a sheet is being altered"; a Change SKU's panel said "The cloud is doing it… Started" for minutes): a request says each
+   stage of its work as it reaches it, through its own step (runCmdStep: what the pressing computer's panel and every sheet card that follows the request show). One write a stage, and only when
+   the words change; never waited for (a process's calls go one at a time, so a stage's words land before the request's next write and before its answer); a write that fails is only words lost.
+   x.quiet (a sweep, which says its own progress at each turn): nothing is said. → say(text), and say.done() to wait for the words already sent. */
+function stepper(x) {
+  const none = Object.assign(() => {}, { done: async () => {} });
+  if (!x || x.quiet || !x.cmd || !x.cmd.id || !x.ctx) return none;
+  const call = typeof x.ctx.callNow === "function" ? x.ctx.callNow : x.ctx.call; if (typeof call !== "function") return none;
+  let last = String(x.cmd.step || ""), chain = Promise.resolve();
+  const say = text => { text = str(text, 160); if (!text || text === last) return; last = text; chain = chain.then(() => call({ op: "runCmdStep", runId: x.ctx.runId, id: x.cmd.id, text }, `${x.ctx.runId}|cmd|${x.cmd.id}|step|${Math.floor(Date.now() / 60000)}`)).catch(() => null); };
+  return Object.assign(say, { done: () => chain });
+}
 
 /* ── a sheet's nest, waited for: started by nestStart (append, or fresh), settled when its record has a newer layout, no nest owed, nothing running, and (with the cloud's files
    lane on) its files written. → { settled, timedOut, rec } ── */
@@ -247,7 +259,7 @@ async function strandedFix(x, o = {}) {
     if (Object.keys(toPooled).length) { const r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: toPooled }, `strand|lines|${Object.keys(toPooled).sort().join(",").slice(0, 400)}|${Math.floor(now / 120000)}`); if (!err(r)) out.writes++; }
     // (a piece a sheet lists but never seated, the sheet at rest: its turned-away list is cleared and the sheet marked changed, so its nest tries it again (the nest step's owedNest);
     //  what still does not fit is moved on by the writer's overflow, step 7b. A cut sheet keeps what it holds)
-    for (const s of resit.values()) { const r = await put(x, { op: "putSheet", sheet: { id: s.id, rejects: [], dirty: true } }, `strand|resit|${s.id}|${num(s.contentRev)}|${num(s.layoutRev)}`); if (!err(r)) { out.writes++; out.resat.push(s.id); } }
+    for (const s of resit.values()) { const r = await put(x, { op: "putSheet", sheet: { id: s.id, rejects: [], dirty: true }, contentBase: num(s.contentRev) }, `strand|resit|${s.id}|${num(s.contentRev)}|${num(s.layoutRev)}`); if (!err(r)) { out.writes++; out.resat.push(s.id); } }   // (FRESHWRITE, 27 Nov 2026: a nest that wrote the sheet since this read keeps its turned-away list)
   }
   // CONTENDEDBACK: a line another run had claimed is asked for again (the server answers afresh)
   const again = {}; for (const [k, l] of Object.entries(L)) if (l && l.state === "contended" && !l.hold) { again[k] = { state: "pulled", reason: null, wait: null }; out.contended.push(k); }
@@ -398,9 +410,11 @@ async function staleLines(ctx, skus) {
 /* REDRAWN (Paul, 22 Nov 2026: 9MM_DISC_8391 updated to 9.0 mm in the Charm Editor with "Make the open pieces again", and the cloud answered "Nothing to make again" while its 4 discs
    stood on a sheet at the old size): a Charm Editor update replaces the design's drawing (charmHash, its edited.from → edited.to) and keeps the master file's hash (masterHash), the only
    hash this looked at. A piece made from the drawing the update replaced (its charmHash, a fitted size's "~10MM" aside, is edited.from) holds an older drawing. */
+// (EVERYOLD, Paul 27 Nov 2026: "those changes do not always propagate throughout the system": after a second update edited.from names only the drawing the LAST update replaced, so pieces still cut from the first
+//  one were never made again. The record keeps every drawing an update replaced (edited.was, _charmNestMaster.js editorPut): a piece cut from any of them holds an older drawing)
 function redrawn(e, r) {
-  const ed = e && e.edited, from = ed && ed.from != null ? String(ed.from) : "", now = String((ed && ed.to) || (e && e.charmHash) || "");
-  return !!(from && from !== now && r && r.charmHash && String(r.charmHash).split("~")[0] === from);
+  const ed = e && e.edited, now = String((ed && ed.to) || (e && e.charmHash) || ""), old = new Set([].concat(ed && Array.isArray(ed.was) ? ed.was : [], ed && ed.from != null ? [ed.from] : []).map(String).filter(h => h && h !== now));
+  return !!(old.size && r && r.charmHash && old.has(String(r.charmHash).split("~")[0]));
 }
 /** Pieces as a sheet lists them, from their own rows and the library's index (the placement's own description: charm-nest-place.js charmOfRow). */
 async function describe(ctx, rows) {
@@ -419,7 +433,7 @@ const NOT_MADE = new Set(["held", "oversize", "unmatched", "noDesign", "skipped"
 async function again(x, keys, label) {
   const ctx = x.ctx, w = x.work, now = Date.now();
   if (!lane(ctx, "nest") || !lane(ctx, "pool")) return no(`${label} is not the cloud's yet (in this build pieces are made and placed by a computer): with the cloud on Standby (Settings → Cloud), press Resume on a computer, then ask again`);
-  const run = await runNow(ctx), L = (run && run.lines) || lines(ctx), why = (w.why || []).slice(), go = new Map(), names = new Set(w.names || []), patch = {};
+  const run = await runNow(ctx), L = (run && run.lines) || lines(ctx), why = (w.why || []).slice(), go = new Map(), names = new Set(w.names || []), patch = {}, waits = (w.waits || []).slice(), say = stepper(x);   // (STEPSAID; TRUEDONE: waits)
   let n = num(w.n), pieces = num(w.pieces), nests = num(w.nests);
   const [sheets, sets] = await Promise.all([sheetsWith(ctx, keys.flatMap(k => (L[k] && L[k].poolIds) || [])), runSets(ctx)]), on = listedBy(sheets), touched = new Set(), notOn = new Set();
   for (const k of keys) {
@@ -432,16 +446,20 @@ async function again(x, keys, label) {
   if (!go.size) { const res = n ? ok(`${n} order line(s) made again`) : no((why.join("; ") || "Nothing was made again").slice(0, 380)); return Object.assign(res.done, { n, names: [...names], why }), res; }
   const held = [...go.keys()].filter(k => L[k].hold || L[k].state === "held"); if (x.lift && held.length) { const free = { state: "pulled", hold: null, reason: null, wait: null }, r = await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: Object.fromEntries(held.map(k => [k, free])) }, `lift|${held.sort().join(",").slice(0, 400)}`); if (err(r)) return no(err(r)); for (const k of held) L[k] = Object.assign({}, L[k], free); }   // (Send to Sheet: the send is the release)
   const swap = (k, s, b, key) => put(x, Object.assign({ op: "cmdSwapLine", runId: ctx.runId, lineKey: k, rid: ridOf(k), sheetId: s.id, by: x.cmd.by || "", keepBacks: !!x.keepBacks }, b), `swap|${k}|${s.id}|${key}`);
+  { const ks = [...go.keys()]; say(ks.length === 1 ? `Making the new pieces of order ${ridOf(ks[0])}…` : `Making the new pieces of ${ks.length} order lines…`); }   // (STEPSAID: the piece maker's stage)
   /** One line's new pieces onto the sheet that holds its old ones (a sheet that changed meanwhile is looked at again); a line of two sheets leaves the other one. No room there: gone, the whole line goes on the next Draft. */
   const onto = async (k, rows, homes) => {
     for (let t = 0; t < 6; t++) {
       const s = t ? await sheetRec(ctx, homes[0].id) : homes[0]; if (!s) return { error: "its sheet is gone", status: 404, gone: true };
       const charms = (await describe(ctx, rows)).filter(c => !c.metal || c.metal === s.metal); if (charms.length !== rows.length) return { error: "its metal changed", status: 409, gone: true };
+      say(`Seating on ${nameOf(s)}…`);   // (STEPSAID)
       const got = await require("./_charmNestSeatNow").seat({ db: ctx.db, rec: s, lineKey: k, charms, rows, say: ctx.say }).catch(e => ({ broke: str((e && e.message) || e, 160) }));
       if (got.broke) return { error: `its new piece could not be drawn (${got.broke})`, status: 500 };
-      if (!got.poses && !got.open) { for (const h of homes) notOn.add(h.id); return { error: got.why, status: 409, gone: true }; }
+      if (!got.poses && !got.open) { for (const h of homes) notOn.add(h.id); return { error: got.why, status: 409, gone: true, noRoom: nameOf(s) }; }
       for (const o of t ? [] : homes.slice(1)) { await swap(k, o, { pools: [], charms: [] }, `off|${num(o.contentRev)}`); touched.add(o.id); }
-      const r = await swap(k, s, { pools: rows, charms, ...(got.poses ? { poses: got.poses, layoutBase: num(s.layoutRev) } : {}) }, `${num(s.layoutRev)}|${num(s.contentRev)}|${got.poses ? 1 : 0}|${t}`);
+      say(`Writing ${nameOf(s)}…`);   // (STEPSAID)
+      // (FRESHWRITE, 27 Nov 2026: the poses were seated on the sheet as read: its content revision too, so a move by hand since (contentRev, not layoutRev) has it seated again)
+      const r = await swap(k, s, { pools: rows, charms, ...(got.poses ? { poses: got.poses, layoutBase: num(s.layoutRev), contentBase: num(s.contentRev) } : {}) }, `${num(s.layoutRev)}|${num(s.contentRev)}|${got.poses ? 1 : 0}|${t}`);
       if (r && r.conflict) continue;   // (the sheet changed while it was seated: seated again on it as it is now)
       if (err(r)) return r;
       names.add(nameOf(s)); touched.add(s.id); n++; pieces += rows.length; if (r.size) why.push(`${ridOf(k)}: resized to ${Math.round(r.size * 100)}% to fit its place`); if (!r.seated) { nests++; await startNest(x, s.id, false, `${label}, asked by ${x.cmd.by || "a person"}`); }
@@ -462,7 +480,7 @@ async function again(x, keys, label) {
     for (const [k, rows] of byLine) {
       const homes = go.get(k) || []; if (!homes.length) { rest.push(...rows); loose.push(k); continue; }
       const r = await onto(k, rows, homes);
-      if (err(r) && r.gone) { for (const s of homes) { await swap(k, s, { pools: [], charms: [] }, `off|${num(s.contentRev)}`); touched.add(s.id); } rest.push(...rows); loose.push(k); }   // (no room on its sheet, its metal changed, or its sheet let it go: new pieces, on the next Draft)
+      if (err(r) && r.gone) { say(`${r.noRoom ? `No room on ${r.noRoom}` : `${ridOf(k)}: ${str(r.error, 80)}`}: placing on the next Draft…`); for (const s of homes) { await swap(k, s, { pools: [], charms: [] }, `off|${num(s.contentRev)}`); touched.add(s.id); } rest.push(...rows); loose.push(k); }   // (no room on its sheet, its metal changed, or its sheet let it go: new pieces, on the next Draft)   // (STEPSAID)
       else if (err(r)) { why.push(`${ridOf(k)}: ${err(r)}`); out.placed.push(...rows.map(p => ({ poolId: p.poolId, sheetId: homes[0].id, sheetName: homes[0].fileBase || null, state: "ready" }))); }
     }
     if (!rest.length) return out;
@@ -481,19 +499,26 @@ async function again(x, keys, label) {
   for (const k of go.keys()) if (!late.includes(k) && (L[k].changePending || L[k].repoolChanged)) patch[k] = Object.assign({ changePending: false, repoolChanged: false }, patch[k]);
   if (Object.keys(patch).length) await put(x, { op: "runLinesPatch", runId: ctx.runId, lines: patch }, `again|${Object.keys(patch).sort().join(",").slice(0, 400)}`);
   if (loose.length) {
-    await require("./_charmNestPlaceUnit").placeAll(Object.assign({}, ctx, { run: given, only: new Set(loose), notOn }));
+    const pr = (await require("./_charmNestPlaceUnit").placeAll(Object.assign({}, ctx, { run: given, only: new Set(loose), notOn }))) || {};
     const g = await runNow(ctx), L2 = (g && g.lines) || given.lines, ids = loose.flatMap(k => (L2[k] && L2[k].poolIds) || []), by = listedBy(await sheetsWith(ctx, ids));
     for (const s of new Set(by.values())) { names.add(nameOf(s)); nests++; await startNest(x, s.id, false, `${label}, asked by ${x.cmd.by || "a person"}`); }
-    n += loose.length; pieces += ids.length;
+    /* TRUEDONE (Paul, 27 Nov 2026: a Change SKU answered "made again … on GF Draft 4" while the placing had said "0 piece(s) placed so far"): only the pieces a sheet's record lists now are said placed;
+       a line's pieces that no sheet lists yet are said to wait, with the placing's own reason (the line's, a sheet being nested, or the placing's time spent): they go on at the next placing */
+    n += loose.length; pieces += ids.filter(id => by.has(String(id))).length;
+    const later = (pr.cursor && pr.cursor.placeWait && pr.cursor.placeWait.why) || pr.why || (pr.more ? "the placing goes on in its next turn" : "");
+    for (const k of loose) { const left = ((L2[k] && L2[k].poolIds) || []).map(String).filter(id => !by.has(id)); if (!left.length) continue; const whyNot = str((L2[k] && L2[k].reason) || later || "the next placing puts them on a sheet", 160); waits.push(`${ridOf(k)}: ${plural(left.length, "new piece")} ${left.length === 1 ? "waits" : "wait"} to be placed (${whyNot})`); }
     const went = loose.flatMap(k => [...new Set(((L2[k] && L2[k].poolIds) || []).map(id => by.get(String(id))).filter(Boolean))].map(s => ({ orderId: ridOf(k), type: "placed", at: Date.now(), by: x.cmd.by || "Cloud", station: "sorter", device: "cloud", sheetId: s.id, sheet: nameOf(s).slice(0, 80), lineKey: k, id: `swap-${x.cmd.id}-${k}-${s.id}`, text: `Went onto ${nameOf(s)}`.slice(0, 200) })));
     if (went.length) await put(x, { op: "timelineAdd", events: went }, `went|${loose.slice().sort().join(",").slice(0, 400)}`);
   }
   if (touched.size) await hopRefile(x, [...touched]);   // (a set already released: its labels, manifest and files are made again)
-  if (late.length && now - (num(w.at) || now) < 5 * 60000) return wait(`Making the pieces again… ${n} of ${n + late.length} made`, { stage: "again", keys: late, at: num(w.at) || now, n, pieces, nests, names: [...names], why });
+  await say.done();   // (STEPSAID: the words said so far land before the answer)
+  if (late.length && now - (num(w.at) || now) < 5 * 60000) return wait(`Making the pieces again… ${n} of ${n + late.length} made`, { stage: "again", keys: late, at: num(w.at) || now, n, pieces, nests, names: [...names], why, waits });
   for (const k of late) why.push(`${ridOf(k)}: not made again: ${str((given.lines[k] || {}).reason || "its order could not be read", 160)}`);
   const tail = why.length ? " · " + why.join("; ") : "";
-  const res = n ? ok(`${n} order line(s) made again: ${pieces} piece(s)${names.size ? " on " + and([...names]) : ""}${nests ? ", being nested" : ""}${tail}`) : no((why.join("; ") || "Nothing was made again").slice(0, 380));
-  return Object.assign(res.done, { n, names: [...names], why }), res;
+  // (TRUEDONE: what is placed, then what still waits; nothing placed is never said placed)
+  const onWords = pieces ? `: ${plural(pieces, "piece")} placed${names.size ? " on " + and([...names]) : ""}${nests ? ", being nested" : ""}` : "", waitWords = waits.length ? (pieces ? " · " : ": ") + waits.join("; ") : "";
+  const res = n ? ok(`${n} order line(s) made again${onWords}${waitWords}${tail}`) : no((why.join("; ") || "Nothing was made again").slice(0, 380));
+  return Object.assign(res.done, { n, names: [...names], why, waits }), res;
 }
 /* BACKHOME (Paul, 22 Nov 2026: "that should've gone back to the original sheet"): an order line made again whose new pieces went onto another sheet goes back to the sheet its pieces were
    taken from (each piece's record names it: vacatedFrom), even a sheet of a set (it is its own order coming back: cmdMovePieces lets that sheet take it), into the room they left; that sheet
@@ -600,7 +625,7 @@ async function remake(x) {
   }
   const tail = [kept ? `${kept} on a sheet marked laser cut stay as they are` : "", held ? `${held} on hold are made again when released` : "", own ? `${own} with their own Charm Editor change keep it` : "", ...why.slice(0, 4)].filter(Boolean).join("; ");
   if (!todo.length) return n ? ok(`${n} order line(s) made again${names.size ? " on " + and([...names]) : ""}${tail ? " · " + tail : ""}`) : kept || held || own || why.length ? (why.length ? no(tail) : ok(`Nothing to make again now: ${tail}`)) : ok("Nothing to make again: every open piece already holds the drawing the library has now");
-  const now = todo.slice(0, BATCH), res = await again(Object.assign({}, x, { work: { at: 1 }, bare: from }), now, "Making the orders again"), r = (res.done || {}); n += num(r.n); for (const z of r.names || []) names.add(z); why.push(...(r.why || []));
+  const now = todo.slice(0, BATCH), res = await again(Object.assign({}, x, { work: { at: 1 }, bare: from, quiet: true }), now, "Making the orders again"), r = (res.done || {}); n += num(r.n); for (const z of r.names || []) names.add(z); why.push(...(r.why || []), ...(r.waits || []));   // (STEPSAID: the sweep says its own progress each turn; TRUEDONE: pieces still to be placed are said)
   return wait(`Making the open orders again… ${did + now.length} of ${did + todo.length}`, { stage: "all", todo: todo.slice(BATCH), did: did + now.length, n, names: [...names].slice(0, 60), why: why.slice(0, 20), kept, held, own, round }, Math.min(99, Math.round((did + now.length) / (did + todo.length) * 100)));
 }
 async function skuonce(x) {
@@ -659,7 +684,7 @@ async function restoreLayout(x) {
   }
   const on = new Set(activeCharms(p).map(c => String(c.id))), placements = res.placements.filter(q => q && on.has(String(q.id)));
   if (!placements.length) return no("None of the pieces that nest placed are on the sheet now.");
-  const r = await put(x, { op: "putSheet", layoutBase: num(p.layoutRev), sheet: { id: p.id, placements, rejects: [], feedWait: null, placedCount: placements.length, density: num(res.density), freePt2: num(res.freePt2),
+  const r = await put(x, { op: "putSheet", layoutBase: num(p.layoutRev), contentBase: num(p.contentRev) /* (FRESHWRITE: a move by hand since this read moves contentRev, not layoutRev) */, sheet: { id: p.id, placements, rejects: [], feedWait: null, placedCount: placements.length, density: num(res.density), freePt2: num(res.freePt2),
     verification: res.verification || null, endedBy: "kept", status: "complete", dirty: false, nestOwed: null } }, `restore|${p.id}|${x.a.sourceId}|${num(p.layoutRev)}`);
   if (err(r)) return no(`Not restored: ${err(r)}`);
   return ok(`${nameOf(p)}: its layout is back, ${placements.length} of ${on.size} pieces placed where the nest of ${new Date(num(j.finishedMs)).toLocaleTimeString("en-CA", { timeZone: "America/Toronto" })} left them`);

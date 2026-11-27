@@ -28,12 +28,20 @@ const laneOn = (ctx, type) => cmdLaneOn(ctx.cloudSteps || [], type);   // (GAP G
    and behind the pass's own calls all the way (they go one at a time). It has a process of its own now (nowRun, started by runCmdPut itself), under the running pass's lease, every write fenced on it, exactly as the pass
    does it. One process holds a request at a time (Charm_Nest_Cmd_Hold/<id>): the pass leaves a fresh one to its process, and goes on with one whose process went quiet, from the request's own journal. */
 const HOLD = "Charm_Nest_Cmd_Hold", HOLD_MS = 15000, KICK_MS = 9000, BEAT_MS = 4000;
+/* ONEHOLD (Paul, 27 Nov 2026: "updates are very delayed for updating SKUs ... it can not take more than 30s at worst"; a Change SKU claimed at 23:24:42 was done at 23:27:39, by the pass, behind a set-labels unit):
+   the request's own process (nowRun) let go of its hold between its turns (each turn of commands took it and gave it back, kickedAt cleared), so the pass's lane beside its unit took the request and did it
+   behind that unit's calls (a process's calls go one at a time), past the unit's time again and again, while its own process waited 80 s and gave up. Now exactly one process does a request:
+     · its own process holds it for its whole life (nowRun: by, at and beatAt, renewed every BEAT_MS) and takes it here without a write; it never gives it up between its turns;
+     · no other process takes it while its holder's beat is fresh (a beat stamped after this look began is fresh too: the time is read inside the transaction), nor while it was kicked to its own
+       process less than KICK_MS ago and that process has not begun (runCmdPut writes the kick with the request, in one transaction: nothing can see the request without it);
+     · its own process that finds another one doing it (the kick lapsed, the pass took it) leaves it to that one. A process that fails: its hold lapses (HOLD_MS) and the pass does it, as before. */
 async function take(ctx, c) {
-  const me = ctx.worker || "pass", ref = ctx.db.collection(HOLD).doc(String(c.id)), at0 = Date.now();
+  const me = ctx.worker || "pass", ref = ctx.db.collection(HOLD).doc(String(c.id));
+  if (ctx.worker && ctx.ownId && String(c.id) === String(ctx.ownId)) return async () => {};   // (ONEHOLD: held by this very process since it began, beat by nowRun)
   const mine = await ctx.db.runTransaction(async tx => {
-    const s = await tx.get(ref), h = s.exists ? s.data() || {} : {};
-    if (h.by && h.by !== me && at0 - num(h.at) < HOLD_MS && at0 >= num(h.at)) return false;
-    if (me === "pass" && num(h.kickedAt) > 0 && at0 - num(h.kickedAt) < KICK_MS) return false;
+    const s = await tx.get(ref), h = s.exists ? s.data() || {} : {}, at0 = Date.now();
+    if (h.by && h.by !== me && at0 - num(h.at) < HOLD_MS) return false;
+    if (num(h.kickedAt) > 0 && at0 - num(h.kickedAt) < KICK_MS && h.by !== me) return false;   // (its own process was started for it a moment ago)
     tx.set(ref, Object.assign({ runId: ctx.runId, by: me, at: at0 }, me === "pass" ? { state: "pass" } : {}, { expireAt: new Date(at0 + 2 * 86400000) }), { merge: true });
     return true;
   });
@@ -90,7 +98,8 @@ async function commands(ctx, held) {
     try { r = ex ? await ex({ ctx, cmd: c, a: c.args || {}, work: Object.assign({}, work), now }) : { done: { ok: false, text: "Unknown command" } }; }
     catch (e) {
       if (e && (e.fenced || e.yielded || e.fatal)) throw e;
-      if (e && e.overBudget) return { more: true, done: n };
+      // (ONEHOLD, 27 Nov 2026: a request that ran past the unit's time was left silently, and done again from its start later: said now, with the request and where it was)
+      if (e && e.overBudget) { if (ctx.say) ctx.say(`[drive] request ${c.type} ${c.id} ran past its time (${((Date.now() - now) / 1000).toFixed(1)} s, ${ctx.worker || "pass"}) at "${str(work.stage || c.step || "its start", 80)}": it goes on next turn`); return { more: true, done: n }; }
       const why = str((e && e.message) || e, 300);
       if (PASSING.test(why) && now - num(c.at) < 30 * 60000) { ctx.say && ctx.say(`[drive] request ${c.type} ${c.id}: ${why} — tried again in the next pass`); continue; }
       r = { done: { ok: false, text: why } };
@@ -110,16 +119,19 @@ async function commands(ctx, held) {
  *  fenced on it and on the run's carrier. It was the pass's lease: no pass running, or a pass that ended in the middle, and the person waited (23 Nov 2026). Any older request of these kinds is done first, in order.
  *  → { done } | { skipped } | { again } (the pass goes on with it) */
 async function nowRun(o) {
-  const { db, Lib, runId, id, key, say } = o, t0 = Date.now(), ref = db.collection(HOLD).doc(String(id)), nap = ms => new Promise(r => setTimeout(r, ms)), worker = "now:" + String(key).slice(0, 8), back = why => ref.set({ kickedAt: 0, state: "" }, { merge: true }).catch(() => {}).then(() => ({ again: why }));
+  const { db, Lib, runId, id, key, say } = o, t0 = Date.now(), ref = db.collection(HOLD).doc(String(id)), nap = ms => new Promise(r => setTimeout(r, ms)), worker = "now:" + String(key).slice(0, 8);
+  const back = why => ref.set({ kickedAt: 0, state: "", by: null, at: 0 }, { merge: true }).catch(() => {}).then(() => ({ again: why }));   // (ONEHOLD: given up, so the pass takes it at once)
   const began = await db.runTransaction(async tx => {
-    const s = await tx.get(ref), h = s.exists ? s.data() || {} : {}, dv = await tx.get(db.collection("Charm_Nest_Open").doc("drive")), d = dv.exists ? dv.data() || {} : {}, cs = await tx.get(db.collection("Charm_Nest_Run_Carrier").doc(String(runId))), c = cs.exists ? (cs.data() || {}).carrier : null;
+    const s = await tx.get(ref), h = s.exists ? s.data() || {} : {}, dv = await tx.get(db.collection("Charm_Nest_Open").doc("drive")), d = dv.exists ? dv.data() || {} : {}, cs = await tx.get(db.collection("Charm_Nest_Run_Carrier").doc(String(runId))), c = cs.exists ? (cs.data() || {}).carrier : null, now = Date.now();
     if (!h.key || h.key !== key || h.runId !== runId) return { skipped: "not this request's turn" };
+    if (h.by && h.by !== worker && now - num(h.at) < HOLD_MS) return { skipped: `${h.by === "pass" ? "the pass" : "another process"} is doing it` };   // (ONEHOLD: one process does a request; it is left to that one)
     if ((d.mode !== "on" && d.mode !== "standby") || !c || c.dev !== CLOUD_DEV) return { no: "the cloud does not carry the run" };
-    tx.set(ref, { state: "running", nonce: key, beatAt: t0 }, { merge: true });
+    tx.set(ref, { state: "running", nonce: key, beatAt: now, by: worker, at: now }, { merge: true });   // (ONEHOLD: held from here to the end of this process, never between its turns only)
     return { drive: d };
   });
   if (began.skipped) return began;
   if (began.no) return back(began.no);
+  const beat = setInterval(() => { const t = Date.now(); ref.set({ at: t, beatAt: t }, { merge: true }).catch(() => {}); }, BEAT_MS); if (beat && typeof beat.unref === "function") beat.unref();
   const fence = { path: HOLD + "/" + id, nonce: key, runId }, fenced = t => Object.assign(new Error(t), { fenced: true }), read = b => Lib.call(b, {}), cloudSteps = Array.isArray(began.drive.cloudSteps) ? began.drive.cloudSteps.map(String) : [];
   const call = async (b, unit) => { const r = await Lib.call(b, { unit: String(unit || ""), fence }); if (r && (r.fenced || (r.status === 409 && r.notCarrier))) throw fenced(r.error); if (r && r.inFlight) throw new Error(String(r.error || "is being written already")); return r; };
   try {
@@ -128,14 +140,14 @@ async function nowRun(o) {
         const got = await read({ op: "runGet", runId }), run = got && got.run;
         if (!run || ["abandoned", "complete"].includes(run.status)) return back("the run is closed");
         const runFresh = Object.assign({}, run, { runId });
-        await commandsUnit({ db, run: runFresh, runId, step: "pass:commands", cursor: {}, call, callNow: call, read, drive: began.drive, cloudSteps, state: {}, fence, say: say || (() => {}), live() {}, worker, only: NOW_TYPES, unitKey: `${runId}|now|${id}`, budgetEnd: Date.now() + 90000, _runNow: { at: Date.now(), run: runFresh } });
+        await commandsUnit({ db, run: runFresh, runId, step: "pass:commands", cursor: {}, call, callNow: call, read, drive: began.drive, cloudSteps, state: {}, fence, say: say || (() => {}), live() {}, worker, ownId: String(id), only: NOW_TYPES, unitKey: `${runId}|now|${id}`, budgetEnd: Date.now() + 90000, _runNow: { at: Date.now(), run: runFresh } });
       } catch (e) { if (e && e.fenced) return back(str(e.message, 160)); if (say) say(`[cmd now] ${id}: ${str((e && e.message) || e, 200)}`); }
       const c = (((await db.collection(CMDS).doc(runId).get()).data() || {}).cmds || {})[id];
       if (c && SWEEP.has(c.type) && c.step !== step) { step = c.step; until = Math.min(Date.now() + 80000, t0 + 12 * 60000); }   // (it goes on while it gets on)
       if (!c || !["waiting", "running"].includes(c.state)) { if (say) say(`[cmd now] ${id}: ${((Date.now() - t0) / 1000).toFixed(1)} s`); return { done: (c && c.state) || "gone" }; }
     }
     return back("not done in time");
-  } finally { await ref.set({ state: "" }, { merge: true }).catch(() => {}); }
+  } finally { clearInterval(beat); await ref.set({ state: "", by: null, at: 0, kickedAt: 0 }, { merge: true }).catch(() => {}); }   // (ONEHOLD: let go once, at the end)
 }
 
-module.exports = { nowRun, NOW_TYPES, HOLD, units: { passItems: [{ name: "commands", lane: "cmd:*", order: 40, unit: commandsUnit }] }, commandsUnit };
+module.exports = { nowRun, take, NOW_TYPES, HOLD, HOLD_MS, KICK_MS, units: { passItems: [{ name: "commands", lane: "cmd:*", order: 40, unit: commandsUnit }] }, commandsUnit };
