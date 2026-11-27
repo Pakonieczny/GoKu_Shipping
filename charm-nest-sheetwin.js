@@ -59,6 +59,9 @@
   const still = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
   const EASE = "cubic-bezier(.2,.8,.2,1)";
   const h = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+  // (SHEETFRESH, Paul 27 Nov 2026: a sheet's saved picture under the link of its version, previewAt or previewRev (charm-nest-1.html picUrl): the file is kept a year at one link, so the window showed
+  //  whatever picture the browser had first; a list row names it `preview`, a whole record `outputs.preview.url`)
+  const pvLink = r => { const u = r && (r.preview || (r.outputs && r.outputs.preview && r.outputs.preview.url)); if (!u || typeof u !== "string") return ""; return typeof window.picUrl === "function" ? window.picUrl({ preview: u, previewAt: r.previewAt, previewRev: r.previewRev }) : cors(u); };
   const animate = (el, frames, ms, opts) => { if (!el || still() || !el.animate) return Promise.resolve(); try { return el.animate(frames, Object.assign({ duration: ms, easing: EASE, fill: "both" }, opts || {})).finished.catch(() => {}); } catch (_) { return Promise.resolve(); } };
   const ICON = {
     pause: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4v8M10 4v8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
@@ -539,7 +542,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     fx.addEventListener("pointermove", e => { if (W.pan) { panMove(e); return; } W.pointer = e; if (!W.moveFrame) W.moveFrame = requestAnimationFrame(() => { W.moveFrame = 0; onMove(W.pointer); }); });
     fx.addEventListener("pointerleave", () => { if (!W.hand) { setHover(null); tip(null); } });
     fx.addEventListener("wheel", e => {
-      if (!W.hand) { if (MC.on) zoomWheel(e); return; }   // (MCZOOM: in Manual Control the wheel zooms where the pointer is)
+      if (!W.hand) { if (MC.on) mcWheel(e); return; }   // (MCZOOM, MIDPAN: in Manual Control Option + wheel zooms where the pointer is; the plain wheel moves a zoomed view)
       e.preventDefault();
       const h = W.hand; h.acc = (h.acc || 0) + (e.deltaY || e.deltaX);
       if (Math.abs(h.acc) >= 40 || e.deltaMode) { handTurn(Math.sign(h.acc) * (e.shiftKey ? 2 : 10)); h.acc = 0; }
@@ -557,6 +560,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (MCFREE, Paul 20 Oct 2026: the tool's handles may stand outside the plate, over the stage round it, or over a dock: a press on one is taken here first, before the
     //  plate (and the sheet hop's own press on a charm) or a dock sees it; the drag then follows the plate's canvas, which holds the pointer, wherever it goes)
     E.plateBox.addEventListener("pointerdown", e => { if (MC.on && !MC.drag && !(e.button > 0) && mcHandleAt(e)) { e.stopPropagation(); mcDown(e); } }, true);
+    // (MIDPAN, Paul 27 Nov 2026: "clicking the middle mouse scrolling button will engage panning irrespective of where the users mouse pointer is located on the sheet including on top of a charm"):
+    //  the wheel button pressed anywhere over the plate, a charm, its tool's handles or the stage round it moves the zoomed view, taken here before the charm, the tool or the sheet hop sees it; never the browser's own autoscroll
+    E.plateBox.addEventListener("pointerdown", e => { if (e.button !== 1 || !MC.on) return; e.preventDefault(); e.stopPropagation(); panStart(e); }, true);
+    for (const ev of ["mousedown", "auxclick"]) E.plateBox.addEventListener(ev, e => { if (e.button === 1 && MC.on) e.preventDefault(); }, true);
     E.plateBox.addEventListener("pointermove", e => {
       if (!MC.on || MC.drag) return;
       const h = e.target === E.fx ? null : mcHandleAt(e), cur = h === "turn" ? "alias" : h === "size" ? "nwse-resize" : "";
@@ -1133,9 +1140,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const St = window.CharmNestStore, holding = !!St && (!again || !!opts.held) && St.holds("sheetFull", id);
     if (!again) {
       // the picture shown until the sheet is drawn: the very picture of the card it was opened from, else the saved one
-      const im = origin && origin.img ? tryDo(origin.img) : null, src0 = loaded(im) ? im.currentSrc || im.src : "", url = lib?.outputs?.preview?.url;
+      const im = origin && origin.img ? tryDo(origin.img) : null, src0 = loaded(im) ? im.currentSrc || im.src : "", url = pvLink(lib);   // (SHEETFRESH: the list row's picture under its version; a row names it `preview`)
       E.pv.removeAttribute("src"); E.pv.style.transitionDelay = ""; W.pvCard = !!src0;
-      if (src0) E.pv.src = src0; else if (url) E.pv.src = cors(url);
+      if (src0) E.pv.src = src0; else if (url) E.pv.src = url;
       if (fresh) {
         // (what the last opening drew is not shown again, even for a moment)
         setNow(E.pv, backFace() ? "0" : "1"); setNow(E.base, W.pre && W.pre.pieces ? "1" : "0");
@@ -1168,8 +1175,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const held = holding ? St.get("sheetFull", id) || await St.load("sheetFull", id) : null;
       if (tok !== W.token) return;
       if (held) for (const s0 of held.sources || []) keptGeom(s0);   // (its designs asked for now, read while the window is drawn: loadGeometry finds them)
-      const r = held ? { sheet: held, rev: St.rev("sheetFull", id), held: true } : await api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 });
-      if (r && r.sheet && !r.held && St) St.put("sheetFull", id, r.sheet, r.rev || "");   // (LOCAL: kept under its revision for the next opening, here or after a reload)
+      let r = held ? { sheet: held, rev: St.rev("sheetFull", id), held: true } : await api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 });
+      // (LOCAL: kept under its revision for the next opening, here or after a reload. NEWERWINS, 27 Nov 2026: this computer already holds a NEWER copy (another read landed first: the order window's,
+      //  the feed's): that one is drawn, never the answer that was read before it)
+      if (r && r.sheet && !r.held && St) { if (typeof St.older === "function" && St.older("sheetFull", id, r.sheet, r.rev || "") && St.get("sheetFull", id)) r = { sheet: St.get("sheetFull", id), rev: St.rev("sheetFull", id) }; else St.put("sheetFull", id, r.sheet, r.rev || ""); }
       if (tok !== W.token) return;
       // (MOVEINSTANT, Paul 20 Oct 2026: a sheet a move by hand is still saving is drawn with the move made, not as its record says until the save lands: hopOverlay)
       const rec = hopOverlay(r.sheet); if (!rec) throw new Error("This sheet is no longer in the Library.");
@@ -1184,7 +1193,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const same = !!(early && W.geom && early.sig === layoutSig(rec));
       head(rec, false); if (same) { for (const x of W.pieces) x.eng = engOf(x); if (rec.shippedOut) tryDo(paintBase); } else { if (early) W.geom = false; indexPieces(); if (MC.on && MC.id === id) mcReattach(); } if (fresh) W.opAsked = new Set(); readPieces(!!again); pruneFreed(); fitPlate(); renderStrip(); renderSheetPane(); renderFoot(); renderMenu(); unstill(); frontWordsReady();
       E.addBtn.hidden = !canAdd();
-      if (!rec.outputs?.preview?.url && !W.live && !W.pvCard) E.pv.removeAttribute("src"); else if (rec.outputs?.preview?.url && !E.pv.getAttribute("src")) E.pv.src = cors(rec.outputs.preview.url);
+      // (SHEETFRESH, 27 Nov 2026: the record's picture under its version takes the place of an older one (it was put only when there was none, under a link the browser keeps a year); a picture this
+      //  page drew itself (a card's LIVEPV drawing, data:) stays: it was drawn from a copy at least as new as the cloud's)
+      { const pv = pvLink(rec), cur = E.pv.getAttribute("src") || "", abs = u => tryDo(() => new URL(u, location.href).href) || u; if (!pv && !W.live && !W.pvCard) E.pv.removeAttribute("src"); else if (pv && !/^data:/.test(cur) && abs(cur) !== abs(pv)) E.pv.src = pv; }
+      tryDo(() => { if (window.CNSheetBusy) { CNSheetBusy.see(r.sheet, id); CNSheetBusy.soon(); } });   // (SHEETBUSY: the header says when the cloud is changing this sheet)
       // the charm clicked is the one the window opens on, as soon as the sheet's pieces are known: the panel comes in
       // showing it (its outline is known now; its drawing, below, makes the choice exact where it was a point clicked)
       const at = opts.at || (origin && origin.at) || null;
@@ -1306,6 +1318,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     else laserState(r);
     if (!prelim || !W.setSheets.length) renderSheetChips();
     tryDo(mcButton);
+    tryDo(() => window.CNSheetBusy && CNSheetBusy.soon());   // (SHEETBUSY: the header's "Updating…" is the sheet shown now)
   }
   /* LASERWIN (Paul, 11 Nov 2026): a sheet in a set is cut with the whole set. The window said "Ready for laser" from the sheet's own readiness while its set was still
    * In progress in the Library (which moves a set to Laser cutting only when every sheet of it is ready: CharmNestReadiness.laserGroup, LibraryDone.canComplete). Now it says
@@ -1778,16 +1791,27 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     e.preventDefault(); const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
     const [px, py] = plateDev(e); zoomTo((W.zv ? W.zv.z : 1) * Math.exp(-d * (e.ctrlKey ? 0.01 : 0.0022)), px, py);
   }
-  /** Pan: a press on the empty sheet, or anywhere with Space held, while zoomed in Manual Control. A press that does not move is a press on the empty sheet (it lets go of the charm in hand). */
+  /** The wheel in Manual Control (MIDPAN, Paul 27 Nov 2026: "For zooming use Mac Option Key + mouse scroller"): Option + wheel zooms about the pointer (a trackpad pinch, which the browser sends as
+   *  ctrl + wheel, too); the plain wheel moves a zoomed view (Shift: sideways) and, with the whole sheet in view, is left to the window. */
+  function mcWheel(e) {
+    if (e.altKey || e.ctrlKey) return zoomWheel(e);
+    if (!zoomed() || !W.el) return;
+    e.preventDefault(); const cv = W.el.fx, r = cv.getBoundingClientRect(), s = cv.width / (r.width || 1), u = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+    let dx = e.deltaX * u, dy = e.deltaY * u; if (e.shiftKey && !dx) { dx = dy; dy = 0; }
+    panBy(-dx * s, -dy * s);
+  }
+  /** Pan, while zoomed in Manual Control: the wheel button pressed anywhere (over a charm too: MIDPAN), a press on the empty sheet, or anywhere with Space held. A left press that does not move is a press on the empty
+   *  sheet (it lets go of the charm in hand); a wheel-button press that does not move changes nothing. */
   function panStart(e) {
-    if (!MC.on || !zoomed() || e.button > 0 || MC.drag || !W.el) return false;
-    if (!W.space && (mcHandleAt(e) || hitAt(e))) return false;
+    const mid = e.button === 1;
+    if (!MC.on || !zoomed() || (e.button > 0 && !mid) || MC.drag || !W.el) return false;
+    if (!mid && !W.space && (mcHandleAt(e) || hitAt(e))) return false;
     e.preventDefault(); const [px, py] = plateDev(e);
-    W.pan = { pid: e.pointerId, x: px, y: py, moved: 0 }; try { W.el.fx.setPointerCapture(e.pointerId); } catch (_) {}
+    W.pan = { pid: e.pointerId, x: px, y: py, moved: 0, mid }; try { W.el.fx.setPointerCapture(e.pointerId); } catch (_) {}
     W.el.plate.classList.add("panning"); tip(null); return true;
   }
   function panMove(e) { const P = W.pan; if (!P) return false; const [px, py] = plateDev(e), dx = px - P.x, dy = py - P.y; P.x = px; P.y = py; P.moved += Math.abs(dx) + Math.abs(dy); panBy(dx, dy); return true; }
-  function panEnd() { const P = W.pan; if (!P) return false; W.pan = null; if (W.el && W.el.plate) W.el.plate.classList.remove("panning"); try { W.el.fx.releasePointerCapture(P.pid); } catch (_) {} if (P.moved < 4 * (W.dpr || 1) && !W.space) tryDo(() => mcSelect(null)); return true; }
+  function panEnd() { const P = W.pan; if (!P) return false; W.pan = null; if (W.el && W.el.plate) W.el.plate.classList.remove("panning"); try { W.el.fx.releasePointerCapture(P.pid); } catch (_) {} if (P.moved < 4 * (W.dpr || 1) && !W.space && !P.mid) tryDo(() => mcSelect(null)); return true; }
   /** The plate's zoom buttons, there while Manual Control is on: −, the zoom, +, Fit. */
   function zoomUi() {
     const E = W.el; if (!E || !E.plateBox) return;
@@ -1795,7 +1819,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!z) {
       if (!MC.on) return;   // (made the first time Manual Control is on: a window opening or flying writes nothing into itself, SWSMOOTH)
       z = E.zoom = h("div", "swZoom"); z.setAttribute("role", "group"); z.setAttribute("aria-label", "Zoom");
-      z.innerHTML = '<button type="button" data-z="out" title="Zoom out" aria-label="Zoom out">−</button><span class="pct" title="Zoom: the wheel or a pinch zooms where the pointer is; double-click a charm to zoom to it; drag the empty sheet, or hold Space and drag, to move around. Zoomed, the arrows move the charm in hand by a screen pixel, Shift + arrows by ten">100%</span><button type="button" data-z="in" title="Zoom in" aria-label="Zoom in">+</button><button type="button" data-z="fit" title="The whole sheet">Fit</button>';
+      z.innerHTML = '<button type="button" data-z="out" title="Zoom out" aria-label="Zoom out">−</button><span class="pct" title="Zoom: Option + wheel, or a pinch, zooms where the pointer is; double-click a charm to zoom to it; press the wheel and drag (anywhere, over a charm too), use the wheel, drag the empty sheet, or hold Space and drag, to move around. Zoomed, the arrows move the charm in hand by a screen pixel, Shift + arrows by ten">100%</span><button type="button" data-z="in" title="Zoom in" aria-label="Zoom in">+</button><button type="button" data-z="fit" title="The whole sheet">Fit</button>';
       z.addEventListener("click", ev => { const b = ev.target.closest("[data-z]"); if (!b) return; ev.stopPropagation(); const cur = W.zv ? W.zv.z : 1; if (b.dataset.z === "in") zoomTo(cur * 2); else if (b.dataset.z === "out") zoomTo(cur / 2); else resetView(); });
       z.addEventListener("pointerdown", ev => ev.stopPropagation());
       E.plateBox.appendChild(z);
@@ -5734,11 +5758,23 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const backSig = r => (r && Array.isArray(r.backPool) ? r.backPool : []).map(b => [b && b.poolId, b && b.face === "front" ? "f" : "b", +(b && b.approvedAt) || 0, b && b.invalidated ? 1 : 0, b && b.pending ? 1 : 0, b && b.outputs && b.outputs.ai ? 1 : 0].join(":")).sort().join(",");
   const memberSig = r => !r ? "gone" : JSON.stringify([(r.poolIds || []).map(String).sort(), (r.orders || []).map(String).sort(), r.setId || "", +r.laserDoneAt || 0, r.archived ? 1 : 0, (r.manual && +r.manual.at) || 0, (r.manualEdit && r.manualEdit.tab) || "", backSig(r)]);   // (Manual Control: a layout saved by hand, and who holds the sheet's claim now)
   const followBusy = () => !!(MC.on || MC.claiming || HOP.pending || W.hand || W.hop || W.add || W.fill || W.flow || W.flying || W.leaving || W.folding || W.away || W.coming || (W.going && W.going.size) || (W.landing && W.landing.length));
+  /* SHEETFRESH (Paul, 27 Nov 2026: "All manual user updates and inputs must be updating throughout the entire system in real-time, it can not take more than 30s at worst case scenario"):
+     · the window read the sheet again only when its pieces, orders, set, cut, hand layout or backs changed (memberSig): a Change SKU or a new drawing of a charm (the same pieces, another layout:
+       layoutRev), a hand move elsewhere, a picture drawn again (previewAt, previewRev) kept the old plate and picture until it was closed. freshSig is memberSig and those: any of them read it again;
+     · a change named while the window was busy (a charm in hand, a flight, a fill, a Manual Control drag, or its own read on its way) was dropped, and the next look was the ten-minute net: it is kept
+       (FOLLOW.owed) and read as soon as the window is free, at the beat that follows (the 2 s beat below, no new timer). Manual Control on its own no longer holds the window: only a gesture under way
+       (a drag, its spring, a run of arrows, the claim being asked) or moves not saved yet do; the window then reads again once they end (mcReattach keeps the person's hand on the new read). */
+  const freshSig = r => !r ? "gone" : memberSig(r) + "|" + [+r.layoutRev || 0, +r.previewAt || 0, +r.previewRev || 0].join(",");
+  const mcEdited = () => tryDo(() => [...MC.edits].some(([pid, q]) => mcChanged(MC.from.get(pid), q))) !== false;
+  const followHold = () => !!((MC.on && (MC.drag || MC.sel || MC.spring || MC.wait || MC.keyRun || mcEdited())) || MC.claiming || HOP.pending || W.hand || W.hop || W.add || W.fill || W.flow || W.flying || W.leaving || W.folding || W.away || W.coming || (W.going && W.going.size) || (W.landing && W.landing.length));
   async function follow(now) {
-    if (!W.dlg || !W.dlg.open || !W.rec || !W.id || document.hidden || FOLLOW.busy || followBusy()) return;
+    if (!W.dlg || !W.dlg.open || !W.rec || !W.id || document.hidden) return;
+    if (FOLLOW.busy || followHold()) { if (now === true) FOLLOW.owed = W.id; return; }   // (SHEETFRESH: kept, read once the window is free)
     if (FOLLOW.id !== W.id) { FOLLOW.id = W.id; FOLLOW.revs = null; FOLLOW.fails = 0; FOLLOW.moved = Date.now(); }
+    if (FOLLOW.owed === W.id) now = true;   // (a change named while it was busy: read now, whatever the beat)
     if (FOLLOW.fails && Date.now() - FOLLOW.at < 3000 * 2 ** Math.min(FOLLOW.fails, 4)) return;
     if (now !== true && Date.now() - FOLLOW.at < followGap()) return;   // (unused for a while: a slower beat; a placement read that moved a piece of its orders asks at once)
+    FOLLOW.owed = null;
     const id = W.id, tok = W.token, setId = W.rec.setId || "", key = "s:" + id, ask = { op: "laserStatus", sheetIds: [id], setIds: setId ? [setId] : [], recordSeals: false, wantRevs: true };
     if (FOLLOW.revs) { ask.ifRevs = FOLLOW.revs; ask.setIds = []; }   // (the probe asks after the sheet record alone: see above)
     FOLLOW.busy = true; FOLLOW.at = Date.now();
@@ -5746,19 +5782,21 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const r = await api("charmNestLibrary", ask, { quiet: true, timeoutMs: 12000 });
       if (!r || r.error) throw new Error((r && r.error) || "no answer");
       FOLLOW.fails = 0;
-      if (r.unchanged || id !== W.id || tok !== W.token || !W.dlg.open || followBusy()) return;
+      if (r.unchanged || id !== W.id || tok !== W.token || !W.dlg.open) return;
+      if (followHold()) { FOLLOW.owed = id; return; }   // (busy since it asked: its revision is not taken, and it asks again once free)
       FOLLOW.revs = r.revs && r.revs[key] != null ? { [key]: r.revs[key] } : null;
       FOLLOW.moved = Date.now();
       const live = (r.sheets || []).find(s => s.id === id) || null;
-      if (memberSig(live) === memberSig(W.rec) || (!live && W.rec.archived)) return;   // (an archived sheet the window shows as archived is what the cloud says too)
-      const sig = memberSig(live);   // (an answer that still differs after the window was read for it is not read again for 30 s: no loop on a record the two reads spell differently, or a sheet that cannot be opened.
+      if (live) tryDo(() => window.CNSheetBusy && CNSheetBusy.see(live, id));   // (SHEETBUSY: the header's spinner follows the record, read or not)
+      if (freshSig(live) === freshSig(W.rec) || (!live && W.rec.archived)) return;   // (an archived sheet the window shows as archived is what the cloud says too)
+      const sig = freshSig(live);   // (an answer that still differs after the window was read for it is not read again for 30 s: no loop on a record the two reads spell differently, or a sheet that cannot be opened.
       //  "The window was read for it" = the record on screen is the very one read for this answer: a window opened afresh since, or the sheet put back to a state it had before, is a change)
       if (FOLLOW.did && FOLLOW.did.id === id && FOLLOW.did.sig === sig && FOLLOW.did.rec === W.rec && Date.now() - FOLLOW.did.at < 30000) return;
       if (window.LaserReview) tryDo(() => LaserReview.patch ? LaserReview.patch(live, id, r.revs && r.revs[key]) : live && LaserReview.record(live));   // (the Library's card, its list row and the shared-orders window take it in too)
       await open(id, { keepWork: true, keepSet: false });   // (read again in place: the plate stays until the saved sheet is drawn over it)
       if (id === W.id && tok === W.token) FOLLOW.did = { id, sig, rec: W.rec, at: Date.now() };
     } catch (e) { FOLLOW.fails++; }
-    finally { FOLLOW.busy = false; }
+    finally { FOLLOW.busy = false; if (FOLLOW.owed && FOLLOW.owed === W.id && !followHold()) { clearTimeout(followHook.t); followHook.t = setTimeout(() => follow(true), 0); } }   // (SHEETFRESH: named while this read was out: read again now)
   }
   setInterval(follow, 2000);
   window.CNSheetEng = { engFace, memberSig, backSig };   // (tests: tests/charm-nest/engrave-live.cjs reads these two functions alone)
@@ -7391,7 +7429,25 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const orderRecs = new Map();   // sheet id → { at, p }: a record read in the last minute is not read again
   /* LOCAL (Paul, 28 Oct 2026): the record is this computer's copy when it holds one (charm-nest-store.js), drawn at once and asked after behind it by revision (getSheet ifRev:
      one small read); read and kept otherwise. fresh (refreshRecord, and that asking after): the cloud is asked now, by revision when a copy is held. */
+  /* SHEETFRESH (Paul, 27 Nov 2026: "it can not take more than 30s at worst case scenario to visually update the system everywhere"): the Sheet tab kept a sheet's record for a minute whatever happened
+     to it (recFor), and read it again only when the pieces' own read said the order's pieces moved (sheetFollow): a new drawing of a charm, a hand move or a new picture made on another computer stayed
+     until the window was opened again. The changes feed names the sheet when it is written: an open order window reads it again now and draws it (OrderWin.remade: one read by revision), a closed one
+     lets the kept record go (the next look reads it). Subscribed the first time the tab reads a record; nothing is asked while the feed names none of its sheets. */
+  let orderFeed = null;
+  function orderFollow() {
+    if (orderFeed || !window.CNSync || typeof window.CNSync.follow !== "function") return;
+    orderFeed = window.CNSync.follow({ name: "order-sheet", kinds: "s", wild: "", active: () => true, wants: k => orderRecs.has(String(k).slice(2)),
+      read: (why, keys, at, names) => {
+        if (why === "reset" || why === "lost") { orderRecs.clear(); return; }
+        const ids = [...new Set((names && names.length ? names : keys || []).map(k => String(k).slice(2)).filter(x => x && x !== "*" && orderRecs.has(x)))];
+        if (!ids.length) return;
+        if (window.OrderWin && typeof OrderWin.isOpen === "function" && OrderWin.isOpen() && typeof OrderWin.remade === "function") tryDo(() => OrderWin.remade(ids));
+        else for (const x of ids) orderRecs.delete(x);
+      } });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && orderFeed) orderFeed.resume(); });   // (named while the tab was hidden: read once it is shown)
+  }
   function recFor(id, o) {
+    tryDo(orderFollow);   // (SHEETFRESH: the Sheet tab's kept records follow the feed)
     const fresh = !!(o && o.fresh), hit = orderRecs.get(id); if (!fresh && hit && Date.now() - hit.at < 60000) return hit.p;
     // Viewing a sheet is a short read, not the five-minute file-writing operation that getSheet otherwise inherits.
     // A rejected read is evicted, so reopening (or Try again) really does ask again.
@@ -7402,8 +7458,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const r = await api("charmNestLibrary", { op: "getSheet", id, ...(held && rev ? { ifRev: rev } : {}) }, { quiet: true, timeoutMs: 12000 });
       if (r && r.unchanged && held) { entry.rec = held; entry.at = Date.now(); return held; }
       if (!r || !r.sheet) { if (St && r && r.sheet === null) St.drop("sheetFull", id); throw new Error("This sheet is no longer in the Library."); }
-      if (St) St.put("sheetFull", id, r.sheet, r.rev || "");
-      entry.rec = r.sheet; entry.at = Date.now(); return r.sheet;
+      // (NEWERWINS, 27 Nov 2026: a newer copy held here (the sheet window's read, landed first) is the one the plate draws, never the answer read before it)
+      const got = St && typeof St.older === "function" && St.older("sheetFull", id, r.sheet, r.rev || "") && St.get("sheetFull", id) || r.sheet;
+      if (St && got === r.sheet) St.put("sheetFull", id, r.sheet, r.rev || "");
+      tryDo(() => window.CNSheetBusy && CNSheetBusy.see(got, id));   // (SHEETBUSY: the order window's sheet chips say when the cloud is changing it)
+      entry.rec = got; entry.at = Date.now(); return got;
     })();
     p.catch(() => { if (orderRecs.get(id) && orderRecs.get(id).p === p) orderRecs.delete(id); });
     entry.p = p; orderRecs.set(id, entry); if (orderRecs.size > 12) orderRecs.delete(orderRecs.keys().next().value);

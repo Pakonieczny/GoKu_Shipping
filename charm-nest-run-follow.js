@@ -60,7 +60,9 @@
   async function now(why) {
     if (holdsRun()) safe(() => { const G = root.Gate; if (G && typeof G.ensureOrder === "function") ["gold10k", "gold14k"].forEach(m => G.ensureOrder(m)); });   // (ORDERCLOUD: the carrier writes its draft order once, without the Options window having to be opened, so every computer numbers the drafts alike)
     if (holdsRun()) runCommands().catch(() => {});   // (SHEETSANYWHERE: the commands of the computers that follow, apart from the 15 s throttle of applyOthers)
-    if (st.busy) return st;
+    // (SHEETFRESH, Paul 27 Nov 2026: "the propagation of the updates throughout the system is intermittent": a name (r:<run>) that came while the run was being read was dropped, and the next read was the
+    //  five-minute net; the read on its way may have left before that write: it is kept and read once more as soon as this read ends: one read, never a loop)
+    if (st.busy) { st.again = why || "again"; return st; }
     if (holdsRun()) return applyOthers(why);   // (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer"): the run's own computer takes the lines other computers changed
     st.busy = true;
     try {
@@ -119,7 +121,7 @@
         safe(() => { const f = root.Recall && root.Recall.follow; if (typeof f === "function") Promise.resolve(f(id, force ? { force: true } : undefined)).catch(() => {}); }); }
       return st;
     } catch (e) { st.last = { at: Date.now(), why, error: String(e && e.message || e) }; return st; }
-    finally { st.busy = false; }
+    finally { st.busy = false; if (st.again) { const w = st.again; st.again = null; setTimeout(() => { now(w).catch(() => {}); }, 0); } }   // (SHEETFRESH: named while this read was out)
   }
   /* ── (CLOUDALL S2, Paul 13 Nov 2026: "Everything must be on the cloud nothing can be on one computer") ──
      patchRows(rows): this computer changed these order lines (a piece taken off, held, cancelled): they are written to the cloud run line by line (runLinesPatch), stamped.
@@ -134,7 +136,7 @@
   async function applyOthers(why) {
     const run = root.B && root.B.run; if (!run || !run.runId) return st;
     const t = Date.now(); if (t - lastApply < 15000) { if (!applyT) applyT = setTimeout(() => { applyT = 0; applyOthers("later"); }, 15000 - (t - lastApply)); return st; }
-    if (st.busy) return st; st.busy = true; lastApply = t;
+    if (st.busy) { st.again = why || "again"; return st; } st.busy = true; lastApply = t;   // (SHEETFRESH: kept, read once this read ends)
     try {
       const res = await api({ op: "runGet", runId: run.runId }); const cr = res && (res.run || res); if (!cr || !cr.lines) return st;
       if (!cr.lineEditAt || (st.appliedAt && +cr.lineEditAt <= +st.appliedAt)) return st;
@@ -167,7 +169,7 @@
       if (released.length) repoolReleased(released);
       return st;
     } catch (e) { st.last = { at: Date.now(), why, error: String((e && e.message) || e) }; return st; }
-    finally { st.busy = false; }
+    finally { st.busy = false; if (st.again) { const w = st.again; st.again = null; setTimeout(() => { (holdsRun() ? applyOthers(w) : now(w)).catch(() => {}); }, 0); } }   // (SHEETFRESH: named while this read was out: read once more; applyOthers keeps its own 15 s pace)
   }
   /* RELEASEHOLD (Paul, 20 Nov 2026: "a Release Hold press on ANY computer releases the hold in the cloud at once ... placing the pieces is the intake's normal work; no more waiting on the computer
      that carries the run"): the release itself is the cloud's (op releaseAsk). On the computer that carries the run, its lines come back here as the cloud left them ("pulled", no hold, the front of

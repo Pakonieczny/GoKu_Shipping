@@ -4284,16 +4284,20 @@ const Master = window.Master = (() => {
       const upAi = await uploadBytes(dir + key + ".ai", ai, "application/illustrator", `Updating ${sku}`, { repoToken: tok.token });
       const upPng = await uploadBytes(dir + key + ".png", dataUrlToBytes(thumb), "image/png", `Updating ${sku}`, { repoToken: tok.token });
       say("Writing the charm repository…");
-      const r = await api("charmNestLibrary", { op: "masterEditorPut", repoToken: tok.token, sku, size, by, expect: { charmHash: String(spec.expect) }, piece: String(spec.piece || ""), order: String(spec.order || ""),
+      // (SAMEFILE, 27 Nov 2026: the SKUs that are this very drawing (the same file and charm, one size) are updated with it, so none of them keeps drawing the old file)
+      const sibs = size ? [] : [...B.master.entries.values()].filter(e => e && e.sku && rdUpper(e.sku) !== sku && !(e.sizes && Object.keys(e.sizes).length) && !e.pair && was.aiPath && e.aiPath === was.aiPath && String(e.charmHash || "") === String(spec.expect)).map(e => rdUpper(e.sku)).slice(0, 24);
+      const r = await api("charmNestLibrary", { op: "masterEditorPut", repoToken: tok.token, sku, size, by, expect: { charmHash: String(spec.expect) }, piece: String(spec.piece || ""), order: String(spec.order || ""), ...(sibs.length ? { siblings: sibs } : {}),
         entry: { charmHash: back.hash, widthPt: back.widthPt, heightPt: back.heightPt, ...(back.drawnPt ? { drawnPt: back.drawnPt } : {}), areaPt2: back.areaPt2, members: back.members.length, holes: P.cutLinesOf(back).length, aiPath: upAi.path, thumbPath: upPng.path, upAngle, upSource } }, { label: `Updating ${sku}`, quiet: true });
       if (!r || r.ok !== true) return fail((r && r.reason) || "error", (r && r.text) || (r && r.error) || "the repository did not answer", r && r.charmHash ? { charmHash: r.charmHash } : {});
       const now = r.entry && r.entry.sku ? r.entry : null;
       if (now && !r.same) {
-        B.master.entries.set(now.sku, now);
-        try { if (window.Review && Review.redrawNoted) Review.redrawNoted(new Map([[now.sku, was]]), new Map([[now.sku, now]])); } catch (e) { console.warn("[repoedit] the open pieces were not looked at:", e && e.message); }
+        const olds = new Map([[now.sku, was]]), news = new Map([[now.sku, now]]);
+        for (const e of Array.isArray(r.siblingEntries) ? r.siblingEntries : []) if (e && e.sku) { olds.set(e.sku, entryFor(e.sku) || was); news.set(e.sku, e); }
+        for (const [k, e] of news) B.master.entries.set(k, e);
+        try { if (window.Review && Review.redrawNoted) Review.redrawNoted(olds, news); } catch (e) { console.warn("[repoedit] the open pieces were not looked at:", e && e.message); }
         try { render(); } catch (_) { /* the Library tab paints at its next look */ }
         // (REPOALL: every open order of the charm is made again by the cloud, each in its own place; said as it goes, nobody waits for it)
-        if (!B.run && typeof window.CNRelayAsk === "function") window.CNRelayAsk({ type: "keepsync", ids: [sku], ...(spec.piece ? { sourceId: String(spec.piece) } : {}), label: `${sku} updated in the repository: every open order of it`.slice(0, 150) }, t => say(String(t || "")), 15 * 60000).then(a => { if (hooks.orders) hooks.orders(a || null); if (typeof window.CNFreshNow === "function") window.CNFreshNow({ sku }).catch(() => {}); }, e => { if (hooks.orders) hooks.orders({ ok: false, text: String((e && e.message) || e) }); });
+        if (!B.run && typeof window.CNRelayAsk === "function") window.CNRelayAsk({ type: "keepsync", ids: [...news.keys()], ...(spec.piece ? { sourceId: String(spec.piece) } : {}), label: `${sku} updated in the repository: every open order of it`.slice(0, 150) }, t => say(String(t || "")), 15 * 60000).then(a => { if (hooks.orders) hooks.orders(a || null); if (typeof window.CNFreshNow === "function") window.CNFreshNow({ sku }).catch(() => {}); }, e => { if (hooks.orders) hooks.orders({ ok: false, text: String((e && e.message) || e) }); });
       }
       return { ok: true, sku, size: size || null, entry: now || was, was: r.was || String(spec.expect), same: !!r.same };
     } catch (e) {
@@ -4546,6 +4550,8 @@ const Master = window.Master = (() => {
         (blocked ? `<button class="btn ghost xs" data-unblock="${keys}" data-repo="modify">unblock</button>` : "") +
         `</div><div class="row skuActs">` +
         dlPair(e, sizes) +
+        // (REPOONLY, Paul 27 Nov 2026: "a new button that opens a given charm from the Master Charm Repo inside the Charm Editor ... press update repository button to save the changes/updates inside the Master Charm Repository")
+        (window.CharmNestCeMasters && !(e.pair && e.pair.mismatched) ? `<button type="button" class="btn ghost xs" data-ceopen="${esc(e.sku)}" title="Open ${esc(e.sku)} in the Charm Editor: change it, then press Update repository to save it in the Master Charm Repository${d.skus.length > 1 ? ` (with its ${d.skus.length - 1} other SKU${d.skus.length > 2 ? "s" : ""} of this drawing)` : ""}">Edit</button>` : "") +
         (!WORKSPACE_SANDBOX && window.CharmNestEtsyLink ? `<button type="button" class="btn ghost xs" data-etsylink="${keys}" data-repo="modify" title="put this charm's SKU on an Etsy listing (asks for your password)">Etsy</button>` : "") +
         // (CARDS17, Paul 27 Oct 2026: on the smaller card Delete is a bin with its padlock; the word is kept for screen readers and its title says what it does)
         `<button type="button" class="btn ghost xs skDel" data-del="${keys}" data-repo="delete" aria-label="Delete" title="Delete this charm${d.skus.length > 1 ? ` and its ${d.skus.length} SKUs` : ""} from the charm repo (asks for your password every time)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9.5 7V4.6h5V7M6.8 7l.9 12.4h8.6L17.2 7M10.2 10.6v5.6M13.8 10.6v5.6"/></svg><span class="skDelTx">Delete</span></button>` +
@@ -4554,6 +4560,13 @@ const Master = window.Master = (() => {
     mountMasterPreviews(grid);
     // Delete: one charm (every SKU it carries) or, while a search narrows the grid, every charm shown. Always the password, a single-use token each time; the confirmation is in that same dialog.
     grid.querySelectorAll("[data-del]").forEach(b => b.onclick = () => removeCharms(b.dataset.del.split("|"), b));
+    // (REPOONLY: the charm in the Charm Editor, saved by Update repository alone; the button says it is opening until the editor is up)
+    grid.querySelectorAll("[data-ceopen]").forEach(b => b.onclick = async () => {
+      const M = window.CharmNestCeMasters; if (!M || typeof M.open !== "function" || b.disabled) return;
+      const was = b.innerHTML; b.disabled = true; b.setAttribute("aria-busy", "true"); b.innerHTML = '<span class="owSpin" aria-hidden="true"></span>Opening…';
+      const back = () => { if (b.isConnected) { b.disabled = false; b.removeAttribute("aria-busy"); b.innerHTML = was; } };
+      try { const p = M.open(b.dataset.ceopen, { repoOnly: true }); setTimeout(back, 1500); await p; } catch (e) { toast(`${b.dataset.ceopen} could not be opened · ${(e && e.message) || e}`, "bad"); } finally { back(); }
+    });
     { const bulk = v.querySelector("#mBulk"), skusShown = rows.flatMap(d => d.skus);
       bulk.innerHTML = q && rows.length >= 1 && skusShown.length <= MASTER_DELETE_MAX ? `<button type="button" class="btn danger sm" id="mDelShown" data-repo="delete" style="margin-left:6px" title="delete every charm shown, with all its SKUs (asks for your password every time)">Delete ${rows.length === 1 ? "this charm" : `these ${rows.length} charms`}</button>`
         : q && skusShown.length > MASTER_DELETE_MAX ? `<span class="meta" style="margin-left:8px">narrow the search to ${MASTER_DELETE_MAX} SKUs or fewer to delete them together</span>` : "";
@@ -5567,17 +5580,25 @@ const Pool = window.Pool = (() => {
   const previewSwap = (poolId, next) => { if (!poolId || !next || charmOf(poolId) || !previews.has(poolId)) return false; previews.set(poolId, next); return true; };
   /* HELDCHARM: the pool ids of a custom line that is on hold, read from the cloud (a line on hold has no pool ids of its own on a computer that did not pool it: "poolIds" is empty and a card has nothing to name its piece by).
      A read of the order's pieces, asked at most once in two minutes for a line. -> [pool ids of its custom pieces that carry a design file], in copy order. */
-  const heldIdsAsked = new Map();
-  async function heldPoolIds(row) {
+  /* SHEETTRUTH (Paul 27 Nov 2026, order 4251135820 on GF Draft 3: "why does it say this order is not on a sheet when it clearly is on a sheet ... the system does not update equally and in real-time causing issues and
+     cross bleeding of old and new statuses"): what the CLOUD holds of a line's pieces, every piece of it (not only a held custom line's), read at most once in thirty seconds for a line, in memory only. This computer's
+     own rows and live sheets are only what it happens to hold: a piece missing there is not proof that it is on no sheet. -> [{ poolId, sheetId, sheetName, state, custom, aiPath, copy }] in copy order. */
+  const linePiecesAsked = new Map();
+  async function linePieces(row) {
     row = (row && row.parentRow) || row; if (!row || !row.key || !row.order) return [];
-    const t = heldIdsAsked.get(row.key); if (t && Date.now() - t.at < 120000) return t.ids;
-    const rid = String(row.order.receiptId || ""), mark = { at: Date.now(), ids: [] }; heldIdsAsked.set(row.key, mark);
-    try {
-      const r = await api("charmNestLibrary", { op: "getOrderPieces", orderId: rid }, { quiet: true });
-      mark.ids = (((r && r.orders && r.orders[rid] && r.orders[rid].pools) || []).filter(p => p && p.lineKey === row.key && p.custom && p.aiPath).sort((a, b) => (+a.copy || 0) - (+b.copy || 0)).map(p => p.poolId));
-    } catch (e) { heldIdsAsked.delete(row.key); }
-    return mark.ids;
+    const t = linePiecesAsked.get(row.key); if (t && (t.p || Date.now() - t.at < 30000)) return t.p || t.pieces;
+    const rid = String(row.order.receiptId || ""), mark = { at: Date.now(), pieces: t ? t.pieces : null, p: null }; linePiecesAsked.set(row.key, mark);
+    mark.p = api("charmNestLibrary", { op: "getOrderPieces", orderId: rid }, { quiet: true }).then(r => {
+      mark.pieces = (((r && r.orders && r.orders[rid] && r.orders[rid].pools) || []).filter(p => p && p.lineKey === row.key && p.poolId).sort((a, b) => (+a.copy || 0) - (+b.copy || 0))
+        .map(p => ({ poolId: String(p.poolId), sheetId: p.sheetId || null, sheetName: p.sheetName || null, state: p.state || null, custom: !!p.custom, aiPath: p.aiPath || null, copy: +p.copy || 0 })));
+      return mark.pieces;
+    }).catch(() => { mark.at = 0; return mark.pieces || []; }).finally(() => { mark.p = null; });
+    return mark.p;
   }
+  /** SHEETTRUTH: the cloud's pieces of a line as last read (null: not read yet, or read over thirty seconds ago); never asks. */
+  const linePiecesKnown = (row, any) => { row = (row && row.parentRow) || row; const t = row && row.key ? linePiecesAsked.get(row.key) : null; return t && t.pieces && (any || Date.now() - t.at < 30000) ? t.pieces : null; };   // (any: the last answer however old, kept on screen while a newer one is read: nothing flickers)
+  /* HELDCHARM: the pool ids of a custom line that is on hold, from the cloud's pieces of the line (SHEETTRUTH) */
+  async function heldPoolIds(row) { return (await linePieces(row)).filter(p => p.custom && p.aiPath).map(p => p.poolId); }
   /** The pool ids a line that is not pooled will get, from its last preview ([] when none was made). */
   const previewIds = row => { row = (row && row.parentRow) || row; return (row && previewIdsOf.get(row.key)) || []; };
   // (who: { by, signedIn, device } for the order timeline's stamp, stampWho; sent beside the patch, not stored on the rows)
@@ -5676,7 +5697,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(ListMedia.oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pairResume, previewHeld, heldPoolIds, heldWhy: id => heldWhyOf.get(id) || "", keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewSwap, previewIds, previewAll: true, previewEntries: () => [...previews.entries()].filter(([id, c]) => c && !charmOf(id)), previewSig: trySig, greenFits, partnerSheets, greenPage, greenResume, greenHeld, greenLeftover };
+  return { pairResume, previewHeld, heldPoolIds, linePieces, linePiecesKnown, heldWhy: id => heldWhyOf.get(id) || "", keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, drawnMaster: (entry, size) => readMasterCharm(entry, size, { weld: false }).then(r => r.charm), masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewSwap, previewIds, previewAll: true, previewEntries: () => [...previews.entries()].filter(([id, c]) => c && !charmOf(id)), previewSig: trySig, greenFits, partnerSheets, greenPage, greenResume, greenHeld, greenLeftover };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -8273,17 +8294,23 @@ const Engrave = window.Engrave = (() => {
   /* HELDCHARM 3 (Paul, 18 Nov 2026, Michelle's computer, order 4225100553): a job with NO piece named (copies empty) in ANY state, drawn as a card, asks the cloud for the pool ids of its line's custom pieces (a line on hold, taken off its
      sheet, that this computer did not pool) and takes them as its own, so the charm is read from its design file and the card is drawn whole. Once in thirty seconds for a job; the cloud answers are kept two minutes (Pool.heldPoolIds). */
   const heldCopiesAsked = new Map();
+  // (SHEETTRUTH, 27 Nov 2026: not only a held custom line: ANY job that names no piece takes the pieces its line has, its own run line's first, else the cloud's (every piece of the line, not taken off), so the
+  //  charm is drawn and its grid shown on every computer; a piece the cloud has on a sheet is not "made before its sheet")
+  const PIECE_GONE = new Set(["abandoned", "superseded", "gone", "removed", "cancelled"]);
   function heldCopiesFor(job) {
     try {
-      if (!job || job.editingBack || job.editCharm || (job.copies || []).length || !Pool.heldPoolIds) return;
+      if (!job || job.editingBack || job.editCharm || (job.copies || []).length || !Pool.linePieces) return;
       const row = lineOf(job.row); if (!row || !row.key || !row.order) return;
       const t = heldCopiesAsked.get(job.key); if (t && Date.now() - t < 30000) return; heldCopiesAsked.set(job.key, Date.now());
-      Pool.heldPoolIds(row).then(ids => {
+      const take = (ids, placed) => {
         if (!ids || !ids.length || (job.copies || []).length) return;
         const m = /^D(\d+)$/.exec(String(job.slot || "")), pick = job.slot ? (m ? [ids[Math.min(+m[1] - 1, ids.length - 1)]] : []) : ids.slice();
-        if (!pick.length) return; job.copies = pick; job.pre = true;
+        if (!pick.length) return; job.copies = pick; job.pre = !placed;
         if (EG.card && EG.card.isConnected && cardJobOf(job)) render();
-      }).catch(() => {});
+      };
+      const own = (row.poolIds || []).map(String).filter(Boolean);
+      if (own.length) return take(own, own.some(id => Pool.sheetOf(id) || savedSheetOf(id)));
+      Pool.linePieces(row).then(ps => { const live = (ps || []).filter(p => !PIECE_GONE.has(String(p.state || ""))); take(live.map(p => p.poolId), live.some(p => p.sheetId)); }).catch(() => {});
     } catch (_) { /* the card as it was */ }
   }
   function charmBack(job) {
@@ -8310,6 +8337,14 @@ const Engrave = window.Engrave = (() => {
       const ids = job.copies || [], rowOf = id => { try { return (B.pool.rows && B.pool.rows.get(id)) || null; } catch (_) { return null; } };
       const gone = r => !r || ["abandoned", "superseded", "gone", "removed", "cancelled"].includes(r.state);   // (a pool row left behind by a removal or a hold is a piece that is not there: order 4225100553 kept its row, state "abandoned", heldBy Ana_M)
       if (ids.some(id => Pool.sheetOf(id) || !gone(rowOf(id)) || Pool.charmOf(id) || Pool.previewCharmOf(id))) return "";
+      // (SHEETTRUTH, Paul 27 Nov 2026: "why does it say this order is not on a sheet when it clearly is on a sheet": nothing above is the cloud, only what this computer holds. The cloud's pieces of the line are read
+      //  (once in thirty seconds, the last answer kept meanwhile) and nothing is said until they are: a piece the cloud has on a sheet is on a sheet, whatever this computer holds)
+      if (Pool.linePieces) {
+        const fresh = Pool.linePiecesKnown(line), last = fresh || Pool.linePiecesKnown(line, true);
+        if (!fresh) Pool.linePieces(line).then(() => { if (EG.card && EG.card.isConnected && cardJobOf(job)) render(); }).catch(() => {});
+        if (!last) return "";
+        if (last.some(p => p.sheetId && !PIECE_GONE.has(String(p.state || "")))) { heldCopiesFor(job); return ""; }
+      }
       const held = line.state === "held" || !!line.hold || ids.some(id => { const r = rowOf(id); return !!(r && (r.heldAt || r.heldReason)); });
       return held ? "This order is on hold, so its piece is not on a sheet yet. The engraving opens here once the order is released and placed." : "This order has no piece on a sheet yet. The engraving opens here once it is placed.";
     } catch (_) { return ""; }
@@ -14439,8 +14474,17 @@ const LaserReview = window.LaserReview = (()=>{
   /* PICNOW (Paul, 24 Nov 2026, the Charm Editor test: the sheet's picture was made again in the cloud, the Library's card kept the old one: its link never changes and the browser keeps it a year): a sheet read with a
      newer picture shows it at once, under a link that carries the picture's own time */
   function picNow(s,id){try{const at=+s.previewAt || 0,url=s.preview || (s.outputs && s.outputs.preview && s.outputs.preview.url);if(!id || !at || !url)return;const row=((S.library && S.library.rows) || []).find(r=>r && r.id===id);if(row && +row.previewAt>at)return;if(row){row.previewAt=at;row.preview=url;}
-    const want=window.picUrl({preview:url,previewAt:at});for(const img of document.querySelectorAll('img[data-sheet-preview]'))if(img.dataset.sheetPreview===String(id) && !img.dataset.livePreview && img.getAttribute('src')!==want)img.src=want;}catch(e){console.warn('sheet picture',e);}}
-  function record(s,rev){try{if(window.CNRefit)CNRefit.see(s);}catch(_){}   /* (REFIT: what the record says of a nest to fit a piece coming back) */ const id=s.id || s.sheetId,old=records.get(id);picNow(s,id);if(id && (!old || (s.updatedAt || 0)>=(old.updatedAt || 0)))records.set(id,s);if(rev!==undefined)keep(s,rev);return s;}
+    const want=window.picUrl({preview:url,previewAt:at});let live=false;for(const img of document.querySelectorAll('img[data-sheet-preview]'))if(img.dataset.sheetPreview===String(id)){if(img.dataset.livePreview){live=true;continue;}if(img.getAttribute('src')!==want)img.src=want;}
+    if(live)window.LivePreview?.tick?.();}catch(e){console.warn('sheet picture',e);}}   // (SHEETFRESH: a picture this page draws itself is looked at now: the cloud's newer one takes its place when this page's copy is behind, charm-nest-1.html LIVEPV)
+  /* NEWERWINS (Paul, 27 Nov 2026: "I have also seen sheets update and reverse back to their previous incorrect state"): a record of a sheet replaces the one the Library holds only when it is at least
+     as new (charm-nest-store.js newerOf: the record's counters, updatedAt, layoutRev, contentRev, previewRev, previewAt). Two reads can be out at once (the live read beside a person's own, the sheet
+     window's follow, the slow seal check), and the one that landed last was kept, whichever had been read first. */
+  const olderRec=(a,b)=>{if(!a || !b || a===b)return false;try{const St=window.CharmNestStore;if(St && typeof St.newerOf==='function')return St.newerOf(a,'',b,'')<0;}catch(_){}return (+a.updatedAt || 0)<(+b.updatedAt || 0);};
+  function record(s,rev){const id=s.id || s.sheetId,old=records.get(id);if(id && old && olderRec(s,old))return old;   // (NEWERWINS: an older read changes nothing: the Library's record, its picture, its row, its spinner stay the newer)
+    try{if(window.CNRefit)CNRefit.see(s);}catch(_){}   /* (REFIT: what the record says of a nest to fit a piece coming back) */ try{window.CNSheetBusy?.see?.(s,id);}catch(_){}   /* (SHEETBUSY: whether the cloud is changing it now) */
+    picNow(s,id);if(id)records.set(id,s);if(rev!==undefined)keep(s,rev);return s;}
+  /** NEWERWINS: the newest record of a sheet the Library holds (charm-nest-1.html LIVEPV compares a page's own copy with it). */
+  const recOf=id=>records.get(String(id || '')) || null;
   function projected(s){
     const id=s.id || s.sheetId,base=records.get(id) || s;
     const known=passDepth && passProjected?.get(base);if(known)return known;
@@ -15159,9 +15203,13 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     const found=new Set();
     for(const s of response.sheets || []){
       found.add(s.id);
+      // (NEWERWINS, 27 Nov 2026: an answer read before a newer record the Library holds (the sheet window's, a read for a person's own write) is not taken: its row, its section and its picture stay the newer)
+      if(olderRec(s,records.get(s.id)))continue;
       shaped('s:'+s.id,(!s.draft && s.solidIncluded!==false?s.setId || '':'')+'|'+(s.laserDoneAt?'cut':''));
       if(!differs('s:'+s.id,s) && !always)continue;
       diff=true;moved.add('s:'+s.id);records.set(s.id,s);patchRow(s);keep(s,response.revs && response.revs['s:'+s.id]);
+      // (SHEETFRESH: a newer picture shows at once, as a record read elsewhere does (PICNOW); REFIT and SHEETBUSY: what the cloud is doing to it now, on every view of it)
+      picNow(s,s.id);try{if(window.CNRefit)CNRefit.see(s);}catch(_){}try{window.CNSheetBusy?.see?.(s,s.id);}catch(_){}
     }
     for(const id of ids)if(!found.has(id) && records.has(id)){
       shaped('s:'+id,'gone');if(!records.get(id).archived)live.gone=true;
@@ -15356,14 +15404,18 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       wants:k=>{if(!live.revs || Object.prototype.hasOwnProperty.call(live.revs,k))return true;
         // (OFFSCREEN, Paul 14 Nov 2026: "Yes, items 3–6"): a sheet or set of a card OFF screen that another computer changed was never read: the Library kept its old section (In progress, Laser cutting), set and cut mark
         //  until the card was scrolled to. It is read once, with the next read (readLive): one read, and only for what the feed names as written
-        const id=String(k).slice(2);if(k[0]==='s' || k[0]==='t'){const cards=[...document.querySelectorAll('[data-laser-card]')];if(k[0]==='s'?cards.some(x=>(x._laserSheets || []).includes(id) || [...x.querySelectorAll('[data-laser-sheet]')].some(n=>n.dataset.laserSheet===id)):cards.some(x=>x._laserSet && x._laserSet.setId===id)){(live.offWant || (live.offWant=new Set())).add(k);return true;}}return false;},   // (a card the Library shows, read or not)
+        const id=String(k).slice(2);if(k[0]==='s' || k[0]==='t'){const cards=[...document.querySelectorAll('[data-laser-card]')];if(k[0]==='s'?cards.some(x=>(x._laserSheets || []).includes(id) || [...x.querySelectorAll('[data-laser-sheet]')].some(n=>n.dataset.laserSheet===id)):cards.some(x=>x._laserSet && x._laserSet.setId===id)){(live.offWant || (live.offWant=new Set())).add(k);return true;}}
+        // (SHEETFRESH, Paul 27 Nov 2026: "it can not take more than 30s at worst case scenario to visually update the system everywhere"): a sheet the Library holds nowhere (made on another computer: a new draft, a sheet split off) was shown only at the
+        //  list's next read; the list is read again now (by revision: only what was written since), as for a sheet that changed set, at most every ten seconds (wantReload)
+        if(k[0]==='s' && id && id!=='*' && liveOn() && !records.has(id)){let held=false;try{held=!!window.CharmNestStore?.has?.('sheets',id);}catch(_){}if(!held)wantReload();}
+        return false;},   // (a card the Library shows, read or not)
       read:why=>{if(!liveOn())return;if(why==='verify' || why==='reset')live.verifiedAt=0;live.feedWant=true;if(live.inResume)return;if(why==='wrote'){live.fresh=true;live.heard=Date.now();readSoon(true);}else readSoon(false);}});   // (wrote: another tab of this computer wrote it: read now, as its own write would)
   };
   feedFollow();
   /** The orders of the sheet cards on screen (the placement feed reads where their pieces are, so the Library's lists and chips follow a hold or a take-off made elsewhere). */
   const shownOrders=()=>{try{if(!liveOn())return [];return [...new Set(shown().ids.flatMap(id=>(records.get(id)?.orders || []).map(String)))].filter(x=>/^\d{4,20}$/.test(x)).slice(0,24);}catch(_){return [];}};
   /** A sheet's cloud record read elsewhere (the sheet window's own follow): taken in as the live read would, the Library's list row too; rec null: the sheet is gone (id given). */
-  const patch=(rec,id,rev)=>{if(rec){record(rec);patchRow(rec);keep(rec,rev);}else if(id){if(records.has(id))records.set(id,{...records.get(id),archived:true});patchRow({id,archived:true});try{window.CharmNestStore?.patch('sheets',id,{archived:true});}catch(_){}}try{window.SharedOrders?.refreshed?.();}catch(_){}changed();};
+  const patch=(rec,id,rev)=>{if(rec){if(record(rec)===rec){patchRow(rec);keep(rec,rev);}/* (NEWERWINS: an older record read elsewhere changes nothing here) */}else if(id){if(records.has(id))records.set(id,{...records.get(id),archived:true});patchRow({id,archived:true});try{window.CharmNestStore?.patch('sheets',id,{archived:true});}catch(_){}}try{window.SharedOrders?.refreshed?.();}catch(_){}changed();};
   /** Why a drop of this sheet or set on Laser cutting (or on Completed, through it) cannot work now, in the words of its card's own grey Approve button ('' when it can be approved, or when a
    *  press can do the rest by itself). The Library's dock reads it, so a place that cannot take the item says why right where it is dropped (Paul, 10 Oct: never a vague word). */
   function moveBlock(item){
@@ -15375,7 +15427,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       return c && c.why ? String(c.why) : '';
     }catch(_){return '';}
   }
-  return {follow:ensureLive,record,sheet,group,canCut,labels,sections,place,changed,changes:()=>changes,missed,owes,arrange:()=>{arrange(false);arrange(true);},saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,moveBlock,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
+  return {follow:ensureLive,record,recOf,sheet,group,canCut,labels,sections,place,changed,changes:()=>changes,missed,owes,arrange:()=>{arrange(false);arrange(true);},saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,moveBlock,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */

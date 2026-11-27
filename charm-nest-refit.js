@@ -24,9 +24,13 @@
       const src = pick(rec), id = idOf(rec) || idOf(src); if (!src || !id) return;
       const was = KNOWN.get(id), at = num(src.updatedAt && src.updatedAt.toMillis ? src.updatedAt.toMillis() : src.updatedAt);
       if (was && at && was.updatedAt && at < was.updatedAt) return;   // (an older read of the record than one seen already)
-      const has = src.refit !== undefined || src.nestJob !== undefined || src.previewAt !== undefined;
+      // (BUSYFLAGS, 27 Nov 2026: a list row says only whether a refit is under way (refit true / false) and its nest job's { status, at } with no id: false ends the refit; true keeps the refit read
+      //  from a whole record; a job with no id is the job already known, its status brought up to date)
+      const rf = typeof src.refit === "boolean" ? (src.refit ? (was ? was.refit : undefined) : null) : src.refit;
+      const nj = src.nestJob && typeof src.nestJob === "object" && src.nestJob.id == null ? (was && was.nestJob && typeof was.nestJob === "object" && was.nestJob.id != null ? Object.assign({}, was.nestJob, src.nestJob) : undefined) : src.nestJob;
+      const has = rf !== undefined || nj !== undefined || src.previewAt !== undefined;
       if (!has && !was) return;
-      KNOWN.set(id, { refit: src.refit !== undefined ? src.refit : was && was.refit, nestJob: src.nestJob !== undefined ? src.nestJob : was && was.nestJob, previewAt: src.previewAt !== undefined ? num(src.previewAt) : was ? was.previewAt : 0, updatedAt: at || (was && was.updatedAt) || 0 });
+      KNOWN.set(id, { refit: rf !== undefined ? rf : was && was.refit, nestJob: nj !== undefined ? nj : was && was.nestJob, previewAt: src.previewAt !== undefined ? num(src.previewAt) : was ? was.previewAt : 0, updatedAt: at || (was && was.updatedAt) || 0 });
       soon();
     } catch (_) { /* a banner never stops a page */ }
   }

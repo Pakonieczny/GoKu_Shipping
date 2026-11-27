@@ -32,6 +32,12 @@
   const sig = list => (list || []).map(p => [p.id, r2(p.cxPt), r2(p.cyPt), r2(p.angle)].join("@")).sort().join(",");
   const near = (a, b) => { if (a === b) return true; const A = a.split(","), Bv = b.split(","); if (A.length !== Bv.length) return false; for (let i = 0; i < A.length; i++) { const x = A[i].split("@"), y = Bv[i].split("@"); if (x[0] !== y[0]) return false; for (let k = 1; k < 4; k++) if (Math.abs(+x[k] - +y[k]) > 0.05) return false; } return true; };
   const revOf = p => (p && Number.isFinite(p.layoutRev) ? p.layoutRev : null);
+  /* SHEETFRESH (Paul, 27 Nov 2026: "the system does not update equally and in real-time causing issues and cross bleeding of old and new statuses"): a page knew only the LAYOUT revision of the cloud
+     record it was built from, so a hand move made on another computer (sheetLayoutPatch: contentRev rises, layoutRev does not, charmNestLibrary.js) never rebuilt it, and the Library's own drawing of
+     it (charm-nest-1.html LIVEPV) kept the old layout over the cloud's newer picture. A page now keeps both revisions of the record it matches (learnRevs), and the newest revisions this page has read of
+     its cloud record (cloudSeen: LIVEPV draws a page by itself only while it is not behind them). */
+  const learnRevs = (p, rec) => { p.layoutRev = +rec.layoutRev || 0; p.contentRev = +rec.contentRev || 0; };
+  const seenRevs = (p, rec) => { if (!p || !rec) return; const s = p.cloudSeen || {}; p.cloudSeen = { layoutRev: Math.max(+rec.layoutRev || 0, +s.layoutRev || 0), contentRev: Math.max(+rec.contentRev || 0, +s.contentRev || 0), at: Date.now() }; };
   /* (FOLLOWFEED, Paul 17 Nov 2026: "one cloud truth, every computer shows the same sheets in real time"; designs-window-e2e.cjs, scenario A, proved it by the feed's own answers): REVS keeps the revision (updateTime) of the cloud record this page last read for each sheet, so a look at a sheet
      that has not moved is one field read (getSheet ifRev / getMany ifRevs) and not the whole record. getRec(id, probe) → the record, SAME (probe: it has not moved since this page read it) or null. */
   const REVS = new Map(), SAME = Object.freeze({ same: true });
@@ -77,13 +83,16 @@
       if (revOf(p) !== null) {
         if (!p.followed || REVS.has(p.sheetId)) continue;
         let cur = null; try { cur = await getRec(p.sheetId); } catch (_) { continue; }
+        if (cur) seenRevs(p, cur);
         if (cur && (+cur.layoutRev || 0) > revOf(p) && !atWork(p) && !p.dirty) { try { await reload(p, "this computer's saved copy was older than the cloud's"); } catch (e) { console.warn("[cloud-sheets] restored sheet", p.sheetId, e && e.message); } }
+        else if (cur && (+cur.layoutRev || 0) === revOf(p) && p.contentRev == null && near(sig(p.placements), sig(cur.placements))) p.contentRev = +cur.contentRev || 0;   // (SHEETFRESH: its content revision, once)
         continue;
       }
       let rec = null; try { rec = await getRec(p.sheetId); } catch (_) { continue; }
       if (!rec) continue;
-      if (near(sig(p.placements), sig(rec.placements))) { p.layoutRev = +rec.layoutRev || 0; st.learned++; }
-      else if (!st.differs.includes(p.sheetId)) { st.differs.push(p.sheetId); say("cloud", `${p.fileBase || p.sheetId}: this computer's copy differs from the cloud's (${(p.placements || []).length} pieces here, ${(rec.placements || []).length} in the cloud); it is left as it is and saves as before`); }
+      seenRevs(p, rec);
+      if (near(sig(p.placements), sig(rec.placements))) { learnRevs(p, rec); st.learned++; }   // (SHEETFRESH: and its content revision)
+      else { p._parted = { layoutRev: +rec.layoutRev || 0, contentRev: +rec.contentRev || 0 }; if (!st.differs.includes(p.sheetId)) { st.differs.push(p.sheetId); say("cloud", `${p.fileBase || p.sheetId}: this computer's copy differs from the cloud's (${(p.placements || []).length} pieces here, ${(rec.placements || []).length} in the cloud); it is left as it is and saves as before`); } }   // (_parted: the cloud's revisions when the two parted, SHEETFRESH below)
     }
     return st;
   }
@@ -99,7 +108,7 @@
     // (a sheet is drawn whole from this answer or not at all: until then, and when a design cannot be read, the cloud's own saved picture stands)
     try { await root.Recall.rebuild(p, Object.assign({ answer: rec }, o && o.background ? { background: true } : {}, o && o.cutOk ? { cutOk: true } : {})); }
     catch (e) { p.charms = (p.charms || []).filter(c => !c.poolId); p.placements = []; safe(() => root.CN.renderCard(p)); throw e; }
-    p.layoutRev = +rec.layoutRev || 0; p.persistedDone = true; p.persisted = Promise.resolve(); p.dirty = false; p.problem = null; delete p.saveOwed;
+    learnRevs(p, rec); seenRevs(p, rec); delete p._parted; p.persistedDone = true; p.persisted = Promise.resolve(); p.dirty = false; p.problem = null; delete p.saveOwed;   // (SHEETFRESH: both revisions of the record it is now)
     st.reloads++; st.last = { at: Date.now(), id: p.sheetId, why: why || "" };
     say("cloud", `${rec.fileBase || p.sheetId}: read again from the cloud (${why || "changed on another computer"}) · ${(p.placements || []).length} pieces`);
     safe(() => root.CN.renderCard(p));
@@ -165,12 +174,14 @@
     for (const k of keys || []) {
       const id = String(k).slice(2); if (!id || id === "*") continue;
       const p = pageOf(id); if (!p) continue;
-      if (atWork(p) || p.dirty) { PENDING.add(id); continue; }
+      if (atWork(p) || p.dirty || p._manualHold) { PENDING.add(id); continue; }   // (SHEETFRESH, 27 Nov 2026: and a sheet Manual Control holds: read once it is let go, never rebuilt under a hand)
       let rec = null; try { rec = await getRec(id, probe); } catch (_) { PENDING.add(id); continue; }
       if (rec === SAME) { if (DIRTYN.has(id)) again(id, true); continue; }   // (not moved since this page read it; read half written, it is looked at again)
       if (!rec) continue;
       safe(() => root.CNViewer && typeof root.CNViewer.sawSheet === "function" && root.CNViewer.sawSheet(p, rec));   // (S4: a viewer learns the cloud's nest of this sheet, nestJob, for its card's Stop)
       safe(() => root.CNRefit && root.CNRefit.see(rec));   // (REFIT)
+      safe(() => root.CNSheetBusy && root.CNSheetBusy.see(rec, id));   // (SHEETBUSY: whether the cloud is changing it now, on every view of it)
+      seenRevs(p, rec);   // (SHEETFRESH: the newest the cloud has of it, for LIVEPV)
       again(id, rec.dirty === true);
       // (ORDERCLOUD 2, Paul 15 Nov 2026: the carrier's new draft order never reached the computer that follows): a followed sheet whose order changed in the cloud has this computer list the run's sheets again
       if (p.followed && rec.draftOrder != null && Number.isFinite(+rec.draftOrder) && +rec.draftOrder !== +p.draftOrder) { clearTimeout(orderT); orderT = setTimeout(() => safe(() => { const R = root.Recall, F = root.CharmNestRunFollow, id = (F && F.state().runId) || p.runId; if (R && R.follow && id) Promise.resolve(R.follow(id, { force: true })).catch(() => {}); }), 1500); }
@@ -182,9 +193,20 @@
       }
       if (await completeTakeOff(p, rec)) continue;
       const mine = revOf(p);
-      if (mine === null) { st.skipped++; continue; }   // (a sheet whose copy here was not the cloud's is never refreshed by itself)
-      // (only a newer revision, saved by another computer, rebuilds a sheet held here: a sheet this page is changing itself is never rebuilt under it)
-      if ((+rec.layoutRev || 0) > mine) { try { await reload(p, "changed on another computer", { background: true }); repaint(id); } catch (e) { PENDING.add(id); console.warn("[cloud-sheets] reload", id, e); } }   // (SKUSHOW: its views painted)
+      if (mine === null) {
+        /* (a sheet whose copy here was not the cloud's is never refreshed by itself. SHEETFRESH, 27 Nov 2026: a copy whose places are the cloud's now matches it: its revisions are learned, and it
+           follows from now on; a sheet this page FOLLOWS (the computer that carries the run, or the cloud, is its truth) whose cloud record moved after the two parted is the cloud's: rebuilt. The
+           computer that carries the run keeps its own copy, as before) */
+        if (near(sig(p.placements), sig(rec.placements))) { learnRevs(p, rec); st.learned++; continue; }
+        const d = p._parted;
+        if (p.followed === true && d && ((+rec.layoutRev || 0) > d.layoutRev || (+rec.contentRev || 0) > d.contentRev)) { try { await reload(p, "changed in the cloud after this copy parted from it", { background: true }); repaint(id); } catch (e) { PENDING.add(id); console.warn("[cloud-sheets] reload", id, e); } continue; }
+        st.skipped++; continue;
+      }
+      // (only a newer revision, saved by another computer, rebuilds a sheet held here: a sheet this page is changing itself is never rebuilt under it. SHEETFRESH, 27 Nov 2026: a hand move made elsewhere
+      //  raises the content revision alone: a page whose places are then not the cloud's is rebuilt too; one whose places are already the cloud's (its own move) learns the revision)
+      const cloudC = +rec.contentRev || 0, mineC = +p.contentRev || 0, otherPlaces = cloudC > mineC && !near(sig(p.placements), sig(rec.placements));
+      if ((+rec.layoutRev || 0) > mine || otherPlaces) { try { await reload(p, "changed on another computer", { background: true }); repaint(id); } catch (e) { PENDING.add(id); console.warn("[cloud-sheets] reload", id, e); } }   // (SKUSHOW: its views painted)
+      else if (cloudC > mineC) p.contentRev = cloudC;
     }
     if (PENDING.size && !pendT) pendT = setTimeout(() => { pendT = 0; const ks = [...PENDING].map(id => "s:" + id); PENDING.clear(); changed(ks, true); }, 5000);
   }

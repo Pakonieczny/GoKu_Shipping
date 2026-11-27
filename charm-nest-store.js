@@ -210,7 +210,7 @@
       const out = [];
       try { const t = db.transaction([...want.keys()], 'readonly'); for (const [kind, ids] of want) for (const id of ids) { const rq = t.objectStore(kind).get(id); rq.onsuccess = () => { if (rq.result && rq.result.rec) out.push([kind, id, rq.result]); }; } t.oncomplete = t.onerror = t.onabort = () => res(out); } catch (_) { res(out); }
     });
-    for (const [kind, id, row] of got) { mem[kind].set(id, { rec: row.rec, rev: row.rev || '', saved: row.saved || 0, used: Date.now(), diskUsed: Date.now() }); tell({ kind, id, rec: row.rec, from: 'tab' }); }
+    for (const [kind, id, row] of got) { if (older(kind, id, row.rec, row.rev || '')) continue; mem[kind].set(id, { rec: row.rec, rev: row.rev || '', saved: row.saved || 0, used: Date.now(), diskUsed: Date.now() }); tell({ kind, id, rec: row.rec, from: 'tab' }); }   // (NEWERWINS: another tab's older copy does not replace a newer one here)
   }
   async function diskRow(kind, id) {
     const db = await records(); if (!db) return null;
@@ -319,11 +319,39 @@
     for (const id of ids) { const had = mem[kind].get(id); const rec = had ? had.rec : await load(kind, id); if (rec) out.push(rec); }
     return out;
   }
+  /* NEWERWINS (Paul, 27 Nov 2026: "I have also seen sheets update and reverse back to their previous incorrect state ... cross bleeding of old and new statuses"): a sheet or a set kept here is
+     replaced only by one at least as new. Answers land in any order (the feed's getMany, the Library's live read, a list's rows, the sheet window's read, the order window's), and whichever landed
+     LAST was kept, even when it had been read first: the older copy was drawn again by the next list and stayed until something named the sheet again. The document's revision (its update time,
+     "<s>.<ns>", which moves with every write to it) decides when both have one; else the record's own counters, which only ever rise (updatedAt, previewAt: times; layoutRev, contentRev, previewRev):
+     one lower and none higher is an older read. The same, or not comparable: taken, as before. */
+  const ORDERED = new Set(['sheets', 'sheetFull', 'sets']);
+  const docRev = r => { const m = /^(\d+)\.(\d+)$/.exec(String(r == null ? '' : r)); return m && +m[1] > 0 ? [+m[1], +m[2]] : null; };
+  const msOf = v => (v && typeof v === 'object' ? (typeof v.toMillis === 'function' ? v.toMillis() : (+v._seconds || +v.seconds || 0) * 1000) : +v || 0);
+  const COUNTERS = [['updatedAt', true], ['previewAt', true], ['layoutRev', false], ['contentRev', false], ['previewRev', false]];   // ([field, a time: 0 is "not known"])
+  /** -1: a (read at revision ra) is older than b (at rb), 1: newer, 0: the same, or it cannot be told. */
+  function newerOf(a, ra, b, rb) {
+    const x = docRev(ra), y = docRev(rb);
+    if (x && y && (x[0] !== y[0] || x[1] !== y[1])) return x[0] !== y[0] ? (x[0] < y[0] ? -1 : 1) : x[1] < y[1] ? -1 : 1;
+    // (the same revision on both, or none: the counters. A row the page put again under the revision it held (LaserReview keep) is a copy of that revision, and its counters say what it is)
+    if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return 0;
+    let lo = false, hi = false;
+    for (const [k, time] of COUNTERS) {
+      if (a[k] == null || b[k] == null) continue;
+      const p = msOf(a[k]), q = msOf(b[k]); if (!Number.isFinite(p) || !Number.isFinite(q) || (time && (!(p > 0) || !(q > 0)))) continue;
+      if (p < q) lo = true; else if (p > q) hi = true;
+    }
+    return lo && !hi ? -1 : hi && !lo ? 1 : 0;
+  }
+  let olderRefused = 0;
+  /** Whether this computer holds a NEWER copy of the record than `rec` (read at revision r): the caller then draws the one held (get). */
+  const older = (kind, id, rec, r) => { const s = ORDERED.has(kind) && mem[kind] ? mem[kind].get(sid(id)) : null; return !!s && s.rec !== rec && newerOf(rec, r, s.rec, s.rev) < 0; };
   /** Keep a record the cloud answered, under its revision. The object is kept as given and written at the end of this task (a caller that changes it
-      in place later puts it again; one that only holds it again need not: get() hands the kept object back). */
+      in place later puts it again; one that only holds it again need not: get() hands the kept object back). false: not kept (another world, not writable,
+      or NEWERWINS: this computer holds a newer copy, which stays). */
   function put(kind, id, rec, r, opts) {
     id = sid(id); if (!known(kind) || !id || rec == null || typeof rec !== 'object') return false;
     if (!canWrite(opts && opts.world)) return false;
+    if (older(kind, id, rec, r)) { olderRefused++; return false; }   // (NEWERWINS: the copy held is newer: an answer read before it does not take its place)
     const now = Date.now(), rv = r == null ? '' : String(r);
     mem[kind].set(id, { rec, rev: rv, saved: now, used: now, diskUsed: now });
     if (kind === 'sheetFull') { lru(mem[kind], id, LIMITS.memFull); onDisk.add(id); }
@@ -373,26 +401,36 @@
   }
   /** A list's answer (rows under `field`, each named by idOf) put together with what is held, and kept for next time: unchanged → the held rows; ids → every row
       in order, the ones sent new, the rest as held; neither (an older server) → the rows sent, as they are. null when a row it names is held nowhere. */
+  // (NEWERWINS: the Library's revision of a list, "<s>.<ns>-<n>": -1 when a is older than b, else 0 or 1; 0 when either cannot be read)
+  const libRevOf = r => { const m = /^(\d+)\.(\d+)-(\d+)$/.exec(String(r == null ? '' : r)); return m ? [+m[1], +m[2], +m[3]] : null; };
+  const libCmp = (a, b) => { const x = libRevOf(a), y = libRevOf(b); if (!x || !y) return 0; for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return 0; };
   function take(name, kind, ans, field, idOf) {
     if (!ans || typeof ans !== 'object' || !known(kind)) return null;
     const l = list(name), sent = Array.isArray(ans[field]) ? ans[field] : [], revs = ans.revs && typeof ans.revs === 'object' ? ans.revs : {};
-    if (ans.unchanged) { const r = rows(name); if (!l || r.missing) return null; if (ans.rev && ans.rev !== l.rev) putList(name, Object.assign({}, l, { rev: ans.rev })); return r.rows; }
+    if (ans.unchanged) { const r = rows(name); if (!l || r.missing) return null; if (ans.rev && ans.rev !== l.rev && libCmp(ans.rev, l.rev) >= 0) putList(name, Object.assign({}, l, { rev: ans.rev })); return r.rows; }
+    // (NEWERWINS: each row sent is kept only when it is at least as new as the one held (put); the list itself is drawn from what is held, so a row read before a newer one held is never drawn again)
     for (const x of sent) { const id = idOf(x); if (id != null) put(kind, id, x, revs[id] != null ? revs[id] : ''); }
-    if (!Array.isArray(ans.ids)) { putList(name, { kind, ids: sent.map(idOf).filter(x => x != null), since: '', rev: '' }); return sent; }
+    if (!Array.isArray(ans.ids)) { putList(name, { kind, ids: sent.map(idOf).filter(x => x != null), since: '', rev: '' }); return sent.map(x => { const id = idOf(x); return (id != null && get(kind, id)) || x; }); }
     const out = [];
     for (const id of ans.ids) { const r = get(kind, id); if (!r) return null; out.push(r); }
+    // (NEWERWINS: a list answer older than the list held (two reads of it out at once, the earlier one landing last) gives its rows, never the list's order and cursor back)
+    if (l && libCmp(ans.rev, l.rev) < 0) { const h = rows(name); if (!h.missing) return h.rows; }
     putList(name, { kind, ids: ans.ids, since: ans.upTo || '', rev: ans.rev || '' });
     return out;
   }
   /* the same read asked again while it is on its way waits for that one (charm-nest-1.html api()); each caller after the first gets a copy of the answer,
      so a page that changes what it was given changes only its own */
+  /* FRESHREAD (NEWERWINS, Paul 27 Nov 2026): a read asked AFTER a change was told here (the changes feed named something, this page wrote: opts.after, the time of that news) is never handed the
+     answer of the same read that left BEFORE it: that answer may not hold the change, and the surface that asked kept it as the truth until the next name (often the ten-minute net). A read in flight
+     that left after the news is shared as before; one that left before it goes on for its own callers, and this one leaves now (one more read, never a loop). */
   const inflight = new Map();
   const copyOf = v => { try { return typeof root.structuredClone === 'function' ? root.structuredClone(v) : JSON.parse(JSON.stringify(v)); } catch (_) { return v; } };
-  function shared(key, make) {
-    const hit = inflight.get(key); if (hit) return hit.then(copyOf);
-    const p = Promise.resolve().then(make);
-    inflight.set(key, p);
-    const out = () => { if (inflight.get(key) === p) inflight.delete(key); };
+  function shared(key, make, opts) {
+    const after = +(opts && opts.after) || 0, hit = inflight.get(key);
+    if (hit && hit.at > after) return hit.p.then(copyOf);
+    const p = Promise.resolve().then(make), mine = { p, at: Date.now() };
+    inflight.set(key, mine);
+    const out = () => { if (inflight.get(key) === mine) inflight.delete(key); };
     p.then(out, out);
     return p;
   }
@@ -656,6 +694,7 @@
   return {
     init, ready: () => readyP || Promise.resolve({ disk: false, rows: 0 }), world: () => world, disk: () => diskOn,
     get, rev, has, holds, warm, load, put, patch, drop, list, putList, rows, ask, take, shared, blob, putBlob,
+    older, newerOf, refused: () => olderRefused,   // (NEWERWINS: older(kind, id, rec, rev) → this computer holds a newer copy; newerOf(a, ra, b, rb) → -1 | 0 | 1, for the page's own copies too)
     on: fn => { listeners.add(fn); return () => listeners.delete(fn); },
     mutate, pending, outbox, settle, touch: e => { touch(e); boxPost({ t: 'box:touch', e }); }, lostIn, onMutation: fn => { mutSubs.add(fn); return () => mutSubs.delete(fn); },
     flush, sweep, squeeze, stats, freeze, discard, LIMITS, KINDS

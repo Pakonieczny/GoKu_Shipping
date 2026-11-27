@@ -115,12 +115,20 @@
   }
 
   /* ── what reaches the surfaces ── */
+  /* FEEDRACE (Paul, 27 Nov 2026: "the propagation of the updates throughout the system is intermittent"): what an answer names was written at some moment before the cloud read its shards,
+     and that moment can be AFTER the question left (at): a write landing while the question was on its way is named in its answer. So the time a name is "known by" is when the answer came
+     back (got), never when the question left: a surface whose own read began between the two had not seen that write, and it was skipped anyway (its read "began after the question") until the
+     ten-minute net. A surface is spared a read only when its own read began after the answer came back; an answer that does not say when it came back (an older tab's) never spares one. The same
+     time marks the kinds as moved (quietSince): a list read after the question left and before the answer came is not "quiet". newsAt: when this tab last heard of any change (a name, a reset, a
+     verify, its own write): a read asked after it is never handed one that left before it (charm-nest-store.js shared, FRESHREAD). */
+  let newsAt = 0;
   function deliver(m) {
-    const reset = !!m.reset, verify = !!m.verify, wrote = !!m.wrote, keys = new Set(Array.isArray(m.keys) ? m.keys.map(String) : []), at = +m.at || now();
-    if (reset) { lastKind.set('!', at); stats.resets++; }
-    for (const k of keys) { const kind = k === '*' ? '*' : k[0]; if (KIND.test(kind)) lastKind.set(kind, Math.max(lastKind.get(kind) || 0, at)); }
+    const reset = !!m.reset, verify = !!m.verify, wrote = !!m.wrote, keys = new Set(Array.isArray(m.keys) ? m.keys.map(String) : []), at = +m.at || now(), got = wrote ? at : +m.got || 0, seen = got || now();
+    if (reset) { lastKind.set('!', seen); stats.resets++; }
+    for (const k of keys) { const kind = k === '*' ? '*' : k[0]; if (KIND.test(kind)) lastKind.set(kind, Math.max(lastKind.get(kind) || 0, seen)); }
+    if (keys.size || reset || verify) newsAt = Math.max(newsAt, now());
     stats.keys += keys.size;
-    for (const s of [...subs]) s.take(keys, reset, verify, at, wrote);
+    for (const s of [...subs]) s.take(keys, reset, verify, at, wrote, got);
   }
   /* A tab's own surfaces hear an answer: from the leader here, or by the channel. An answer asked from a count this tab did not reach (it missed one) is a
      reset for it: every surface asks its own question again. */
@@ -148,7 +156,7 @@
     if (m.kn && seenN.size) { const all = keys.length; keys = keys.filter(k => !(m.kn[k] > 0 && (seenN.get(k) || 0) >= m.kn[k])); stats.ownSkipped = (stats.ownSkipped || 0) + all - keys.length; }   // (written here, and told at once: read then)
     if (m.n === m.from && !m.reset && !gap && !keys.length) return;
     if (!keys.length && !m.reset && !gap) return;
-    deliver({ keys, reset: m.reset || gap, at: m.at });
+    deliver({ keys, reset: m.reset || gap, at: m.at, got: m.got });   // (FEEDRACE: got, when the answer came back)
   }
   function post(m) { if (!ch) return; try { ch.postMessage(Object.assign({ v: V, from_: me }, m)); } catch (_) {} }
   function onMessage(ev) {
@@ -213,7 +221,7 @@
       }
       fails = 0; lastOk = now(); stats.answers++;
       if (r.orders) for (const [rid, rev] of Object.entries(r.orders)) orderRevs.set(String(rid), String(rev || ''));
-      const m = { v: V, t: 'feed', from, n: String(r.n), keys: r.keys || [], kn: r.kn || null, reset: !!r.reset, first: from == null, cg: r.cg != null ? +r.cg : cg, at };
+      const m = { v: V, t: 'feed', from, n: String(r.n), keys: r.keys || [], kn: r.kn || null, reset: !!r.reset, first: from == null, cg: r.cg != null ? +r.cg : cg, at, got: now() };   // (FEEDRACE: got, when the answer came back: what it names was written before then, not before `at`)
       heard(m, true); post(m); keepCursor();
       if (m.keys.length || m.reset) heldMoved(m.keys, m.reset);
       // (the net: every surface asks once anyway every ten minutes while the computer is in use)
@@ -296,7 +304,7 @@
     const run = (why, keys, at, names) => { stats.reads++; safe(() => spec.read(why, keys, at, names || keys)); };
     const s = {
       every: () => (gone || !spec.every ? 0 : safe(() => +spec.every() || 0, 0)),
-      take(keys, reset, verify, at, wrote) {
+      take(keys, reset, verify, at, wrote, got) {
         if (gone) return;
         let hit = reset || verify || keys.has('*'), mine = [];
         // (ENGLIVE, Paul 17 Nov 2026: "things are not being updated in time"): a surface is handed the names of its own kinds ALWAYS, also when the same answer carried a wildcard, a reset or a verify (it used to be handed none then: `mine` was only filled when
@@ -306,8 +314,9 @@
         if (!hit) return;
         if (whole) mine = [];
         const why = reset ? 'reset' : verify ? 'verify' : wrote ? 'wrote' : 'keys';
-        // (its own read began after the leader's question (or the write's answer): it holds what that named)
-        if ((why === 'keys' || why === 'wrote') && spec.since && safe(() => +spec.since() || 0, 0) > at) return;
+        // (its own read began after the answer came back (or the write's answer): it holds what that named. FEEDRACE: after the ANSWER, not after the question: a write landing while the question
+        //  was out is named, and a read begun in that time had not seen it; no `got` (an older tab's answer): read)
+        if ((why === 'keys' || why === 'wrote') && spec.since && +got > 0 && safe(() => +spec.since() || 0, 0) > +got) return;
         if (!active() || !visible()) { dirty = dirty || { why, keys: new Set(), at }; if (why === 'reset' || why === 'verify') dirty.why = why; dirty.at = Math.min(dirty.at, at); for (const k of mine) dirty.keys.add(k); return; }
         run(why, mine, at, named);
       },
@@ -375,6 +384,7 @@
     if (!started || dead || !header) return false;
     const [names, cs] = String(header).split(';'), keys = names.split(',').map(x => x.trim()).filter(k => NAME.test(k)).slice(0, 60);
     if (!keys.length) return false;
+    newsAt = Math.max(newsAt, now());   // (FRESHREAD: a write of this tab is news: a read asked after it is not handed one that left before it)
     const counts = {}; for (const p of String(cs || '').split(',')) { const [k, v] = p.split('='); if (k && +v > 0) counts[k.trim()] = +v; }
     noteSeen(keys, Object.keys(counts).length ? counts : null);
     post({ t: 'wrote', keys, counts, at: now() });
@@ -562,6 +572,6 @@
     return { world, started, dead, leader, live: live(), n, cg, pace: pace(), polls: stats.polls, answers: stats.answers, heard: stats.heard, keys: stats.keys, resets: stats.resets, reads: stats.reads,
       fetches: stats.fetches, errors: stats.errors, gaps: stats.gaps, leads: stats.leads, subs: subs.size, watched: Object.keys(watched() || {}), lastOk, heardAt, me, ownSkipped: stats.ownSkipped || 0, push: pushHealthy(), nudges };
   }
-  const api = { start, follow, live, quietSince, watchOrder, once, poke, wrote, here, stop, state, PACE, drain, drainState, push };
+  const api = { start, follow, live, quietSince, watchOrder, once, poke, wrote, here, stop, state, PACE, drain, drainState, push, newsAt: () => newsAt };   // (FRESHREAD: newsAt())
   return api;
 });

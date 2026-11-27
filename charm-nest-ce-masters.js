@@ -537,7 +537,7 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
     let draft = null;
     if (host && typeof host.draft === 'function' && by) { try { const who = String(by).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40), dk = start.id ? 'DESIGN-' + String(start.id).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 60) : 'DESIGN-NEW-' + (who || 'x'); draft = await host.draft(dk, by, Number(start.version) || 0); } catch (e) { console.warn('masters: the draft', e); } }
     const opts = Object.assign({ title: start.title || start.name, subtitle: start.subtitle || '', faces: start.faces, startFace: 'front', lockRoles: [] },
-      Array.isArray(fonts) && fonts.length ? { fonts } : {}, textToPaths ? { textToPaths } : {}, start.back ? { back: Object.assign({}, start.back) } : {}, { hold: true }, start.repo ? { repo: Object.assign({}, start.repo) } : {},
+      Array.isArray(fonts) && fonts.length ? { fonts } : {}, textToPaths ? { textToPaths } : {}, start.back ? { back: Object.assign({}, start.back) } : {}, { hold: true }, start.repo ? { repo: Object.assign({}, start.repo) } : {}, start.saveOff ? { saveOff: start.saveOff } : {},
       draft ? { autosave: draft.autosave } : {}, draft && draft.offer ? { offer: draft.offer, base: start.faces } : {});   // (CES3 hold: the workspace stays under the windows after Save)   // (the way back: the editor's head, CharmEditor opts.back)
     let shown;
     try { shown = E.open(opts); }
@@ -713,7 +713,11 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
     const ks = sizesOf(entry), sz = size && ks.includes(size) ? size : ks[0] || null;
     const src = await Pl.masterCharm(entry, sz), charm = src && src.charms && src.charms[0];
     if (!charm || !Array.isArray(charm.members) || !charm.members.length || !charm.outline) throw new Error('its drawing could not be read');
-    const front = masterFace(charm, AE, M);
+    // (DRAWN, Paul 27 Nov 2026: "the ungroup does not seem to separate the charm hoop from the rest of the charm ... Research how illustrator does this": the pool's charm has its hoop welded into the cut line for the
+    //  laser (charm-nest-pdf.js integrateRings), one contour no ungroup can take apart. The editor holds the master as its .ai draws it, the hoop its own parts, as Illustrator opens it; the master's own
+    //  reading keeps welding it for every sheet. A file that cannot be read so is opened welded, as before)
+    let drawn = null; if (typeof Pl.drawnMaster === 'function') { try { drawn = await Pl.drawnMaster(entry, sz); } catch (e) { drawn = null; } }
+    const front = masterFace(drawn && Array.isArray(drawn.members) && drawn.members.length && drawn.outline ? drawn : charm, AE, M);
     if (!front.items.length) throw new Error('its drawing has no part the editor can hold');
     const skipped = front.skipped; delete front.skipped;
     const st = { name: entry.sku, title: entry.sku, source: Object.assign({ kind: 'master', sku: entry.sku }, sz ? { size: sz } : {}), faces: { front, back: backFace(front, [], M) },
@@ -721,6 +725,9 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
     // (REPOEDIT, Paul 17 Nov 2026: the editor is told the ONE repository entry this drawing is, so its Repository button can update exactly that entry: charm-nest-ce-repo.js. A pair is two bodies: not updated from here)
     { const g = geomOf(entry, sz), pair = !!(entry.pair || (g && g.pair)); st.repo = { kind: 'repository', sku: entry.sku, size: sz || '', charmHash: String((g && g.charmHash) || ''), ...(pair ? { why: `${entry.sku} is a pair (two bodies in one drawing): add it as a master file to change it.` } : {}) }; }
     st.subtitle = subtitleFor(st) + (skipped ? ` · ${skipped} part${skipped === 1 ? ' is' : 's are'} live text or a picture in the master and not here` : '');
+    // (REPOONLY, Paul 27 Nov 2026: "a new button that opens a given charm from the Master Charm Repo inside the Charm Editor ... press update repository button to save the changes ... The Blue Save button should be disabled
+    //  in this Charm Edit mode": opened from a Master files card, the charm is saved to the repository alone)
+    if (o && o.repoOnly) { st.saveOff = st.repo && st.repo.why ? st.repo.why : true; st.subtitle = 'Master Charm Repository · ' + st.subtitle; }
     return st;
   }
   let opening = null;      // { key, p }: the master being read, so a second press does not read it twice

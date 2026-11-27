@@ -334,7 +334,7 @@
       const m = FIT_PATH.exec(String(path || "")); if (!m) return bytes;
       return P.scaleSource(bytes, await fitFactor(bytes, sku, O.sizeMmOf(m[1]), +m[2]));
     }
-    async function readMasterCharm(entry,size) {
+    async function readMasterCharm(entry,size,o) {
       const geom=sizeEntry(entry,size), fitP=FIT_PATH.exec(String(geom.aiPath||"")), real=geom.base||geom, filePath=fitP?String(geom.aiPath).slice(0,fitP.index):geom.aiPath;   // (a scaled design is read from the file it is scaled from)
       // (a stored download link dies when the file under it is written again, and a record that shares the file keeps the old one: the file is asked for again through a fresh link before the design is given up)
       const fresh = async () => (await api("charmNestOutput", { op: "url", path: filePath })).url;
@@ -359,7 +359,9 @@
           charm.members.push(m); charm.bbox = [Math.min(b[0], m.bbox[0]), Math.min(b[1], m.bbox[1]), Math.max(b[2], m.bbox[2]), Math.max(b[3], m.bbox[3])]; grew = true;
         }
       }
-      { const r = P.integrateRings(charm); if (r.left.length) throw new Error(`${entry.sku}: a hoop could not join its charm — ${r.left[0]}`); }
+      // (DRAWN, Paul 27 Nov 2026: "Research how illustrator does this": the Charm Editor opens a master as its .ai draws it, its hoop parts its own, so Ungroup takes the hoop off the charm as Illustrator does; o.weld false. Every
+      //  reading for a sheet, a nest or a file keeps the hoop welded into the cut line, as before)
+      if (!(o && o.weld === false)) { const r = P.integrateRings(charm); if (r.left.length) throw new Error(`${entry.sku}: a hoop could not join its charm — ${r.left[0]}`); }
       return {url,bytes,parsed,g,charm};
     }
     function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); delete k.frontAt; delete k.manual; return k; }   // (a copy never carries another order's place in the queue, nor a size a person gave another piece by hand: Manual Control)

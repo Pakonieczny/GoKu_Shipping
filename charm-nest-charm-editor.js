@@ -914,10 +914,16 @@
     return [...groups.values()].map(g => g.sort((p, q) => p - q)).sort((p, q) => p[0] - q[0]);
   }
   /** Ungroup a path of several pieces (ISLANDS): one path per piece, each where it was (the same transform, paint and role), in place of the path. → { items, ids } (ids: [] when it is one piece) */
+  /* UNGROUPALL (Paul 27 Nov 2026: "The ungroup must ungroup ALL items in a given selection ... the ungroup does not seem to separate the charm hoop from the rest of the charm ... certain black cutting outlines do not
+     get fully ungrouped ... Research how illustrator does this and implement the exact same functionality"). Illustrator's Ungroup (Shift+Cmd+G) lifts one level of grouping a press, and a compound path is taken apart
+     by Object > Compound Path > Release (Alt+Shift+Cmd+8), which makes every subpath its own path where it stood, with the compound's paint. Here ONE press does all of it for the selection: every group at every depth is
+     lifted (ungroupAll) and a path of several pieces is released. A path drawn as LINES only (a stroke, no fill: the black cut lines, a hoop's two rings) is released as Illustrator releases it, every ring its own path,
+     so a hoop that crosses its charm's outline comes away from it; a FILLED path keeps a hole with the shape it is cut from (ISLANDS: an O keeps its counter), since a hole released alone would fill in. */
+  const lineOnly = it => !!it && !it.fill && !!it.stroke;
   function splitIslands(items, id, geo) {
     const ix = indexTree(items, geo), e = ix.get(id);
     if (!e || e.it.kind !== 'path' || e.it.locked) return { items, ids: [] };
-    const groups = islandsOf(e.it.subpaths || []); if (groups.length < 2) return { items, ids: [] };
+    const groups = lineOnly(e.it) ? (e.it.subpaths || []).map((_, i) => [i]) : islandsOf(e.it.subpaths || []); if (groups.length < 2) return { items, ids: [] };
     // (each piece drawn where it was: the path's own turn and scale go into its points, as Illustrator's pieces stand where they stood; a transform kept on each would turn it about its OWN middle)
     const W = geo.matrix(e.it), base = String(e.it.name || 'Path');
     const parts = groups.map((g, k) => { const n = Object.assign({}, e.it, { id: newId(), name: `${base} ${k + 1}`, subpaths: transformSubpaths(g.map(i => e.it.subpaths[i]), W), tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 }); for (const f of ['shape', 'clipOf', 'matrix', 'pivot', 'bbox']) delete n[f]; return n; });
@@ -936,6 +942,19 @@
     const list = listOf(items, parentId, ix).slice();
     list.splice(e.i, 1, ...flat.children);
     return { items: setList(items, parentId, list), ids: flat.children.map(c => c.id) };
+  }
+  /** UNGROUPALL: the parts `ids` taken apart all the way down, in their places in the stack: every group at every depth lifted (its transform pushed into its children), every path of several pieces among them
+   *  released (splitIslands); a locked part stays as it is. → { items, ids (what the selection becomes, in stacking order), split (paths made by releasing) } */
+  function ungroupAll(items, ids, geo) {
+    let next = items, split = 0;
+    const apart = id => {
+      const e = indexTree(next, geo).get(id); if (!e) return [];
+      if (e.it.kind === 'group' && !e.it.locked) { const r = ungroupItem(next, id, geo); next = r.items; return r.ids.flatMap(apart); }
+      if (e.it.kind === 'path' && !e.it.locked) { const r = splitIslands(next, id, geo); if (r.ids.length) { next = r.items; split += r.ids.length; return r.ids; } }
+      return [id];
+    };
+    const out = []; for (const id of ids) out.push(...apart(id));
+    return { items: next, ids: out, split };
   }
   /** Stacking order within each parent: 'forward' | 'backward' | 'front' | 'back'. */
   function arrange(items, ids, how, geo) {
@@ -1154,7 +1173,7 @@
 
   const model = { MM, PT, I, mul, ap, inv, tr, rotM, scM, about, isI, bboxOf, union, transformSubpaths, flatten, dOf, rectSP, ellipseSP, lineSP,
     createGeo, decompose, composeInto, pushDown, retext, foldTextScale, walk, indexTree, replaceIn, removeIds, pruneEmpty, topmost, normaliseAncestors, copyItems, pasteItems, reid,
-    groupItems, ungroupItem, islandsOf, splitIslands, ungroupable, arrange, hitTest, touching, History, prepIn, exportItems, diffFace, changeCount, outlinesOf, newId, paintFill, paintStroke,
+    groupItems, ungroupItem, ungroupAll, islandsOf, splitIslands, ungroupable, arrange, hitTest, touching, History, prepIn, exportItems, diffFace, changeCount, outlinesOf, newId, paintFill, paintStroke,
     weighSubpaths, weighItem, weighable, weightOf, lwOf, inkArea, canWeigh, LW_LASER_PT, WT_MIN_MM, WT_MAX_MM };
   Object.assign(model, { polygonSP, polygonRatio });
   Object.assign(model, { casedText, caseOf, styledEngine, CASES });   // (CETEXT, 28 Oct 2026: the text's style, for node tests and the extensions)
@@ -2007,7 +2026,7 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
     <span class="ce-draft" data-draft role="status" aria-live="polite"></span>
     <div class="ce-actions">
       <button class="ce-btn ce-btn--ghost" type="button" data-act="cancel" title="Close without saving (Esc)">Cancel</button>
-      <button class="ce-btn ce-btn--gold" type="button" data-act="save" title="Save (${esc(keyText('Mod+S'))})">Save</button>
+      <button class="ce-btn ce-btn--gold" type="button" data-act="save" ${opts.saveOff ? `disabled aria-disabled="true" title="${esc(String(opts.saveOff === true ? 'This charm is edited for the Master Charm Repository: press Update repository to save it' : opts.saveOff))}"` : `title="Save (${esc(keyText('Mod+S'))})"`}>Save</button>
     </div>
     <button class="ce-icon ce-close" type="button" data-act="cancel" aria-label="Close without saving" title="Close (Esc)">${AIC.close}</button>
   </header>
@@ -3224,10 +3243,8 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
     function ungroupSel() {
       let next = items(); const sel = [];
       let split = 0;
-      for (const e of selEntries()) {
-        if (e.it.kind === 'path') { const r = splitIslands(next, e.it.id, geo); if (r.ids.length) { next = r.items; sel.push(...r.ids); split += r.ids.length; } else sel.push(e.it.id); continue; }   // (ISLANDS: a path of several pieces, one path a piece)
-        if (e.it.kind !== 'group') { sel.push(e.it.id); continue; } const r = ungroupItem(next, e.it.id, geo); next = r.items; sel.push(...r.ids);
-      }
+      // (UNGROUPALL: each selected part taken apart all the way down: a group's children, and theirs, and every path of several pieces among them; a locked part stays as it is, as Illustrator leaves it)
+      { const r = ungroupAll(next, selEntries().map(e => e.it.id), geo); next = r.items; sel.push(...r.ids); split = r.split; }
       if (next !== items()) commit(next, sel);
       else if (selEntries().some(e => e.it.kind === 'path' && (e.it.subpaths || []).length > 1)) { try { say('This shape is one piece: nothing to ungroup'); } catch (_) { /* the button says it */ } }
     }
@@ -4093,7 +4110,9 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
       if (S.editing) closeEditor();
       abandon();
       if (!dirty()) { finish(null); return; }
-      const yes = await ask({ title: 'Leave without saving?', text: 'The changes you made to this charm will be lost. Nothing is kept until you press Save.', yes: 'Discard changes', no: 'Keep editing' });
+      // (REPOONLY: a repository edit is kept by Update repository: once the drawing as it stands is in the repository, nothing is lost by closing)
+      if (opts.saveOff) { const rp = rootEl.querySelector('.ce-repo'); if (rp && rp.dataset.done === '1' && rp.dataset.dirty !== '1') { finish(null); return; } }
+      const yes = await ask({ title: 'Leave without saving?', text: opts.saveOff ? 'The changes you made to this charm are not in the Master Charm Repository. Nothing is kept until you press Update repository.' : 'The changes you made to this charm will be lost. Nothing is kept until you press Save.', yes: 'Discard changes', no: 'Keep editing' });
       if (yes) finish(null);
     }
     /** CES1: the workspace brought in front of every window open now (its dialog shown modally again, last) and given the keys: Edit Design pressed while it is already open. */
@@ -4138,6 +4157,8 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
     let checking = false, switching = false;   // (CES1 switching: a "Save and switch": the result says so, so the caller's after-save window does not come up over the charm asked for next)
     async function save() {
       if (S.ask || checking || finished) return;
+      // (REPOONLY, Paul 27 Nov 2026: "The Blue Save button should be disabled in this Charm Edit mode": a master opened from the Master Charm Repository is saved by Update repository alone; Save and Mod+S say so)
+      if (opts.saveOff) { say(opts.saveOff === true ? 'This charm is edited for the Master Charm Repository: press Update repository to save it' : String(opts.saveOff)); return; }
       if (S.editing) closeEditor();
       abandon();
       const r = result();
