@@ -15943,9 +15943,13 @@ const Sets = window.Sets = (() => {
       if (g.setId && g.sheets.length > 1 && g.status !== "superseded") { let line = ""; try { line = linkLine(g, all, by, homes, docOf); } catch (_) { /* no line */ } if (line) g.cardinalLinks = line; else delete g.cardinalLinks; }
       if (!g.setId || g.committedAt || /^complete|superseded/.test(String(g.status || "")) || !g.sheets.length) continue;
       let items; try { items = SO.core.between(all, g.sheets.map(r => r.id), g.setId); if (homes && SO.core.realPartners) items = SO.core.realPartners(all, items, g.setId, homes); } catch (_) { continue; }   // (a known green-line split is no partner to wait for)
-      const free = [...new Set(items.flatMap(it => it.thereIds).filter(i => by.get(i) && !by.get(i).fixed))];
       // (Paul, 13 Oct: a partner that is not full yet cannot be added to the set; the line says it joins by itself once it is full)
       const SRp = window.CharmNestSetRules, pageOf = id => { try { return typeof allSheets === "function" ? allSheets().find(p => p.sheetId === id) : null; } catch (_) { return null; } };
+      // (CUSTOMSPLIT, Paul 27 Nov 2026: "if it happens because of the custom order ... don't show me those warnings and don't block anything because of this": an order tied to a sheet outside the set by a custom
+      //  piece is no partner to wait for; the sheets' own records (their design lists name the custom design with its order) say so: charm-nest-set-invariants.js customOrderOn)
+      { const SI = window.CharmNestSetInvariants, recAny = id => { try { return rowOf.get(id) || (window.LaserReview && typeof LaserReview.recOf === "function" ? LaserReview.recOf(id) : null) || pageOf(id) || null; } catch (_) { return null; } };
+        if (SI && typeof SI.customOrderOn === "function") items = items.filter(it => !(it && it.orderId && g.sheets.map(r => r.id).concat(it.thereIds || []).some(i => SI.customOrderOn(recAny(i), it.orderId)))); }
+      const free = [...new Set(items.flatMap(it => it.thereIds).filter(i => by.get(i) && !by.get(i).fixed))];
       // (Paul, 26 Oct 2026: a 10K / 14K partner is never cut or approved by itself: `manual`, it waits greyed in this set for a person to approve it and cut its green line, goldPendingOf)
       if (free.length) g.cardinalWait = free.map(i => ({ label: by.get(i).label, id: i, ...(SRp && SRp.isPartial && SRp.isPartial(pageOf(i)) ? { partial: true } : {}), ...(goldManual(by.get(i), pageOf(i), rowOf.get(i)) ? { manual: true, ...(goldFull(pageOf(i), rowOf.get(i)) ? { full: true } : {}) } : {}) }));
     }

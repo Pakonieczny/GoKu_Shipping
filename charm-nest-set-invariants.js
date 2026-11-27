@@ -80,6 +80,16 @@
     for (const s of rows) { if (!s || typeof s !== 'object') continue; const id = str(pageId(s)); if (id && !out.has(id)) out.set(id, Object.assign({}, s, { id })); }
     return out;
   }
+  /* CUSTOMSPLIT (Paul, 27 Nov 2026: "Sometimes this will happen. I don't wanna change any rules, but I also don't wanna see these notices if it happens because of the custom order ... just let it happen. It's OK the way
+     it is and don't show me those warnings and don't block anything because of this"): an order tied across sheets by a CUSTOM piece (a custom design sent from Review days later, turned away by its order's
+     full, released sheet and placed on the next one) is let be: no rule line, no partner to wait for, no block. Nothing about how sets form changes. A sheet names its custom designs in its own design list
+     with the order's number (charmnest_custom_<order>_…, or a placed charm marked custom); every other order is judged exactly as before. */
+  function customOrderOn(rec, oid) {
+    oid = str(oid); if (!rec || typeof rec !== 'object' || !oid) return false;
+    const mark = '_' + oid + '_';
+    if ((Array.isArray(rec.sources) ? rec.sources : []).some(x => x && typeof x === 'object' && (x.custom === true || /charmnest_(?:sandbox_)?custom_/.test(str(x.id))) && (str(x.id).indexOf(mark) >= 0 || str(x.path).indexOf('/' + oid + '/') >= 0))) return true;
+    return (Array.isArray(rec.charms) ? rec.charms : []).some(c => c && c.custom && str(c.order || c.orderId).split('/')[0] === oid);
+  }
   function readSets(input) {
     const rows = input instanceof Map ? [...input.entries()].map(([k, v]) => ({ k, v })) : Array.isArray(input) ? input.map(v => ({ k: null, v }))
       : input && typeof input === 'object' ? Object.entries(input).map(([k, v]) => ({ k, v })) : [];
@@ -243,7 +253,8 @@
         const mine = g.ids.filter(i => inside.has(i)), outside = g.ids.filter(i => !inside.has(i) && !setOf.has(i)), mineCore = mine.filter(i => !C.isGreen(i));
         for (const id of outside) {
           const r = recs.get(id); if (!r || r.archived || +r.laserDoneAt > 0 || waitingIds.has(id)) continue;      // (SETFIX 19 Oct 2026: a sheet the laser cut moves to no set: the order is split for good, like an order mate in a committed set)
-          const cls = R.metalClass(r), n = C.normById.get(id), because = g.orders.filter(oid => n && n.pieces.some(p => p.orderId === oid)), withNames = mine.map(C.name);
+          const cls = R.metalClass(r), n = C.normById.get(id), because = g.orders.filter(oid => n && n.pieces.some(p => p.orderId === oid) && !mine.concat(id).some(i => customOrderOn(recs.get(i), oid))), withNames = mine.map(C.name);   // (CUSTOMSPLIT: an order tied here by a custom piece is let be)
+          if (!because.length) continue;
           // (Paul, 26 Oct 2026: a GF / SS sheet tied to this set only through a green-line sheet is no partner of it, a green-line sheet is the partner of its ONE set only: a known split, `splits`)
           if ((cls === 'GF' || cls === 'SS') && C.homes && !mineCore.length) continue;
           if (GOLD_FAMILY.includes(cls) && C.homes && ((C.homes.get(id) || {}).home || null) !== st.id) continue;
@@ -296,7 +307,7 @@
     //  the fault, and it is named as the completed sheet that is in no set ('cardinal' above), never as "orders on sheets of different sets", which those orders are not)
     const idxR9 = S.index(C.norm), core = i => !C.homes || !C.isGreen(i);      // (Paul, 26 Oct 2026: a green-line sheet's pieces in its one set while its partners are in another is a known split, `splits`, never this)
     for (const g of groups) {
-      const crossing = g.orders.filter(oid => { const m = idxR9.get(oid); return !!m && new Set([...m.keys()].filter(core).map(i => setOf.get(i)).filter(Boolean)).size > 1; });
+      const crossing = g.orders.filter(oid => { const m = idxR9.get(oid); return !!m && new Set([...m.keys()].filter(core).map(i => setOf.get(i)).filter(Boolean)).size > 1 && ![...m.keys()].some(i => customOrderOn(recs.get(i), oid)); });   // (CUSTOMSPLIT)
       if (!crossing.length) continue;
       const on = [...new Set(crossing.flatMap(oid => [...idxR9.get(oid).keys()]))].filter(i => setOf.has(i) && core(i)), sets = [...new Set(on.map(i => setOf.get(i)))];
       const st = setList.find(s => s.id === sets[0]), by = sets.map(sid => `${(setList.find(s => s.id === sid) || {}).name || sid}: ${and(on.filter(i => setOf.get(i) === sid).map(C.name))}`);
@@ -322,6 +333,7 @@
     const idx = S.index(C.norm);
     for (const [oid, m] of idx) {
       if (!S.spans(m)) continue;
+      if ([...m.keys()].some(i => customOrderOn(C.recs.get(i), oid))) continue;   // (CUSTOMSPLIT: a custom order's late piece on another sheet of its colour is let be)
       const byCls = new Map(); for (const sid of m.keys()) { const cls = R.metalClass(C.recs.get(sid)); if (!byCls.has(cls)) byCls.set(cls, []); byCls.get(cls).push(sid); }
       for (const [cls, ids] of byCls) if (ids.length > 1) warnings.push({ rule: 'orderSplit', ruleNo: RULE_NO.orderSplit, id: `orderSplit:${oid}:${cls}`, set: setOf.get(ids[0]) || null, sheets: ids, names: ids.map(C.name), message: `Order ${oid} has pieces on ${and(ids.map(C.name))}: a multi-piece order stays on ONE sheet of its colour, otherwise same-colour sheets chain into one unit` });
     }
@@ -382,5 +394,5 @@
   }
 
   const RULES = Object.freeze(Object.assign({}, RULE_NO));
-  return { check: evaluate, expected, explain, goldGaps, RULES, LETTER, GOLD_FAMILY };
+  return { check: evaluate, expected, explain, goldGaps, RULES, LETTER, GOLD_FAMILY, customOrderOn };
 });
