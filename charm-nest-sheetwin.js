@@ -5571,7 +5571,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
    *  left overlapping, once they are moved clear, by its card), and a set already released (approved for laser cutting, sent to the station, its labels made) has its files written again and
    *  says on its card and the sheet's what changed (Review.inPlaceRefile: releasedChange), so the laser never cuts from files made before the change. Never throws. */
   async function goldAfter(sh, what) {
-    if (!sh || !MANUAL_METALS.includes(sh.metal) || !allSheets().includes(sh)) return;
+    if (!sh || !(MANUAL_METALS.includes(sh.metal) || sh.metal === "rose") || !allSheets().includes(sh)) return;   // (RGHAND: a Rose Gold sheet changed by hand: a released set's files written again, its card says so)
     delete sh._goldWrite; sh._roseError = null;   // (its card may make its contour again now: a refusal met before the write is not this layout's)
     if (laserCut(sh)) return;
     // (STUCKSPIN 28 Oct 2026: neither holds the save's outcome for good: each goes on by itself past its minute, and the card says what it did)
@@ -5927,6 +5927,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!o.saving && HOP.writing.has(sh)) return "The sheet's files are being written in the background after the charms moved by hand. Try again in a moment.";   // (MOVEINSTANT, Paul 20 Oct 2026: writeOwed no longer holds the window)
     if (!o.saving && !o.api && W.flow) return "Another change in this window is still running. Try again once it is done.";
     const Sv = SV(); if (!Sv || !Sv.makeSheetGrid || !Sv.prepareVariant || !Sv.verify) return "The layout check is not loaded in this page.";
+    { const band = rgBand(sh); if (band && band.why) return band.why; }   // (RGHAND: a Rose Gold sheet's green line is read before its charms move: they stay on its side of it)
     if (!o.api && !sh.placements.length) return "No charm is placed on this sheet yet.";   // (CNManual.fits may ask about an empty sheet: a charm dragged onto it)
     return "";
   }
@@ -5936,7 +5937,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (MCEVERY: a piece whose order shipped is on the metal that was cut: it stays where it is, on every metal)
     { const r = W.rec, m = r && r.shippedOut; if (m && c.poolId && m[c.poolId]) return "This piece has shipped: it stays where it was cut."; }
     // (GOLDEDIT: on a 10K / 14K sheet a charm inside a green line moves too: the line follows the charms and is drawn again, goldAfter. Another metal's saved line keeps its charms, as before)
-    if (sh && !MANUAL_METALS.includes(sh.metal) && sh.roseProtected && (sh.roseProtected.placements || []).some(p => p.id === c.id)) return "This charm is inside a saved green line: it stays where the line was drawn.";
+    // (RGHAND: on a Rose Gold sheet whose line is drawn or cut, a charm inside it moves too, on its own side of the line: rgBand)
+    if (sh && !MANUAL_METALS.includes(sh.metal) && sh.roseProtected && !rgCut(sh) && (sh.roseProtected.placements || []).some(p => p.id === c.id)) return "This charm is inside a saved green line: it stays where the line was drawn.";
     return "";
   }
 
@@ -5954,6 +5956,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
    *  charms, which they may move in. Every other sheet: the copy as it is. */
   function preCut(sh, sheet) {
     const out = Object.assign({}, sheet);
+    { const band = rgCut(sh); if (band) { if (band.prior) out.remnant = band.prior; else delete out.remnant; return out; } }   // (RGHAND: a Rose Gold line's own metal: from the outline before it, rgBand)
     if (!sh || !MANUAL_METALS.includes(sh.metal) || !sh.roseCutAt || !out.remnant) return out;
     const rev = +(sh.roseStock && sh.roseStock.revision) || 0, was = rev > 1 ? (sh.roseHistory || []).find(c => +c.revision === rev - 1) : null, prof = was && was.plan && was.plan.profile;
     if (prof) out.remnant = prof; else delete out.remnant;
@@ -5961,7 +5964,67 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** (GOLDEDIT) A saved green line that keeps its charms and the metal it takes (roseProtected): another metal's. A 10K / 14K sheet's line is no cut (the laser's is: the stock's own outline,
    *  buildJob's remnant, stays), its charms move and the line follows them. */
-  const mcGuard = sh => !!(sh && sh.roseProtected && !MANUAL_METALS.includes(sh.metal));
+  const mcGuard = sh => !!(sh && sh.roseProtected && !MANUAL_METALS.includes(sh.metal) && !rgCut(sh));
+  /* RGHAND (Paul, 27 Nov 2026: "There should be nothing preventing the user from moving the pieces around on a given RG sheets even if the green cut line has already been marked" ... "the pieces must
+     use the green cut line as a boundary a barrier of the sheet so that pieces must stay to the left of the green cut line for that particular RG sheet"). A Rose Gold sheet whose green line is drawn
+     or its cut recorded keeps that line, its cut and its physical sheet exactly as they are: the metal past the line is its leftover, often another sheet's already (RG Nov.26 Set-1 Sheet 1 is nested
+     on what RG Nov.23 Set-1 Sheet 2's cut left), so nothing is set aside and nothing is approved again. Its charms move, turn and resize by hand anywhere on the metal the line keeps for them: never
+     nearer the line than the line's own allowance (CharmNestRose.inside, the shapes the line was drawn from moved with each charm, CharmNestRose.moved: refused, the charm springs back, mcLine), and
+     checked against the outline before the line (metal an earlier cut took) as any stock's metal cut away is (red where it meets it: MCFREE). The save is checked the same way on the server
+     (sheetLayoutPatch, keptBand). rec: the window's record or the sheet's own (its plan, the fingerprint its shapes were drawn for, its cut's revision).
+     → null: not such a sheet; { why, load? }: its line cannot be read here yet; { key, cut, prior, allowanceMm, shapes: Map id → shape, from: Map id → pose, sh } */
+  const RGB = new Map();
+  function rgBand(sh) {
+    if (!sh || sh.metal !== "rose" || laserCut(sh)) return null;
+    const rec = (sh._standalone && sh._rec) || (W.rec && W.rec.id === sh.sheetId ? W.rec : null);
+    const cutAt = (rec && rec.roseCutAt) || sh.roseCutAt || null, planJson = rec ? rec.rosePlanJson : null;
+    if (!cutAt && !planJson && !sh.rosePlanHash) return null;
+    const name = sheetWord(sh.sheetId, sh.fileBase, sh), stock = sh.roseStock || null;
+    if (!rec || !planJson || !rec.roseFingerprint) return { why: `${name}'s green line is still being read from the Library. Try again in a moment.` };
+    const key = [sh.sheetId, cutAt || 0, rec.rosePlanHash || "", rec.roseCutRevision == null ? "" : rec.roseCutRevision, String(rec.roseFingerprint).length, rec.roseRevision || 0, stock ? stock.revision : "", sh._roseLoaded ? 1 : 0, (sh.roseHistory || []).length, sh.roseMore ? 1 : 0].join("|");
+    const hit = RGB.get(sh.sheetId); if (hit && hit.key === key) return hit.band;
+    const band = (() => {
+      const R = window.CharmNestRose; if (!R || typeof R.inside !== "function" || typeof R.moved !== "function") return { why: "The green line's check is not loaded in this page; reload it." };
+      let plan = null, fp = null; try { plan = JSON.parse(planJson); fp = JSON.parse(rec.roseFingerprint); } catch (_) { plan = null; }
+      if (!plan || !plan.profile || !Array.isArray(plan.profile.values) || !Array.isArray(plan.shapes) || !Array.isArray(fp)) return { why: `${name}'s green line could not be read from its record, so its charms stay where they are.` };
+      let prior = null;
+      if (cutAt) {
+        if (!sh._roseLoaded) return { why: `${name}'s physical sheet is still being read. Try again in a moment.`, load: true };
+        const hist = sh.roseHistory || [], mine = hist.find(c => c && c.sheetId === sh.sheetId);
+        const own = rec.roseCutRevision != null && Number.isFinite(+rec.roseCutRevision) ? +rec.roseCutRevision : mine ? +mine.revision : 0;
+        if (!(own >= 1)) return { why: `${name}'s green line cut was not found on its physical sheet, so its charms stay where they are.` };
+        const before = hist.filter(c => c && !c.setAsideAt && +c.revision < own).sort((a, b) => +b.revision - +a.revision)[0];
+        if (before && !(before.plan && before.plan.profile)) return { why: `The outline ${name}'s physical sheet had before its green line could not be read, so its charms stay where they are.` };
+        if (!before && sh.roseMore && own > 1) return { why: `${name}'s physical sheet's earlier cuts are still being read. Try again in a moment.` };
+        prior = before ? before.plan.profile : null;
+      } else {
+        if (!stock) return { why: `${name}'s physical sheet is still being read. Try again in a moment.`, load: true };
+        if (+stock.revision !== +rec.roseRevision) return { why: `${name}'s physical sheet changed since its green line was drawn: draw its line again, then move its charms.` };
+        try { prior = stock.profileJson ? JSON.parse(stock.profileJson) : null; } catch (_) { return { why: `${name}'s physical sheet could not be read, so its charms stay where they are.` }; }
+      }
+      return { cut: plan.profile, prior, allowanceMm: +plan.allowanceMm || +rec.roseAllowanceMm || 0.2, shapes: new Map(plan.shapes.map(x => [x.id, x])), from: new Map(fp.map(r => [r[0], { cxPt: +r[1], cyPt: +r[2], angle: +r[3] || 0, scale: +r[4] || 1 }])), sh };
+    })();
+    band.key = key; RGB.set(sh.sheetId, { key, band }); if (RGB.size > 20) RGB.delete(RGB.keys().next().value);
+    if (band.load) rgLoad(sh, rec);
+    return band;
+  }
+  /** (RGHAND) The band of a Rose Gold sheet whose line holds its charms (rgBand, read), else null. */
+  const rgCut = sh => { const b = sh && sh.metal === "rose" ? rgBand(sh) : null; return b && b.cut ? b : null; };
+  /** (RGHAND) Its physical sheet and cuts read once (RoseStock.restore, as the Library window's own load), the button told when they are in. */
+  function rgLoad(sh, rec) {
+    if (!rec || !rec.roseStockId || sh._roseLoading || sh._rgLoading || Date.now() - (sh._rgTried || 0) < 5000 || !window.RoseStock || typeof window.RoseStock.restore !== "function") return;
+    sh._rgLoading = true; sh._rgTried = Date.now();
+    Promise.resolve().then(() => window.RoseStock.restore(sh, rec)).catch(e => console.warn("sheet window: green line read", e)).finally(() => { sh._rgLoading = false; RGB.delete(sh.sheetId); tryDo(mcButton); });
+  }
+  /** (RGHAND) Why a charm cannot stand at pose q on a Rose Gold sheet whose line holds its charms: past that line ("" = it may). Checked at the size it is put at, as the save writes it. */
+  function mcLine(G, c, q) {
+    const B = G && G.band; if (!B || !c) return "";
+    const s = B.shapes.get(c.id), f = B.from.get(c.id), p = B.sh.placements.find(z => z.id === c.id);
+    if (!s || !f || !p) return "This charm is not one its sheet's green line was drawn for, so it stays where it is.";
+    const size = q.size == null ? sizeOf(c) : +q.size, scale = Math.abs(size - sizeOf(c)) < 1e-9 ? +p.scale || 1 : frozenWhy(c) ? 1 : scaleOf(size);
+    const r = CharmNestRose.inside([CharmNestRose.moved(s, f, { cxPt: +q.cxPt, cyPt: +q.cyPt, angle: +q.angle || 0, scale })], B.cut, B.prior, B.allowanceMm);
+    return r.past.length ? `No room there: it would cross this sheet's green line. The line stays where it was drawn, so its charms stay ${B.cut.axis === "y" ? "above" : "to the left of"} it.` : "";
+  }
   /** Where a charm of the sheet stands: its pose moved in Manual Control (poses), else its placement and the size it has. */
   function mcPoseOf(sh, id, poses) {
     if (poses && poses.has(id)) return poses.get(id);
@@ -5971,7 +6034,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** The sheet as the nest sees it, every placed charm but `exceptId` stamped where it stands (kept for the same layout: the cross-sheet drag asks often). */
   function mcGrid(sh, exceptId, poses) {
     const clr = mcClr(), prof = mcGuard(sh) && sh.roseProtected.profile;
-    const sig = JSON.stringify([sh.sheetId || sh.page, exceptId, clr, MC_INSET, mcCornerPt(sh), prof ? 1 : 0, sh.roseStock && sh.roseStock.revision, sh.roseStock && sh.roseStock.profileJson ? String(sh.roseStock.profileJson).length : 0, (sh.roseStock && sh.roseStock.owner) || "", sh.placements.map(p => { const q = mcPoseOf(sh, p.id, poses); return q ? [p.id, q.cxPt, q.cyPt, q.angle, q.size] : p.id; }), sh.charms.length]);
+    const sig = JSON.stringify([sh.sheetId || sh.page, exceptId, clr, MC_INSET, mcCornerPt(sh), prof ? 1 : 0, sh.roseStock && sh.roseStock.revision, sh.roseStock && sh.roseStock.profileJson ? String(sh.roseStock.profileJson).length : 0, (sh.roseStock && sh.roseStock.owner) || "", sh.placements.map(p => { const q = mcPoseOf(sh, p.id, poses); return q ? [p.id, q.cxPt, q.cyPt, q.angle, q.size] : p.id; }), sh.charms.length, (rgCut(sh) || {}).key || ""]);
     const hit = MC.grids.get(sig); if (hit) return hit;
     // (MCINSTANT, 28 Oct 2026: the empty sheet kept (mcEdgeOf, GOLDEDIT's preCut and an earlier line's remnant as before), copied without its summed-area table: THE check asks fits() only)
     const E = mcEdgeOf(sh), sheet = E.sheet, edge = E.edge, grid = mcGridCopy(edge), others = [], byId = new Map(sh.charms.map(c => [c.id, c]));
@@ -5983,7 +6046,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       grid.stamp(v.fine.bits, v.fine.w, v.fine.h, Math.round(q.cxPt * 2 - v.solid.cx), Math.round(q.cyPt * 2 - v.solid.cy));
       others.push({ id: p.id, c, q, guarded: guarded.has(p.id) });
     }
-    const G = { grid, edge, sheet, clearancePt: mcClr(), others, except: exceptId };
+    const G = { grid, edge, sheet, clearancePt: mcClr(), others, except: exceptId, band: E.band || null };   // (RGHAND: a Rose Gold line that holds its charms, mcLine)
     MC.grids.set(sig, G); if (MC.grids.size > 6) MC.grids.delete(MC.grids.keys().next().value);
     return G;
   }
@@ -6032,6 +6095,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const x0 = Math.round(pose.cxPt * 2 - v.solid.cx), y0 = Math.round(pose.cyPt * 2 - v.solid.cy);
     if (![x0, y0].every(Number.isFinite)) return { ok: false, why: "pose", reason: "That position is not on the sheet." };
     const exact = { cxPt: +pose.cxPt, cyPt: +pose.cyPt, angle, size };
+    // (RGHAND: a Rose Gold sheet's green line is a barrier: past it the charm is refused and springs back, never kept red; why "line" is no MCFREE reason)
+    { const past = mcLine(G, c, exact); if (past) return { ok: false, why: "line", reason: past, pose: exact, v }; }
     let vr = null;
     if (G.grid.fits(v.fine.pm, x0, y0)) {
       if (full && full !== "exact") { vr = mcVerify(G, c, exact); if (!vr.ok) return { ok: false, why: vr.edge ? "edge" : "verify", reason: vr.reason, pose: exact, v }; }
@@ -6043,7 +6108,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const r = SV().tryPlace(G.grid, v, pose.cxPt, pose.cyPt, snapPt);
       if (r.ok && Number.isFinite(r.x) && Number.isFinite(r.y)) {
         const at = { cxPt: (r.x + v.solid.cx) / 2, cyPt: (r.y + v.solid.cy) / 2, angle, size };
-        if (!full || full === "exact" || mcVerify(G, c, at).ok) return { ok: true, why: "", reason: "", pose: at, v, snapped: true };
+        if (!mcLine(G, c, at) && (!full || full === "exact" || mcVerify(G, c, at).ok)) return { ok: true, why: "", reason: "", pose: at, v, snapped: true };
       }
     }
     if (vr && !vr.ok) return { ok: false, why: vr.edge ? "edge" : "overlap", reason: vr.reason, pose: exact, v };
@@ -6087,11 +6152,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function mcEdgeOf(sh) {
     // (MCINSTANT, 28 Oct 2026: known by what makes it (its stock, metal cut away, an earlier line), so a check that finds it kept builds no job for the sheet)
     const prof = mcGuard(sh) && sh.roseProtected.profile, rs = sh.roseStock || null, st0 = typeof stockFor === "function" ? tryDo(() => stockFor(sh.metal, sh)) : null;
-    const sig = JSON.stringify([sh.sheetId || sh.page, sh.metal, mcClr(), MC_INSET, mcCornerPt(sh), st0 ? [st0.wPt, st0.hPt] : 0, prof ? 1 : 0, rs && rs.revision, rs && rs.profileJson ? String(rs.profileJson).length : 0, (rs && rs.owner) || "", sh.roseCutAt || 0, (sh.roseHistory || []).length]);
+    const sig = JSON.stringify([sh.sheetId || sh.page, sh.metal, mcClr(), MC_INSET, mcCornerPt(sh), st0 ? [st0.wPt, st0.hPt] : 0, prof ? 1 : 0, rs && rs.revision, rs && rs.profileJson ? String(rs.profileJson).length : 0, (rs && rs.owner) || "", sh.roseCutAt || 0, (sh.roseHistory || []).length, (rgCut(sh) || {}).key || ""]);
     let E = MCE.get(sig); if (E) return E;
     const job = buildJob(sh), sheet = Object.assign(preCut(sh, job.sheet), { insetPt: MC_INSET });
     if (prof) sheet.remnant = prof;
-    E = { edge: SV().makeSheetGrid(sheet, mcClr(), 2), sheet, clearancePt: mcClr() };   // (ZEROGAP)
+    E = { edge: SV().makeSheetGrid(sheet, mcClr(), 2), sheet, clearancePt: mcClr(), band: rgCut(sh) };   // (RGHAND: preCut gave its metal from the outline before its line; mcLine keeps it left of the line)   // (ZEROGAP)
     MCE.set(sig, E); if (MCE.size > 8) MCE.delete(MCE.keys().next().value);
     return E;
   }
@@ -6112,7 +6177,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       grid.stamp(v.fine.bits, v.fine.w, v.fine.h, Math.round(o.cxPt * 2 - v.solid.cx), Math.round(o.cyPt * 2 - v.solid.cy));
       others.push({ id: oid, c, q: o, guarded: guarded.has(oid) });
     }
-    return { grid, edge: E.edge, sheet: E.sheet, clearancePt: E.clearancePt, others, except: id };
+    return { grid, edge: E.edge, sheet: E.sheet, clearancePt: E.clearancePt, others, except: id, band: E.band || null };
   }
   /** Map id -> "" (clear) | why it is red, for the given placed charms (all of them when ids is null), each where it stands (poses: Manual Control's moves). */
   function mcClashes(sh, poses, ids) {
@@ -6615,7 +6680,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
        cloud checks it once more when the moves are saved (sheetLayoutPatch). */
     // (GOLDEDIT, Paul 27 Oct 2026: a recorded green line cut is no lock. Nothing is given up when Manual Control merely starts: its charms are checked against the metal as it was before that
     //  cut (preCut), and the cut is set aside only when a change is saved (mcSave -> goldOpen); turned off with nothing moved, the cut, its line and its stock stay exactly as they were)
-    if (sh.roseCutAt || (W.rec && W.rec.roseCutAt)) mcSay("Its green line was approved: a change you save sets that approval aside, and Cut Sheet approves the line again.", "");
+    // (RGHAND, Paul 27 Nov 2026: a Rose Gold sheet's line is a barrier: it stays, and its charms move on their side of it)
+    { const band = rgCut(sh); if (band) mcSay(`Its green line stays where it was drawn: move, turn and resize its charms anywhere ${band.cut.axis === "y" ? "above" : "to the left of"} it.`, "");
+      else if (sh.roseCutAt || (W.rec && W.rec.roseCutAt)) mcSay("Its green line was approved: a change you save sets that approval aside, and Cut Sheet approves the line again.", ""); }
     stopHand(true); if (W.add) closeAdd();
     if (backFace()) turnPlate("front");   // (the tool works on the sheet as it lies, face up)
     Object.assign(MC, { on: true, sh, id: sh.sheetId, who, sel: null, lift: null, drag: null, edits: new Map(), valid: null, msg: "", tone: "", owed: new Set() });
@@ -7199,6 +7266,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         const res = mcCheck(mcGrid(sh, id, edits), c, q, 0, true);
         // (MCFREE, Paul 20 Oct 2026: a charm placed where it overlaps, or past the margin, is saved where it was put, red; the sheet's own check flags it, and it goes to no
         //  set and no laser until it is moved clear (sheetClashes: the sheet window, its card, Sets.validateRelease). Only a charm that cannot be checked at all stops the save)
+        if (!res.ok && res.why === "line") throw new Error(`${ridOfC(c) ? `order ${ridOfC(c)}'s charm` : "a charm"} would cross the sheet's green line, which stays where it was drawn`);   // (RGHAND)
         if (!res.ok && !mcFree(res)) throw new Error(`${ridOfC(c) ? `order ${ridOfC(c)}'s charm` : "a charm"} could not be checked where it was put (${(res.reason || "it moved").replace(/^No room there: /, "").replace(/\.$/, "")})`);
       }
       check.state = "ok"; paint();

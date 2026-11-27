@@ -142,6 +142,42 @@
     const full=room(remaining)<smallest;if(full)remaining.values=remaining.values.map(()=>remaining.axis==='x'?w:h);
     return {version:1,profile:remaining,lines:lines(remaining,base),shapes,allowanceMm,full,removedPt2:area(remaining)-(prior?area(prior):0),remainingPt2:w*h-area(remaining)};
   }
+  /* RGHAND (Paul, 27 Nov 2026: "There should be nothing preventing the user from moving the pieces around on a given RG sheets even if the green cut line has already been marked" ... "the pieces must
+     use the green cut line as a boundary a barrier of the sheet so that pieces must stay to the left of the green cut line for that particular RG sheet"). A Rose Gold sheet's line stays exactly where it
+     was drawn; its charms move, turn and resize by hand on the metal it keeps for them. The two below are that barrier, the same on the page and on the server.
+     moved(shape, from, to): a shape of a plan (sheet points, drawn for its charm placed at `from` {cxPt, cyPt, angle (degrees), scale}) where the charm stands at `to` instead: the same outline
+     turned, sized and moved as the charm is (shapes() below places an outline at centre + rotate(angle) · scale · outline). */
+  function moved(shape,from,to){
+    const k=(+to.scale||1)/(+from.scale||1),a=((+to.angle||0)-(+from.angle||0))*Math.PI/180,cos=Math.cos(a)*k,sin=Math.sin(a)*k;
+    const f=paths=>(paths||[]).map(path=>path.map(([x,y])=>{const dx=x-from.cxPt,dy=y-from.cyPt;return [+(to.cxPt+dx*cos-dy*sin).toFixed(4),+(to.cyPt+dx*sin+dy*cos).toFixed(4)];}));
+    return {...shape,paths:f(shape.paths),ink:f(shape.ink)};
+  }
+  // Each row of frontier p that the edge a→b meets, widened by pad along the rows: f(i, dMin, dMax), its depth there (as profile() reads an edge).
+  function rowsOf(p,a,b,pad,f){
+    const x=p.axis==='x',t0=x?a[1]:a[0],t1=x?b[1]:b[0],d0=x?a[0]:a[1],d1=x?b[0]:b[1],n=p.values.length;
+    const lo=Math.max(0,Math.floor((Math.min(t0,t1)-pad)/p.step)),hi=Math.min(n-1,Math.floor((Math.max(t0,t1)+pad)/p.step));
+    for(let i=lo;i<=hi;i++){
+      if(t0===t1){f(i,Math.min(d0,d1),Math.max(d0,d1));continue;}
+      const ta=Math.max(Math.min(t0,t1),i*p.step-pad),tb=Math.min(Math.max(t0,t1),(i+1)*p.step+pad),da=d0+(d1-d0)*(ta-t0)/(t1-t0),db=d0+(d1-d0)*(tb-t0)/(t1-t0);
+      f(i,Math.min(da,db),Math.max(da,db));
+    }
+  }
+  /* inside(shapes, cut, prior, allowanceMm): the shapes that leave the metal a line keeps for its own sheet. past: an outline nearer the line than the line's own allowance (the very rule profile()
+     drew the line by, so the line still runs where it was drawn; where the line reaches the sheet's far edge there is no leftover, and that edge is the sheet's own check); into: an outline on metal
+     an earlier cut took (prior; none for a first cut). cut, prior: frontiers (validate). → { past: [id], into: [id] } */
+  function inside(shapes,cut,prior,allowanceMm=.2){
+    const pad=allowanceMm/MM+.015+SLIM_MARGIN_PT,tol=.0011,depth=cut.axis==='x'?cut.wPt:cut.hPt,past=[],into=[];
+    for(const shape of shapes||[]){
+      let over=false,under=false;
+      for(const path of shape.paths||[])for(let j=0;j<path.length;j++){
+        const a=path[j],b=path[(j+1)%path.length];
+        if(!over)rowsOf(cut,a,b,pad,(i,lo,hi)=>{if(cut.values[i]<depth-1e-6&&hi+pad>cut.values[i]+tol)over=true;});
+        if(prior&&!under)rowsOf(prior,a,b,0,(i,lo)=>{if(lo<prior.values[i]-tol)under=true;});
+      }
+      if(over)past.push(shape.id);if(under)into.push(shape.id);
+    }
+    return {past,into};
+  }
   function flatten(seg){
     const paths=[];for(const sub of seg?.subpaths||[]){let path=[],cur=null;
       const cubic=(a,b,c,d,depth=0)=>{const len=Math.hypot(d[0]-a[0],d[1]-a[1]);const distance=p=>len?Math.abs((d[0]-a[0])*(a[1]-p[1])-(a[0]-p[0])*(d[1]-a[1]))/len:Math.hypot(p[0]-a[0],p[1]-a[1]);
@@ -190,5 +226,5 @@
     }
     return {charms,job:{sheet:{wPt:100/MM,hPt:50/MM,insetPt:1.5,remnant:prior},pieces,angles:Array.from({length:36},(_,i)=>i*10),clearancePt:.6,fineRes:2,coarseRes:.5,maxFill:.95,maxTrials:3,timeBudgetMs:2500,seed:41+batch,verifyResult:true}};
   }
-  return {flatten,shapes,slimShape,simplify,validate,area,frontier,intersects,stamp,plan,lines,room,tidy,MM,EDGE_PT,POCKET_PT,demoBatch,CUT_METALS,cuts,cutCode,cutWord,owesLine,holdsLine};
+  return {flatten,shapes,slimShape,simplify,validate,area,frontier,intersects,stamp,plan,lines,room,tidy,moved,inside,MM,EDGE_PT,POCKET_PT,demoBatch,CUT_METALS,cuts,cutCode,cutWord,owesLine,holdsLine};
 });
