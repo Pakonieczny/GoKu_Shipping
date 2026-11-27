@@ -52,18 +52,30 @@
   const handOf=l=>{const c=l && !(Array.isArray(l.poolIds) && l.poolIds.length) && (l.state==='skipped' && !l.hold ? {state:'completed',how:'skip',completedAt:+l.releasedAt || 0,completedBy:l.releasedBy || ''} : l.handDone || l.spec?.customDone);return isHand(c)?c:null;};
   /* ONECOUNT (Paul, 23 Nov 2026: Set-5 · 2026-11-12 said 5 / 5 and 8 / 8 on screen and stood in Laser cutting, and "Mark set completed" was refused: the cloud counted 4 more engravings to approve): a line the
      cloud read as having NOTHING to engrave was written { needed: false, state: 'none', approved: false } by its own summary (46 lines that day), and was counted as waiting. Nothing to engrave waits on nobody. */
+  /* SEALFACES (Paul, 27 Nov 2026, Set-1 · 2026-11-24: "Why am I getting this problem when I press approve for laser cutting ... All of the back engravings have been approved"): a piece engraved on its FRONT only
+     (4244028423 "Waldo", 4245556382) whose decision was written without its faces read as a back that has no file ("Approved, but its back file is not saved yet"), and the set could never go to the laser.
+     The line's approvals say which face each one was (a seal with face "front"; a seal without one at the very time of a front seal is that same approval's line copy): an approved line of ONE piece whose
+     approvals were all of its front engraves its front alone. Only an approved decision is read so: a piece still waiting is never let through by this. */
+  function sealFaces(row,e,ids){
+    if(!e || e.faces || !e.approved || ids.length!==1)return null;
+    const seals=(row.engrave && Array.isArray(row.engrave.seals)?row.engrave.seals:[]).filter(x=>x && x.how==='engraveApproved');
+    const fronts=seals.filter(x=>x.face==='front'),at=new Set(fronts.map(x=>+x.at));
+    if(!fronts.length || seals.some(x=>x.face!=='front' && !at.has(+x.at)))return null;
+    return {front:{needed:true,state:e.state,approved:true}};
+  }
   function decisions(rows){
     const out={};
     // (a line whose record lost its pool ids is read by the ids the pool gives its copies, "<line key>_<n>", as orderReports reads them)
-    for(const row of rows || [])for(const id of copyIds(row,lineKeyOf(row))) {
+    for(const row of rows || []){const ids=copyIds(row,lineKeyOf(row));for(const id of ids) {
       // (a line that splits its engraving per ear, `engrave.pieces[poolId] = {needed,state,approved}`: this piece's own decision; every other line: the line's, as always)
       const e=row.engrave && row.engrave.pieces && typeof row.engrave.pieces[id]==='object' && row.engrave.pieces[id] ? row.engrave.pieces[id] : row.engrave;
       // a cancelled order's piece left on a released sheet is cut and set aside, so it waits on no engraving decision
       // A line with no personalization, message or note has nothing to engrave, before its engraving check has run too.
       // The page reads that from the row's reading, the server from the run's line record.
       const candidate=row.spec ? row.spec.engraveCandidate : row.engraveCandidate;
-      out[id]=row.state==='gone' && !e?.approved ? {needed:false,state:'none',approved:true} : e ? {needed:!!e.needed,state:e.state,approved:!!e.approved || (!e.needed && ['none','skipped'].includes(e.state)),...(e.faces?{faces:e.faces}:{})} : candidate===false ? {needed:false,state:'none',approved:true} : {needed:true,state:'unknown',approved:false};
-    }
+      const fc=e && (e.faces || sealFaces(row,e,ids));
+      out[id]=row.state==='gone' && !e?.approved ? {needed:false,state:'none',approved:true} : e ? {needed:!!e.needed,state:e.state,approved:!!e.approved || (!e.needed && ['none','skipped'].includes(e.state)),...(fc?{faces:fc}:{})} : candidate===false ? {needed:false,state:'none',approved:true} : {needed:true,state:'unknown',approved:false};
+    }}
     return out;
   }
   const orderIds=s=>[...new Set([...(Array.isArray(s.orders)?s.orders:[]),...idsOf(s).map(id=>String(id).split('_')[0]).filter(id=>/^\d+$/.test(id))].map(String))];
@@ -499,7 +511,7 @@
       if(d && d.needed===false && d.approved===true && ['none','skipped'].includes(d.state) && !b && !fr)return {id,plain:true};
       const f=pieceFaces(d,b,fr);
       const out={id,accepted:f.accepted,saved:f.saved && !!(b || fr),back:b,state:d?.state || 'unknown'};
-      if(fr || d?.faces)Object.assign(out,{front:fr,faces:true,expB:f.expB,expF:f.expF});   // (only a piece with a front says more: every other copy reads as it always did)
+      if(fr || d?.faces)Object.assign(out,{front:fr,faces:true,expB:f.expB,expF:f.expF,sB:f.sB,sF:f.sF});   // (only a piece with a front says more: every other copy reads as it always did)
       return out;
     });
   }
@@ -542,7 +554,8 @@
     const unsaved=cs.filter(c=>!c.plain && c.accepted && !c.saved);let failedFile=false;
     for(const c of unsaved.slice(0,LISTED)){
       const bad=r=>!!r && (r.verified?.file?.ok===false || r.verified?.geometry?.ok===false);
-      const failed=bad(c.back) || bad(c.front), face=bad(c.back) || !bad(c.front) ? 'back' : 'front', rec=face==='front' ? c.front : c.back;
+      // (SEALFACES: the face named is the one whose file is missing: a front-only piece's front, never a back it does not have)
+      const failed=bad(c.back) || bad(c.front), face=bad(c.back) ? 'back' : bad(c.front) ? 'front' : c.faces && c.expF && !c.sF && !(c.expB && !c.sB) ? 'front' : 'back', rec=face==='front' ? c.front : c.back;
       items.engraving.push({kind:'charm',id:c.id,label:N.charm(c.id),part:'files',why:failed?`Its saved ${face} file failed its check: approve the ${face} again`:rec?.approvedAt?`Approved, and its ${face} file is still being saved`:`Approved, but its ${face} file is not saved yet`});
       if(failed){hard.engraving=true;failedFile=true;}
     }
