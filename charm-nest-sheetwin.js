@@ -6413,6 +6413,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return STAND.why || "The sheet is being made ready for Manual Control. Try again in a moment.";
   }
   /** The sheet loaded from its saved record (see above), once its stock and green line are read; null meanwhile (mcStandWhy says why). */
+  /** MCREBIND: the window's pieces `shown` stand exactly where the page's copy `sh` has them, every one of them, and that copy can draw each (its silhouette): the window takes that copy's charm objects
+   *  (x.c) and true is answered. false, nothing changed, for anything else (a piece more or less, a place that differs, a charm the copy cannot draw): the window reads the sheet again, as before. */
+  function mcRebind(shown, sh) {
+    if (!sh || !Array.isArray(sh.placements) || !Array.isArray(sh.charms) || !shown.length || shown.length !== sh.placements.length) return false;
+    const live = new Map(sh.placements.map(p => [p.id, p])), byId = new Map(sh.charms.map(c => [c.id, c])), turn = a => ((+a || 0) % 360 + 360) % 360;
+    const same = (a, b) => !!a && !!b && Math.abs(+a.cxPt - +b.cxPt) < 0.01 && Math.abs(+a.cyPt - +b.cyPt) < 0.01 && Math.min(Math.abs(turn(a.angle) - turn(b.angle)), 360 - Math.abs(turn(a.angle) - turn(b.angle))) < 0.01 && Math.abs((+a.scale || 1) - (+b.scale || 1)) < 1e-4;
+    if (!shown.every(x => same(x.p, live.get(x.id)) && (c => !!c && !!c.bits && c.w > 0)(byId.get(x.id)))) return false;
+    for (const x of shown) x.c = byId.get(x.id);
+    return true;
+  }
   function mcStandalone() {
     const rec = W.rec, id = W.id;
     if (!rec || rec.id !== id || !MC_METALS.includes(rec.metal)) return null;
@@ -6594,6 +6604,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const who = needName(() => mcToggle()); if (!who) return;
     // the window shows the sheet as this sorter holds it, charm for charm (a read behind the page is read again first)
     const live = new Map(sh.placements.map(p => [p.id, p])), shown = W.pieces.filter(x => !x.gone), byId = new Map(sh.charms.map(c => [c.id, c]));
+    // (MCREBIND, Paul 27 Nov 2026, GF_Nov.24.26_Set-2_Sheet-1, released long before: "it was not allowing them with this message, but these sheets have nothing being drawn on them"): the page's copy
+    //  of the sheet was built again in the background since the window drew it (charm-nest-cloud-sheets.js: a newer revision of the cloud's record), the same charms in the same places, only other
+    //  objects; the window kept the old ones, its read again kept them too, and every press said "an older copy". The same sheet in the same places is the same sheet: the window takes the page's own charms
+    if (W.geom && mcRebind(shown, sh)) { if (!sh._standalone) W.live = sh; }
     if (!W.geom || shown.length !== live.size || shown.some(x => !live.has(x.id) || x.c !== byId.get(x.id))) { mcSay("The window showed an older copy of this sheet; it is read again. Press Manual Control once it is drawn.", "bad"); return open(W.id, { keepWork: true, keepSet: false }); }
     /* OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"): Manual Control is on in the frame it is pressed in, and the first drag happens at once; the claim
        (one person at a time, op manualClaim) is taken behind it (mcClaimed). Refused (another screen holds the sheet, the laser cut it): every charm goes back where it stood, Manual
