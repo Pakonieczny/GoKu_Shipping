@@ -525,3 +525,44 @@ module.exports.partialGroups=partialGroups;
 module.exports.fitCheck=fitCheck;
 module.exports.assertProtected=assertProtected;
 module.exports.lineKeeps=lineKeeps;
+/* RGHAND (Paul, 27 Nov 2026: "There should be nothing preventing the user from moving the pieces around on a given RG sheets even if the green cut line has already been marked" ... "the pieces must
+   use the green cut line as a boundary a barrier of the sheet so that pieces must stay to the left of the green cut line for that particular RG sheet"). A Rose Gold sheet's green line (drawn, or its
+   cut recorded) stays exactly where it was drawn while its charms are moved by hand: nothing is set aside, its physical sheet and its leftover (often another sheet's already) are not touched.
+   keptBand: the metal that line keeps for its charms, read in the move's own transaction. cut: the line's frontier (its plan's profile); prior: the outline before it (a recorded cut: the latest
+   earlier cut of its physical sheet that still stands, as roseGet and roseReopen read them, ASIDE included; a line drawn only: its physical sheet as it was when the line was drawn); shapes / from:
+   the outlines the line was drawn from and the poses they were drawn for (its fingerprint). stocksCol: the Charm_Nest_Rose_Stock collection. → { cut, prior, allowanceMm, shapes, from } | { error } */
+module.exports.keptBand=async function keptBand(tx,stocksCol,sheet){
+  const name=String(sheet.fileBase||'This sheet').slice(0,80);
+  let plan=null,fp=null;try{plan=parse(sheet.rosePlanJson);fp=parse(sheet.roseFingerprint);}catch(_){plan=null;}
+  if(!plan||!plan.profile||!Array.isArray(plan.profile.values)||!Array.isArray(plan.shapes)||!Array.isArray(fp))return {error:`${name}'s green line is not in its record, so its charms stay where they are`};
+  const sid=id(sheet.roseStockId)?sheet.roseStockId:null;
+  if(!sid)return {error:`${name} holds no physical sheet, so its green line cannot be read`};
+  const sref=stocksCol.doc(sid);
+  let prior=null;
+  if(sheet.roseCutAt){
+    let own=sheet.roseCutRevision!=null&&Number.isFinite(+sheet.roseCutRevision)?+sheet.roseCutRevision:null;
+    if(own==null){const sd=await tx.get(sref),st=sd.exists?sd.data():null;if(st&&st.lastCutSheetId===sheet.id)own=+st.revision;}   // (a cut saved before its revision was kept on the sheet: the stock says whose last cut it was)
+    if(!(own>=1))return {error:`${name}'s green line cut cannot be found on its physical sheet, so its charms stay where they are`};
+    const aside=new Set((Array.isArray(sheet.roseReseated)?sheet.roseReseated:[]).filter(x=>x&&x.reopen&&x.cut&&x.cut.revision!=null&&Number.isFinite(+x.cut.revision)).map(x=>+x.cut.revision));
+    const q=await tx.get(sref.collection('cuts').where('revision','<',own).orderBy('revision','desc').limit(8));
+    const c=q.docs.map(d=>d.data()).find(c=>c&&!c.setAsideAt&&!(aside.has(+c.revision)&&c.sheetId===sheet.id));
+    if(c){const p=parse(c.planJson);if(!p||!p.profile)return {error:`The outline ${name}'s physical sheet had before its green line was cut could not be read, so its charms stay where they are`};prior=p.profile;}
+  }else{
+    const sd=await tx.get(sref),st=sd.exists?sd.data():null;
+    if(!st)return {error:`${name}'s physical sheet is not in the cloud, so its green line cannot be read`};
+    if(+st.revision!==+sheet.roseRevision)return {error:`${name}'s physical sheet changed since its green line was drawn: draw its line again, then move its charms`};
+    prior=parse(st.profileJson);
+  }
+  return {cut:plan.profile,prior,allowanceMm:+plan.allowanceMm||+sheet.roseAllowanceMm||.2,shapes:new Map(plan.shapes.map(s=>[s.id,s])),from:new Map(fp.map(r=>[r[0],{cxPt:+r[1],cyPt:+r[2],angle:+r[3]||0,scale:+r[4]||1}]))};
+};
+/* RGHAND: the ids of `ids` (charms moved by hand, `placements` as they now stand) that would cross the line keptBand read: a charm whose outline comes nearer the line than its own allowance,
+   or one the line was not drawn for. Metal an earlier cut took is the page's check (the charm stays where it was put, red, and the sheet goes to no set: MCFREE), never this refusal. */
+module.exports.pastLine=function pastLine(band,placements,ids){
+  const out=[];
+  for(const i of ids){
+    const p=(placements||[]).find(z=>z&&z.id===i);if(!p)continue;
+    const s=band.shapes.get(i),f=band.from.get(i);if(!s||!f){out.push(i);continue;}
+    if(Rose.inside([Rose.moved(s,f,{cxPt:+p.cxPt,cyPt:+p.cyPt,angle:+p.angle||0,scale:+p.scale||1})],band.cut,band.prior,band.allowanceMm).past.length)out.push(i);
+  }
+  return out;
+};

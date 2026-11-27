@@ -180,7 +180,10 @@ STEP.S0 = async X => {
        piece's FRONT in the Charm Editor (charm-nest-pdf.js buildSheet). A sheet holding an edited piece (its placement's hash carries the edit's ~ae mark) whose files say nothing of the fix is
        written ONCE again, from its layout as it is: nothing is nested and no piece moves. Its new report says frontInSheet, so it is never written again for this. */
     const frontLost = !!report && !(num(report.frontInSheet) >= 1) && (rec.placements || []).some(p => p && /~ae[0-9a-z]+$/.test(String(p.hash || "")));
-    return { report, changed: !report || art || redrawn || frontLost || was.size !== now.size || [...now].some(k => !was.has(k)) };
+    // (RGHAND, 27 Nov 2026: a Rose Gold sheet whose cut is recorded may have a charm resized by hand where it stands: its size is a change of its files too, read where its files say a size)
+    const sized = new Map(((report && report.placements) || []).filter(p => p && p.id != null && p.scale != null && Number.isFinite(+p.scale)).map(p => [String(p.id), +p.scale]));
+    const resized = (rec.placements || []).some(p => p && p.id != null && sized.has(String(p.id)) && Math.abs((+p.scale || 1) - sized.get(String(p.id))) > 1e-4);
+    return { report, changed: !report || art || redrawn || frontLost || resized || was.size !== now.size || [...now].some(k => !was.has(k)) };
   };
   const filesCurrent = async () => {
     try { await X.call({ op: "putSheet", sheet: { id: X.sheetId, filesOwed: null, outputs: rec.outputs }, contentBase: num(rec.contentRev), filesOwedBase: num(rec.filesOwed) }, `files-current|${num(rec.layoutRev)}|${num(rec.contentRev)}|${num(rec.filesOwed)}`);   /* (TWOEDITS, 24 Nov 2026: a front edit saved while the back's was looked at lost its owed mark here) */ X.notes.push("its files already show its layout: the owed mark is off and its picture is current"); }

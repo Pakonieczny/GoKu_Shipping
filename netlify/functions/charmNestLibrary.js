@@ -1391,13 +1391,14 @@ async function op_manualClaim(b) {
   const ref = col(SHEETS).doc(b.id);
   return db.runTransaction(async tx => {
     // (COST, Oct 2026: the claim is kept alive every 30 s; it reads the three fields it decides on, not the sheet record whole, which can be hundreds of KB)
-    const [snap] = await txGetAll(tx, [ref], ["manualEdit", "laserDoneAt", "roseCutAt", "metal"]); if (!snap.exists) return { error: "This sheet is no longer in the Library.", status: 404 };
+    const [snap] = await txGetAll(tx, [ref], ["manualEdit", "laserDoneAt"]); if (!snap.exists) return { error: "This sheet is no longer in the Library.", status: 404 };
     const d = snap.data(), cur = d.manualEdit && typeof d.manualEdit === "object" && d.manualEdit.tab ? d.manualEdit : null, now = Date.now();
     if (b.release === true) { if (cur && cur.tab === tab) tx.set(ref, { manualEdit: null }, { merge: true }); return { ok: true, held: null }; }
     if (cur && cur.tab !== tab && now - num(cur.at) < MANUAL_STALE_MS) return { ok: false, held: { by: str(cur.by, 80), at: num(cur.at) } };
     // (Paul, 27 Oct 2026: a 10K / 14K sheet changes "until such time a sheet has been cut on a laser and marked as cut": its recorded green line cut is no lock, the page sets it aside
-    //  first (roseReopen); the laser's mark alone refuses. Another metal's recorded cut still refuses, as before)
-    if (num(d.laserDoneAt) > 0 || (d.roseCutAt && !["gold10k", "gold14k"].includes(d.metal))) return { ok: false, held: null, refused: "cut" };
+    //  first (roseReopen); the laser's mark alone refuses. RGHAND, Paul 27 Nov 2026: "There should be nothing preventing the user from moving the pieces around on a given RG sheets even if the
+    //  green cut line has already been marked": a Rose Gold sheet's recorded cut is no lock either; its charms stay on its side of the line, sheetLayoutPatch)
+    if (num(d.laserDoneAt) > 0) return { ok: false, held: null, refused: "cut" };
     const held = { by, tab, at: now };
     tx.set(ref, { manualEdit: held }, { merge: true });
     return { ok: true, held };
@@ -1442,7 +1443,12 @@ async function op_sheetLayoutPatch(b) {
     if (num(old.laserDoneAt) > 0) return { error: "This sheet has been cut on the laser: its charms can no longer change.", status: 409, refused: "cut" };
     const cur = old.manualEdit && typeof old.manualEdit === "object" && old.manualEdit.tab ? old.manualEdit : null;
     if (cur && cur.tab !== tab && now - num(cur.at) < MANUAL_STALE_MS) return { error: `${str(cur.by, 80) || "Someone"} took this sheet on another screen: your moves were not saved there.`, status: 409, refused: "held", held: { by: str(cur.by, 80), at: num(cur.at) } };
-    if (old.roseCutAt) return { error: `${name}'s green line cut is recorded: it is set aside before its charms change. Try again.`, status: 409, refused: "line" };
+    if (old.roseCutAt && old.metal !== "rose") return { error: `${name}'s green line cut is recorded: it is set aside before its charms change. Try again.`, status: 409, refused: "line" };
+    // (RGHAND, Paul 27 Nov 2026: "the pieces must use the green cut line as a boundary a barrier of the sheet so that pieces must stay to the left of the green cut line for that particular RG
+    //  sheet"): a Rose Gold sheet's green line, drawn or its cut recorded, stays where it was drawn and nothing is set aside; a charm moved past it is refused, read here in this transaction)
+    const protection = require("./_charmNestRoseStock");
+    const band = old.metal === "rose" && (old.roseCutAt || old.rosePlanJson) ? await protection.keptBand(tx, col("Charm_Nest_Rose_Stock"), old) : null;
+    if (band && band.error) return { error: `${band.error}: the moves were not saved.`, status: 409, refused: "line" };
     const placements = (Array.isArray(old.placements) ? old.placements : []).map(p => Object.assign({}, p)), charms = (Array.isArray(old.charms) ? old.charms : []).map(c => Object.assign({}, c));
     const missing = ids.filter(id => !placements.some(p => p && p.id === id) || !charms.some(c => c && c.id === id));
     if (missing.length) return { error: `${missing.length === 1 ? "A charm" : missing.length + " charms"} moved by hand left ${name} meanwhile: the moves were not saved.`, status: 409, refused: "gone", missing: missing.slice(0, 20) };
@@ -1458,15 +1464,20 @@ async function op_sheetLayoutPatch(b) {
       if (pin && pin.pinned && typeof pin.pinned === "object") { c.pinned = { cxPt: +pin.pinned.cxPt, cyPt: +pin.pinned.cyPt, angle: +pin.pinned.angle || 0, ...(Number.isFinite(+pin.pinned.size) && +pin.pinned.size !== 1 ? { size: +pin.pinned.size } : {}) }; delete c.arrivalPin; }
       if (pin && pin.manual && typeof pin.manual === "object") c.manual = { by: str(pin.manual.by, 80) || by, at: num(pin.manual.at) || now, ...(Number.isFinite(+pin.manual.size) && +pin.manual.size !== 1 ? { size: +pin.manual.size } : {}) };
     }
-    const protection = require("./_charmNestRoseStock"), guard = protection.protectedLayout(old);
-    try { protection.assertProtected(guard, placements, old.metal); } catch (e) { return { error: `${name}: ${e.message}. Its green line is set aside first; try again.`, status: 409, refused: "line" }; }
+    if (band) {
+      const past = protection.pastLine(band, placements, ids);
+      if (past.length) return { error: `${name}: ${past.length === 1 ? "a charm" : past.length + " charms"} would cross its green line, which stays where it was drawn, so its charms stay ${band.cut.axis === "y" ? "above" : "to the left of"} it: the moves were not saved.`, status: 409, refused: "line", past: past.slice(0, 20) };
+    } else {
+      const guard = protection.protectedLayout(old);
+      try { protection.assertProtected(guard, placements, old.metal); } catch (e) { return { error: `${name}: ${e.message}. Its green line is set aside first; try again.`, status: 409, refused: "line" }; }
+    }
     const overwrote = Mutations.overlap(curOf, wantOf, base ? baseOf : null, old._w);
     const doc = { placements, charms, updatedAt: FV.serverTimestamp(), _w: Mutations.stampFields(old._w, ids.map(id => "pose:" + id), by, b.mid, now) };
     if (b.mark && typeof b.mark === "object") doc.manual = { at: num(b.mark.at) || now, by: str(b.mark.by, 80) || by, n: num(b.mark.n) || ids.length };
     if (b.release === true && (!cur || cur.tab === tab)) doc.manualEdit = null;
     if (moved) doc.filesOwed = now;   // (as a move between sheets marks it: the page's file job clears it once the files are written, putSheet { filesOwed: null })
     if (moved && contentOn) doc.contentRev = (num(old.contentRev) || 0) + 1;
-    if (old.rosePlanJson && protection.fingerprint && protection.fingerprint({ placements, charms }) !== old.roseFingerprint) Object.assign(doc, { rosePlanJson: null, rosePlanHash: null, roseFingerprint: null });
+    if (!band && old.rosePlanJson && protection.fingerprint && protection.fingerprint({ placements, charms }) !== old.roseFingerprint) Object.assign(doc, { rosePlanJson: null, rosePlanHash: null, roseFingerprint: null });   // (RGHAND: a Rose Gold line stays, with the fingerprint its shapes were drawn for)
     tx.set(ref, doc, { merge: true });
     return { ok: true, id: b.id, moved, overwrote, filesOwed: moved ? doc.filesOwed : (old.filesOwed || null) };
   });
