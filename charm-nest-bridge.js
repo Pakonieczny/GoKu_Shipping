@@ -13073,14 +13073,16 @@ const Engrave = window.Engrave = (() => {
     render();
     const rw = doneRowOf(key); if (rw) { rw.scrollIntoView({ block: "nearest", behavior: "smooth" }); mark(rw); }
   }
+  /* STILLBAR (Paul, 27 Nov 2026, screen recording of the Design & Engrave bar: "I don't want to see this happen in the engraving menu. It interrupts the engraving workflow"): the Working chip came and went
+     between the tabs and the search box, and each time it did the search box, Any time and Newest first jumped sideways under the pointer. It stands last in the bar, after every control, and keeps
+     its room while nothing is being fitted (unseen, never taken out), so the page starting or stopping a preview moves nothing; it shows, with its spinner, while one is being read or fitted. */
   function renderWorking(v, jobs) {
     const host = v.querySelector("[data-eg-working]"); if (!host) return;
+    const bar = host.closest(".egBar"); if (bar && bar.lastElementChild !== host) bar.appendChild(host);
     const n = jobs.filter(isWorking).length;
-    host.hidden = !n;
-    if(n) {
-      if(!host.firstElementChild)host.innerHTML='<span class="egTab working" title="Actively reading or fitting engraving previews"><span class="spin"></span>Working<b></b></span>';
-      const count=host.querySelector('b');if(count.textContent!==String(n))count.textContent=String(n);
-    }
+    if(!host.firstElementChild)host.innerHTML='<span class="egTab working" title="Actively reading or fitting engraving previews"><span class="spin"></span>Working<b>1</b></span>';
+    host.hidden = !n;   // (idle: hidden, its room kept by the bar's own rule, charm-nest-1.html .egBar>[data-eg-working][hidden])
+    const count=host.querySelector('b'), t=String(n || 1);if(count.textContent!==t)count.textContent=t;
   }
   const waitingReason = (job, panel) => ["ready", "fitting"].includes(job.state)
     ? (canFit(job) ? `Preparing this ${facedJob(job) ? faceWord(job) + " " : ""}engraving preview…` : "Waiting for this charm’s sheet and outline. Its preview will resume when they are ready.")
