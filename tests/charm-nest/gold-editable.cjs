@@ -13,7 +13,8 @@
 //      changed after it was approved for laser cutting
 //   d  a 14K sheet cut on the laser (the sheet's mark, or its set's): Manual Control and the hop refuse, "has been cut on the laser: its charms can no longer change", nothing written; the server
 //      refuses too
-//   e  GF and Rose Gold keep their rules (no Manual Control on GF; a Rose Gold cut still refuses the claim, the reopen and a moved layout; a charm in a Rose Gold saved line stays)
+//   e  GF and Rose Gold keep their rules (no Manual Control on GF; a Rose Gold cut is never set aside: the reopen and a whole layout written over it refused; a charm in a Rose Gold saved
+//      line stays). RGHAND (Paul, 27 Nov 2026): a Rose Gold sheet whose cut is recorded IS claimed for Manual Control: its charms move on their side of its line (rt1127-rghand.cjs)
 //   node tests/charm-nest/gold-editable.cjs      (PW_DIR=<dir holding playwright-core>, CHROMIUM=<chrome>)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
@@ -407,10 +408,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       assert(/inside a saved green line/.test(r.rgLine), 'a charm in a Rose Gold saved line stays: ' + r.rgLine);
       const cl = await call('manualClaim', { id: 'rg-1', tab: 'tab-test-1', by: 'Tester' }), re = await call('roseReopen', { sheetId: 'rg-1' });
       const put = await call('putSheet', { sheet: { id: 'rg-1', placements: (rec('rg-1').placements || []).map(p => Object.assign({}, p, { cxPt: p.cxPt + 1 })) } });
-      assert(cl && cl.ok === false && cl.refused === 'cut', 'a Rose Gold cut sheet is never claimed: ' + JSON.stringify(cl));
+      assert(cl && cl.ok === true, 'a Rose Gold cut sheet is claimed for Manual Control (RGHAND: its line is a barrier, never set aside): ' + JSON.stringify(cl));
+      await call('manualClaim', { id: 'rg-1', tab: 'tab-test-1', release: true });
       assert(/Only a 10K or 14K Gold sheet/.test(re.thrown || re.error || ''), 'nor set aside: ' + JSON.stringify(re));
       assert(/already cut/.test(put.thrown || put.error || ''), 'nor its layout moved: ' + JSON.stringify(put));
-      pass('e · GF has no Manual Control and no hop; Rose Gold keeps its cut and its saved lines (the claim, the reopen and a moved layout refused)');
+      pass('e · GF has no Manual Control and no hop; Rose Gold keeps its cut and its saved lines (claimed for Manual Control, never set aside; a whole layout written over its cut refused)');
     } catch (e) { fail('e · GF and Rose Gold unchanged', e); }
 
     try {
