@@ -150,6 +150,7 @@ module.exports = function (d) {
           out.removed = t.removed; out.layoutRev = sheetUpd.layoutRev; out.contentRev = sheetUpd.contentRev; out.left = charms.length;
           // the copies leave its set's order list (dropFromSets); a set already released has its labels, manifest and files made again (the lane asks for them)
           if (s.setId && !s.draft && d.isId(s.setId)) { setRef = col(N.SETS).doc(String(s.setId)); const ss = await tx.get(setRef), sx = ss.exists ? ss.data() || {} : null; if (sx) { setOrders = setOrdersWithout(sx.orders, take); setRevNow = Number(sx.setRev) || 0; if (released(sx, s)) out.refile = s.setId; } }
+          if (setRef && setOrders) out.setTouched = String(s.setId);   // (SHEETLIVE stage 4 (Paul, 27 Nov 2026: "Make sure that all the automatic connections and changes that the system can make on behalf of the user are correctly wired in to this new one live copy ... Everything has to be wired perfectly and update immediately"): the set whose order list this take-off rewrites is named on the feed: t:<set>)
           // the pieces' engraving records leave the sheet too (their approval stays: TAKEOFFSOLID G4)
           const refs = []; for (const id of t.removed) for (const face of ["back", "front"]) { const k = Faces.recKey(id, face); if (!backOf.has(k)) { backOf.set(k, sheetId); refs.push(col(N.BACK).doc(k)); } }
           backRows = refs.length ? await txGetAll(tx, refs, ["sheetId"]) : [];
@@ -186,8 +187,9 @@ module.exports = function (d) {
     if (!res || res.error) return res;
     const before = res.before; delete res.before;
     if (res.marked) { d.revTouch(b, ["s:" + sheetId]); d.feedOrders(b, [[rid], res.marked]); }   // (SHIPPEDSTAYS)
+    const setTouched = res.setTouched; delete res.setTouched;
     if (res.wrote) {
-      d.revTouch(b, sheetId ? ["s:" + sheetId] : []); d.feedOrders(b, [[rid], res.removed]);
+      d.revTouch(b, (sheetId ? ["s:" + sheetId] : []).concat(setTouched ? ["t:" + setTouched] : [])); d.feedOrders(b, [[rid], res.removed]);
       const all = res.removed.slice(), who = { by: patch.removedBy || patch.heldBy || "Cloud", device: "cloud", signedIn: true };
       // the order's timeline: "removed" from the pieces' own records (the id the sheet window and AutoCancel use, so a page's own event lands on the same one)
       if (patch.removedBy) { await d.stamp(() => d.poolEvents(all, patch, before, who), "cloud take-off"); if (/^cancel/i.test(String(patch.removedReason || ""))) await d.noteCancelRemovals(all, patch, before, who); }

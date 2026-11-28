@@ -226,6 +226,10 @@ async function tick(ctx) {
   if (ctx.lost) throw new Fenced("another holder runs this slot now");
 }
 
+/* SHEETLIVE stage 4 (Paul, 27 Nov 2026: "Make sure that all the automatic connections and changes that the system can make on behalf of the user are correctly wired in to this new one live copy ... Everything has to be wired perfectly and update immediately"): the sheet's nestJob is written here, outside the library's handler, so it named nothing: a sheet shown as "Nesting…" (SHEETBUSY) stayed so on every screen until something else
+   named the sheet (an hour at worst), and a nest that ended without a layout was never seen. It is named on the changes feed at once (charmNestLibrary.js feedNames: s:<sheet>, the push counter),
+   by the function that runs the slot (deps.feed); a caller that gives none (a test, a tool) names nothing, as before. Never the slot's work: a failure is only said. */
+async function announce(ctx) { if (typeof ctx.feed !== "function" || !ctx.job || !ctx.job.sheetId) return; try { await ctx.feed(["s:" + ctx.job.sheetId]); } catch (e) { try { ctx.log(`[nest] ${ctx.jobId}: the feed was not told (${(e && e.message) || e})`); } catch (_) {} } }
 /** The job ends without a layout (stopped before it searched, stale, an error): the job and the sheet's nestJob say so, then the driver is told. */
 async function endJob(ctx, status, why) {
   const { FV } = ctx, now = Date.now(), shref = ctx.db.collection(Nest.SHEETS).doc(ctx.job.sheetId);
@@ -233,9 +237,10 @@ async function endJob(ctx, status, why) {
     const js = await tx.get(ctx.jref), j = js.exists ? js.data() || {} : null, ss = await tx.get(shref), sd = ss.exists ? ss.data() || {} : null;
     if (!j || ENDED.has(j.status)) return false;
     tx.set(ctx.jref, { status, state: status, endedBy: status === "stopped" ? "stopped" : status, error: status === "error" || status === "stale" ? str(why, 300) : null, note: str(why, 300), finishedMs: now, finishedAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() }, { merge: true });
-    if (sd && sd.nestJob && sd.nestJob.id === ctx.job.id) tx.set(shref, { nestJob: Object.assign({}, sd.nestJob, { status, at: now, why: str(why, 200) }) }, { merge: true });
+    if (sd && sd.nestJob && sd.nestJob.id === ctx.job.id) { tx.set(shref, { nestJob: Object.assign({}, sd.nestJob, { status, at: now, why: str(why, 200) }) }, { merge: true }); ctx.sheetMarked = true; }
     return true;
   });
+  if (wrote && ctx.sheetMarked) await announce(ctx);
   if (wrote) await Nest.kickDriver(ctx.db, "nest", { kick: ctx.kickDriver });
   return wrote;
 }
@@ -368,12 +373,14 @@ async function finishCheck(ctx) {
       verification, feedWait: (meta.feedWait || []).map(String), missing: (meta.missing || []).map(flat), notes: notes.slice(0, 20), layoutJson: text, retainedBest: !!pick.retainedBest, ...(meta.whole ? { whole: true, appended } : {}) };
   }
   const shref = db.collection(Nest.SHEETS).doc(ctx.job.sheetId);
-  await fencedTx(ctx, async tx => {
+  const marked = await fencedTx(ctx, async tx => {
     const s = await tx.get(ctx.jref), d = s.exists ? s.data() || {} : {}, sv = await tx.get(shref), sd = sv.exists ? sv.data() || {} : null;
-    if (ENDED.has(d.status) || !d.picking || d.picking.nonce !== ctx.nonce) return;
+    if (ENDED.has(d.status) || !d.picking || d.picking.nonce !== ctx.nonce) return false;
     tx.set(ctx.jref, Object.assign({ status, state: status, endedBy: result ? result.endedBy : status, error, finishedMs: now, finishedAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp(), beatAt: now }, result ? { result } : {}), { merge: true });
-    if (sd && sd.nestJob && sd.nestJob.id === ctx.job.id) tx.set(shref, { nestJob: Object.assign({}, sd.nestJob, { status: status === "done" ? "nested" : status, at: now }) }, { merge: true });
+    if (sd && sd.nestJob && sd.nestJob.id === ctx.job.id) { tx.set(shref, { nestJob: Object.assign({}, sd.nestJob, { status: status === "done" ? "nested" : status, at: now }) }, { merge: true }); return true; }
+    return false;
   });
+  if (marked) await announce(ctx);
   ctx.log(`[nest] ${ctx.jobId}: ${status}${result ? ` · ${result.placements.length}/${result.pieces} placed · ${result.endedBy} · ${n} slot(s)` : ""}${error ? " · " + error : ""}`);
   if (status === "done" && ctx.job.runId) await require("./_charmNestFinishOps").startWriter(db, ctx.job.sheetId, { runId: ctx.job.runId, nestJobId: ctx.jobId, reason: "nest" });
   await Nest.kickDriver(db, "nest", { kick: ctx.kickDriver });
@@ -397,7 +404,7 @@ async function run(o) {
   if (began.refused) { await Lease.end(db, sref, nonce, { refused: began.why }).catch(() => {}); return { refused: began.why }; }
   const job = began.info.job;
   const ctx = { db, FV, bucket, nonce, jobId, i, jref, sref, job, log, deadline: t0 + (o.budgetMs || BUDGET_MS), cref: job.runId ? db.collection(Nest.CARRIER).doc(job.runId) : null,
-    stop: false, lost: false, handed: null, polledAt: 0, beatAt: 0 /* (the first step beats at once: the job reads "running" while its pieces are made, so a hand-back waits for it) */, input: null, solverJob: null, kickDriver: o.kickDriver, kickSlot: o.kickSlot, progress: () => ({ phase: "begin" }) };
+    stop: false, lost: false, handed: null, polledAt: 0, beatAt: 0 /* (the first step beats at once: the job reads "running" while its pieces are made, so a hand-back waits for it) */, input: null, solverJob: null, kickDriver: o.kickDriver, kickSlot: o.kickSlot, feed: o.feed /* (SHEETLIVE stage 4: names the sheet on the changes feed) */, progress: () => ({ phase: "begin" }) };
   ctx.tick = () => tick(ctx);
   let out = { slot: i };
   try {
@@ -472,7 +479,7 @@ async function handler(body, deps) {
   if (!nonce || !Nest.isId(jobId) || !(slot >= 0 && slot < Nest.MAX_SLOTS)) return { statusCode: 400, body: "bad payload" };
   const admin = deps.admin, db = deps.db || admin.firestore(), FV = admin.firestore.FieldValue, bucket = deps.bucket || admin.storage().bucket();
   let out;
-  try { out = await run({ db, FV, bucket, nonce, jobId, slot, pick: body.pick === true, log: t => console.log(t) }); }
+  try { out = await run({ db, FV, bucket, nonce, jobId, slot, pick: body.pick === true, log: t => console.log(t), feed: deps.feed }); }
   catch (e) { console.error("[nest] slot", jobId, slot, e); out = { error: String((e && e.message) || e) }; }
   return { statusCode: 200, body: JSON.stringify(out).slice(0, 800) };
 }

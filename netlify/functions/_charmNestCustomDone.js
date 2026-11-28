@@ -119,12 +119,12 @@ module.exports = function (d) {
         if (e.setRef && e.setOrders) tx.update(e.setRef, { orders: e.setOrders, setRev: num(e.setRevNow) + 1, updatedAt: ts });   // (FRESHWRITE: the set's revision moves with its order list)
         for (const r of e.backRows) if (r.exists && (r.data() || {}).sheetId === e.s.id) tx.set(col(N.BACK).doc(r.id), { sheetId: null, updatedAt: ts }, { merge: true });
       }
-      return { ok: true, removed: list, sheets: edits.map(e => ({ id: e.s.id, label: e.label, pieces: e.removed.length, layoutRev: e.upd.layoutRev })), before };
+      return { ok: true, removed: list, sheets: edits.map(e => ({ id: e.s.id, label: e.label, pieces: e.removed.length, layoutRev: e.upd.layoutRev, ...(e.setRef && e.setOrders ? { setId: String(e.setRef.id) } : {}) })), before };   // (SHEETLIVE stage 4 (Paul, 27 Nov 2026: "Make sure that all the automatic connections and changes that the system can make on behalf of the user are correctly wired in to this new one live copy ... Everything has to be wired perfectly and update immediately"): setId, the set whose order list it rewrote, named below)
     });
     if (!res || res.error) return res;
     const before = res.before; delete res.before;
     if (res.removed.length) {
-      d.revTouch(b, res.sheets.map(x => "s:" + x.id)); d.feedOrders(b, [[rid], res.removed]);
+      d.revTouch(b, res.sheets.map(x => "s:" + x.id).concat(res.sheets.filter(x => x.setId).map(x => "t:" + x.setId))); d.feedOrders(b, [[rid], res.removed]);
       await d.stamp(() => d.poolEvents(res.removed, patch, before, b), "custom done in the Charm Editor");
     }
     return Object.assign(res, { orderId: rid, cover });
@@ -216,7 +216,7 @@ module.exports = function (d) {
         if (m.setOrders && x.setNow) tx.update(col(N.SETS).doc(String(x.setNow.id)), { orders: Object.assign({}, x.setNow.orders || {}, m.setOrders), setRev: num(x.setNow.setRev) + 1, updatedAt: ts });   // (FRESHWRITE: the set's revision moves with its order list)
         for (const r of x.backRows) if (r.exists && !(r.data() || {}).sheetId) tx.set(col(N.BACK).doc(r.id), { sheetId: s.id, updatedAt: ts }, { merge: true });
         for (const w of x.list) tx.set(col(N.POOL).doc(w.id), { state: w.from.state || "nested", sheetId: s.id, sheetName: w.from.sheetName || s.fileBase || null, setId: s.setId || null, [Placement.REPOOLED]: back, coveredBy: w.coveredBy, customDoneFrom: null, updatedAt: ts }, { merge: true });
-        out.back.push({ ids: ids2, sheetId: s.id, label: m.label || Placement.labelOf(s) || "its sheet", placed: m.placements.length > 0, layoutRev: upd.layoutRev });
+        out.back.push({ ids: ids2, sheetId: s.id, label: m.label || Placement.labelOf(s) || "its sheet", placed: m.placements.length > 0, layoutRev: upd.layoutRev, ...(m.setOrders && x.setNow ? { setId: String(x.setNow.id) } : {}) });   // (SHEETLIVE stage 4 (Paul, 27 Nov 2026: "Make sure that all the automatic connections and changes that the system can make on behalf of the user are correctly wired in to this new one live copy ... Everything has to be wired perfectly and update immediately"): the set the Undo rewrote)
       }
       for (const w of loose) {
         const run = [w.row.runId, w.from && w.from.runId, b.runId].map(x => (x ? String(x) : "")).find(x => runs.get(x)), size = sizeOf(w.row, w.from), file = fileOf(w.row, w.from), metal = w.row.material || w.row.metal || (w.from && w.from.metal) || null;
@@ -229,7 +229,7 @@ module.exports = function (d) {
       return Object.assign({ ok: true, undone: write.map(w => w.id), ...(write.length ? {} : { already: true }) }, out);
     });
     if (!res || !res.ok) return res;
-    if (res.undone.length) { d.feedOrders(b, [[rid], res.undone]); if (res.back.length) d.revTouch(b, res.back.map(x => "s:" + x.sheetId)); }
+    if (res.undone.length) { d.feedOrders(b, [[rid], res.undone]); if (res.back.length) d.revTouch(b, res.back.map(x => "s:" + x.sheetId).concat(res.back.filter(x => x.setId).map(x => "t:" + x.setId))); }
     // the cloud asked to place the pieces that could not go back where they were (one request per run): its answer says the sheet they went on
     const byRun = new Map(); for (const p of res.placing || []) { if (!byRun.has(p.runId)) byRun.set(p.runId, []); byRun.get(p.runId).push(p); }
     const placing = [];

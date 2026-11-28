@@ -7251,6 +7251,9 @@ OPS.customDone = require("./_charmNestCustomDone")({ db, col, FV, txGetAll, isId
   driveMode: async () => driveModeOf(await driveDoc()), names: { POOL, SHEETS, BACK, SETS, RUNS },
   drive: async () => driveDoc(), cmdPut: body => op_runCmdPut(body) }).ops.customDone;   // (G7: an Undo of Done puts the piece back where it was, or asks the run to place it: placewaiting)
 DRIVE_TRIGGERS.add("customDone");   // (the sheet it left owes its files and its nest: the driver is told now)
+/* SHEETLIVE stage 4 (Paul, 27 Nov 2026: "Make sure that all the automatic connections and changes that the system can make on behalf of the user are correctly wired in to this new one live copy ... Everything has to be wired perfectly and update immediately"): rosePlan (_charmNestRoseStock.js) writes the sheet's green line (rosePlanJson, rosePlanHash, its stock and revision) and named nothing but the default p:*: the sheet itself is named now,
+   s:<sheet>, once its plan is written, so every view of the sheet (the Library card, the sheet window, the Nest card) draws its line within seconds. Nothing else about it changes. */
+{ const plan = OPS.rosePlan; if (typeof plan === "function") OPS.rosePlan = async b => { const out = await plan(b); if (b && isId(b.sheetId)) revTouch(b, ["s:" + b.sheetId]); return out; }; }
 /* (CLOUDDRIVE build step 12, hard-parts §2; DORMANT): the commit journal (Charm_Nest_Commits/<runId>~<setId>: the cloud's memory of sending a set to the Design Station,
    written first; _charmNestCommitOps.js) and the set's completion check asked before it. Only the cloud's commit unit writes a journal; a person's Undo of one is commitUndoAsk. */
 SANDBOXED.add("Charm_Nest_Commits"); Object.assign(OPS, require("./_charmNestCommitOps")({ db, col, fenceTx, isId, str, num, fenceNonce: () => (FENCE ? FENCE.nonce : null) }), { setCommitCheck: op_setCommitCheck }); ["commitJournal", "commitGet", "commitUndoAsk", "setCommitCheck"].forEach(op => NO_GEN_BUMP.add(op)); DRIVE_TRIGGERS.add("commitUndoAsk");
@@ -7302,6 +7305,14 @@ exports.engApprovedByBack = engApprovedByBack;   // (ENGLABEL; tests: tests/char
 exports.feedStats = feedStats;   // (FEED: bumpRev's counts, for the contention test)
 /** CLOUDWORLD: the world was built again (charmNestWorld-background.js): every page that follows w:world reads it. Production only. */
 exports.worldBump = async () => { PREFIX = ""; FEED_TOUCHED = new Set(); return feedBump(["w:world"]); };
+/* SHEETLIVE stage 4 (Paul, 27 Nov 2026: "Make sure that all the automatic connections and changes that the system can make on behalf of the user are correctly wired in to this new one live copy ... Everything has to be wired perfectly and update immediately"): a write made OUTSIDE this handler that changes what a sheet shows (a nest slot's end written on the sheet's nestJob, _charmNestNestSlot.js) names it on the
+   changes feed at once, as every op does after its writes (feedBump: the shards, then the push counter the pages listen to): production only (the slots write production's records), best-effort and
+   bounded (never the slot's work), queued behind the cloud's own in-process calls so no request's names mix with it. Only names of the feed's form are taken. */
+exports.feedNames = keys => {
+  const list = [...new Set((Array.isArray(keys) ? keys : []).map(String).filter(k => FEED_KEY.test(k)))]; if (!list.length) return Promise.resolve(null);
+  const run = async () => { PREFIX = ""; FEED_TOUCHED = new Set(); return feedBump(list); };
+  const p = CALLS.then(run, run); CALLS = p.catch(() => {}); return p;
+};
 /* FASTOPEN (Paul, 23 Nov 2026: "nowhere in the application is the system allowed to make the user wait"): an answer of a megabyte or more goes out compressed by this function, so the lists a page opens with (the SKU list, the order
    lines, the run's sheets) are ONE answer (`whole`) and not parts read one after the other: the platform carries 6 MB, and 10 MB of SKU list is 1.6 MB compressed. A caller that takes no gzip has its parts, as before. */
 const pack = res => (!PACK || !res || typeof res.body !== "string" || res.body.length < 1000000 ? res : Object.assign({}, res, { headers: Object.assign({}, res.headers, { "Content-Encoding": "gzip", Vary: "Accept-Encoding" }), body: require("zlib").gzipSync(res.body, { level: 4 }).toString("base64"), isBase64Encoded: true }));

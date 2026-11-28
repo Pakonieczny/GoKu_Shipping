@@ -33,7 +33,7 @@ const MAX_BUDGET_MS = 13 * 60 * 1000;         // leave margin under the 15-minut
 
 exports.handler = async (event) => {
   const body = parseBody(event);
-  if (body && body.nonce && body.jobId != null && body.slot != null) return require("./_charmNestNestSlot").handler(body, { admin, db });   // (the cloud's slot mode)
+  if (body && body.nonce && body.jobId != null && body.slot != null) return require("./_charmNestNestSlot").handler(body, { admin, db, feed: keys => require("./charmNestLibrary").feedNames(keys) });   // (the cloud's slot mode. SHEETLIVE stage 4 (Paul, 27 Nov 2026: "Make sure that all the automatic connections and changes that the system can make on behalf of the user are correctly wired in to this new one live copy ... Everything has to be wired perfectly and update immediately"): feed, the sheet's nestJob named on the changes feed when the slot writes it)
   const id = String(body.id || "").replace(/[^\w\-]/g, "").slice(0, 80);
   const job = body.job;
   if (!id || !job || !Array.isArray(job.pieces)) { console.warn("[charmNestSolve] bad payload"); return { statusCode: 400, body: "bad payload" }; }
