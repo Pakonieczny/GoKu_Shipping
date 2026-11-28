@@ -14,6 +14,7 @@
 "use strict";
 const O = require("../../charm-nest-orders.js");
 const Rose = require("../../charm-nest-rose.js");
+const PoolPieces = require("../../charm-nest-pool-pieces.js");
 const TOL_PT = 0.06 / (25.4 / 72);   // 0.06 mm in points
 const POOL = "Charm_Pool", INDEX = "Charm_Master_Index";
 const num = v => (Number.isFinite(+v) ? +v : 0);
@@ -74,7 +75,11 @@ async function charmsOf(ctx, rec) {
     await new Promise(r => (typeof setImmediate === "function" ? setImmediate(r) : setTimeout(r, 0)));
     const row = cache.rows.get(String(rc.poolId)), name = rc.name || rc.poolId;
     if (!row) throw new ShapeError(`${name}: its pool record is gone: nest the sheet again`);
-    let entry = cache.entries.get(String(row.sku || "").trim().toUpperCase()) || null;
+    /* MULTIDRAW (Paul, 28 Nov 2026, GF Draft 2: the pieces of one custom file of several charms drawn as its first charm): a custom piece is drawn from its own file, the one it was made, nested and
+       written from (as _charmNestFinishHost.js draws it), never from a library entry of the same SKU, and as the charm of that file its row names (customIndex: charm-nest-pool-make.js ensureBase);
+       the record and the row of a master piece are read as before */
+    const ci = row.custom === true || rc.custom === true ? PoolPieces.customIndexOf(rc, row) : null;
+    let entry = (row.custom === true || rc.custom === true) && row.aiPath ? null : cache.entries.get(String(row.sku || "").trim().toUpperCase()) || null;
     if (entry && row.masterHash && entry.masterHash && String(row.masterHash) !== String(entry.masterHash)) throw new ShapeError(`the design of ${name} changed since it was placed: nest the sheet again`);
     if (!entry) { if (!row.aiPath) throw new ShapeError(`${name}: its design is not in the library`); entry = { sku: String(row.sku || "CUSTOM"), aiPath: String(row.aiPath).replace(/#fit-.*$/, ""), charmHash: row.charmHash || null }; }
     let src; try { src = await H.masterCharm(entry, row.size || null); } catch (e) { throw new ShapeError(`the design of ${name} could not be read (${(e && e.message) || e}): nest the sheet again`); }
@@ -82,7 +87,7 @@ async function charmsOf(ctx, rec) {
     const oneBody = typeof row.oneBody === "number" && Number.isInteger(row.oneBody) ? row.oneBody : typeof rc.oneBody === "number" && Number.isInteger(rc.oneBody) ? rc.oneBody : null;
     let base;
     if (oneBody != null && !H.sidedPiece(piece)) { const bodies = await H.soloBodies(src); base = bodies && bodies[oneBody]; }
-    else base = await H.ensureBase(src, piece, { charmHash: row.charmHash });
+    else base = await H.ensureBase(src, piece, Object.assign({ charmHash: row.charmHash }, ci != null ? { customIndex: ci } : {}));
     if (!base || !base.outline) throw new ShapeError(`${name}: the body it is cut from could not be made again from its design: nest the sheet again`);
     let charm = H.cloneCharm(base, rc.id); charm.poolId = rc.poolId;
     const AE = require("../../charm-nest-art-edit.js");
