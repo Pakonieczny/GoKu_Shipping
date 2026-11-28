@@ -106,13 +106,11 @@
   const ls = () => safe(() => root.localStorage, null);
   const cursorKey = () => 'cn.sync.cursor.' + world;
 
-  /* ── the cursor: kept for this computer, so a new leader (or the page after a reload) goes on from where the last one stopped ── */
-  // (production's only: the sandbox leaves nothing behind in the browser (Paul, 10 Oct 2026), and a sandbox page after a reload begins from the count it is answered)
-  function keepCursor() { const s = world === 'production' ? ls() : null; if (s && n != null) safe(() => s.setItem(cursorKey(), JSON.stringify({ n, at: now(), cg }))); }
-  function keptCursor() {
-    const s = world === 'production' ? ls() : null; const v = s ? safe(() => JSON.parse(s.getItem(cursorKey()) || 'null'), null) : null;
-    return v && v.n != null && now() - (+v.at || 0) < PACE.cursorFor ? v : null;
-  }
+  /* ── the cursor: where this computer's feed stopped ── NOTHINGKEPT (SHEETLIVE stage 3, Paul 27 Nov 2026: "nothing can be on any computer. Everything must be grabbed from the cloud"): it was kept in localStorage so a page after a reload went on from there; it is kept in
+     this page's memory only (n, and every tab hears it on the channel: a new leader of this computer goes on from the count its tab last heard). A page after a reload begins from the count it is
+     answered (its first answer names nothing: what it reads at start is what the cloud holds), as the sandbox always did. A cursor an older page left is deleted (and charm-nest-1.html NODISK). */
+  function keepCursor() { const s = ls(); if (s) safe(() => s.removeItem(cursorKey())); }
+  function keptCursor() { return null; }
 
   /* ── what reaches the surfaces ── */
   /* FEEDRACE (Paul, 27 Nov 2026: "the propagation of the updates throughout the system is intermittent"): what an answer names was written at some moment before the cloud read its shards,

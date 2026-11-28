@@ -46,9 +46,12 @@
   }
 
   /* ── what is remembered (this tab, and this computer's storage as a fallback) ── */
-  const store = () => { try { const v = JSON.parse(root.localStorage.getItem(KEY) || "null"); return v && typeof v === "object" ? v : {}; } catch (_) { return {}; } };
+  /* NOTHINGKEPT (SHEETLIVE stage 3, Paul 27 Nov 2026: "nothing can be on any computer. Everything must be grabbed from the cloud"): the last completion of each person was kept in localStorage as a fallback; it is kept in this page's memory only (KEPT, beside mem), and after a
+     reload the cloud is asked for it (prepare: the server keeps every completion). One an older page left is deleted (and charm-nest-1.html NODISK). */
+  let KEPT = {}; try { if (root.localStorage) root.localStorage.removeItem(KEY); } catch (_) {}
+  const store = () => KEPT;
   const save = (key, local) => {
-    try { const o = store(), keys = Object.keys(o); for (const k of keys.slice(0, Math.max(0, keys.length - 10))) delete o[k]; delete o[key]; o[key] = { local }; root.localStorage.setItem(KEY, JSON.stringify(o)); } catch (_) {}
+    try { const o = store(), keys = Object.keys(o); for (const k of keys.slice(0, Math.max(0, keys.length - 10))) delete o[k]; delete o[key]; o[key] = { local }; KEPT = o; } catch (_) {}
   };
   function previous(key, loginAt) {
     const m = mem.get(key);
@@ -90,7 +93,7 @@
     } catch (e) { warn("noted:", e); }
   }
   function forget(by) {
-    try { const key = keyOf(by); if (!key) return; mem.delete(key); const o = store(); delete o[key]; try { root.localStorage.setItem(KEY, JSON.stringify(o)); } catch (_) {} setTimeout(() => { try { prepare(by); } catch (_) {} }, 400); }
+    try { const key = keyOf(by); if (!key) return; mem.delete(key); const o = store(); delete o[key]; KEPT = o; setTimeout(() => { try { prepare(by); } catch (_) {} }, 400); }
     catch (e) { warn("forget:", e); }
   }
 
@@ -136,6 +139,6 @@
     configure(o) { Object.assign(cfg, o || {}); return root.LaserSheetTime; },
     /** for the tests and the console: what this tab remembers (a person's previous completion on this clock) */
     remembered(by) { const m = mem.get(keyOf(by)); return m ? Object.assign({}, m) : null; },
-    reset() { mem.clear(); busy.clear(); try { root.localStorage.removeItem(KEY); } catch (_) {} }
+    reset() { mem.clear(); busy.clear(); KEPT = {}; try { root.localStorage.removeItem(KEY); } catch (_) {} }
   };
 })(typeof window !== "undefined" ? window : globalThis);

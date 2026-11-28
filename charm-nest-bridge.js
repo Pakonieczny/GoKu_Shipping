@@ -14486,9 +14486,14 @@ const LaserReview = window.LaserReview = (()=>{
      as new (charm-nest-store.js newerOf: the record's counters, updatedAt, layoutRev, contentRev, previewRev, previewAt). Two reads can be out at once (the live read beside a person's own, the sheet
      window's follow, the slow seal check), and the one that landed last was kept, whichever had been read first. */
   const olderRec=(a,b)=>{if(!a || !b || a===b)return false;try{const St=window.CharmNestStore;if(St && typeof St.newerOf==='function')return St.newerOf(a,'',b,'')<0;}catch(_){}return (+a.updatedAt || 0)<(+b.updatedAt || 0);};
-  function record(s,rev){const id=s.id || s.sheetId,old=records.get(id);if(id && old && olderRec(s,old))return old;   // (NEWERWINS: an older read changes nothing: the Library's record, its picture, its row, its spinner stay the newer)
+  /* SHEETLIVE (Paul, 27 Nov 2026: "the library showing wrong old information, not updating"): with the Library's switch on (window.CN_SHEETLIVE.library, read at use), every record the Library takes in goes
+     to the page's ONE copy of the sheet first (charm-nest-sheet-live.js) and the Library draws what that copy holds: the newest any view read (the sheet window's whole record, a Nest card's, the
+     order window's), never its own older one. Off: as before. */
+  const slLib=()=>{const L=window.CNSheetLive;return L && typeof L.on==='function' && L.on('library')?L:null;};
+  function record(s,rev){const L=slLib(),lid=s && (s.id || s.sheetId),s0=s;if(L && lid){const held=L.put(lid,s,{rev,from:'library'});if(held && held!==s && olderRec(s,held)){if(records.get(lid)!==held && !olderRec(held,records.get(lid))){records.set(lid,held);patchRow(held);picNow(held,lid);}return held;}if(held)s=held;}   // (SHEETLIVE: an older read hands back the newer record the one copy holds; a taken one is that copy's own object)
+    const id=s.id || s.sheetId,old=records.get(id);if(id && old && olderRec(s,old))return old;   // (NEWERWINS: an older read changes nothing: the Library's record, its picture, its row, its spinner stay the newer)
     try{if(window.CNRefit)CNRefit.see(s);}catch(_){}   /* (REFIT: what the record says of a nest to fit a piece coming back) */ try{window.CNSheetBusy?.see?.(s,id);}catch(_){}   /* (SHEETBUSY: whether the cloud is changing it now) */
-    picNow(s,id);if(id)records.set(id,s);if(rev!==undefined)keep(s,rev);return s;}
+    picNow(s,id);if(id)records.set(id,s);if(rev!==undefined)keep(s,s===s0?rev:L.rev(id));return s;}
   /** NEWERWINS: the newest record of a sheet the Library holds (charm-nest-1.html LIVEPV compares a page's own copy with it). */
   const recOf=id=>records.get(String(id || '')) || null;
   function projected(s){
@@ -14806,6 +14811,8 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   const ROW_FIELDS=['poolIds','orders','charmCount','placedCount','rejectCount','density','freePt2','updatedAt','setId','setSeq','sheetIndex','draft','solidIncluded','laserDoneAt','laserDoneBy','roseCutAt','archived'];
   function patchRow(rec){
     const rows=S.library?.rows;if(!rows || !rec)return;
+    // (SHEETLIVE: the list's row takes the row fields of the one copy's newest record, as below, into a NEW row object: a row is never changed in place, it may be what another list holds)
+    {const L=slLib(),id=rec.id || rec.sheetId,i=L && id?rows.findIndex(r=>(r.id || r.sheetId)===id):-1;if(i>=0){const row=rows[i],held=(!rec.archived && L.get(id)) || rec;if(!held.archived && (held.updatedAt || 0)<(row.updatedAt || 0))return;let next=null;for(const k of ROW_FIELDS){if(!(k in held))continue;if(JSON.stringify(row[k])!==JSON.stringify(held[k]))(next || (next={...row}))[k]=held[k];}if(next){rows[i]=next;S.library.patchedAt=Date.now();}return;}if(L)return;}
     const id=rec.id || rec.sheetId,row=rows.find(r=>(r.id || r.sheetId)===id);if(!row)return;
     if(!rec.archived && (rec.updatedAt || 0)<(row.updatedAt || 0))return;   // (the list is newer than this answer: a read made before the list was)
     let moved=false;
@@ -15207,13 +15214,16 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       for(const card of cardsOf(set.setId))card._laserSet={...card._laserSet,...set};
     }
     const found=new Set();
-    for(const s of response.sheets || []){
-      found.add(s.id);
+    const L=slLib();   // (SHEETLIVE: each sheet of the answer goes to the one copy first, and the Library takes what that copy holds: the newer record another view read wins here too)
+    for(const s0 of response.sheets || []){
+      found.add(s0.id);
+      const s=L && s0 && s0.id ? L.put(s0.id,s0,{rev:response.revs && response.revs['s:'+s0.id],from:'library'}) || s0 : s0;
+      if(s!==s0 && olderRec(s0,s) && records.get(s.id)===s)continue;   // (SHEETLIVE: an older answer, and the card already draws the newer record the one copy holds)
       // (NEWERWINS, 27 Nov 2026: an answer read before a newer record the Library holds (the sheet window's, a read for a person's own write) is not taken: its row, its section and its picture stay the newer)
       if(olderRec(s,records.get(s.id)))continue;
       shaped('s:'+s.id,(!s.draft && s.solidIncluded!==false?s.setId || '':'')+'|'+(s.laserDoneAt?'cut':''));
-      if(!differs('s:'+s.id,s) && !always)continue;
-      diff=true;moved.add('s:'+s.id);records.set(s.id,s);patchRow(s);keep(s,response.revs && response.revs['s:'+s.id]);
+      if(!differs('s:'+s.id,s0) && !always)continue;   // (SHEETLIVE: whether THIS answer differs from the last; a newer record another view read is drawn by the subscription below)
+      diff=true;moved.add('s:'+s.id);records.set(s.id,s);patchRow(s);keep(s,s===s0?response.revs && response.revs['s:'+s.id]:L.rev(s.id));
       // (SHEETFRESH: a newer picture shows at once, as a record read elsewhere does (PICNOW); REFIT and SHEETBUSY: what the cloud is doing to it now, on every view of it)
       picNow(s,s.id);try{if(window.CNRefit)CNRefit.see(s);}catch(_){}try{window.CNSheetBusy?.see?.(s,s.id);}catch(_){}
     }
@@ -15418,10 +15428,23 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       read:why=>{if(!liveOn())return;if(why==='verify' || why==='reset')live.verifiedAt=0;live.feedWant=true;if(live.inResume)return;if(why==='wrote'){live.fresh=true;live.heard=Date.now();readSoon(true);}else readSoon(false);}});   // (wrote: another tab of this computer wrote it: read now, as its own write would)
   };
   feedFollow();
+  /* SHEETLIVE (Paul, 27 Nov 2026: "the sheets and the library showing wrong old information, not updating"): a newer record of a sheet the Library shows, read by ANOTHER view of this page (the sheet
+     window's whole record, the order window's, a Nest card's, a person's own write: mine), is drawn on its card at once: its record, its list row, its picture under its version, its refit; no read
+     is made for it (the one copy read it already). The Library's own reads (from 'library') and a list being drawn (from 'list') are not told back to it. */
+  let slOff=null;
+  const slFollow=()=>{if(slOff || !window.CNSheetLive || typeof window.CNSheetLive.subscribe!=='function')return;slOff=window.CNSheetLive.subscribe('*',ev=>{try{
+    if(!slLib() || !ev || !ev.id || ev.from==='library' || ev.from==='list')return;
+    if(!ev.rec){if(ev.why==='gone' && records.has(ev.id))patch(null,ev.id);return;}
+    if(ev.rec===ev.prev)return;   // (a name of its set or orders: the record is the same)
+    const had=records.get(ev.id);if(had===ev.rec || (had && olderRec(ev.rec,had)))return;
+    patchRow(ev.rec);if(!had)return;   // (a card not read here yet: its list row only)
+    records.set(ev.id,ev.rec);picNow(ev.rec,ev.id);try{if(window.CNRefit)CNRefit.see(ev.rec);}catch(_){}changed(new Set(['s:'+ev.id]));
+  }catch(e){console.warn('Library: sheet live',e);}});};
+  slFollow();
   /** The orders of the sheet cards on screen (the placement feed reads where their pieces are, so the Library's lists and chips follow a hold or a take-off made elsewhere). */
   const shownOrders=()=>{try{if(!liveOn())return [];return [...new Set(shown().ids.flatMap(id=>(records.get(id)?.orders || []).map(String)))].filter(x=>/^\d{4,20}$/.test(x)).slice(0,24);}catch(_){return [];}};
   /** A sheet's cloud record read elsewhere (the sheet window's own follow): taken in as the live read would, the Library's list row too; rec null: the sheet is gone (id given). */
-  const patch=(rec,id,rev)=>{if(rec){if(record(rec)===rec){patchRow(rec);keep(rec,rev);}/* (NEWERWINS: an older record read elsewhere changes nothing here) */}else if(id){if(records.has(id))records.set(id,{...records.get(id),archived:true});patchRow({id,archived:true});try{window.CharmNestStore?.patch('sheets',id,{archived:true});}catch(_){}}try{window.SharedOrders?.refreshed?.();}catch(_){}changed();};
+  const patch=(rec,id,rev)=>{if(rec){const got=record(rec,undefined);if(got===rec || (slLib() && !olderRec(rec,got))){patchRow(got);keep(got,got===rec?rev:slLib().rev(got.id || got.sheetId));}/* (NEWERWINS: an older record read elsewhere changes nothing here. SHEETLIVE: one the one copy merged with its readiness is that copy's) */}else if(id){try{slLib()?.gone(id);}catch(_){}if(records.has(id))records.set(id,{...records.get(id),archived:true});patchRow({id,archived:true});try{window.CharmNestStore?.patch('sheets',id,{archived:true});}catch(_){}}try{window.SharedOrders?.refreshed?.();}catch(_){}changed();};
   /** Why a drop of this sheet or set on Laser cutting (or on Completed, through it) cannot work now, in the words of its card's own grey Approve button ('' when it can be approved, or when a
    *  press can do the rest by itself). The Library's dock reads it, so a place that cannot take the item says why right where it is dropped (Paul, 10 Oct: never a vague word). */
   function moveBlock(item){
@@ -15433,7 +15456,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       return c && c.why ? String(c.why) : '';
     }catch(_){return '';}
   }
-  return {follow:ensureLive,record,recOf,sheet,group,canCut,labels,sections,place,changed,changes:()=>changes,missed,owes,arrange:()=>{arrange(false);arrange(true);},saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,moveBlock,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
+  return {follow:ensureLive,record,recOf:id=>(slLib() && slLib().get(String(id || ''))) || recOf(id),sheet,group,canCut,labels,sections,place,changed,changes:()=>changes,missed,owes,arrange:()=>{arrange(false);arrange(true);},saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,moveBlock,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -16108,7 +16131,7 @@ const Sets = window.Sets = (() => {
         if (St && !got && (L.sets.since !== "0.0" || L.sheets.since !== "0.0")) { L = { sets: { wantRev: true, since: "0.0" }, sheets: { wantRev: true, since: "0.0" } }; [ss, sh] = await read(L); got = takeLibrary(ss, sh); }
         if (request !== libraryRequest || S.library.kind !== "sets") return;
         S.library.setsAskedAt = askedAt;
-        const records = got ? got.sheets : [...new Map([...(sh.sheets || []), ...(ss.sheets || [])].map(r=>[r.id,r])).values()];
+        const records = slRows(got ? got.sheets : [...new Map([...(sh.sheets || []), ...(ss.sheets || [])].map(r=>[r.id,r])).values()], sh && sh.revs);   // (SHEETLIVE: the rows the one copy holds)
         // (nothing moved since what is on screen was read or held: it is the cloud's, and nothing is drawn again; the page still follows its records, as below)
         if (got && got.same && _cache && body.querySelector(".setCard, .libEmpty")) { S.library.loadedAt = Date.now(); if (_cache.held) { _cache.held = false; Promise.resolve(Gate.followRecords(records)).then(n => { if (n) Gate.refreshMembership(); }).catch(() => {}); } return; }
         _cache = {rawSets:got ? got.sets : ss.sets || [], rawSheets:records, sets:[], sheets:records};
@@ -16182,10 +16205,14 @@ const Sets = window.Sets = (() => {
     if (!a.list || !b.list || !c.list || a.missing || b.missing || c.missing) return null;
     return { sets: a.rows, sheets: [...new Map([...b.rows, ...c.rows].map(r => [r.id, r])).values()] };
   }
+  /* SHEETLIVE (Paul, 27 Nov 2026: "the library showing wrong old information"): with the Library's switch on, a list's rows go to the page's ONE copy of each sheet and the list draws what that copy holds
+     (charm-nest-sheet-live.js putRows: the newest any view read, never an older row); off: the rows as read */
+  const slRows = (rows, revs) => { const L = window.CNSheetLive; return L && typeof L.on === "function" && L.on("library") && Array.isArray(rows) ? L.listRows(rows, revs) : rows; };   // (list-shaped copies: the list marks its own rows)
   function adoptHeld() {
     const h = heldLibrary(); if (!h) return false;
-    _cache = { rawSets: h.sets, rawSheets: h.sheets, sets: [], sheets: h.sheets, held: true };
-    S.library.rows = Gate.projectLibraryRecords(h.sheets.slice()); S.library.loadedFor = "all";
+    const rows = slRows(h.sheets);
+    _cache = { rawSets: h.sets, rawSheets: rows, sets: [], sheets: rows, held: true };
+    S.library.rows = Gate.projectLibraryRecords(rows.slice()); S.library.loadedFor = "all";
     return true;
   }
   const askLibrary = St => (heldLibrary() ? { sets: St.ask("library:sets"), sheets: St.ask("library:sheets") } : { sets: { wantRev: true, since: "0.0" }, sheets: { wantRev: true, since: "0.0" } });
@@ -25120,7 +25147,7 @@ const OrderWin = window.OrderWin = (() => {
     // (the close event comes a moment after the window closes: one opened again at once, on another order, keeps its own
     // state — the late event used to clear its line, so the next repaint closed it)
     W.dlg.addEventListener("close", () => {
-      if (W.dlg.open) return; tryDo(() => window.CNLive && CNLive.close("sorter")); tryDo(() => window.CNZoomPan && CNZoomPan.forget("ow:")); giveBack(0); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
+      if (W.dlg.open) return; tryDo(() => window.CNLive && CNLive.close("sorter")); tryDo(() => window.SheetWin && SheetWin.orderLetGo && SheetWin.orderLetGo()); /* (SHEETLIVE: its Sheet tab's sheets are watched no more) */ tryDo(() => window.CNZoomPan && CNZoomPan.forget("ow:")); giveBack(0); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
       W.closing = false; stopMotion(); flightGone(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
       unmountTimeline(); tryDo(() => { if (W.engCard) W.engCard.destroy(); W.engCard = null; }); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); SV.shown = null; W.dlg.classList.remove("owCancelled"); lookDone();
       W.engHist = null; W.monoHist = null; tryDo(() => window.OrderFacts && OrderFacts.collapse(byId("owMeta")));   // (the next order opens with the facts calm: its card put away, Details shut)
@@ -29193,6 +29220,10 @@ const Recall = window.Recall = (() => {
     following = (async () => {
       const ls = await api("charmNestLibrary", { op: "listSheets", limit: 200, runId, whole: true }, { quiet: true, all: "sheets" });
       if (B.run || on() || ownWork()) return false;   // (a run was opened, or work begun, here while the list was on its way)
+      // (SHEETLIVE, Paul 27 Nov 2026: "Everything must be grabbed from the cloud": with the Nest cards' switch on, the run's rows go to the page's ONE copy of each sheet and the cards are drawn from what that
+      //  copy holds, the newest any view read (charm-nest-sheet-live.js); a whole record there brings its own back records)
+      //  (each card is given its own copy of that record, its picture's link named as a list row names it: a card's drawing keeps its own marks on it, and the one copy's record is never changed)
+      { const L = window.CNSheetLive; if (L && typeof L.on === "function" && L.on("nest") && Array.isArray(ls.sheets)) ls.sheets = L.putRows(ls.sheets, ls.revs).map(r => (r && typeof r === "object" ? Object.assign({}, r, { preview: r.preview || (r.outputs && r.outputs.preview && r.outputs.preview.url) || null }) : r)); }
       const byName = new Map(), gone = new Set((window.CharmNestRunFollow && CharmNestRunFollow.state().retired) || []);   // (GONESHEET: a sheet the run let go of (deleted on the carrying computer) is not listed, though its record is archived only at the run's next checkpoint)
       for (const x of ls.sheets || []) { if (gone.has(String(x.id))) continue; const k = (x.setId || "") + "|" + (x.fileBase || x.id); /* (NAMECLASH: as above: a follower showed 3 of 4 sheets when two sets held one name) */ const had = byName.get(k); if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) byName.set(k, x); }
       const startedOf = x => +x.cardStartedAt || +(x.createdAt && (x.createdAt._seconds || x.createdAt.seconds)) * 1000 || Date.parse(x.createdAt) || 0;
@@ -29232,9 +29263,9 @@ const Recall = window.Recall = (() => {
           pg.charms = []; pg.placements = []; pg.rejects = []; pg.outputs = null; pg.verification = rec.verification || null; pg.liveInfo = null; pg.dirty = false; pg.problem = null;
           delete pg.roseStock; delete pg.roseProtected; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded = false; pg._roseError = null; pg.roseCutAt = rec.roseCutAt || null;
           pg.recalled = rec; pg.followed = true; pg.status = "complete"; if (rec.draftOrder != null && Number.isFinite(+rec.draftOrder)) { pg.draftOrder = +rec.draftOrder; pg._savedDO = pg.draftOrder; } pg.sheetId = rec.id; pg.runId = rec.runId || runId; pg.setId = rec.setId; pg.seq = rec.setSeq; pg.setDay = setDayOfRec(rec); pg.cardStartedAt = rec.cardStartedAt || rec.createdAt || null; pg.sheetIndex = rec.sheetIndex; pg.fileBase = rec.fileBase; pg.group = null;
-          pg.backPool = (rec.backs || []).map(bk => ({ sheetId: rec.id, engravingSeals: bk.engravingSeals || [], approvedAt: bk.approvedAt, copy: bk.copy, previewWPt: bk.previewWPt, previewHPt: bk.previewHPt, pageWPt: bk.pageWPt, pageHPt: bk.pageHPt, poolId: bk.poolId, ...(bk.face === "front" ? { face: "front" } : {}), order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));
-          pg.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
-          pg.persistedDone = true; pg.persisted = Promise.resolve(); pg._img = null;
+          pg.backPool = !Array.isArray(rec.backs) && Array.isArray(rec.backPool) ? rec.backPool.slice() : (rec.backs || []).map(bk => ({ sheetId: rec.id, engravingSeals: bk.engravingSeals || [], approvedAt: bk.approvedAt, copy: bk.copy, previewWPt: bk.previewWPt, previewHPt: bk.previewHPt, pageWPt: bk.pageWPt, pageHPt: bk.pageHPt, poolId: bk.poolId, ...(bk.face === "front" ? { face: "front" } : {}), order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));   // (SHEETLIVE: a whole record's own back records as they are)
+          pg.cloud = Object.assign({ preview: rec.preview || (rec.outputs && rec.outputs.preview && rec.outputs.preview.url) || null }, rec.outputs || {});
+          pg.persistedDone = true; pg.persisted = Promise.resolve(); pg._img = null; try { const CSl = window.CharmNestCloudSheets; if (CSl && typeof CSl.slSig === "function") pg._slSig = CSl.slSig(rec); } catch (_) {}   // (SHEETLIVE: which version of the one copy's record the card shows)
           takeNames(pg, rec, runId);   // (SHEETSAME: its draft mark, page and cut marks too, as the record says them)
         });
         // the newest sheet that is not cut is the one shown, as on the computer that carries the run

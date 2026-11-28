@@ -41,7 +41,22 @@
   /* (FOLLOWFEED, Paul 17 Nov 2026: "one cloud truth, every computer shows the same sheets in real time"; designs-window-e2e.cjs, scenario A, proved it by the feed's own answers): REVS keeps the revision (updateTime) of the cloud record this page last read for each sheet, so a look at a sheet
      that has not moved is one field read (getSheet ifRev / getMany ifRevs) and not the whole record. getRec(id, probe) → the record, SAME (probe: it has not moved since this page read it) or null. */
   const REVS = new Map(), SAME = Object.freeze({ same: true });
-  const getRec = async (id, probe) => {
+  /* SHEETLIVE (Paul, 27 Nov 2026: "not being able to click the manual button"; "nothing can be on any computer. Everything must be grabbed from the cloud"): with the Nest cards' switch on
+     (window.CN_SHEETLIVE.nest, read at use), a sheet this computer does NOT carry (CLOUD MODE: the cloud carries every run, CNViewer.on(); or the page follows a run another carrier holds:
+     p.followed) is the page's ONE copy of the sheet (charm-nest-sheet-live.js): the cards are drawn from that copy's records, it alone reads them (by revision, when the feed names them), and
+     this file no longer rebuilds its own page copies behind the cards: a card that changed in the cloud is drawn from its record (its picture), and a page with the sheet's pieces is built ON
+     DEMAND from that record, when the card is looked at or when a press needs one (ensureLive: Manual Control's sheets to move charms onto, a take-off). The Manual Control refusal of 27 Nov ("The
+     window showed an older copy of this sheet": a Nest card's copy rebuilt in the background under the window) cannot come back. A sheet this computer CARRIES goes on exactly as before. */
+  const slNest = () => { const L = root.CNSheetLive; return L && typeof L.on === "function" && L.on("nest") ? L : null; };
+  const viewerOn = () => !!safe(() => root.CNViewer && typeof root.CNViewer.on === "function" && root.CNViewer.on(), false);
+  const carried = p => !!p && !viewerOn() && p.followed !== true;   // (this computer carries it: its own run in mode off; else the cloud or another computer does)
+  const viaLive = p => !!slNest() && (p ? !carried(p) : viewerOn());
+  // (which version of the one copy's record a card shows, as a small string: a page never holds the one copy's own object, so the computer's saved workspace (Session) copies nothing of it)
+  const slSig = rec => (rec ? [Array.isArray(rec.charms) ? "w" : "r", +rec.updatedAt || 0, +rec.layoutRev || 0, +rec.contentRev || 0, +rec.previewAt || 0, +rec.previewRev || 0, rec.archived ? 1 : 0, +rec.laserDoneAt || 0, (rec.poolIds || []).length, (rec.backPool || rec.backs || []).length].join("|") : "");
+  const getRec = async (id, probe, cloud) => {
+    // (SHEETLIVE: through the one copy, by revision, with the pieces' rows; the copy handed back carries them, the one copy's own record is never changed)
+    const L = cloud ? slNest() : null;
+    if (L) { const had = L.full(id), rec = await L.read(id, { pieces: true, whole: !had }); if (!rec) return null; if (L.rev(id)) REVS.set(id, L.rev(id)); if (probe && rec === had) return SAME; const pools = L.pools(id) || await root.Recall.piecesOf(rec); return Object.assign({}, rec, { pools, _live: rec }); }
     const ask = { op: "getSheet", id, pieces: true }; if (probe && REVS.has(id)) ask.ifRev = REVS.get(id);
     const r = await api(ask); if (r && r.unchanged === true && ask.ifRev) return SAME;
     if (r && r.sheet) r.sheet.pools = r.pools || await root.Recall.piecesOf(r.sheet);   // (NOSTORE: the pieces' rows come with the sheet, in one answer)
@@ -78,6 +93,7 @@
   async function learn() {
     for (const p of pages()) {
       if (!p || !p.sheetId || p.recalled || atWork(p) || p.dirty) continue;
+      if (viaLive(p)) continue;   // (SHEETLIVE: a sheet this computer does not carry is the one copy's to read, not this look's)
       /* (RESTOREDSTALE, Paul 18 Nov 2026: "why her nesting is not updating"): a followed sheet that came back from this computer's saved workspace keeps the revision it was saved with and nothing had read its record, so the sweep (which looks only at
          sheets this page has read) never looked at it again: Michelle's Rose Gold draft stayed at 7 pieces, revision 6, while the cloud held 27, revision 32. It is read once here; a newer one is rebuilt, the same one is now known to the sweep. */
       if (revOf(p) !== null) {
@@ -100,11 +116,12 @@
   /** Rebuild a sheet this page holds from the cloud, as it is there now (its pieces from the master files, its places from the record). */
   async function reload(p, why, o) {   // (QUIETLIVE, Paul 19 Nov 2026: o.background = the page's own building of the followed sheets after a reload: no progress pill, the page is let answer, no thumbnail redraw per sheet)
     if (!p || !p.sheetId || !root.Recall || typeof root.Recall.rebuild !== "function") return p;
-    const rec = await getRec(p.sheetId); if (!rec) return p;
+    const rec = o && o.rec ? o.rec : await getRec(p.sheetId, false, viaLive(p)); if (!rec) return p;   // (SHEETLIVE: built from the one copy's record, on demand; o.rec: that record already read, with its pieces' rows)
+    if (rec._live) { p._slSig = slSig(rec._live); delete rec._live; }
     safe(() => root.CNViewer && typeof root.CNViewer.sawSheet === "function" && root.CNViewer.sawSheet(p, rec));   // (S4: the cloud's nest of this sheet, as its record says)
     p.recalled = rec; p.answer = rec; p.recStockId = rec.roseStockId || "";   // (MOVESHOW, Paul 15 Nov 2026: the physical sheet the record names, kept for the tile that says what a sheet lies on; a rebuilt sheet no longer carries the record)
     p.outputs = null; p.verification = rec.verification || null; p.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
-    p.backPool = Array.isArray(rec.backPool) ? rec.backPool : p.backPool;
+    p.backPool = Array.isArray(rec.backPool) ? rec.backPool.slice() : p.backPool;   // (SHEETLIVE: its own list: a page adds to it, the record it was read in is never changed)
     // (a sheet is drawn whole from this answer or not at all: until then, and when a design cannot be read, the cloud's own saved picture stands)
     try { await root.Recall.rebuild(p, Object.assign({ answer: rec }, o && o.background ? { background: true } : {}, o && o.cutOk ? { cutOk: true } : {})); }
     catch (e) { p.charms = (p.charms || []).filter(c => !c.poolId); p.placements = []; safe(() => root.CN.renderCard(p)); throw e; }
@@ -121,8 +138,9 @@
   /** A sheet this page can change, from the cloud: the page holding it (rebuilt when it holds only its saved record), else a new page made from the record. */
   async function ensureLive(id) {
     let p = pageOf(id);
-    if (p && !p.recalled) return p;
-    const rec = await getRec(id); if (!rec) throw new Error("that sheet is no longer in the cloud");
+    // (SHEETLIVE: a page built here earlier for a sheet this computer does not carry is built again first when the one copy holds a newer layout of it: a press works on the cloud's sheet)
+    if (p && !p.recalled) { const L = viaLive(p) ? slNest() : null, cur = L && L.get(id); if (cur && slSig(cur) !== p._slSig && ((+cur.layoutRev || 0) > (revOf(p) == null ? -1 : revOf(p)) || ((+cur.contentRev || 0) > (+p.contentRev || 0) && !near(sig(p.placements), sig(cur.placements || [])))) && !atWork(p) && !p.dirty) await reload(p, "opened here to be changed", { cutOk: true }); return p; }
+    const rec = await getRec(id, false, viaLive(p)); if (!rec) throw new Error("that sheet is no longer in the cloud");
     { const w = lockOf(rec); if (w) throw new Error(`${rec.fileBase || "This sheet"} is being ${w.status === "nesting" ? "nested" : "changed"} on another computer${w.by ? " (" + w.by + ")" : ""} right now; it can be changed here once it is saved there`); }   // (CLOUDALL C6, Paul 13 Nov 2026: "Sheets that haven't been saved yet ... exist only on the computer doing it")
     if (!p) {
       if (typeof addPage !== "function") throw new Error("the page is not ready");
@@ -174,6 +192,7 @@
     for (const k of keys || []) {
       const id = String(k).slice(2); if (!id || id === "*") continue;
       const p = pageOf(id); if (!p) continue;
+      if (viaLive(p)) { if (atWork(p) || p.dirty || p._manualHold || inHand(p)) { PENDING.add(id); continue; } if (DIRTYN.has(id)) safe(() => slNest().refresh(id)); liveSoon(id); continue; }   // (SHEETLIVE: the one copy reads it (never while the page is in use); its record is drawn by liveChanged)
       if (atWork(p) || p.dirty || p._manualHold) { PENDING.add(id); continue; }   // (SHEETFRESH, 27 Nov 2026: and a sheet Manual Control holds: read once it is let go, never rebuilt under a hand)
       let rec = null; try { rec = await getRec(id, probe); } catch (_) { PENDING.add(id); continue; }
       if (rec === SAME) { if (DIRTYN.has(id)) again(id, true); continue; }   // (not moved since this page read it; read half written, it is looked at again)
@@ -220,13 +239,60 @@
     if (sweeping || wait > 0) { if (!sweepT) sweepT = setTimeout(() => { sweepT = 0; sweep(); }, Math.max(1000, wait) + 100); return; }
     sweeping = true; sweepAt = Date.now();
     try {
-      const mine = pages().filter(p => p && p.sheetId && REVS.has(p.sheetId) && !(+p.laserDoneAt > 0) && !(+p.roseCutAt > 0) && !(p.recalled && +p.recalled.laserDoneAt > 0)), ifRevs = {};
+      const mine = pages().filter(p => p && p.sheetId && REVS.has(p.sheetId) && !viaLive(p) && !(+p.laserDoneAt > 0) && !(+p.roseCutAt > 0) && !(p.recalled && +p.recalled.laserDoneAt > 0)), ifRevs = {};
       for (const p of mine) ifRevs["s:" + p.sheetId] = REVS.get(p.sheetId);
       const keys = Object.keys(ifRevs); if (!keys.length) return;
       const moved = []; for (let i = 0; i < keys.length; i += 300) { const part = keys.slice(i, i + 300), r = await api({ op: "getMany", keys: part, ifRevs: Object.fromEntries(part.map(k => [k, ifRevs[k]])) }); moved.push(...Object.keys((r && r.recs) || {})); }
       st.swept = (st.swept || 0) + 1; if (moved.length) { st.sweptMoved = (st.sweptMoved || 0) + moved.length; await changed(moved); }
     } catch (e) { console.warn("[cloud-sheets] sweep", e && e.message); }
     finally { sweeping = false; }
+  }
+
+  /* SHEETLIVE: a card of a sheet this computer does not carry, drawn from the one copy's newest record. A card shown from its record (recalled) takes it at once; a page holding the sheet's pieces
+     (built here when it was looked at, or for a press) is built again from that record only while it is on screen (the card of its metal on the Nest tab, nothing in hand on it), else it is put
+     back as its record (its picture) and built again when it is looked at (Recall's own look, makeLive); one in use (a nest, a save, Manual Control, a move on its way) waits (PENDING). */
+  const LIVEQ = new Set(); let liveT = 0;
+  const liveSoon = id => { LIVEQ.add(String(id)); if (!liveT) liveT = setTimeout(liveRun, 0); };
+  const inHand = p => !!safe(() => root.SheetWin && typeof root.SheetWin.mcUses === "function" && root.SheetWin.mcUses(p.sheetId), false);
+  const lookedAt = p => !!safe(() => S.mode === "nest" && S.sheets[p.metal] && S.sheets[p.metal].pages[S.sheets[p.metal].active || 0] === p, false);
+  const recPic = rec => (rec && (rec.preview || (rec.outputs && rec.outputs.preview && (rec.outputs.preview.url || rec.outputs.preview)))) || null;
+  // (a card's own copy of the one copy's record, its picture's link where a list row has it: the card's drawing marks it (previewSrc), the one copy's record is never changed)
+  const cardRec = rec => Object.assign({}, rec, { preview: recPic(rec) });
+  async function liveRun() {
+    liveT = 0; const ids = [...LIVEQ]; LIVEQ.clear();
+    for (const id of ids) {
+      const p = pageOf(id), L = slNest(); if (!p || !L || !viaLive(p)) continue;
+      const rec = L.get(id); if (!rec || slSig(rec) === p._slSig) continue;
+      if (p._slBusy || atWork(p) || p.dirty || p._manualHold || inHand(p)) { PENDING.add(id); continue; }
+      p._slBusy = true;
+      try { await liveChanged(p, rec, L); } catch (e) { PENDING.add(id); console.warn("[cloud-sheets] sheet live", id, e && e.message); } finally { delete p._slBusy; }
+    }
+    if (PENDING.size && !pendT) pendT = setTimeout(() => { pendT = 0; const ks = [...PENDING].map(id => "s:" + id); PENDING.clear(); changed(ks, true); }, 5000);
+  }
+  // (a page that holds the sheet's pieces: built here, or a card drawn with them)
+  const built = p => !!p && (p.charms || []).some(c => c && c.poolId);
+  async function liveChanged(p, rec, L) {
+    const id = p.sheetId;
+    // (a page with the sheet's pieces is drawn from the WHOLE record only: a newer list row held is read whole first, by the one copy; a list row never empties a sheet)
+    if (built(p) && !Array.isArray(rec.charms)) { let w = null; try { w = await L.read(id, { whole: true, pieces: true }); } catch (_) { w = null; } rec = L.full(id); if (!rec || !w) { PENDING.add(id); return; } }
+    safe(() => root.CNViewer && typeof root.CNViewer.sawSheet === "function" && root.CNViewer.sawSheet(p, rec));   // (S4: a viewer learns the cloud's nest of this sheet, for its card's Stop)
+    safe(() => root.CNRefit && root.CNRefit.see(rec));   // (REFIT)
+    seenRevs(p, rec); again(id, rec.dirty === true);
+    if (p.followed && rec.draftOrder != null && Number.isFinite(+rec.draftOrder) && +rec.draftOrder !== +p.draftOrder) { clearTimeout(orderT); orderT = setTimeout(() => safe(() => { const R = root.Recall, F = root.CharmNestRunFollow, rid = (F && F.state().runId) || p.runId; if (R && R.follow && rid) Promise.resolve(R.follow(rid, { force: true })).catch(() => {}); }), 1500); }   // (ORDERCLOUD 2, as changed above)
+    if (p.recalled) {
+      const other = pieceSig(p.charms) !== pieceSig(rec.charms);
+      p.recalled = cardRec(rec); p.answer = p.recalled; p._slSig = slSig(rec); p._img = null; p.cloud = Object.assign({}, p.cloud || {}, { preview: recPic(rec) || (p.cloud && p.cloud.preview) || null }); if (Array.isArray(rec.backPool)) p.backPool = rec.backPool.slice();
+      st.refreshed++; safe(() => root.CN.renderCard(p));
+      if (other && Array.isArray(rec.charms) && root.Recall && typeof root.Recall.redraw === "function" && (p.charms || []).some(c => c && c.poolId)) { try { await root.Recall.redraw(p); st.redrawn = (st.redrawn || 0) + 1; safe(() => root.CN.renderCard(p)); repaint(id); } catch (e) { console.warn("[cloud-sheets] redraw", id, e); } }   // (SKUSHOW: a card drawn with pieces of other charms)
+      return;
+    }
+    const mine = revOf(p), cl = +rec.layoutRev || 0, cc = +rec.contentRev || 0, mc = +p.contentRev || 0, samePlaces = near(sig(p.placements), sig(rec.placements || []));
+    if ((mine !== null && cl <= mine && !(cc > mc && !samePlaces)) || (mine === null && samePlaces)) { if (mine === null) learnRevs(p, rec); else if (cc > mc) p.contentRev = cc; p._slSig = slSig(rec); return; }   // (its places are the cloud's: nothing to build)
+    if (lookedAt(p)) { const pools = L.pools(id) || await root.Recall.piecesOf(rec); await reload(p, "changed in the cloud", { background: true, rec: Object.assign({}, rec, { pools, _live: rec }) }); repaint(id); st.onDemand = (st.onDemand || 0) + 1; return; }   // (on screen: built from the one copy's record now, no read of it again)
+    // (not on screen: the card is its record again; Recall builds it when it is looked at)
+    p.recalled = cardRec(rec); p.answer = p.recalled; p._slSig = slSig(rec); p._img = null; p.charms = (p.charms || []).filter(c => !c.poolId); p.placements = []; p.status = "complete"; p.dirty = false;
+    p.cloud = Object.assign({}, p.cloud || {}, { preview: recPic(rec) }); if (Array.isArray(rec.backPool)) p.backPool = rec.backPool.slice();
+    st.unbuilt = (st.unbuilt || 0) + 1; safe(() => root.CN.renderCard(p)); repaint(id);
   }
 
   /** persistSheet's refusal from the server (409 conflict): the sheet is read again; the run goes on (its next look nests what is still waiting). */
@@ -241,7 +307,12 @@
       if (!ready) return;
       st.started = true;
       const Y = root.CNSync;
-      if (Y && typeof Y.follow === "function") Y.follow({ name: "cloud-sheets", kinds: "s", wild: "", wants: k => !!pageOf(String(k).slice(2)), read: (why, keys, at, names) => { if (keys && keys.length) return changed(keys); if (names && names.length && why !== "wrote") { changed(names); } if (why !== "wrote") return sweep(); } });   // (ENGLIVE: the names of an answer that also carried a wildcard / reset / verify are read at once, then the sweep)   // (FOLLOWFEED: no names = '*', a reset, a verify or a lost feed: every sheet shown here is looked at, by revision)
+      // (SHEETLIVE: the cards of sheets this computer does not carry are watched in the one copy, which reads them when the feed names them, and told here when they change)
+      const L0 = root.CNSheetLive;
+      const cards = () => (slNest() ? pages().filter(p => p && p.sheetId && viaLive(p) && !(+p.laserDoneAt > 0) && !(p.recalled && +p.recalled.laserDoneAt > 0)) : []);
+      // (a card drawn from its record needs its list row; a page with the sheet's pieces needs its WHOLE record: a newer row has the one copy read it whole)
+      if (L0 && typeof L0.watchSet === "function") { L0.watchSet("nest", () => cards().filter(p => !built(p)).map(p => p.sheetId)); L0.watchSet("nest-built", () => cards().filter(built).map(p => p.sheetId), { full: true }); L0.subscribe("*", ev => { if (!ev || !ev.id || !ev.rec || ev.why === "order" || ev.why === "set" || !slNest()) return; const p = pageOf(ev.id); if (p && viaLive(p) && slSig(ev.rec) !== p._slSig) liveSoon(ev.id); }); }
+      if (Y && typeof Y.follow === "function") Y.follow({ name: "cloud-sheets", kinds: "s", wild: "", wants: k => { const p = pageOf(String(k).slice(2)); return !!p && !viaLive(p); }, read: (why, keys, at, names) => { if (keys && keys.length) return changed(keys); if (names && names.length && why !== "wrote") { changed(names); } if (why !== "wrote") return sweep(); } });   // (ENGLIVE: the names of an answer that also carried a wildcard / reset / verify are read at once, then the sweep)   // (FOLLOWFEED: no names = '*', a reset, a verify or a lost feed: every sheet shown here is looked at, by revision)
       setTimeout(() => { learn().catch(e => console.warn("[cloud-sheets] learn", e)); }, 15000);
       setInterval(() => { if (!(root.document && root.document.hidden)) learn().catch(() => {}); }, 300000);
       setInterval(() => { announce().catch(() => {}); }, 4000);
@@ -249,6 +320,6 @@
     };
     go();
   }
-  root.CharmNestCloudSheets = { state: () => Object.assign({}, st, { differs: st.differs.slice() }), reload, ensureLive, learn, revOf, conflict, announce, lockOf, marks, setGrace: ms => { st.grace = +ms || 0; }, _changed: changed };
+  root.CharmNestCloudSheets = { state: () => Object.assign({}, st, { differs: st.differs.slice() }), reload, ensureLive, learn, revOf, conflict, announce, lockOf, marks, setGrace: ms => { st.grace = +ms || 0; }, _changed: changed, carried, viaLive, slSig, _liveChanged: liveChanged };
   if (root.document) { if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", boot); else boot(); }
 })(typeof self !== "undefined" ? self : this);

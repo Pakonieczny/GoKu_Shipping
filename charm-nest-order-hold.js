@@ -242,10 +242,14 @@
   }
 
   /* ── the run's journal: written before anything moves and at each step, so a reload sees where it stopped ── */
+  /* (NOTHINGKEPT (SHEETLIVE stage 3, Paul 27 Nov 2026: "nothing can be on any computer. Everything must be grabbed from the cloud")): the journal is kept in this page's memory only (JRN, by world), never on the computer; a journal an older page left is read once into it, for
+     the steps a reload interrupted, and deleted (charm-nest-1.html NODISK moves it into the page's memory before any script runs) */
+  const JRN = new Map();
+  const jOf = () => { const k = KEY(); if (!JRN.has(k)) { let j = {}; try { const v = localStorage.getItem(k); if (v != null) { j = JSON.parse(v) || {}; localStorage.removeItem(k); } } catch (_) { j = {}; } JRN.set(k, j && typeof j === "object" && !Array.isArray(j) ? j : {}); } return JRN.get(k); };
   const journal = {
-    all() { try { const j = JSON.parse(localStorage.getItem(KEY()) || "{}"); return j && typeof j === "object" && !Array.isArray(j) ? j : {}; } catch (_) { return {}; } },
-    set(rid, patch) { try { const j = journal.all(); j[rid] = Object.assign(j[rid] || {}, patch); localStorage.setItem(KEY(), JSON.stringify(j)); } catch (_) { /* a private window: the run still goes */ } },
-    drop(rid) { try { const j = journal.all(); delete j[rid]; localStorage.setItem(KEY(), JSON.stringify(j)); } catch (_) {} },
+    all() { return Object.assign({}, jOf()); },
+    set(rid, patch) { const j = jOf(); j[rid] = Object.assign(j[rid] || {}, patch); },
+    drop(rid) { delete jOf()[rid]; },
   };
   const active = new Map();   // rid → { who, at, step, steps, sheetId }
 

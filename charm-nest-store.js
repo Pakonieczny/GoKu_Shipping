@@ -574,10 +574,12 @@
         });
       }));
   }
-  // (no disk: what this tab has not had answered is kept in localStorage too, so a reload of THIS page still sends it; read back at start when there is no disk)
+  /* (no disk: what this tab has not had answered was kept in localStorage too, so a reload of THIS page still sent it. NOTHINGKEPT (SHEETLIVE stage 3, Paul 27 Nov 2026: "nothing can be on any computer. Everything must be grabbed from the cloud"): it is kept in this page's
+     memory only (box) and sent from there by the drain; nothing is written to the computer. A journal an older page left is read ONCE at start (journalLoad, boxLoad: the presses in it are sent,
+     the mid makes a second send a no-op) and deleted; charm-nest-1.html NODISK moves it into the page's memory before any script runs) */
   const JKEY = () => 'cn.outbox.' + world;
-  function journal() { if (world === 'sandbox') return false; try { const list = [...box.values()].filter(e => e.tab === tab); if (list.length) root.localStorage.setItem(JKEY(), JSON.stringify(list.slice(-200))); else root.localStorage.removeItem(JKEY()); } catch (_) {} return false; }
-  function journalLoad() { if (world === 'sandbox') return; let j = null; try { j = JSON.parse(root.localStorage.getItem(JKEY()) || 'null'); } catch (_) { j = null; } if (Array.isArray(j)) for (const e of j) if (e && e.k && e.world === world && !box.has(e.k)) box.set(e.k, Object.assign(e, { tab, state: 'pending' })); if (box.size) mutTell({ t: 'load', n: box.size }); }
+  function journal() { return false; }
+  function journalLoad() { if (world === 'sandbox') return; let j = null; try { j = JSON.parse(root.localStorage.getItem(JKEY()) || 'null'); root.localStorage.removeItem(JKEY()); } catch (_) { j = null; } if (Array.isArray(j)) for (const e of j) if (e && e.k && e.world === world && !box.has(e.k)) box.set(e.k, Object.assign(e, { tab, state: 'pending' })); if (box.size) mutTell({ t: 'load', n: box.size }); }
   async function boxLoad(db) {
     const rows = await new Promise(res => { try { const rq = db.transaction('outbox', 'readonly').objectStore('outbox').getAll(); rq.onsuccess = () => res(rq.result || []); rq.onerror = () => res([]); } catch (_) { res([]); } });
     for (const e of rows) if (e && e.k && e.world === world && !box.has(e.k)) box.set(e.k, Object.assign(e, { state: e.state === 'sending' ? 'pending' : e.state }));

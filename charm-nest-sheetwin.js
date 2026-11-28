@@ -809,6 +809,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     pressed = { id, at: Date.now(), el: t, x: e.clientX, y: e.clientY };
   }, true);
   const tryDo = f => { try { return f ? f() : null; } catch (_) { return null; } };
+  /* SHEETLIVE (Paul, 27 Nov 2026: "not being able to click the manual button"; "nothing can be on any computer. Everything must be grabbed from the cloud"): the sheet window and the order window's Sheet tab
+     draw the page's ONE copy of the sheet (charm-nest-sheet-live.js) while their switch is on (window.CN_SHEETLIVE.sheetwin / .orderwin, read at use); off, as before. In CLOUD MODE (the cloud carries
+     every run: CNViewer.on(); or this computer follows a run another carrier holds: the page is `followed`, Recall.follow) a page built on this computer is a copy, never what a window draws or
+     Manual Control works on: the window draws the one copy's record, and Manual Control makes its sheet from that record and the window's own drawn pieces (mcStandalone), save a sheet Manual
+     Control has just built here for itself (HOPLIVE: W.mcLive). The computer that CARRIES the run (its own B.run, mode off) goes on exactly as before. */
+  const slOn = v => { const L = window.CNSheetLive; return L && typeof L.on === "function" && L.on(v) ? L : null; };
+  const cloudPage = p => !!p && (!!tryDo(() => window.CNViewer && typeof CNViewer.on === "function" && CNViewer.on()) || p.followed === true);
   const onScreen = r => !!r && r.width > 1 && r.height > 1 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
   const shown = el => !!el && el.isConnected && el.getClientRects().length > 0;
   /** The largest box of aspect a (w/h) centred in r. */
@@ -1137,7 +1144,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     /* LOCAL (Paul, 28 Oct 2026: "as responsive as Photoshop … leverage local storage … keep the API calls to the bare minimum"): a sheet this computer holds (read here, or before a
        reload, in the last 45 days: charm-nest-store.js) is drawn from its record at once, with no veil, and the cloud is asked behind it whether it moved (recheck: getSheet ifRev,
        one small read). A sheet never seen here is read as before. A read again after a change (keepWork) asks the cloud, unless it is the recheck's own (held). */
-    const St = window.CharmNestStore, holding = !!St && (!again || !!opts.held) && St.holds("sheetFull", id);
+    // (SHEETLIVE: with the sheet window's switch on, the copy it draws at once is the page's ONE copy of the sheet (charm-nest-sheet-live.js), watched while the window shows it: the feed's names of this
+    //  sheet, its set and its orders read it by revision, and a newer one is drawn in place; nothing else is kept)
+    const SLw = slOn("sheetwin"); if (SLw) slWatch(SLw, id);
+    const St = window.CharmNestStore, holding = SLw ? (!again || !!opts.held) && !!SLw.full(id) : !!St && (!again || !!opts.held) && St.holds("sheetFull", id);
     if (!again) {
       // the picture shown until the sheet is drawn: the very picture of the card it was opened from, else the saved one
       const im = origin && origin.img ? tryDo(origin.img) : null, src0 = loaded(im) ? im.currentSrc || im.src : "", url = pvLink(lib);   // (SHEETFRESH: the list row's picture under its version; a row names it `preview`)
@@ -1172,21 +1182,24 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // pieces drawn (a charm taken in hand meanwhile stays in hand), a different one is drawn as before
     const early = !holding && !fresh && !again && !backFace() ? tryDo(() => openEarly(id, tok)) : null;
     try {
-      const held = holding ? St.get("sheetFull", id) || await St.load("sheetFull", id) : null;
+      const held = holding ? (SLw ? SLw.full(id) : St.get("sheetFull", id) || await St.load("sheetFull", id)) : null;
       if (tok !== W.token) return;
       if (held) for (const s0 of held.sources || []) keptGeom(s0);   // (its designs asked for now, read while the window is drawn: loadGeometry finds them)
-      let r = held ? { sheet: held, rev: St.rev("sheetFull", id), held: true } : await api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 });
+      let r = held ? { sheet: held, rev: SLw ? SLw.rev(id) : St.rev("sheetFull", id), held: true } : await api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 });
+      // (SHEETLIVE: the answer goes to the one copy; a newer whole record it already holds is drawn instead, never the answer read before it)
+      if (SLw && r && r.sheet && !r.held) { const kept = SLw.put(id, r.sheet, { rev: r.rev || "", full: true, from: "sheetwin", why: "read" }); if (kept && kept !== r.sheet && SLw.full(id)) r = { sheet: SLw.full(id), rev: SLw.rev(id) }; else if (kept && kept !== r.sheet) SLw.refresh(id, { whole: true }); }
+      else if (SLw && r && r.sheet === null && SLw.has(id)) tryDo(() => SLw.gone(id));
       // (LOCAL: kept under its revision for the next opening, here or after a reload. NEWERWINS, 27 Nov 2026: this computer already holds a NEWER copy (another read landed first: the order window's,
       //  the feed's): that one is drawn, never the answer that was read before it)
-      if (r && r.sheet && !r.held && St) { if (typeof St.older === "function" && St.older("sheetFull", id, r.sheet, r.rev || "") && St.get("sheetFull", id)) r = { sheet: St.get("sheetFull", id), rev: St.rev("sheetFull", id) }; else St.put("sheetFull", id, r.sheet, r.rev || ""); }
+      if (!SLw && r && r.sheet && !r.held && St) { if (typeof St.older === "function" && St.older("sheetFull", id, r.sheet, r.rev || "") && St.get("sheetFull", id)) r = { sheet: St.get("sheetFull", id), rev: St.rev("sheetFull", id) }; else St.put("sheetFull", id, r.sheet, r.rev || ""); }
       if (tok !== W.token) return;
       // (MOVEINSTANT, Paul 20 Oct 2026: a sheet a move by hand is still saving is drawn with the move made, not as its record says until the save lands: hopOverlay)
       const rec = hopOverlay(r.sheet); if (!rec) throw new Error("This sheet is no longer in the Library.");
       if (window.LaserReview) LaserReview.record(r.sheet);
       // (STUCKSPIN, Paul 28 Oct 2026: the window said "14K Draft 2 · filling · joins a set when full · No QR yet" while its record held it in Set 3 with its QR label: the page follows the record
       //  it just read (Gate.followRecords: a sheet the record holds in an open set of the run while this page holds it in none takes that place back, nothing written), and the window is drawn again)
-      if (!r.held) followRec(r.sheet, id);   // (LOCAL: a record held here is followed once the cloud has said it is current: recheck)
-      W.rec = rec; W.st = stockOf(rec); W.live = liveOf(id);
+      if (!r.held || (SLw && !opts.held)) followRec(r.sheet, id);   // (LOCAL: a record held here is followed once the cloud has said it is current: recheck. SHEETLIVE: the one copy's record is the cloud's as last read)
+      W.rec = SLw && rec === r.sheet ? Object.assign({}, rec) : rec; W.recBase = r.sheet; W.st = stockOf(W.rec); W.live = liveOf(id);   // (SHEETLIVE: recBase, the one copy's record the window is drawn from; W.rec its own copy: the window marks it (a laser press shown at once), the one copy's never)
       tryDo(() => roseLoad(rec));   // (RGWINDOW: the physical sheet's earlier cuts, read behind the drawing when this page does not hold them)
       if (r.rev) { FOLLOW.id = id; FOLLOW.revs = { ["s:" + id]: r.rev }; }   // (LOCAL: the follow asks after the record at the revision drawn: one small read from its first beat)
       if (backFace()) W.backs = backsOf(rec, W.live, W.backsList);
@@ -1217,7 +1230,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (opts.glow && !still()) { const t0 = performance.now(); for (const x of W.pieces) if (!x.gone && opts.glow.includes(x.poolId)) W.fx.push({ kind: "pulse", piece: x, t0, ms: 1400 }); fxLoop(); }
       suggest();
       if (W.opening && tok === W.token) requestAnimationFrame(() => { if (tok === W.token) W.opening = false; });
-      if (r.held) recheck(id, tok, r.rev);
+      if (r.held) { if (SLw) { if (!opts.held) SLw.refresh(id); } else recheck(id, tok, r.rev); }   // (SHEETLIVE: an opening drawn from the one copy asks the cloud by revision once; a newer record is drawn by the follow, which asks nothing)
     } catch (e) {
       if (tok !== W.token) return;
       W.opening = false;
@@ -1256,6 +1269,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const d = W.dlg; if (!d || !d.open || W.leaving || d.classList.contains("closing") || W.folding) return;
     if (MC.on) mcOff({ bg: true });   // (closed with Manual Control on: what was moved is saved, as if it had been turned off; MOVEINSTANT 2: in the background)
     W.token++; menu(false);
+    slWatch(null, null); if (W.mcLive) W.mcLive.clear();   // (SHEETLIVE: the closed window watches nothing: its sheet is read no more for it)
     // a sheet deleted for good has no card to go back into: it fades and folds away where it lay, slowly enough to be
     // seen going, and then the window closes (Paul, 27 Sep)
     if (opts.gone && !still()) {
@@ -1326,7 +1340,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const SET_WAIT = "This sheet is ready · its set is not in Laser cutting yet (it is cut with the whole set)";
   // (a sheet of the set, as this page holds it: the Library's record, its list, this computer's copy; none: the set cannot be read here)
   const mateOf = sid => tryDo(() => window.LibraryDone && LibraryDone.recordOf && LibraryDone.recordOf(sid)) || (tryDo(() => S.library.rows) || []).find(x => x.id === sid)
-    || tryDo(() => { const St = window.CharmNestStore; return St ? St.get("sheets", sid) || St.get("sheetFull", sid) : null; }) || null;
+    || tryDo(() => { const L = slOn("sheetwin"); if (L && L.get(sid)) return L.get(sid); const St = window.CharmNestStore; return St ? St.get("sheets", sid) || St.get("sheetFull", sid) : null; }) || null;
   /** True only when `r` is in a real set and that set, read here, is not ready as a whole. */
   function setHolds(r) {
     if (!r || !r.setId || r.draft || r.solidIncluded === false) return false;
@@ -1412,11 +1426,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // LOCAL (28 Oct 2026): a sheet this computer holds names itself; the others are read in ONE call (getMany: their list entries), where each was a whole getSheet
     const St = window.CharmNestStore, name = (x, rec) => Object.assign(x, { metal: rec.metal || "", n: sheetNoOf(rec), name: rec.folder || rec.fileBase || x.name, guess: false });
     const ask = [];
-    for (const x of list) { const rec = St ? St.get("sheets", x.id) || St.get("sheetFull", x.id) : null; if (rec) name(x, rec); else ask.push(x); }
+    for (const x of list) { const L = slOn("sheetwin"), rec = (L && L.get(x.id)) || (St ? St.get("sheets", x.id) || St.get("sheetFull", x.id) : null); if (rec) name(x, rec); else ask.push(x); }   // (SHEETLIVE: the one copy first)
     if (ask.length) {
       try {
         const r = await api("charmNestLibrary", { op: "getMany", keys: ask.map(x => "s:" + x.id) }, { quiet: true, timeoutMs: 12000 }), recs = (r && r.recs) || {};
-        for (const x of ask) { const v = recs["s:" + x.id]; if (v && v.rec) { name(x, v.rec); if (St) St.put("sheets", x.id, v.rec, v.rev || ""); } }
+        for (const x of ask) { const v = recs["s:" + x.id]; if (v && v.rec) { name(x, v.rec); if (St) St.put("sheets", x.id, v.rec, v.rev || ""); tryDo(() => { const L = slOn("sheetwin"); if (L) L.put(x.id, v.rec, { rev: v.rev || "", from: "sheetwin" }); }); } }
       } catch (_) { /* they stay "Sheet": nothing is invented */ }
     }
     if (tok !== W.token || !W.dlg || !W.dlg.open) return;
@@ -1530,10 +1544,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     return pieces;
   }
-  const liveOf = id => allSheets().find(p => p.sheetId === id && p.placements.length) || null;
+  const pageLive = id => allSheets().find(p => p.sheetId === id && p.placements.length) || null;
+  const liveOf = id => { const p = pageLive(id); return p && slOn("sheetwin") && cloudPage(p) && !(W.mcLive && W.mcLive.has(id)) ? null : p; };   // (SHEETLIVE: in cloud mode the one copy's record, never a page copy; the carrier's own page as before)
+  const orderLiveOf = id => { const p = pageLive(id); return p && slOn("orderwin") && cloudPage(p) ? null : p; };   // (SHEETLIVE: the order window's Sheet tab, the same rule)
   /* (MCINSTANT, 28 Oct 2026) The records this window read (a sheet switched back to is drawn from its own record at once, then read again behind it): LOCAL (the same day), they are this
      computer's copy (charm-nest-store.js 'sheetFull'), the one every opening reads first, so this page holds no list of its own. */
-  const RECS = { get: id => (window.CharmNestStore ? CharmNestStore.get("sheetFull", id) : null) };
+  const RECS = { get: id => { const L = slOn("sheetwin"); return L ? L.full(id) : (window.CharmNestStore ? CharmNestStore.get("sheetFull", id) : null); } };   // (SHEETLIVE: the one copy's whole record)
   /** What decides the plate: each piece where it lies, whose it is and what it is drawn from. */
   const layoutSig = rec => JSON.stringify(piecesOf(rec).map(x => [x.id, +x.p.cxPt.toFixed(3), +x.p.cyPt.toFixed(3), +(+x.p.angle).toFixed(3), +(+x.p.scale).toFixed(5), x.poolId, x.sourceId, x.index, x.hash, x.side, x.mirror]));
   /** A custom design's piece (CUSTOMPOOL: sent from the Charm Editor; the record's charm keeps its `frozen`): what the window says of it and opens it with, else null. */
@@ -4664,33 +4680,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   })();
 
   /* ── the freed room: which orders fit it, found with the nest's own collision grid, oldest order first ── */
-  // sheetId → the room pieces left on it; kept in this browser (per workspace) for 12 hours, so a reload keeps it
+  // sheetId → the room pieces left on it, for 12 hours, in this page's memory only (NOTHINGKEPT, 27 Nov 2026: it was kept in this browser so a reload kept it; one an older page left is read once below)
   const FREED = new Map(), FREED_KEY = () => "cn.sheetwin.freed" + (typeof WORKSPACE_SANDBOX !== "undefined" && WORKSPACE_SANDBOX ? ":sandbox" : "");
-  // a freed spot keeps the charm's own outline (points to 0.01 pt), so after a reload it still reads as that charm's room
-  const r2 = v => Math.round(v * 100) / 100;
-  function shapeOf(c) {
-    if (!c) return null; if (c.mini) return { centerPt: c.centerPt, outline: c.outline, members: [] };
-    try { return { centerPt: c.centerPt, outline: { subpaths: c.outline.subpaths.map(sub => sub.map(s => [s[0], ...s.slice(1).map(q => [r2(q[0]), r2(q[1])])])) }, members: [] }; } catch (_) { return null; }
-  }
-  // the removed piece's bitmap (as the solver keeps it), so the spot can be tested for room again after a reload
-  const BITMAPS = new WeakMap();
-  function bitmapOf(c) {
-    if (!c || !c.bits || !c.w || !c.h) return null;
-    if (typeof c.bits === "string") return { bits: c.bits, w: c.w, h: c.h, scale: c.scale };
-    if (BITMAPS.has(c)) return BITMAPS.get(c);
-    const n = c.w * c.h, by = new Uint8Array((n + 7) >> 3); for (let i = 0; i < n; i++) if (c.bits[i]) by[i >> 3] |= 1 << (i & 7);
-    let t = ""; for (let i = 0; i < by.length; i += 8192) t += String.fromCharCode.apply(null, by.subarray(i, i + 8192));
-    const out = { bits: btoa(t), w: c.w, h: c.h, scale: c.scale }; BITMAPS.set(c, out); return out;
-  }
   function setFreed(id, list) {
     if (list && list.length) FREED.set(id, list); else FREED.delete(id);
-    // the bitmaps are kept up to about 1 MB in all; a spot without one is judged by distance after a reload
-    let room = 1e6;
-    const bm = c => { const b = bitmapOf(c); if (!b || b.bits.length > room) return null; room -= b.bits.length; return b; };
-    try { const o = {}; for (const [k, gs] of FREED) o[k] = gs.map(g => ({ p: g.x.p, id: g.x.id || "", rid: g.rid || "", sku: g.sku || "", at: g.at || Date.now(), s: shapeOf(g.x.c), b: bm(g.x.c) })); localStorage.setItem(FREED_KEY(), JSON.stringify(o)); } catch (_) {}
+    // (NOTHINGKEPT (SHEETLIVE stage 3, Paul 27 Nov 2026: "nothing can be on any computer. Everything must be grabbed from the cloud"): the freed spots are this page's memory only (FREED), with their
+    //  drawings; they were written to localStorage, up to about 1 MB of bitmaps, so a reload judged them again: nothing is written to the computer any more)
   }
   try {
-    const o = JSON.parse(localStorage.getItem(FREED_KEY()) || "{}");
+    const o = JSON.parse(localStorage.getItem(FREED_KEY()) || "{}"); try { localStorage.removeItem(FREED_KEY()); } catch (_) {}   // (an older page's: read once into memory, and deleted)
     for (const [k, gs] of Object.entries(o)) { const list = (gs || []).filter(g => g && g.p && Date.now() - (+g.at || 0) < 12 * 3600e3).map(g => ({ x: { id: g.id || undefined, p: g.p, c: g.s && g.s.outline ? Object.assign({}, g.s, { mini: true }, g.b && g.b.bits ? g.b : null) : null, gone: true }, rid: g.rid, sku: g.sku, at: +g.at, t0: 0 })); if (list.length) FREED.set(k, list); }
   } catch (_) {}
   const SV = () => window.CharmNestSolver;
@@ -5146,9 +5144,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      back and stamped. At no point does a saved sheet name a piece another saved sheet names; interrupted between the
      two saves, the pieces are on no sheet and the run places them again (restoreRunSheets), so nothing is lost. ── */
   const JOURNAL = () => "cn.sheetwin.moves" + (typeof WORKSPACE_SANDBOX !== "undefined" && WORKSPACE_SANDBOX ? ":sandbox" : "");
-  function journal(rid, entry) {
-    try { const j = JSON.parse(localStorage.getItem(JOURNAL()) || "{}"); if (entry) j[rid] = entry; else delete j[rid]; localStorage.setItem(JOURNAL(), JSON.stringify(j)); } catch (_) {}
-  }
+  /* (NOTHINGKEPT (SHEETLIVE stage 3, Paul 27 Nov 2026: "nothing can be on any computer. Everything must be grabbed from the cloud")): the moves on their way are this page's memory only (MOVES); a journal an older page left is read once at start (below) and deleted */
+  const MOVES = {};
+  function journal(rid, entry) { if (entry) MOVES[rid] = entry; else delete MOVES[rid]; }
   /* GAP G1 (Paul 21 Nov 2026): "Fill the freed room" / Place / Place all / by hand on a staff computer in mode "on" (a viewer) went through moveIn -> rewritePage -> startNest (_byHand):
      a FRESH nest of both saved sheets, asked of the cloud, which arranged again sheets the person never asked to change. Now it is ONE request to the cloud (runCmdPut hop, fill: true;
      the cloud's cmdHopPieces): the pieces go into the freed room exactly where this window planned them (pinned there), every other charm of every sheet stays where it is, the sheets owe
@@ -5628,7 +5626,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   // a move this browser was making when it was closed: its pieces are wherever the saved sheets put them (a piece on
   // no sheet is placed again by the run); the interruption is written to the run's log once
   setTimeout(() => {
-    let j = {}; try { j = JSON.parse(localStorage.getItem(JOURNAL()) || "{}"); } catch (_) {}
+    let j = {}; try { j = JSON.parse(localStorage.getItem(JOURNAL()) || "{}"); localStorage.removeItem(JOURNAL()); } catch (_) {}   // (NOTHINGKEPT: an older page's journal, once, then deleted)
     for (const e of Object.values(j)) {
       const where = new Set((e.ids || []).map(id => { const sh = window.Pool && Pool.sheetOf(id); return sh ? sheetName(sh) : "no sheet yet (placed again by the run)"; }));
       try { agent({ pool: true }, "warn", `A move of order ${e.rid} by ${e.by || "someone"} was interrupted (${e.stage}); its pieces are on ${[...where].join(", ") || "no sheet"}.`); } catch (_) {}
@@ -5749,6 +5747,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const followGap = () => {
     const now = Date.now();
     if (typeof followSynced === "function" && followSynced() && FOLLOW.id === W.id) return 600000;   // (FEED: the feed names this sheet when it moves; tests/cost/fc4-sheetwin-follow.cjs reads this function alone)
+    if (typeof window !== "undefined" && window.CNSheetLive && CNSheetLive.on("sheetwin") && CNSheetLive.live() && FOLLOW.id === W.id) return 600000;   // (SHEETLIVE: the one copy reads this sheet when the feed names it)
     if (now - FOLLOW.touch < 120000 && (typeof document.hasFocus !== "function" || document.hasFocus())) return 0;
     return now - Math.max(FOLLOW.touch, FOLLOW.moved) < 600000 ? 13500 : 59500;   // (the beat is 2 s: these read at about 14 s and 60 s)
   };
@@ -5770,6 +5769,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   async function follow(now) {
     if (!W.dlg || !W.dlg.open || !W.rec || !W.id || document.hidden) return;
     if (FOLLOW.busy || followHold()) { if (now === true) FOLLOW.owed = W.id; return; }   // (SHEETFRESH: kept, read once the window is free)
+    { const L = window.CNSheetLive; if (L && typeof L.on === "function" && L.on("sheetwin")) return followLive(L, now); }   // (SHEETLIVE: the one copy's record is drawn; see followLive)
     if (FOLLOW.id !== W.id) { FOLLOW.id = W.id; FOLLOW.revs = null; FOLLOW.fails = 0; FOLLOW.moved = Date.now(); }
     if (FOLLOW.owed === W.id) now = true;   // (a change named while it was busy: read now, whatever the beat)
     if (FOLLOW.fails && Date.now() - FOLLOW.at < 3000 * 2 ** Math.min(FOLLOW.fails, 4)) return;
@@ -5798,7 +5798,38 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     } catch (e) { FOLLOW.fails++; }
     finally { FOLLOW.busy = false; if (FOLLOW.owed && FOLLOW.owed === W.id && !followHold()) { clearTimeout(followHook.t); followHook.t = setTimeout(() => follow(true), 0); } }   // (SHEETFRESH: named while this read was out: read again now)
   }
+  /* SHEETLIVE (Paul, 27 Nov 2026: "the sheets ... showing wrong old information, not updating"): with the switch on, the window asks the cloud nothing of its own: the page's one copy of the sheet reads it
+     (by revision) whenever the feed names it, its set or its orders, and the window draws the newer record that copy holds, in place, as the follow above drew a changed one (never under a hand:
+     FOLLOW.owed, drawn at the beat that follows the gesture's end). A record that differs only in what the plate does not draw (a mark, the readiness) takes the window's record without a redraw.
+     Only while the feed is not answering does the window's own beat ask the one copy to look (followGap: 2 s while used, 15 s, 60 s), as it asked before. */
+  async function followLive(L, now) {
+    const id = W.id, tok = W.token;
+    if (FOLLOW.id !== id) { FOLLOW.id = id; FOLLOW.revs = null; FOLLOW.fails = 0; FOLLOW.moved = Date.now(); }
+    if (FOLLOW.owed === id) { now = true; FOLLOW.owed = null; }
+    if (W.slGone === id) { W.slGone = null; return open(id, { keepWork: true, keepSet: true }); }   // (the cloud no longer has it: the window reads it and says so)
+    const cur = L.full(id);
+    if (cur && cur !== W.recBase) {   // (the one copy never holds an older record than one it handed out: another object is a newer one, or the same version with its readiness)
+      FOLLOW.moved = Date.now();
+      if (freshSig(cur) === freshSig(W.rec)) { W.recBase = cur; const o = hopOverlay(cur) || cur; W.rec = o === cur ? Object.assign({}, cur) : o; tryDo(() => head(W.rec, false)); tryDo(() => window.CNSheetBusy && CNSheetBusy.soon()); return; }
+      const sig = freshSig(cur);
+      if (FOLLOW.did && FOLLOW.did.id === id && FOLLOW.did.sig === sig && FOLLOW.did.rec === W.rec && Date.now() - FOLLOW.did.at < 30000) return;
+      FOLLOW.busy = true;
+      try { await open(id, { keepWork: true, keepSet: false, held: true }); if (id === W.id && tok === W.token) FOLLOW.did = { id, sig, rec: W.rec, at: Date.now() }; }
+      finally { FOLLOW.busy = false; if (FOLLOW.owed && FOLLOW.owed === W.id && !followHold()) { clearTimeout(followHook.t); followHook.t = setTimeout(() => follow(true), 0); } }
+      return;
+    }
+    if (cur && !L.live() && (now === true || Date.now() - FOLLOW.at >= followGap())) { FOLLOW.at = Date.now(); L.refresh(id); }   // (no feed: the window's own net, one read by revision; what it brings is drawn by the subscription)
+    else if (!cur && L.has(id) && (now === true || Date.now() - FOLLOW.at >= followGap())) { FOLLOW.at = Date.now(); L.refresh(id, { whole: true }); }   // (a newer list row overtook the record drawn: the whole one)
+  }
   setInterval(follow, 2000);
+  /** SHEETLIVE: the sheet the window watches in the one copy (one at a time, its orders too); null lets it go. */
+  function slWatch(L, id) {
+    if (W.slId === id && W.slOff) return;
+    if (W.slOff) tryDo(W.slOff); W.slOff = null; W.slId = null;
+    if (L && id) { W.slOff = L.watch(id, "sheetwin", { full: true, orders: true }); W.slId = id; }
+  }
+  // (SHEETLIVE: a change of the record of the sheet shown (read for any view, or a person's own write) is drawn now, or at the beat after a gesture; a name of its orders or set alone draws nothing)
+  tryDo(() => window.CNSheetLive && CNSheetLive.subscribe("*", ev => { if (!ev || !slOn("sheetwin") || !W.dlg || !W.dlg.open || ev.id !== W.id || ev.why === "order" || ev.why === "set") return; if (ev.why === "gone") W.slGone = ev.id; clearTimeout(followHook.t); followHook.t = setTimeout(() => follow(true), 0); }));
   window.CNSheetEng = { engFace, memberSig, backSig };   // (tests: tests/charm-nest/engrave-live.cjs reads these two functions alone)
   // a read that moved a piece of one of the orders this window shows (the placement feed's, or any other) asks for the sheet's own read at once, not at the next beat
   const followHook = () => { try { const OP = window.OrderPieces; if (!OP || !OP.subscribe || followHook.on) return; followHook.on = true; OP.subscribe(() => { if (W.dlg && W.dlg.open) { clearTimeout(followHook.t); followHook.t = setTimeout(() => follow(true), 80); } }); } catch (_) {} };
@@ -5886,10 +5917,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const mcChanged = (a, b) => !a || !b || Math.abs(a.cxPt - b.cxPt) > 1e-3 || Math.abs(a.cyPt - b.cyPt) > 1e-3 || Math.abs(normDeg(a.angle) - normDeg(b.angle)) > 1e-3 || Math.abs((a.size || 1) - (b.size || 1)) > 1e-4;
   // (MCLIBRARY, Paul 9 Nov 2026: Manual Control on any 10K / 14K sheet not cut on the laser, from ANY screen: the run's own live sheet where this sorter holds it, else the sheet loaded from
   //  its saved record (mcStandalone), so a sheet opened from the Library, on a station without its run, after the run closed, or recalled onto the cards, is moved by hand all the same)
-  const mcLive = () => (W.id ? mcRunSheet(W.id) || mcStandalone() : null);
+  const mcLive = () => (W.id ? mcHeld(W.id) || mcStandalone() : null);   // (SHEETLIVE: mcHeld, the carrier's own page; in cloud mode the one copy's record and the window's pieces)
   /* (MCEVERY: a GF / SS / RG sheet this page does not hold is loaded from its record only when Manual Control is pressed: its window opening, sitting idle or drawing its switch reads
      nothing more (a Rose Gold sheet's stock was read once for its picture, RGWINDOW; loading the sheet for Manual Control reads it again). A 10K / 14K sheet is loaded as before. */
-  const mcLiveQuiet = () => { const rec = W.rec; if (!W.id || !rec || MANUAL_METALS.includes(rec.metal) || MC.on || MC.claiming || mcRunSheet(W.id) || (STAND.id === W.id && STAND.ready && STAND.sh)) return mcLive(); return null; };
+  const mcLiveQuiet = () => { const rec = W.rec; if (!W.id || !rec || MANUAL_METALS.includes(rec.metal) || MC.on || MC.claiming || mcHeld(W.id) || (STAND.id === W.id && STAND.ready && STAND.sh)) return mcLive(); return null; };
   /** (MCEVERY) Why a sheet not loaded yet cannot start Manual Control, from its record alone ("" = press it): the laser's mark, another screen's claim. */
   function mcCheapWhy(rec) {
     if (laserCut(null, rec)) return LASER_CUT_WORDS;
@@ -6405,20 +6436,25 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /* MCINSTANT (Paul, 28 Oct 2026: "you need to leverage local storage to provide immediate responses to every movement ... I absolutely wanna keep the API calls to the bare minimum").
      Every move is the page's own until Manual Control is turned off (one save: the record and the sheet's files once, mcSave); meanwhile the moves not saved are kept on this
      computer (localStorage, by sheet and tab), a quarter second after the last change, so a reload never loses them: Manual Control turned on again for that sheet in that tab
-     puts them back. Dropped once a save has them. Nothing is sent to the cloud per move. */
+     puts them back. Dropped once a save has them. Nothing is sent to the cloud per move.
+     NOTHINGKEPT (SHEETLIVE stage 3, Paul 27 Nov 2026: "nothing can be on any computer. Everything must be grabbed from the cloud"): they are kept in this page's MEMORY only (MC_DRAFTS): Manual Control turned on again for that sheet in this page puts them back (a window closed
+     and opened again, a save refused); a reload loses moves not saved (the press saves them when Manual Control is turned off or the window closed). Nothing is written to the computer; a draft
+     an older page left is read once (mcDraftRestore) and deleted. */
   const mcDraftKey = id => `cn.mc.draft.${id}.${MC_TAB}`;
+  const MC_DRAFTS = new Map();
+  const draftGet = k => { if (MC_DRAFTS.has(k)) return MC_DRAFTS.get(k); try { const v = localStorage.getItem(k); if (v != null) { localStorage.removeItem(k); MC_DRAFTS.set(k, v); return v; } } catch (_) {} return null; };
   function mcDraftSave() {
     clearTimeout(MC.draftT);
     MC.draftT = setTimeout(() => {
       tryDo(mcButton);
       if (!MC.on || !MC.id || MC.wait) return;
-      try { const ed = [...MC.edits].filter(([pid, q]) => mcChanged(MC.from.get(pid), q)), k = mcDraftKey(MC.id); if (ed.length) localStorage.setItem(k, JSON.stringify({ at: Date.now(), by: MC.who || "", edits: ed })); else localStorage.removeItem(k); } catch (_) {}
+      try { const ed = [...MC.edits].filter(([pid, q]) => mcChanged(MC.from.get(pid), q)), k = mcDraftKey(MC.id); if (ed.length) MC_DRAFTS.set(k, JSON.stringify({ at: Date.now(), by: MC.who || "", edits: ed })); else MC_DRAFTS.delete(k); } catch (_) {}
     }, 250);
   }
-  function mcDraftDrop(id) { try { if (id) localStorage.removeItem(mcDraftKey(id)); } catch (_) {} }
+  function mcDraftDrop(id) { try { if (id) { MC_DRAFTS.delete(mcDraftKey(id)); localStorage.removeItem(mcDraftKey(id)); } } catch (_) {} }
   /** The moves a reload left unsaved on this sheet, back in Manual Control (charms still on it only). -> how many. */
   function mcDraftRestore(sh) {
-    let d = null; try { d = JSON.parse(localStorage.getItem(mcDraftKey(sh.sheetId)) || "null"); } catch (_) { d = null; }
+    let d = null; try { d = JSON.parse(draftGet(mcDraftKey(sh.sheetId)) || "null"); } catch (_) { d = null; }
     if (!d || !Array.isArray(d.edits) || !(Date.now() - (+d.at || 0) < 7 * 86400e3)) return 0;
     let n = 0;
     for (const [pid, q] of d.edits) {
@@ -6463,13 +6499,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const CS = window.CharmNestCloudSheets; if (!CS || typeof CS.ensureLive !== "function" || !sh || !MANUAL_METALS.includes(sh.metal)) return;
     const todo = allSheets().filter(p => p !== sh && p.sheetId && p.recalled && !(p.charms || []).length && p.metal === sh.metal && (p.runId || null) === (sh.runId || null) && !laserCut(p, p.recalled));
     let n = 0;
-    for (const p of todo) { if (!MC.on || MC.sh !== sh) return; try { if (await liveWhole(p.sheetId)) n++; } catch (e) { console.warn("sheet window: a sheet to move charms onto", e && e.message); } }
+    for (const p of todo) { if (!MC.on || MC.sh !== sh) return; try { if (await liveWhole(p.sheetId)) { n++; if (slOn("sheetwin")) (W.mcLive || (W.mcLive = new Set())).add(p.sheetId); } } catch (e) { console.warn("sheet window: a sheet to move charms onto", e && e.message); } }
     if (n && MC.on && MC.sh === sh) tryDo(() => window.SheetHop && SheetHop.refresh());
   }
   function mcRunSheet(id) {
     const p = allSheets().find(q => q.sheetId === id) || null;
     return p && p.recalled && !(p.charms || []).length ? null : p;
   }
+  /** SHEETLIVE (Paul, 27 Nov 2026, GF_Nov.24.26_Set-2_Sheet-1: "not being able to click the manual button"): the page's own sheet Manual Control may work on. On the computer that CARRIES the run, its live
+   *  sheet, as before; in CLOUD MODE (cloudPage) a page built here is a copy the Nest card rebuilt behind the window's back (other charm objects, the "older copy" refusal), so none, and the sheet is
+   *  made from the one copy's record and the window's own drawn pieces (mcStandalone), save one Manual Control built here for itself just now to move charms between sheets (HOPLIVE: W.mcLive). */
+  function mcHeld(id) { const p = mcRunSheet(id); return p && slOn("sheetwin") && cloudPage(p) && !(W.mcLive && W.mcLive.has(id)) ? null : p; }
   /** Why Manual Control cannot start yet on a sheet this screen holds no live copy of (the window loads it from its record). */
   function mcStandWhy() {
     const rec = W.rec;
@@ -6639,13 +6679,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
        14K sheet opened from the Library was edited from its record alone (MCLIBRARY) and the run's other sheets of its metal, the hop's sheets to drop onto, were none of them held here. Manual
        Control on a 10K / 14K sheet first makes it a sheet this page holds (CharmNestCloudSheets.ensureLive, as an opened draft is: openDrafts), the window draws it again and Manual Control starts
        by itself; the run's other sheets of the metal are built behind it (hopLive) and the hop's docks come back. A sheet that cannot be built here is edited from its record, as before. */
-    if (!(o0 && o0.livened) && W.rec && MANUAL_METALS.includes(W.rec.metal) && !mcRunSheet(W.id) && !laserCut(null, W.rec) && window.CharmNestCloudSheets && typeof CharmNestCloudSheets.ensureLive === "function" && allSheets().some(p => p.sheetId === W.id)
+    if (!(o0 && o0.livened) && W.rec && MANUAL_METALS.includes(W.rec.metal) && !mcHeld(W.id) && !laserCut(null, W.rec) && window.CharmNestCloudSheets && typeof CharmNestCloudSheets.ensureLive === "function" && allSheets().some(p => p.sheetId === W.id)
       && allSheets().some(p => p.sheetId && p.sheetId !== W.id && p.metal === W.rec.metal && (p.runId || null) === (W.rec.runId || null) && !laserCut(p, p.recalled))) {   // (only when its run has another sheet of the metal to move charms onto)
       const id = W.id; MC.claiming = true; mcButton(); mcSay("Getting this sheet and its run's other sheets ready to move charms between them…", "");
       let ok = false; try { ok = await within(liveWhole(id), 120000, "it was not ready in two minutes") && !!mcRunSheet(id); } catch (e) { console.warn("sheet window: live sheet", e && e.message); }
       MC.claiming = false; mcButton();
       if (!W.dlg || !W.dlg.open || W.id !== id) return;
       if (!ok) return mcToggle(Object.assign({}, o0 || {}, { livened: true }));   // (not built here: its record is edited, as before; no sheets to move charms onto)
+      if (slOn("sheetwin")) (W.mcLive || (W.mcLive = new Set())).add(id);   // (SHEETLIVE: built here just now, from the cloud, for this Manual Control: the window and Manual Control use it until Manual Control ends)
       W.mcAfterOpen = id; return open(id, { keepWork: true, keepSet: false });   // (drawn again as this page now holds it; geometryReady starts Manual Control)
     }
     // (MCEVERY: a GF / SS / RG sheet is loaded from its record now, its stock and green line read once; the press waits for that read, then starts)
@@ -6739,6 +6780,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   function mcOff(o = {}) {
     if (!MC.on) return Promise.resolve(false);
+    if (W.mcLive) W.mcLive.clear();   // (SHEETLIVE: the sheets Manual Control built here are copies again: the window draws the one copy's record from its next drawing)
     // (MOVEINSTANT 2: o.bg, the window left or closed: the moves are saved in the background, the chip, no panel; a sheet still waiting for its own background save
     //  (MC.wait) has no moves of its own: those are being saved already)
     const sh = MC.sh, id = MC.id, who = MC.who || whoAmI(), edits = MC.wait ? new Map() : new Map([...MC.edits].filter(([pid, q]) => mcChanged(MC.from.get(pid), q)));
@@ -7067,7 +7109,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return { done: h.done, jobK: job.k, mid: h.mid };
   }
   /** The moves of a sheet kept on this computer again (a refusal): Manual Control turned on again for it puts them back. */
-  function mcDraftPut(id, edits, who) { try { const ed = [...edits].filter(([, q]) => q && Number.isFinite(+q.cxPt)); if (ed.length && id) localStorage.setItem(mcDraftKey(id), JSON.stringify({ at: Date.now(), by: who || "", edits: ed })); } catch (_) {} }
+  function mcDraftPut(id, edits, who) { try { const ed = [...edits].filter(([, q]) => q && Number.isFinite(+q.cxPt)); if (ed.length && id) MC_DRAFTS.set(mcDraftKey(id), JSON.stringify({ at: Date.now(), by: who || "", edits: ed })); } catch (_) {} }
   /** The patch answered: the window's record takes the new poses under the revision the cloud gave them (its next question by revision is answered "unchanged"); a press that
       won over another person's later-arriving change says so. */
   function mcAnswered(sh, ans, who) {
@@ -7079,7 +7121,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const pl = new Map(sh.placements.map(p => [p.id, p])), ch = new Map(sh.charms.map(c => [c.id, c]));
       const next = Object.assign({}, rec, { placements: (rec.placements || []).map(p => (pl.has(p.id) ? Object.assign({}, p, pl.get(p.id)) : p)), charms: (rec.charms || []).map(c => (ch.has(c.id) ? Object.assign({}, c, { pinned: ch.get(c.id).pinned, manual: ch.get(c.id).manual }) : c)), manualEdit: null, filesOwed: ans.filesOwed || rec.filesOwed || null });
       if (W.rec && W.rec.id === id) W.rec = next;
-      if (St && St.put && ans.rev) St.put("sheetFull", id, next, ans.rev);
+      const L = slOn("sheetwin");
+      // (SHEETLIVE: the person's own save is the one copy's at once (mine): every view shows it, and only the cloud's record at or after this write replaces it)
+      if (L && L.has(id)) { const was = L.get(id), m = L.mine(id, { placements: next.placements, charms: next.charms, manualEdit: null, filesOwed: next.filesOwed }, { rev: ans.rev || "" }); if (W.rec === next && m !== was) W.recBase = m; }   // (the one copy already held a newer record: the window draws that one at its next look)
+      else if (St && St.put && ans.rev) St.put("sheetFull", id, next, ans.rev);
     });
     if (ans.overwrote && ans.overwrote.length) { const words = overwroteWords(ans.overwrote, sh); if (words) tryDo(() => toast(words, "", 8000)); }
   }
@@ -7518,7 +7563,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   let orderFeed = null;
   function orderFollow() {
     if (orderFeed || !window.CNSync || typeof window.CNSync.follow !== "function") return;
-    orderFeed = window.CNSync.follow({ name: "order-sheet", kinds: "s", wild: "", active: () => true, wants: k => orderRecs.has(String(k).slice(2)),
+    orderFeed = window.CNSync.follow({ name: "order-sheet", kinds: "s", wild: "", active: () => true, wants: k => !slOn("orderwin") && orderRecs.has(String(k).slice(2)),   // (SHEETLIVE: with the switch on the one copy reads and tells, recLive)
       read: (why, keys, at, names) => {
         if (why === "reset" || why === "lost") { orderRecs.clear(); return; }
         const ids = [...new Set((names && names.length ? names : keys || []).map(k => String(k).slice(2)).filter(x => x && x !== "*" && orderRecs.has(x)))];
@@ -7528,8 +7573,32 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       } });
     document.addEventListener("visibilitychange", () => { if (!document.hidden && orderFeed) orderFeed.resume(); });   // (named while the tab was hidden: read once it is shown)
   }
+  /* SHEETLIVE (Paul, 27 Nov 2026: "the sheets ... showing wrong old information, not updating"): with the order window's switch on (window.CN_SHEETLIVE.orderwin), the Sheet tab keeps no record of its own and
+     no minute: it draws the page's ONE copy of the sheet (charm-nest-sheet-live.js), watched while the order window is open (orderLetGo when it closes), read by revision whenever the feed names the
+     sheet, its set or its orders; a change is drawn at once (OrderWin.remade). A record the one copy holds is drawn at once and asked after behind it by revision, as the held copy was. */
+  const OW_SL = new Map();   // sheet id → unwatch (the sheets the Sheet tab shows, watched in the one copy)
+  let owSub = null;
+  function recLive(L, id, o) {
+    const owOpen = !!tryDo(() => window.OrderWin && typeof OrderWin.isOpen === "function" && OrderWin.isOpen());
+    if (!OW_SL.has(id) && owOpen) OW_SL.set(id, L.watch(id, "orderwin", { full: true, orders: true }));   // (watched while the order window is open; another view that draws a sheet (the run history, the set picker) keeps its minute, below)
+    const watching = OW_SL.has(id);
+    if (!owSub) owSub = L.subscribe("*", ev => { if (!ev || !OW_SL.has(ev.id) || ev.why === "order" || ev.why === "set" || !slOn("orderwin")) return; const e = orderRecs.get(ev.id); if (e && e.rec === ev.rec) return; if (window.OrderWin && typeof OrderWin.isOpen === "function" && OrderWin.isOpen() && typeof OrderWin.remade === "function") tryDo(() => OrderWin.remade([ev.id])); else orderRecs.delete(ev.id); });
+    const fresh = !!(o && o.fresh), held = L.full(id), hit = orderRecs.get(id);
+    if (!fresh && hit && held && hit.rec === held && (watching || Date.now() - hit.at < 60000)) return hit.p;   // (the one copy has not moved since this record was drawn: watched, it is the cloud's; else asked again after a minute, as before)
+    const entry = { at: Date.now(), p: null, rec: null };
+    const took = rec => { const got = L.full(id) || rec; tryDo(() => window.CNSheetBusy && CNSheetBusy.see(got, id)); entry.rec = got; entry.at = Date.now(); return got; };
+    const newer = !!held && !!hit && hit.rec !== held;   // (the one copy read a newer record since this one was drawn: drawn now, nothing more asked)
+    const p = held && (!fresh || newer) ? Promise.resolve(took(held)) : L.read(id, held ? {} : { whole: true }).then(rec => { if (!rec) throw new Error("This sheet is no longer in the Library."); return took(rec); });
+    if (held && !fresh && !newer && (!hit || !watching) && !(o && o.quiet)) entry.behind = L.read(id).then(rec => (rec ? L.full(id) || rec : null), () => null);   // (NEWPLATE: what was asked behind it, for the plate drawn from the copy, once)
+    p.catch(() => { if (orderRecs.get(id) && orderRecs.get(id).p === p) orderRecs.delete(id); });
+    entry.p = p; orderRecs.set(id, entry); if (orderRecs.size > 12) orderRecs.delete(orderRecs.keys().next().value);
+    return p;
+  }
+  /** SHEETLIVE: the order window closed: the sheets its Sheet tab showed are watched no more. */
+  function orderLetGo() { for (const [id, off] of OW_SL) { tryDo(off); orderRecs.delete(id); } OW_SL.clear(); }   // (and forgets the records it drew of them: the next opening asks after each by revision)
   function recFor(id, o) {
     tryDo(orderFollow);   // (SHEETFRESH: the Sheet tab's kept records follow the feed)
+    { const L = slOn("orderwin"); if (L) return recLive(L, id, o); }   // (SHEETLIVE: the one copy, no minute kept)
     const fresh = !!(o && o.fresh), hit = orderRecs.get(id); if (!fresh && hit && Date.now() - hit.at < 60000) return hit.p;
     // Viewing a sheet is a short read, not the five-minute file-writing operation that getSheet otherwise inherits.
     // A rejected read is evicted, so reopening (or Try again) really does ask again.
@@ -7560,7 +7629,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   async function refreshRecord(id) {
     const kept = orderRecs.get(id), was = kept && kept.rec;
     orderRecs.delete(id);
-    let rec = null; try { rec = await recFor(id, { fresh: true }); } catch (_) { rec = null; }
+    // (SHEETLIVE: the one copy already holds a newer record than the one drawn (it read it, and told the window): that one, with no read)
+    const L = slOn("orderwin"), newer = !!L && !!L.full(id) && L.full(id) !== was;
+    let rec = null; try { rec = await recFor(id, newer ? { quiet: true } : { fresh: true }); } catch (_) { rec = null; }
     // (WRONGCHARM2, Paul 20 Oct 2026: and the design of each piece: a piece made again from another charm keeps its pool id. Both are whole records read by getSheet here, so their charms compare)
     const designSig = r => JSON.stringify(((r && r.charms) || []).map(c => String((c && c.poolId) || "") + ":" + String((c && c.sku) || "").toUpperCase()).sort());
     return !rec ? !!was : !was || memberSig(rec) !== memberSig(was) || designSig(rec) !== designSig(was);
@@ -7898,7 +7969,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   async function drawOrder(cv, target, orderId, opts = {}) {
     const rid = String(orderId || ""), page = target && typeof target === "object" ? target : null, id = page ? page.sheetId || "" : String(target || "");
-    const held0 = page ? null : id ? liveOf(id) : null, live = page || (opts.cloudRec ? null : held0), claim = cv._claim = {};   // (NEWPLATE: cloudRec: the cloud's record, newer than the sheet this page holds)
+    const held0 = page ? null : id ? orderLiveOf(id) : null, live = page || (opts.cloudRec ? null : held0), claim = cv._claim = {};   // (NEWPLATE: cloudRec: the cloud's record, newer than the sheet this page holds)
     const was = cv._order; if (was && was.dispose) was.dispose(); else if (was) { cancelAnimationFrame(was.raf); cancelAnimationFrame(was.soon); was.raf = was.soon = 0; }
     cv._order = null;
     const current = () => cv._claim === claim && cv.isConnected && (!opts.isCurrent || !!tryDo(opts.isCurrent));
@@ -8326,7 +8397,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     try { const St = window.CharmNestStore; if (St && St.warm && window.Pool && Pool.warmKept) St.ready().then(() => St.warm("sheetFull", 8)).then(recs => { for (const r of recs) for (const s0 of r.sources || []) if (s0 && s0.pool && s0.path && s0.hash) Pool.warmKept(s0.path, s0.hash); }).catch(() => {}); } catch (_) {} }, { timeout: 5000 }); } catch (_) {}
   /* SAVEDNOW (Paul, 24 Nov 2026): a piece saved in the Charm Editor is drawn at once in the window it was opened from */
   document.addEventListener("cn-charm-saved", e => { let n = 0; for (const id of (e.detail && e.detail.poolIds) || []) { const x = W.byPool && W.byPool.get(String(id)), c = window.CharmNestSavedCharms && CharmNestSavedCharms.get(String(id)); if (x && c) { x.c = Object.assign({}, c, { id: x.id, poolId: x.poolId }); n++; if (W.sel === x) { const cv = W.el && W.el.detail && W.el.detail.querySelector(".swThumb"); if (cv) tryDo(() => drawThumb(cv, x)); } } } if (n && W.rec && W.geom) { tryDo(paintBase); tryDo(() => paintFx()); } });
-  window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, dropOrder, dropTakenOff, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, pieceBase, _W: W };
+  window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, dropOrder, dropTakenOff, holdKit, refreshRecord, heldOf, orderLetGo, mcUses: id => !!(MC.on || MC.claiming) && (MC.id === id || (MC.sh && MC.sh.sheetId === id) || !!(W.mcLive && W.mcLive.has(id))), /* (SHEETLIVE: a sheet Manual Control holds now is never built again under it) */ open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, pieceBase, _W: W };
   /* ── the sheet hop (charm-nest-sheet-hop.js; Paul, 18 Oct 2026: on 10K and 14K sheets a person drags a charm onto the next or previous sheet
      of its metal): this window's own pieces for it, nothing new. The move itself is moveIn (o.hop: pinned where it was put, the hop's own
      guards), the room is the window's collision grid (plateGrid / variantOf: real outlines and the run's clearance). W.hop, set while a charm
