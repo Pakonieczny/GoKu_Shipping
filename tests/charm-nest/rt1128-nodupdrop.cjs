@@ -185,7 +185,7 @@ function seedOnSheet(k, q, p) {
     ok('P8 a refusal from the server drops the unrecorded send (no retry for ever) and says its words', /err\.data\.refused==="nodupdrop"[^\n]*delete e\.sendIntent/.test(sendSrc));
     ok('P9 a card held by the rule takes no drop (dropOk) and says why; the replaced send is never put back over the new design', /dropOk: !sent && !locked && open && !cut && !held/.test(src) && /if \(c && c\.held\) return c\.held;/.test(src) && /had\.replaces\.id===rec\.sent\.id\)continue;/.test(src));
     const html = fs.readFileSync(path.join(ROOT, 'charm-nest-1.html'), 'utf8');
-    ok('P10 charm-nest-1.html loads the changed page files under new tokens', /charm-nest-bridge\.js\?v=[^"]*-nd1"/.test(html) && /charm-nest-pool-pieces\.js\?v=[^"]*-nd1"/.test(html));
+    ok('P10 charm-nest-1.html loads the changed page files under new tokens', /charm-nest-bridge\.js\?v=[^"]*-nd1(?:-\w+)*"/.test(html) && /charm-nest-pool-pieces\.js\?v=[^"]*-nd1(?:-\w+)*"/.test(html));
   });
 
   ok('Z no Etsy call, no network', F.etsy.calls === 0 && !F.net.tripwire.length && !F.net.other.length, { etsy: F.etsy.calls, trip: F.net.tripwire, other: F.net.other });
