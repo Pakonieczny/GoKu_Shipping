@@ -18195,6 +18195,38 @@ const CustomSheet = window.CustomSheet = (() => {
     return want.size ? open0.filter(r => want.has(r.key)) : open0;
   }
   const targetsOf = e => new Set(((e && e.files) || []).map(F => F && !F.mono && F.line).filter(Boolean));
+  /* NODUPDROP (Paul, 28 Nov 2026: "The user added an .ai file to a custom order that was already nested. This duplicated the pieces of this order"; order 4249694385, 12 charms, read 25 pieces).
+     A design dropped on a card JOINED the card's designs (add: e.files.push) and a send cuts every design of the card (planLines): a card that still listed the first design, its 12 pieces on
+     a sheet, sent it again with the new one, copies 1-12 (the pieces already there, kept) and 13-25 (the new design) on the one line. And whether a card was "already on the sheets" was only
+     what this page remembered of its send (cardOf: decisionOf / e.sent): a computer that had not read the send (a viewer reads the sends once, when it opens) took the drop. Now the LINE is
+     asked, through charm-nest-pool-pieces.js dropRule, the rule the server (customSheetPut) and the cloud (customsend) read too: a line whose pieces were made from a design dropped before
+     keeps them while one is on a sheet (the drop and the send are refused in words that say what to do), and with none on a sheet the new design REPLACES the earlier one (never beside it). A
+     line with its matched charm's pieces is replaced in place as before (REVDROP). nodupRule(row) → dropRule's answer for that line, from what this page holds (the server decides again). */
+  const NODUP_TAKEN = new Set(["abandoned", "superseded"]);
+  function nodupRule(r) {
+    const PP = window.CharmNestPoolPieces; if (!r || !PP || typeof PP.dropRule !== "function") return { ok: true, replace: false, ids: [] };
+    const ids = [...new Set(((r.poolIds) || []).map(String).filter(Boolean))], want = new Set(ids), onSheet = new Map();
+    if (ids.length) { let sheets = []; try { sheets = allSheets(); } catch (_) { sheets = []; } for (const s of sheets) for (const c of s.charms || []) if (c && want.has(String(c.poolId)) && !onSheet.has(String(c.poolId))) onSheet.set(String(c.poolId), [s, c]); }
+    const pieces = ids.map(id => {
+      const p = B.pool.rows.get(id) || null; if (p && NODUP_TAKEN.has(String(p.state || ""))) return null;
+      const [sh, c] = onSheet.get(id) || [null, null];
+      let pc = null; try { pc = Pool.charmOf(id); } catch (_) { pc = null; }
+      const custom = !!((p && p.custom === true) || (c && (c.custom || c.customCk)) || (pc && (pc.custom || pc.customCk)));
+      let cut = false; try { cut = !!(sh && replaceLaserWhy(sh)); } catch (_) { cut = false; }
+      return { poolId: id, custom, sheet: sh ? String(sh.fileBase || sheetName(sh) || "its sheet") : p && p.sheetId ? String(p.sheetName || "its sheet") : "", cut: cut || !!(p && p.state === "committed") };
+    }).filter(Boolean);
+    // (a custom listing's line takes no piece but from the designs dropped for it: its pieces are a drop's, whatever this page holds of their rows)
+    const decided = !!decisionOf(r) || (!!pieces.length && !!(r.spec && (r.spec.special || r.spec.ownDesign)));
+    return PP.dropRule({ rid: String((r.order && r.order.receiptId) || ""), decided, pieces });
+  }
+  /** The lines a drop on this card is for (the piece picked, or every line of the card) and what dropRule says of each: { refuse: words } | { replace: [rows] } | null (nothing to replace). */
+  function nodupCard(it, opts) {
+    if (opts && opts.mono) return null;
+    const all0 = linesOf(it), want = (opts && opts.line && all0.find(r => r.key === opts.line)) || (pickable(it) ? pickRow(it) : null), rows = want ? [want] : all0, replace = [];
+    for (const r of rows) { const a = nodupRule(r); if (!a.ok) return { refuse: a.words, row: r }; if (a.replace) replace.push(r); }
+    return replace.length ? { replace } : null;
+  }
+  /* NODUPDROP end */
   /* ── an earring pair cut from the customer's own designs (Paul, 9 Oct 2026, 18:47) ──
      A pair of earrings is a LEFT and a RIGHT piece for every pair bought (charm-nest-pair.js piecesFor), a custom order too. The customer's file may draw
      both ears (two bodies: the one on the left is the Left) or one (the Right is then the Left mirrored, as for every other design). The card's Send to
@@ -18249,8 +18281,10 @@ const CustomSheet = window.CustomSheet = (() => {
     const cut = !!(row.spec && row.spec.special && row.spec.special.notCut);
     const sent = !!decisionOf(row) || !!(e && e.sent), locked = !!(e?.sendIntent || busy.has(ck));   // (PIECEPICK: a send that replaced another charm of the order is this card's send too)
     const open = openLines(it).length > 0;
+    // (NODUPDROP: a card whose line holds pieces of a design dropped before, one of them on a sheet, takes no drop: `held` says why, in the drop's own words; looked at only for a card that would take one)
+    let held = ""; if (!sent && !locked && open && !cut) { try { const nd = nodupCard(it, {}); held = nd && nd.refuse ? nd.refuse : ""; } catch (_) { held = ""; } }
     // a card takes designs while it can still be cut from them: not sent, not completed, not chain only (never cut)
-    return { ck, e, files: e ? e.files : [], sent, open:open || !!e?.sendIntent, cut, busy: busy.get(ck) || "", why: sent ? "" : e?.sendIntent ? "" : notReady(e), dropOk: !sent && !locked && open && !cut };
+    return { ck, e, files: e ? e.files : [], sent, open:open || !!e?.sendIntent, cut, busy: busy.get(ck) || "", why: sent ? "" : e?.sendIntent ? "" : notReady(e), held, dropOk: !sent && !locked && open && !cut && !held };
   }
   // the card's own designs only (one card's file being read no longer rebuilds every other custom card, which also
   // dropped the drag state of the card under the pointer)
@@ -18411,7 +18445,10 @@ const CustomSheet = window.CustomSheet = (() => {
     if (bad) toast(ok.length ? `${plural(bad, "file")} left out: only .ai and .dxf designs go on a custom order` : "Only .ai and .dxf designs can go on a custom order", "bad", 5000);
     if (!ok.length) return;
     if (c.e?.sendIntent || busy.has(c.ck)) { toast("The designs are being sent; retry the recorded send before editing them", "bad", 5000); return; }
-    if (c.sent) { toast("That order's designs are already on the sheets", "bad", 5000); return; }
+    // NODUPDROP: the lines the design is for, asked first: pieces of a design dropped before that are on a sheet keep the drop out (in words); with none on a sheet it replaces them
+    const nd = nodupCard(it, opts);
+    if (nd && nd.refuse) { toast(nd.refuse, "bad", 14000); return; }
+    if (c.sent && !nd) { toast("That order's designs are already on the sheets", "bad", 5000); return; }
     if (!c.open) { toast("Every piece of that order is already on a sheet or completed", "bad", 5000); return; }
     if (c.cut && !c.files.length) { toast("That order is not laser cut, so it takes no designs", "bad", 5000); return; }
     // REVDROP (Paul, 15 Oct 2026): a vector file dropped on an order's card, or added in its window, asks first (the first design of an order): it replaces the listing's selected vector for THIS order only
@@ -18424,6 +18461,20 @@ const CustomSheet = window.CustomSheet = (() => {
     const metal = (opts.metal && metalOf(opts.metal) ? opts.metal : null) || (tgt && tgt.spec && metalOf(tgt.spec.material) ? tgt.spec.material : null) || (e.files.length ? e.files[e.files.length - 1].metal || defaultMetal(it) : defaultMetal(it)), qty = opts.qty >= 1 ? Math.min(99, Math.round(opts.qty)) : tgt ? lineQty(tgt) : defaultQty(it);
     if (tgt) picks.set(c.ck, tgt.key);
     if (opts.keepWant) e.keepWant = { line: tgt ? tgt.key : null, at: Date.now() };   // (PIECEPICK: "Update the charm repository" was picked in the question: the window's switch is pressed for it once the design is read, and asks to confirm as ever)
+    // NODUPDROP: the new design REPLACES the line's earlier one, never joins it: the earlier designs of those lines leave the card, a send of them recorded already is reopened (e.replaces: the
+    // server takes the new send in its place while none of the pieces is on a sheet), and the pieces are made again from the new design under the same pool ids when Nest it is pressed
+    if (nd && nd.replace) {
+      const keys = new Set(nd.replace.map(r => r.key)), own = F => !F.mono && (F.line ? keys.has(F.line) : true), was = e.sent || decisionOf(nd.replace[0]);
+      if (was) {
+        e.replaces = { id: String(was.id || ""), at: +was.at || 0, by: String(was.by || "") }; e.sent = null; delete e.sendError; delete e.sendCloudPending;
+        for (const r of linesOf(it)) { delete r._customSentDecision; if (B.maps && B.maps.customSent && B.maps.customSent[r.key]) { const m = Object.assign({}, B.maps.customSent); delete m[r.key]; B.maps.customSent = m; } }
+      }
+      const gone = e.files.filter(own);
+      for (const F of gone) { keepFileRemoved(e.rid, F); geo.delete(F.id); pending.delete(F.id); arriving.delete(F.id); popThumb.delete(F.id); charmViews.delete(F.id); }
+      if (gone.length) e.files = e.files.filter(F => !own(F));
+      ver++;
+      if (was || gone.length) toast(`Order ${e.rid}: the new design replaces the earlier one. Its pieces are made again from it, under the same numbers, when you press Nest it`, "ok", 7000);
+    }
     const fresh = ok.map(f => Object.assign({ id: uid(), name: f.name, kind: /\.dxf$/i.test(f.name) ? "dxf" : "ai", size: f.size || 0, bytes: null, hash: null, cloud: null, metal, qty, pieces: 0, wMm: 0, hMm: 0, thumb: null, state: "reading", error: null }, tgt ? { line: tgt.key } : {}, opts.mono && opts.mono.line ? { mono: Object.assign({ line: String(opts.mono.line), slot: opts.mono.slot || null }, +opts.mono.hoops > 0 ? { hoops: +opts.mono.hoops } : {}) } : {}));   // (MONOHOOPS: mono.hoops, the design carries the two hoops)
     fresh.forEach((F, i) => pending.set(F.id, ok[i]));
     if (!e.files.length && !opts.quiet) stripNew.add(c.ck);           // the card's strip of designs opens its room when it first shows
@@ -18479,7 +18530,7 @@ const CustomSheet = window.CustomSheet = (() => {
   // Only metadata and durable file references cross the API. The original bytes stay in the workspace.
   function cloudRecord(e, phase) {
     const sent=e.sent || e.sendIntent;
-    return {ck:e.ck,rid:String(e.rid),at:e.at || sent.at,phase,files:e.files.map(F=>({id:F.id,name:F.name,kind:F.kind,size:F.size || 0,hash:F.hash || null,cloud:F.cloud?{path:F.cloud.path,url:F.cloud.url}:null,metal:F.metal,qty:F.qty,pieces:F.pieces,wMm:F.wMm || 0,hMm:F.hMm || 0,maxPt:F.maxPt || 0,minPt:F.minPt || 0,maxAreaPt2:F.maxAreaPt2 || 0,state:"ready",thumb:F.thumb || null,...(multiFile(F)?{charmQty:Object.assign({},F.charmQty)}:{}),...(Array.isArray(F.charmBacks)&&F.charmBacks.length?{charmBacks:F.charmBacks.slice()}:{})})),sent:{id:sent.id || `custom-sheet:${e.ck}:${sent.at}`,at:sent.at,by:sent.by || "",lines:sent.lines}};
+    return {ck:e.ck,rid:String(e.rid),at:e.at || sent.at,phase,files:e.files.map(F=>({id:F.id,name:F.name,kind:F.kind,size:F.size || 0,hash:F.hash || null,cloud:F.cloud?{path:F.cloud.path,url:F.cloud.url}:null,metal:F.metal,qty:F.qty,pieces:F.pieces,wMm:F.wMm || 0,hMm:F.hMm || 0,maxPt:F.maxPt || 0,minPt:F.minPt || 0,maxAreaPt2:F.maxAreaPt2 || 0,state:"ready",thumb:F.thumb || null,...(multiFile(F)?{charmQty:Object.assign({},F.charmQty)}:{}),...(Array.isArray(F.charmBacks)&&F.charmBacks.length?{charmBacks:F.charmBacks.slice()}:{})})),sent:{id:sent.id || `custom-sheet:${e.ck}:${sent.at}`,at:sent.at,by:sent.by || "",lines:sent.lines,...(e.replaces && e.replaces.id ? {replaces:e.replaces.id} : {})}};   // (NODUPDROP: replaces, the recorded send the card's new design takes the place of)
   }
   async function saveCloud(e, phase) {
     if (!S.cloud.ok) { e.sendCloudPending=true; return; }
@@ -18553,6 +18604,8 @@ const CustomSheet = window.CustomSheet = (() => {
     const rows=e.sendIntent?currentRows(e):sendRows(it,e);   // (PIECEPICK: only the charms its designs were dropped for)
     if(!e.sendIntent && !rows.length && targetsOf(e).size){if(!how.recover)toast("The piece this design was dropped for can no longer take a design (it is cut, completed or gone): remove the design, pick another piece and drop it again","bad",8000);return;}
     if(!rows.length || e.sendIntent && rows.length!==Object.keys(e.sendIntent.lines).length){if(!how.recover)toast("The recorded pieces of the order are still loading; retry when the order is available","bad",5000);return;}
+    // NODUPDROP: a new send is asked of its lines again at the press (their pieces may have gone onto a sheet since the drop): never made beside pieces of an earlier design on a sheet
+    if(!e.sendIntent){for(const r of rows){const a=nodupRule(r);if(!a.ok){if(!how.recover)toast(a.words,"bad",14000);return;}}}
     const sigOf=list=>JSON.stringify(list.map(F=>[F.id,F.hash,F.metal,F.qty,multiFile(F)?F.charmQty:null])),files=e.files.slice(), fileSig=sigOf(files);   // (MULTICHARM: a charm's own count changed under the send is a change too)
     const current=()=>owns(e,owner,rows) && e.files.length===files.length && fileSig===sigOf(e.files);
     const say=t=>{busy.set(ck,t);redraw();};
@@ -18664,6 +18717,9 @@ const CustomSheet = window.CustomSheet = (() => {
       }else{nestHold?.releaseAll();if(snap?.ghost)snap.ghost.remove();letGo();if(!how.from && toSheets(ck,n,words,shutting?700:0))flying=true;else toast(words,"ok",6000);}
       return e.sent;
     }catch(err){
+      /* NODUPDROP: the server refused the send (its lines' pieces of an earlier design are on a sheet, or belong to another card's send): nothing was recorded or made, so it is not kept for a
+         retry that could only be refused again; the card keeps its designs and the person reads what to do */
+      if(err && err.data && err.data.refused==="nodupdrop" && owner[e.ck]===e && e.sendIntent && !e.sendIntent.pressed){delete e.sendIntent;delete e.sendError;ver++;Session.schedule();if(!how.recover)toast(String(err.data.error || err.message || "Not sent: the order's pieces are already on a sheet"),"bad",14000);return null;}
       if(owner[e.ck]===e){e.sendError=String(err.message || err);Session.schedule();await Session.flushNow?.().catch(()=>{});}
       if(!how.recover){humanAct("error",{orderId:String(e.rid),detail:"send to the sheets not finished, kept for retry"});toast(`${e.rid}: send saved for retry — ${err.message}`,"bad",8000);}
     }finally{keepDisarm(keepK);stampHost?.remove();busy.delete(ck);if(!flying){nestHold?.releaseAll();if(snap?.ghost)snap.ghost.remove();letGo();redraw();}}
@@ -18804,6 +18860,7 @@ const CustomSheet = window.CustomSheet = (() => {
           // A remote receipt fills metadata, never discards this browser's files or rewrites a different local decision.
           const localFiles=new Map((had?.files || []).map(F=>[F.id,F]));
           if(had && (had.sent || had.sendIntent)?.id && (had.sent || had.sendIntent).id!==rec.sent.id)continue;
+          if(had && had.replaces && had.replaces.id && had.replaces.id===rec.sent.id)continue;   // (NODUPDROP: the send this card's new design replaces is not put back over it)
           const e=had || {ck:rec.ck,rid:String(rec.rid),at:rec.at || rec.sent.at,files:[]};e.files=rec.files.map(F=>Object.assign({},F,localFiles.get(F.id) || {},{cloud:F.cloud || localFiles.get(F.id)?.cloud,state:"ready"}));
           const local=had && (had.sent || had.sendIntent), kept=Object.assign({},rec.sent,{lines:Object.fromEntries(Object.entries(rec.sent.lines).map(([key,pcs])=>[key,pcs.map((pc,n)=>{const old=local?.lines?.[key]?.[n];return old?.removed && old.f===pc.f && old.i===pc.i?Object.assign({},pc,{removed:old.removed}):Object.assign({},pc);})]))});
           if(rec.phase==="sent"){e.sent=kept;delete e.sendIntent;delete e.sendError;e.sendCloudPending=false;}else if(!e.sent)e.sendIntent=Object.assign({},kept,{pressed:true});
@@ -18986,7 +19043,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const none = !c.files.length;
     return sheetSealsHtml(it) +
       (none && linesOf(it)[0]?.spec?.special?.monogram ? `<button type="button" class="btn gold sm" data-cu-mono title="Make the monogram from the buyer's three letters (Design & Engrave tab)">Build monogram</button>` : "") +
-      (none && hint ? `<button type="button" class="cuHint" data-cu-designs title="Drop the order's .ai or .dxf design files on this card, or click to choose them">${DROP_IC}<span>Drop .ai / .dxf designs here</span></button>` : "");
+      (none && hint && !c.held ? `<button type="button" class="cuHint" data-cu-designs title="Drop the order's .ai or .dxf design files on this card, or click to choose them">${DROP_IC}<span>Drop .ai / .dxf designs here</span></button>` : "");
   }
   const hasFiles = ev => !!ev.dataTransfer && [...(ev.dataTransfer.types || [])].includes("Files");
   const veilWords = () => `${drag.n ? plural(drag.n, "file") + " · " : ""}.ai and .dxf designs only · you pick each one's metal next`;
@@ -19077,6 +19134,7 @@ const CustomSheet = window.CustomSheet = (() => {
     if (card.classList.contains("cuDone")) return `${who} is completed: reopen it to add designs`;
     const c = card._cuIt ? cardOf(card._cuIt) : null;
     if (c && c.sent) return `${who}: its designs are already on the sheets`;
+    if (c && c.held) return c.held;   // (NODUPDROP: pieces of a design dropped before are on a sheet)
     if (c && c.cut) return `${who} is not laser cut, so it takes no designs`;
     if (c && !c.open) return `${who} is already on a sheet`;
     return "Only an open custom order's card takes designs";

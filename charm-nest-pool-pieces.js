@@ -261,6 +261,31 @@
     if (at) return { charm: at, by: "index" };
     return list.length === 1 ? { charm: list[0], by: "only" } : null;
   }
+  /* NODUPDROP (Paul, 28 Nov 2026: "The user added an .ai file to a custom order that was already nested. This duplicated the pieces of this order"): order 4249694385, a necklace of 12 charms
+     cut from its own design, showed 25 pieces. A design dropped for an order line made pieces BESIDE the pieces the line already had: a send of the card's designs puts every design of the card on
+     the line (charm-nest-bridge.js planLines), copy n of the line being pool id <line>_<n>, so the first design again (copies 1-12, the pieces already on the sheet, kept as they are) and the new one
+     after it (copies 13-25), and nothing compared a send with what the line already held. ONE rule, read the same way by the page (the drop and the send, CustomSheet), the server (customSheetPut,
+     before a send is recorded) and the cloud (customsend), says what a design dropped for ONE line may do:
+       line: { rid, pieces: [{ poolId, custom, sheet, cut }], decided }   its LIVE pieces (not taken off: abandoned / superseded), each with custom (cut from a design dropped before), sheet
+                                                                           (the name of the live sheet that lists it, "" when none) and cut (that sheet or its set laser cut, or the piece committed);
+                                                                           decided: the line has a recorded send of dropped designs
+       → { ok: true, replace: false }        no piece of the line was made from a dropped design (none yet, or its matched charm's: the drop replaces those in place, REVDROP, as before)
+         { ok: true, replace: true, ids }    its pieces were made from a design dropped before and none is on a sheet: the new design REPLACES them, under the same pool ids, never beside them
+         { ok: false, words, sheets, n }     one is on a sheet (or cut): refused, in words that say what to do (the order window's "Take off the sheet…", then the drop again)
+     A send never adds pieces beside the pieces a line already has. */
+  function dropRule(line) {
+    const l = line && typeof line === "object" ? line : {}, rid = String(l.rid || "").trim();
+    const pieces = (Array.isArray(l.pieces) ? l.pieces : []).filter(p => p && p.poolId);
+    if (!l.decided && !pieces.some(p => p.custom === true)) return { ok: true, replace: false, ids: [] };
+    const on = pieces.filter(p => p.sheet || p.cut);
+    if (!on.length) return { ok: true, replace: true, ids: pieces.map(p => String(p.poolId)) };
+    const sheets = [...new Set(on.map(p => String(p.sheet || "").trim()).filter(Boolean))], n = pieces.length, cut = on.some(p => p.cut);
+    const where = sheets.length ? sheets.join(" and ") : "a sheet", them = n === 1 ? "it" : "them", its = n === 1 ? "its custom piece" : `its ${n} custom pieces`;
+    const words = cut
+      ? `Order ${rid || "this order"} already has ${its} on ${where}, already cut on the laser: a new design is never added beside ${them}, and a cut piece can no longer change. Nothing was changed.`
+      : `Order ${rid || "this order"} already has ${its} on ${where}: a new design is never added beside ${them}. To use the new design, open the order, press “Take off the sheet…” to take ${them} off, then drop the new design again. Nothing was changed.`;
+    return { ok: false, words, sheets, n, cut };
+  }
 
-  return { FIELDS, MAX_PIECES, parsePoolId, groupKeyOf, cleanFields, cleanGroupFields, cleanBody, fieldsOf, sheetCharmFields, metaOf, groupsOf, legacyGlued, placedCharms, uniqueIds, sourceOfCharm, sourceOf, sourcesOf, ownSource, carrySources, customIndexOf, pickCharm };
+  return { FIELDS, MAX_PIECES, parsePoolId, groupKeyOf, cleanFields, cleanGroupFields, cleanBody, fieldsOf, sheetCharmFields, metaOf, groupsOf, legacyGlued, placedCharms, uniqueIds, sourceOfCharm, sourceOf, sourcesOf, ownSource, carrySources, customIndexOf, pickCharm, dropRule };
 });
