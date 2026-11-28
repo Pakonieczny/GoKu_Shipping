@@ -163,7 +163,7 @@ async function roseStockOf(db, rec) {
 }
 async function sheetsOfRun(db, runId) { const q = await db.collection(SHEETS).where("runId", "==", runId).get(); return q.docs.map(d => Object.assign({ id: d.id }, d.data() || {})).filter(s => !s.archived); }
 /** The run's nest jobs, their bookkeeping only (a job's result is read by the writer, never by every pass of the driver). */
-const JOB_FIELDS = ["kind", "status", "sheetId", "sheetName", "layoutBase", "contentBase", "lane", "createdMs", "stopRequested", "stopFor", "auto", "slots", "attempt", "inputPath", "error", "preparedMs"];
+const JOB_FIELDS = ["kind", "status", "sheetId", "sheetName", "layoutBase", "contentBase", "lane", "createdMs", "stopRequested", "stopFor", "auto", "slots", "attempt", "inputPath", "error", "preparedMs", "endedBy", "roseStockId"];   // (LEFTOVERNOROOM: how a nest ended and on which plate)
 /* READCUT (Paul, 25 Nov 2026: "this is costing me about $60 per day … cut down the usage several fold without affecting usability or real time"; Query Insights: this run's
    `jobs where runId` read ~9,900 documents at every call, 1,758 calls a day, 17.5M of the day's 23M reads). A run keeps every nest it ever asked (each attempt, each revision);
    a pass needs only the jobs still queued or running, and each sheet's latest job (its record's nestJob: the one nestStart writes in the same transaction that makes the job).

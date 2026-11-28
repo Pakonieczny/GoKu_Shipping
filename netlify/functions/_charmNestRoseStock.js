@@ -63,7 +63,8 @@ function partialGroups(sheet,gone){
    generous estimate holds fewer pieces than that order, because it could only strand part of a pair. No hint, no change. Pure CPU on documents roseList already read. */
 function fitCheck(fit){
   const unit=fit&&Math.floor(+fit.unit);
-  if(!(unit>1&&unit<=50))return ()=>true;
+  // (LEFTOVERNOROOM, Paul 27 Nov 2026: a leftover that holds NO piece of the sheet is skipped too, whatever its orders: one with a single-piece order was taken without a look)
+  if(!(unit>=1&&unit<=50))return ()=>true;
   const typical={};for(const [k,v] of [['areaMm2',fit.areaMm2],['minMm',fit.minMm],['maxMm',fit.maxMm]])if(Number.isFinite(+v)&&+v>0)typical[k]=+v;
   return s=>{
     if(!s||!s.profileJson)return true;
@@ -129,6 +130,14 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
     // Resume a reservation after browser recovery before assigning another sheet.
     const held=await stocks().where('owner','==',b.sheetId).limit(1).get();
     let stockId=held.docs[0]?.id||b.stockId;
+    /* LEFTOVERNOROOM (Paul, 27 Nov 2026, RG Draft 1 of Nov 26: "Preview unavailable", 0 of its 22 pieces placed): the draft opened on the newest cut's leftover (RGLINK, the nest's hint)
+       took it with no look at its room, a strip about 16 pt wide that holds no piece, and stood there for good. A leftover only NAMED (no exact choice, not held by this sheet) is taken
+       when the room check takes it and this sheet has not found it without room before (b.skip, the sheet's greenNoRoom); else the automatic choice below, as with no name given. */
+    const skip=new Set((Array.isArray(b.skip)?b.skip:[]).map(String).slice(0,20));
+    if(!held.docs[0]&&b.stockId&&!b.exact&&(b.fit||skip.size)){
+      const hd=id(b.stockId)?await stocks().doc(b.stockId).get():null,hs=hd&&hd.exists?hd.data():null;
+      if(!hs||skip.has(String(b.stockId))||!fitCheck(b.fit)(hs))stockId=null;
+    }
     // exact (a chosen partial sheet, partialClaim): never quietly keep another physical sheet this layout holds, never create one
     if(b.exact){
       if(!id(b.stockId))throw new Error('Choose a partial sheet');
@@ -139,7 +148,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
     //  then any other sheet on the list oldest first as before, and a brand-new sheet only when none fits. Every metal with a green line. A chosen sheet (stockId, exact) and fresh are as they were)
     if(!stockId&&!b.fresh){const available=(await roseList({metal})).stocks,room=fitCheck(b.fit),left=s=>+s.revision>0||!!s.profileJson,cutAt=s=>+s.lastCutAt||0;
       const order=available.filter(left).sort((x,y)=>cutAt(y)-cutAt(x)).concat(available.filter(s=>!left(s)));
-      stockId=order.find(s=>Math.abs(s.wPt-b.wPt)<.01&&Math.abs(s.hPt-b.hPt)<.01&&room(s))?.id;}
+      stockId=order.find(s=>Math.abs(s.wPt-b.wPt)<.01&&Math.abs(s.hPt-b.hPt)<.01&&room(s)&&!skip.has(String(s.id)))?.id;}
     // onlyRemnant (10K and 14K nest on a leftover when one fits, and otherwise claim nothing): no leftover, nothing is created or written
     if(b.onlyRemnant&&!stockId)return {stock:null,protectedJson:null};
     if(stockId&&!id(stockId))throw new Error('Invalid '+metalWord(metal)+' sheet');

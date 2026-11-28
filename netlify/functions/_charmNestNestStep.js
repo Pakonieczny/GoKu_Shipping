@@ -29,7 +29,7 @@ function fitHint(rec, S) {
   try {
     const list = Nest.activeCharms(rec); if (!list.length) return {};
     const by = new Map(); for (const c of list) { const k = c.order || c.id; by.set(k, (by.get(k) || 0) + 1); }
-    const unit = Math.min(...by.values()); if (!(unit > 1)) return {};
+    const unit = Math.min(...by.values()); if (!(unit >= 1)) return {};   // (LEFTOVERNOROOM: a sheet whose smallest order is one piece asks for room for that one piece too)
     const MM = 25.4 / 72, area = list.reduce((n, c) => n + Nest.inflatedArea(S, c), 0) / list.length * MM * MM, sides = list.map(c => [num(c.widthPt) * MM, num(c.heightPt) * MM]).filter(x => x[0] > 0 && x[1] > 0);
     return { fit: { unit, areaMm2: +area.toFixed(1), ...(sides.length ? { minMm: +(sides.reduce((n, x) => n + Math.min(...x), 0) / sides.length).toFixed(2), maxMm: +(sides.reduce((n, x) => n + Math.max(...x), 0) / sides.length).toFixed(2) } : {}) } };
   } catch (_) { return {}; }
@@ -49,7 +49,8 @@ async function claimStock(ctx, rec, S, policy) {
      opened on a green line's leftover (greenLeftover, charm-nest-place.js greenPage) claims THAT plate, as the page claims the exact partial sheet (RoseStock.nestClaim). Refused (taken
      meanwhile, another size, deleted): the automatic choice, as before. Rose Gold only; Options -> Partial Sheet "new" keeps a fresh plate. */
   const hint = rose && !rec.roseStockId && pol.mode !== "new" && rec.greenLeftover && rec.greenLeftover.stockId ? String(rec.greenLeftover.stockId) : null;
-  const ask = (sid, tag) => ctx.call(Object.assign({ op: "roseClaim", sheetId: rec.id, metal: rec.metal, wPt: st.wPt, hPt: st.hPt, nesting: true }, sid ? { stockId: sid } : {}, extra),
+  const skip = Array.isArray(rec.greenNoRoom) && rec.greenNoRoom.length ? { skip: rec.greenNoRoom.map(String).slice(-10) } : {};   // (LEFTOVERNOROOM: the leftovers this sheet found without room)
+  const ask = (sid, tag) => ctx.call(Object.assign({ op: "roseClaim", sheetId: rec.id, metal: rec.metal, wPt: st.wPt, hPt: st.hPt, nesting: true }, sid ? { stockId: sid } : {}, extra, skip),
     "nestclaim|" + rec.id + "|" + num(rec.layoutRev) + "|" + num(rec.contentRev) + tag);
   let res = await ask(rec.roseStockId || hint, hint ? "|left" : "");
   if (hint && res && res.status >= 400 && !passing(res)) res = await ask(null, "");
@@ -100,6 +101,32 @@ async function nestCore(ctx) {
     const owed = Nest.owedNest(rec, run, now);
     if (!owed.owed) { if (owed.wait) waits.push(owed.why); continue; }
     const at = mine.filter(j => num(j.layoutBase) === num(rec.layoutRev) && num(j.contentBase) === num(rec.contentRev));
+    /* LEFTOVERNOROOM (Paul, 27 Nov 2026, RG Draft 1 of Nov 26: "Why is this RG sheet preview not visible"): its 22 pieces stood on a leftover with no room (the nest ended "no-room", the
+       writer had nothing to write: no files, no preview, the card "Updating…" for good, and the nest was never asked again at those revisions). A green-line sheet with NO piece placed,
+       in no set, whose nest at these revisions ended with no room on the LEFTOVER it holds, gives that leftover back (roseRelease), remembers it (greenNoRoom: never claimed for this
+       sheet again) and claims another plate (roseClaim's room check: a leftover that holds its pieces, else a new sheet), then is nested again on it at once. A sheet with pieces placed
+       keeps its plate (what does not fit goes on, as always); a NEW plate is never given back here (an order too big for a whole sheet is the writer's problemStop). */
+    if (CutLine.cuts(rec.metal) && !rec.roseCutAt && (rec.draft || !rec.setId) && !(rec.placements || []).length && rec.roseStockId && !mine.some(j => LIVE.has(j.status))
+      && at.some(j => j.status === "done" && j.endedBy === "no-room" && (!j.roseStockId || String(j.roseStockId) === String(rec.roseStockId)))) {
+      const stock = await Nest.roseStockOf(db, rec);
+      if (stock && (num(stock.revision) > 0 || stock.profileJson)) {
+        const name = rec.fileBase || rec.metalLabel || rec.id, sid = String(rec.roseStockId);
+        const rel = await ctx.call({ op: "roseRelease", stockId: sid, sheetId: rec.id }, "noroom-release|" + rec.id + "|" + sid);
+        if (passing(rel)) { waits.push(`${name}: its leftover with no room is given back at the next pass (${str((rel && rel.error) || "no answer", 160)})`); continue; }
+        if (rel && rel.status >= 400) { hold(rec.id, `${name}: its leftover has no room for its pieces and could not be given back (${str(rel.error || "refused", 200)})`); continue; }
+        const skip = [...new Set([].concat(Array.isArray(rec.greenNoRoom) ? rec.greenNoRoom : [], [sid]).map(String))].slice(-10);
+        await ctx.call({ op: "putSheet", sheet: { id: rec.id, greenNoRoom: skip, greenLeftover: null } }, "noroom-mark|" + rec.id + "|" + sid);
+        const r2 = Object.assign({}, rec, { roseStockId: null, roseRevision: null, greenLeftover: null, greenNoRoom: skip });
+        const claim2 = await claimStock(ctx, r2, S, policy);
+        if (claim2 && claim2.again) { waits.push(`${name}: its new plate is claimed at the next pass (${claim2.again})`); continue; }
+        if (claim2 && claim2.error) { hold(rec.id, `${name}: ${claim2.error}`); continue; }
+        const res2 = await ctx.call({ op: "nestStart", sheetId: rec.id, auto: true, why: `${name}: its leftover had no room for its pieces; nested on another plate` }, "nest|" + rec.id + "|" + num(rec.layoutRev) + "|" + num(rec.contentRev) + "|" + at.map(j => j.id).sort().join(",") + "|replate|" + sid);
+        if (passing(res2) || (res2 && res2.status === 409 && res2.retry)) { waits.push(`${name}: its nest on the new plate is asked at the next pass`); continue; }
+        if (res2 && res2.held) { hold(rec.id, str(res2.why, 300)); continue; }
+        if (!res2 || res2.status >= 400) { hold(rec.id, `${name}: ${str((res2 && res2.error) || "its nest could not be asked", 260)}`); continue; }
+        asked++; continue;
+      }
+    }
     if (at.some(j => LIVE.has(j.status) || j.status === "done")) continue;   // (its job runs, or its layout waits for the writer)
     if (mine.some(j => LIVE.has(j.status))) continue;   // (a job of an older revision still runs: it ends stale or its layout is refused; the next one is asked then)
     const claim = await claimStock(ctx, rec, S, policy);
