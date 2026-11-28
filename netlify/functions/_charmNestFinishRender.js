@@ -13,10 +13,11 @@
  *                               and a shading are drawn as their box (more ink, never less: a check that errs flags, it never passes what pdf.js would flag); line caps and
  *                               joins are the PDF defaults. The exact cut-line check (finish-core exactOverlaps) stays the authority on overlap, as on the page.
  *  previewPng(sh, st)           the page's previewPng / paintPreview(clean) (charm-nest-1.html :6941, :7906): the sheet alone, 1026 px wide, every placed charm drawn by
- *                               CharmNestPDF.drawCharm where it lies; a Rose Gold / 10K / 14K sheet on its stock's history (RGHISTORY: the grey cut-away, earlier cuts' grey
- *                               pieces and green lines, as the page's RoseStock.paint drew them). → a PNG Buffer.                                                                                                      */
+ *                               CharmNestPDF.drawCharm where it lies, with its saved FRONT engraving on it (FRONTPIC: sh.backPool, as the .ai has it); a Rose Gold / 10K / 14K sheet
+ *                               on its stock's history (RGHISTORY: the grey cut-away, earlier cuts' grey pieces and green lines, as the page's RoseStock.paint drew them). → a PNG Buffer.
+ *  previewFonts(pool)           (FRONTPIC) the fonts those front engravings are drawn in, read before the picture (and the script fonts their words need). Never throws.               */
 "use strict";
-const { CharmNestPDF: P, withCanvas } = require("./_charmNestPdf");
+const { CharmNestPDF: P, Geom, withCanvas } = require("./_charmNestPdf");
 const Canvas = require("./_charmNestCanvas");
 
 const canvas = (w, h) => { withCanvas({ backend: process.env.CHARM_NEST_CANVAS || "auto" }); return new Canvas.NodeCanvas(w, h); };
@@ -177,18 +178,62 @@ function roseLines(ctx, sh, hist, k) {
   for (const c of cuts) roseStroke(ctx, c.plan && c.plan.lines, k, "#249c8a", Math.max(2, 0.2 * k), false);
   if (!sh.roseCutAt && sh.rosePlanJson) { const pl = parseJ(sh.rosePlanJson); if (pl) roseStroke(ctx, pl.lines, k, "#008974", Math.max(2.5, 0.2 * k), true); }
 }
+/* FRONTPIC (Paul, 28 Nov 2026: every picture of a sheet must show exactly what the downloaded .ai shows; the Library picture of GF_Nov.24.26_Set-1_Sheet-1 had no "Waldo" on
+   4244028423_5307575879_1 (SKINNY_0191), GF_Nov.23.26_Set-1_Sheet-2 no "MSW", both in the sheet window and in the .ai). The .ai puts each SAVED front engraving ON its charm
+   (charm-nest-export-ui.js build, charm-nest-export.js planFronts); a back goes above the sheet, never on it. This picture drew the charms alone. Each placed charm's saved front is now
+   drawn on it as the sheet window draws it (charm-nest-sheetwin.js paintBase: CharmNestBacks.engraveOn, then drawEngrave in CharmNestBacks.INK): a record of sh.backPool with face
+   "front", not invalidated, not pending, its file saved (outputs.ai or ai), the newest approval per piece; an artOnly front's parts are already in the charm's drawing. Its font is the
+   window's backFont: the record's own (CharmNestOrders.fontOfRecord: its fontKey, else its font's name), Semibold when its weight says so and the font has one (_charmEngraveFonts.js).
+   A font that cannot be read leaves those words out: the picture is still made, and why is said once. The page's picture (charm-nest-1.html paintPreview, clean) draws them the same way. */
+const savedFront = r => !!r && r.face === "front" && !r.invalidated && !r.pending && !r.artOnly && !!((r.outputs && r.outputs.ai) || r.ai);
+/** The saved front engraving of each piece, the newest approval: Map poolId → record. */
+function savedFronts(pool) {
+  const by = new Map();
+  for (const r of Array.isArray(pool) ? pool : []) { if (!savedFront(r) || r.poolId == null) continue; const k = String(r.poolId), was = by.get(k); if (!was || (+r.approvedAt || 0) >= (+was.approvedAt || 0)) by.set(k, r); }
+  return by;
+}
+const said = new Set();
+const sayOnce = why => { if (said.has(why)) return; said.add(why); console.warn("[sheet picture] " + why); };
+let Fonts = null;
+/** The font a saved front is drawn in (the window's backFont); null, said once, when it cannot be read. */
+function frontFont(rec) {
+  try {
+    const F = Fonts || (Fonts = require("./_charmEngraveFonts")), O = require("../../charm-nest-orders.js");
+    const id = O.fontOfRecord(rec) || O.DEFAULT_FONT, set = F.setOf(id);
+    if (!set) { sayOnce(`the engraving font ${(O.fontById(id) || {}).name || id} could not be read: front engravings in it are left out of the sheet pictures`); return null; }
+    return (rec.weight === "Semibold" && set.Semibold) || set.Regular || null;
+  } catch (e) { sayOnce(`the engraving fonts could not be read (${(e && e.message) || e}): front engravings are left out of the sheet pictures`); return null; }
+}
+/** One saved front's words on its charm: the context at the charm's place, tx the charm's own points → the picture (the window's tx0). → true when drawn. */
+function drawFront(ctx, rec, c, tx) {
+  const font = frontFont(rec); if (!font) return false;
+  try {
+    const Backs = require("../../charm-nest-backs.js"), geo = Backs.engraveOn(rec, c, { font, geom: Geom }); if (!geo) return false;
+    if (!geo.glyphs) { sayOnce(`the words of the front engraving of ${rec.poolId} could not be laid out: they are left out of its sheet's picture`); return false; }
+    return Backs.drawEngrave(ctx, geo, tx, { fill: Backs.INK });
+  } catch (e) { sayOnce(`a front engraving could not be drawn on its charm (${(e && e.message) || e})`); return false; }
+}
+/** Before the picture: the fonts of the saved fronts read, and the script fonts their words need (as the page's ensureScriptFonts). pool: a backPool, or a sheet holding one. Never throws. */
+async function previewFonts(pool) {
+  for (const rec of savedFronts(Array.isArray(pool) ? pool : pool && pool.backPool).values()) {
+    const font = frontFont(rec); if (!font) continue;
+    try { await Fonts.ensureScripts((Array.isArray(rec.lines) ? rec.lines : String(rec.text == null ? "" : rec.text).split(/\r?\n/)).join("\n"), font); }
+    catch (e) { sayOnce(`the script fonts of a front engraving could not be read (${(e && e.message) || e})`); }
+  }
+}
 function previewPng(sh, st, hist) {
   try {
     const Wc = 1026, Hc = Math.max(8, Math.round(1026 * st.hPt / st.wPt)), cv = canvas(Wc, Hc), ctx = cv.getContext("2d"), k = Wc / st.wPt;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#fffefb"; ctx.fillRect(0, 0, Wc, Hc);
     if (hist) { try { roseHistory(ctx, sh, hist, k); } catch (e) { /* the sheet is drawn without its history */ } }   // (RGHISTORY)
     ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.strokeRect(0.5, 0.5, Wc - 1, Hc - 1);
-    const byId = new Map((sh.charms || []).map(c => [c.id, c]));
+    const byId = new Map((sh.charms || []).map(c => [c.id, c])), fronts = savedFronts(sh.backPool);
     for (const p of sh.roseCutAt && +sh.laserDoneAt > 0 ? [] : sh.placements || []) {
       const c = byId.get(p.id); if (!c || !c.centerPt) continue;
       ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate((+p.angle || 0) * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale);
       const cx = c.centerPt[0], cy = c.centerPt[1], tx = (x, y) => [(x - cx) * k, (cy - y) * k];
       P.drawCharm(ctx, c, tx, k);
+      if (c.poolId != null && fronts.has(String(c.poolId))) drawFront(ctx, fronts.get(String(c.poolId)), c, tx);   // (FRONTPIC)
       if (sh.shippedOut && c.poolId && sh.shippedOut[c.poolId]) P.shippedMark(ctx, c, tx, Math.max(2.2, 0.9 * k) / (p.scale || 1));   // (SHIPPEDSTAYS)
       ctx.restore();
     }
@@ -197,4 +242,4 @@ function previewPng(sh, st, hist) {
   } catch (e) { return null; }
 }
 
-module.exports = { renderCheck, previewPng, roseCutsOf, layersOf, coveredOf, drawLayer, floodFromBorder, packArea, unpackArea };
+module.exports = { renderCheck, previewPng, previewFonts, savedFronts, roseCutsOf, layersOf, coveredOf, drawLayer, floodFromBorder, packArea, unpackArea };

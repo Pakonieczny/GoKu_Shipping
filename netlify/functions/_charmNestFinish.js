@@ -271,7 +271,9 @@ async function pictureOnly(X, rec) {
   const lost = (rec.placements || []).filter(p => p && !have.has(String(p.id))).length;
   if (made.missing.length || lost) throw new Stop("failed", `${rec.fileBase || rec.id}: ${made.missing.length || lost} piece(s) could not be made again: its picture stays as it was`);
   const sh = sheetOf(X, made.charms), st = (X.st = X.Host.stockFor(rec.metal, sh, X.S));
-  const png = X.Render.previewPng(Object.assign({}, sh, { id: rec.id, placements: rec.placements, rosePlanJson: rec.rosePlanJson || null, shippedOut: rec.shippedOut || null }), st, await stockHistory(X, rec));
+  const backPool = rec.backPool || [];   // (FRONTPIC: the record holds the sheet's saved engravings, its saved fronts drawn on their charms as the .ai has them; sheetOf's copy holds none)
+  await X.Render.previewFonts(backPool);
+  const png = X.Render.previewPng(Object.assign({}, sh, { id: rec.id, placements: rec.placements, rosePlanJson: rec.rosePlanJson || null, shippedOut: rec.shippedOut || null, backPool }), st, await stockHistory(X, rec));
   if (!png) throw new Stop("failed", `${rec.fileBase || rec.id}: its picture could not be drawn`);
   const now = await readSheet(X.db, X.sheetId);
   if (!now || now.archived || num(now.laserDoneAt) > 0 || num(now.layoutRev) !== num(rec.layoutRev)) throw new Stop("superseded", "the sheet changed while its picture was drawn: it is drawn again");
@@ -433,7 +435,9 @@ STEP.S6 = async X => {
   const report = FC.buildReport(sh, W.result, items, { stockFor: (m, s) => X.Host.stockFor(m, s, X.S), labelOf: m => X.Host.labelOf(m), shapeSignature: its => X.Host.shapeSignature(its, X.S), now: () => Date.now() });
   // (RGHISTORY: a sheet on a Rose Gold / 10K / 14K stock is drawn on that stock's history: its record and its last cuts, read as the page's roseGet reads them)
   const hist = await stockHistory(X, X.rec);
-  const png = X.Render.previewPng(Object.assign({}, sh, { id: X.rec ? X.rec.id : sh.id, roseCutAt: X.rec ? X.rec.roseCutAt : sh.roseCutAt, laserDoneAt: X.rec ? X.rec.laserDoneAt : sh.laserDoneAt, rosePlanJson: X.rec ? X.rec.rosePlanJson : null, shippedOut: X.rec ? X.rec.shippedOut : null }), X.st, hist);
+  const backPool = (X.rec || sh).backPool || [];   // (FRONTPIC: the record holds the sheet's saved engravings, its saved fronts drawn on their charms as the .ai has them; sheetOf's copy holds none)
+  await X.Render.previewFonts(backPool);
+  const png = X.Render.previewPng(Object.assign({}, sh, { id: X.rec ? X.rec.id : sh.id, roseCutAt: X.rec ? X.rec.roseCutAt : sh.roseCutAt, laserDoneAt: X.rec ? X.rec.laserDoneAt : sh.laserDoneAt, rosePlanJson: X.rec ? X.rec.rosePlanJson : null, shippedOut: X.rec ? X.rec.shippedOut : null, backPool }), X.st, hist);
   await X.nonceHeld();
   await putWork(X.bucket, X.dir + "/report.json", JSON.stringify(report, null, 1), "application/json");
   if (png) await putWork(X.bucket, X.dir + "/preview.png", png, "image/png");
