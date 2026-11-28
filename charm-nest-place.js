@@ -530,11 +530,15 @@
       its size (`geo`: { widthPt, heightPt, areaPt2 } from the row or the library's index entry). The nest makes its outline from the design (the pool row names it). */
   function charmOfRow(row, geo, at) {
     const src = "pool:" + String(row.aiPath || row.sku || "").replace(/[^\w]+/g, "_"), q = Math.max(1, Math.floor(+row.quantity || 1)), g = geo || {};
-    const c = { id: `${src}:${row.poolId}`, hash: row.charmHash || null, name: `${row.orderId} · ${row.sku || ""}${q > 1 ? ` · ${+row.copy || 1}/${q}` : ""}`, sourceId: src, sourceName: `${row.sku || ""}${row.size ? " · " + row.size : ""} (master)`, index: 0,
+    /* MULTIDRAW (Paul, 28 Nov 2026, GF Draft 2: the 8 pieces of one custom file of 8 charms all drawn as its first charm, the snow globe): a custom piece names the charm of its file it is
+       (its row's customIndex, MULTICHARM) as a page's record names it (index, finish-core record()), and customIndex itself, which every reader asks first. A master piece is as it was. */
+    const ci = row.custom === true && row.customIndex != null && row.customIndex !== "" && Number.isInteger(+row.customIndex) && +row.customIndex >= 0 && +row.customIndex < 10000 ? +row.customIndex : null;
+    const c = { id: `${src}:${row.poolId}`, hash: row.charmHash || null, name: `${row.orderId} · ${row.sku || ""}${q > 1 ? ` · ${+row.copy || 1}/${q}` : ""}`, sourceId: src, sourceName: `${row.sku || ""}${row.size ? " · " + row.size : ""} (master)`, index: ci != null ? ci : 0,
       order: String(row.orderId), layer: null, poolId: row.poolId, custom: !!row.custom, sku: row.sku || null, metal: row.material || null, lineKey: row.lineKey || null,
       areaPt2: Math.round((+g.areaPt2 || 0) * 10) / 10, widthPt: Math.round((+g.widthPt || 0) * 100) / 100, heightPt: Math.round((+g.heightPt || 0) * 100) / 100,
       aiPath: row.aiPath || null, orderDate: +row.orderDate || 0, arrivedAt: +row.arrivedAt || 0, excluded: false, open: false, placedBy: "Cloud", placedAt: at || Date.now() };
     if (+row.frontAt > 0) c.frontAt = +row.frontAt;
+    if (ci != null) c.customIndex = ci;   // (MULTIDRAW)
     for (const k of ["side", "mirror", "bodyIndex", "groupKey", "groupSize", "oneBody"]) if (row[k] !== undefined && row[k] !== null) c[k] = row[k];
     return c;
   }

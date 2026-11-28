@@ -1537,6 +1537,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         // (SKUFIX, 12 Nov 2026: this comment once sat in the middle of the line and hid sku, name, copy and qty: the order list said "undefined")
         c: null, poolId, rid: /^\d+$/.test(rid) || /^CUSTOM-\d{8}-\d{1,6}$/.test(rid) ? rid : "", sku: c.sku || (name.split(" · ")[1] || "").trim() || c.layer || "", name, copy, qty: m ? +m[2] : 1,
         tx: poolId ? poolId.split("_")[1] : "", sourceId: c.sourceId, index: c.index, hash: c.hash, thumb: c.thumbUrl || null,
+        // (MULTIDRAW, Paul 28 Nov 2026: which charm of a custom file of several the piece is, and its own size, as its record says them: fileCharm)
+        customIndex: c.customIndex, ownFile: c.custom === true, recW: +c.widthPt || 0, recH: +c.heightPt || 0,
         // (pairs: the ear a piece is, when the record says so; an old record says nothing and the window asks OrderPieces)
         // (amendment 2: every earring piece says its ear, and `mirror` when it is the mirror image of the drawn design; a record's own `pieceSides` map says the ear of a piece whose charm does not)
         side: c.side === "L" || c.side === "R" ? c.side : poolId && rec.pieceSides && (rec.pieceSides[poolId] === "L" || rec.pieceSides[poolId] === "R") ? rec.pieceSides[poolId] : null,
@@ -1668,7 +1670,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const geom = await fileGeoms.get(key);
     // The saved file's shapes stay shared; custom identity belongs to this descriptor, so regular file views of the
     // same artwork do not inherit the plum tint through the cache. Preserve every outline, hole, hash and dimension.
-    return custom ? Object.assign({}, geom, { charms: geom.charms.map(c => Object.assign({}, c, { custom: true })) }) : geom;
+    // (MULTIDRAW: a custom file names itself, so a piece of a file of several charms is cut from its own charm by the page's piece maker: fileCharm)
+    return custom ? Object.assign({}, geom, { charms: geom.charms.map(c => Object.assign({}, c, { custom: true })), file: { path: s.path || null, url: s.url || null, sku: s.sku || null } }) : geom;
   }
   function geometryReady(tok) {
     if (tok !== W.token) return;
@@ -5362,7 +5365,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     return out;
   }
-  const hopEntry = c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, order: c.order || c.id, poolId: c.poolId || null, sku: c.sku || null, areaPt2: +(+c.areaPt2 || 0).toFixed(1), widthPt: +(+c.widthPt || 0).toFixed(2), heightPt: +(+c.heightPt || 0).toFixed(2) });
+  const hopEntry = c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, order: c.order || c.id, poolId: c.poolId || null, sku: c.sku || null, areaPt2: +(+c.areaPt2 || 0).toFixed(1), widthPt: +(+c.widthPt || 0).toFixed(2), heightPt: +(+c.heightPt || 0).toFixed(2),
+    ...(c.custom === true && Number.isInteger(c.customIndex) && c.customIndex >= 0 ? { customIndex: c.customIndex } : {}) });   // (MULTIDRAW, Paul 28 Nov 2026: a custom piece moved keeps which charm of its file it is)
   const hopIdle = () => HOP.chain.then(() => true, () => true);
   function hopChip(state, text) {
     const E = W.el; if (!E || !E.plateBox) return;
@@ -7651,11 +7655,58 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      (an outline only: its seams, its engraving, its parts gone from the detailed view while its stored picture has them all). Now: the charm with that very hash, else the charm of the same drawing (the hash without the edit's
      tag), else the file's charm at the piece's index (or its only charm), turned over when the record says the piece is mirrored; and the piece's own artwork edit is laid over it. */
   const hashCore = h => String(h == null ? "" : h).replace(/~ae[0-9a-z]+$/, "");
+  /* MULTIDRAW (Paul, 28 Nov 2026, GF Draft 2, custom order 4253009906: one file drawing 8 charms, two snow globes, teacups and teapots, its 8 pieces nested each as its own charm, and this window
+     drew all 8 as the snow globe, over each other and their neighbours, while the cloud's picture of the sheet had them right; a 12-charm "Donut1" file drew 12 copies of its first donut). The
+     cloud put the pieces on the sheet as charm 0 of the file (charm-nest-place.js charmOfRow, index 0) with the hash ITS drawing gives each charm, which a page never draws, so no hash matched
+     and every piece fell to charm 0. A piece of a custom file of several charms is now the charm it is (customIndex): its record's, else its pool row's (held here, in the one copy's answer,
+     else asked once for the pieces of that file on the sheet that name none: one poolGet), cut by the page's piece maker exactly as the cloud cuts and writes it (Pool.ensureBase, its file read
+     as the card read it: charm-nest-pool-make.js customBodies; the Right ear of a charm drawn twice turned over there). Without one: the hash as before, else the one charm of its own size,
+     else the index (CharmNestPoolPieces.pickCharm). A file of one charm, a master's piece and a file dropped by hand are drawn exactly as before. */
+  const ROWASK = new Map();   // "sheet|file|pool ids" → the rows of a file's custom pieces that name no charm, asked once
+  function rowsAsk(rec, x, need) {
+    const PP = window.CharmNestPoolPieces, id = rec && rec.id;
+    const ids = [...new Set(((rec && rec.charms) || []).filter(c => c && c.custom === true && c.poolId && c.sourceId === x.sourceId && PP.customIndexOf(c) == null).map(c => String(c.poolId)))].filter(need).sort();
+    if (!id || !ids.length) return Promise.resolve({});
+    const k = id + "|" + x.sourceId + "|" + ids.join(","); if (ROWASK.has(k)) return ROWASK.get(k);
+    const p = (async () => { const out = {}; for (let i = 0; i < ids.length; i += 300) Object.assign(out, ((await api("charmNestLibrary", { op: "poolGet", poolIds: ids.slice(i, i + 300) }, { quiet: true, timeoutMs: 12000 })) || {}).pools || {}); return out; })()
+      .catch(e => { ROWASK.delete(k); console.warn("sheet window: the rows of a custom file's pieces", (e && e.message) || e); return {}; });
+    ROWASK.set(k, p); if (ROWASK.size > 40) ROWASK.delete(ROWASK.keys().next().value);
+    return p;
+  }
+  /** The charm of its file a custom piece is: its record's, else its row's as this page holds it (B.pool, the order's rows, the one copy's answer); a row is asked only when no charm of the file
+      has the piece's own hash (a record a page wrote is drawn from its hash as before, with no read). null: nothing says. */
+  async function customIndexFor(x, rec, cs) {
+    const PP = window.CharmNestPoolPieces; if (!PP || typeof PP.customIndexOf !== "function") return null;
+    const L = window.CNSheetLive, kept = id => { try { const m = rec && rec.id && L && typeof L.pools === "function" ? L.pools(rec.id) : null; return (m && m[id]) || null; } catch (_) { return null; } };
+    const known = id => PP.customIndexOf(poolRowOf(id, x.rid), kept(id));
+    const v = PP.customIndexOf(x); if (v != null) return v;
+    const w = known(x.poolId); if (w != null) return w;
+    const want = hashCore(x.hash); if (want && (cs || []).some(c => c && hashCore(c.hash) === want)) return null;
+    return PP.customIndexOf((await rowsAsk(rec, x, id => known(id) == null))[x.poolId]);
+  }
+  async function customBaseOf(g, x, ci) {
+    const f = g && g.file, Pl = window.Pool;
+    if (!f || !(f.path || f.url) || !Pl || typeof Pl.masterCharm !== "function" || typeof Pl.ensureBase !== "function") return null;
+    try {
+      const src = await Pl.masterCharm({ sku: f.sku || "CUSTOM", aiPath: f.path || f.url, aiUrl: f.url || null }, null);
+      const sided = (x.side === "L" || x.side === "R") && x.bodyIndex != null && Number.isInteger(+x.bodyIndex);
+      const b = await Pl.ensureBase(src, sided ? { side: x.side, bodyIndex: +x.bodyIndex, mirror: x.mirror === true } : null, { customIndex: ci });
+      return b && +b.customIndex === ci ? b : null;   // (a file the maker reads as one charm gives the file whole: not this piece)
+    } catch (e) { console.warn("sheet window: a charm of a custom file", x.poolId, (e && e.message) || e); return null; }
+  }
   async function fileCharm(g, x, rec) {
     const cs = (g && g.charms) || []; if (!cs.length) return null;
-    const want = hashCore(x.hash);
-    let base = (x.hash && cs.find(c => c.hash === x.hash)) || (want && cs.find(c => hashCore(c.hash) === want)) || null, near = false;
-    if (!base) { base = cs[x.index] || (cs.length === 1 ? cs[0] : null); near = !!base; }
+    const PP = window.CharmNestPoolPieces, pick = PP && typeof PP.pickCharm === "function" ? PP.pickCharm : null;
+    let base = null, near = false;
+    if (pick) {
+      const ci = cs.length > 1 && x.ownFile && x.poolId ? await customIndexFor(x, rec, cs) : null;   // (MULTIDRAW)
+      if (ci != null) base = await customBaseOf(g, x, ci);
+      if (!base) { const pk = pick(cs, { customIndex: ci, hash: x.hash, index: x.index, widthPt: x.recW, heightPt: x.recH, custom: !!x.ownFile, poolId: x.poolId }); base = pk ? pk.charm : null; near = !!pk && pk.by !== "hash"; }
+    } else {
+      const want = hashCore(x.hash);
+      base = (x.hash && cs.find(c => c.hash === x.hash)) || (want && cs.find(c => hashCore(c.hash) === want)) || null;
+      if (!base) { base = cs[x.index] || (cs.length === 1 ? cs[0] : null); near = !!base; }
+    }
     if (!base) return null;
     if (near && x.mirror === true && window.CharmNestPair && typeof CharmNestPair.pieceGeometry === "function") {
       try { const m = CharmNestPair.pieceGeometry(base, { side: x.side, bodyIndex: x.bodyIndex != null ? +x.bodyIndex : 0, mirror: true }); if (m) base = m; } catch (e) { console.warn("sheet window: a piece turned over", x.poolId, (e && e.message) || e); }

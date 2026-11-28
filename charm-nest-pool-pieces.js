@@ -229,5 +229,38 @@
     return { sources, sourcesLite: sourcesLiteOf(sources) };
   }
 
-  return { FIELDS, MAX_PIECES, parsePoolId, groupKeyOf, cleanFields, cleanGroupFields, cleanBody, fieldsOf, sheetCharmFields, metaOf, groupsOf, legacyGlued, placedCharms, uniqueIds, sourceOfCharm, sourceOf, sourcesOf, ownSource, carrySources };
+  /* MULTIDRAW (Paul, 28 Nov 2026, GF Draft 2, custom order 4253009906: one dropped file drawing 8 charms, two snow globes, teacups and teapots; its 8 pieces were made and nested each
+     as its own charm, and the sheet showed all 8 as the snow globe, over each other and their neighbours; a 12-charm "Donut1" file showed 12 copies of its first donut). A piece of a custom
+     file of several charms is ONE of them, and its pool row says which (customIndex, MULTICHARM). The cloud put such pieces on a sheet as charm 0 of the file (charm-nest-place.js charmOfRow:
+     index 0, no customIndex), and whatever drew a sheet's piece from its file and that index drew charm 0 for every piece. customIndexOf: the charm the first of `recs` that says it names
+     (the sheet record's charm, its pool row, ...), null when none says. pickCharm: the charm of a file's charms `cs` (a reading of the file, in its order) a sheet's piece `x` ({ customIndex,
+     hash, index, widthPt, heightPt, custom, poolId }) is drawn from, { charm, by } or null: in a file of several charms the charm its customIndex names (never another: null when the file has
+     no such charm), else the charm with its very hash, else the same drawing (the hash without a Charm Editor edit's "~ae" tag; of several with that hash, the one at its index), else, for
+     an order's custom piece in a file of several charms, the charm of its own size (within 3 %; of several that close, the one at its index, else the nearest: a record made before MULTIDRAW
+     names no charm, and a hash the cloud drew is never one a page draws), else the charm at its index, else a file's only charm. A file of one charm is read exactly as before. */
+  function customIndexOf(...recs) {
+    for (const r of recs) { const v = r && typeof r === "object" ? r.customIndex : null; if (v != null && v !== "" && Number.isInteger(+v) && +v >= 0 && +v < 10000) return +v; }
+    return null;
+  }
+  const hashCore = h => String(h == null ? "" : h).replace(/~ae[0-9a-z]+$/, "");
+  function pickCharm(cs, x, ...more) {
+    const list = Array.isArray(cs) ? cs.filter(Boolean) : []; if (!list.length || !x) return null;
+    const many = list.length > 1, ci = many ? customIndexOf(x, ...more) : null;
+    if (ci != null) { const own = list.filter(c => !c.open); return own[ci] ? { charm: own[ci], by: "customIndex" } : null; }   // (the card and the cloud count the closed outlines only)
+    const at = list[x.index];   // (as the sheet window always read it)
+    // (a silhouette's hash is its outline's: two charms of one outline, a hole left or right, share it; the piece's index then says which, as the page that wrote it counted)
+    const want = hashCore(x.hash), same = x.hash ? list.filter(c => c.hash === x.hash) : [], hits = same.length ? same : want ? list.filter(c => hashCore(c.hash) === want) : [];
+    if (hits.length) return { charm: hits.length > 1 && at && hits.includes(at) ? at : hits[0], by: "hash" };
+    const w = +x.widthPt || 0, h = +x.heightPt || 0;
+    if (many && x.custom === true && x.poolId != null && w > 0 && h > 0) {
+      const off = c => Math.max(Math.abs((+c.widthPt || 0) - w) / w, Math.abs((+c.heightPt || 0) - h) / h);
+      const near = list.filter(c => !c.open).map(c => ({ c, e: off(c) })).filter(z => z.e <= 0.03).sort((a, b) => a.e - b.e);
+      // (charms of one size: the one its index names among them, else the nearest; a charm of another size never: the two teapots of one file are a teapot, never its snow globe)
+      if (near.length) return { charm: near.length === 1 || near[1].e - near[0].e > 0.01 ? near[0].c : (at && near.some(z => z.c === at) ? at : near[0].c), by: "size" };
+    }
+    if (at) return { charm: at, by: "index" };
+    return list.length === 1 ? { charm: list[0], by: "only" } : null;
+  }
+
+  return { FIELDS, MAX_PIECES, parsePoolId, groupKeyOf, cleanFields, cleanGroupFields, cleanBody, fieldsOf, sheetCharmFields, metaOf, groupsOf, legacyGlued, placedCharms, uniqueIds, sourceOfCharm, sourceOf, sourcesOf, ownSource, carrySources, customIndexOf, pickCharm };
 });

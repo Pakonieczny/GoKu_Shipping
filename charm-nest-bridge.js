@@ -8406,7 +8406,11 @@ const Engrave = window.Engrave = (() => {
         if (!source?.pool) throw new Error("Restore this sheet to the Nest workspace before editing backs from a combined source file.");
         if (!source?.url) throw new Error("The original front design is unavailable. Restore this sheet's source file before editing its back.");
         const src=await Pool.masterCharm({sku:saved.sku,aiPath:source.path || source.url,aiUrl:source.url,upAngle:saved.upAngle},null);
-        const piece=CharmNestPoolPieces.cleanFields(savedCharm).side ? savedCharm : null, base=await Pool.ensureBase(src,piece,savedCharm?.hash?savedCharm:(B.pool.rows.get(poolId) || saved)).catch(()=>null);   // (a piece of a mismatched pair is its own body)
+        // (MULTIDRAW, Paul 28 Nov 2026: a piece of a custom file of several charms is the charm its record or its row names, customIndex; a record the cloud nested names none, so its row is asked, that one row)
+        const said=savedCharm?.hash?savedCharm:(B.pool.rows.get(poolId) || saved), PPc=CharmNestPoolPieces, several=!!(src.group && Array.isArray(src.group.charms) && src.group.charms.length>1);
+        let ci=savedCharm?.custom===true && several && typeof PPc.customIndexOf==="function" ? PPc.customIndexOf(savedCharm,B.pool.rows.get(poolId)) : null;
+        if(ci==null && savedCharm?.custom===true && several && typeof PPc.customIndexOf==="function") ci=PPc.customIndexOf(((await api("charmNestLibrary",{op:"poolGet",poolIds:[poolId]},{quiet:true}).catch(()=>null)) || {}).pools?.[poolId]);
+        const piece=PPc.cleanFields(savedCharm).side ? savedCharm : null, base=await Pool.ensureBase(src,piece,ci!=null ? Object.assign({},said,{customIndex:ci}) : said).catch(()=>null);   // (a piece of a mismatched pair is its own body)
         if(!base) throw new Error("This piece's own body is no longer in its design. Rebuild this sheet before editing its back.");
         charm=Pool.cloneCharm(base,poolId); if(typeof CharmNestArtEdit!=="undefined")charm=await CharmNestArtEdit.piece(charm,poolId,B.pool.rows.get(poolId) || null);   // (ART EDIT: its own artwork edit, as its sheet was cut with it)
         charm.poolId=poolId; if(piece) Object.assign(charm,CharmNestPoolPieces.fieldsOf(piece));
@@ -29137,7 +29141,10 @@ const Recall = window.Recall = (() => {
     const fromLib = !own && sized && sized.aiPath && (m || !rc.aiPath || sized.aiPath === rc.aiPath);   // (the library's own entry of that very file: its upright angle; else the record's own file, as the cloud's writer draws it)
     if (!fromLib && !(file && file.aiPath)) return null;
     const src = await Pool.masterCharm(fromLib ? me : file, fromLib ? row.size : null).catch(() => null); if (!src) return null;
-    const piece = CharmNestPoolPieces.cleanFields(rc).side ? rc : CharmNestPoolPieces.cleanFields(row).side ? row : null, base = await Pool.ensureBase(src, piece, m ? null : rc.hash ? rc : row).catch(() => null); if (!base) return null;
+    /* MULTIDRAW (Paul, 28 Nov 2026, GF Draft 2: 8 pieces of one custom file of 8 charms drawn alike): a custom piece is the charm of its file its record or its row says (customIndex). The record the
+       cloud nested names none (charm-nest-place.js charmOfRow: index 0) and carries a hash, so the maker read the record alone and never this answer's row: every piece was the whole file folded into one */
+    const said = m ? null : rc.hash ? rc : row, PPc = CharmNestPoolPieces, ci = !m && (rc.custom || row.custom) && typeof PPc.customIndexOf === "function" ? PPc.customIndexOf(rc, row) : null;
+    const piece = PPc.cleanFields(rc).side ? rc : PPc.cleanFields(row).side ? row : null, base = await Pool.ensureBase(src, piece, ci != null && PPc.customIndexOf(said) == null ? Object.assign({}, said, { customIndex: ci }) : said).catch(() => null); if (!base) return null;
     const c0 = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`), charm = typeof CharmNestArtEdit !== "undefined" && !m ? await CharmNestArtEdit.piece(c0, rc.poolId, row.poolId ? row : null) : c0, tail = String(rc.poolId).split("_");   // (ART EDIT: the piece's own artwork edit)
     Object.assign(charm, { name: rc.name, order: rc.order || row.orderId, orderDate: rc.orderDate || row.orderDate || 0, arrivedAt: rc.arrivedAt || row.arrivedAt || 0, poolId: rc.poolId, metal: d.metal, lineKey: rc.lineKey || row.lineKey, sku,
       orderInfo: { receiptId: rc.order || row.orderId, transactionId: row.transactionId || tail[1], sku, copy: row.copy || +tail[2] || 1, quantity: row.quantity, form: row.form, size: row.size, ...(rc.hand ? { custom: true, orderless: true } : {}) } }, piece ? CharmNestPoolPieces.fieldsOf(piece) : {}, own ? { custom: true } : {}, rc.hand === true ? { hand: true } : {});
