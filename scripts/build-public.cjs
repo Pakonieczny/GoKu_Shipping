@@ -178,6 +178,7 @@ const assets = [
   "charm-nest-store.js",
   "charm-nest-sync-worker.js",
   "charm-nest-push.js",
+  "charm-nest-sheet-live.js",
   "vendor/firebase-app-compat-10.14.1.js",
   "vendor/firebase-firestore-compat-10.14.1.js",
   "vendor/firebase-10.14.1-LICENSE.txt",
