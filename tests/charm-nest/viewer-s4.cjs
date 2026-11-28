@@ -256,7 +256,7 @@ function partH() {
   ok('H2 Stop on a viewer\'s card stops the cloud\'s job; a sheet nesting on this computer is stopped as before; a sheet with neither is left alone', JSON.stringify(w.called) === JSON.stringify([['cloud', 'c1'], ['worker', 'stop']]) && loc.pool.stopAsked === true, w.called);
   ok('H3 the changed files load under new tokens (-s4)', /charm-nest-viewer\.js\?v=[^"]*-s4(?:-\w+)*"/.test(HTML) && /charm-nest-bridge\.js\?v=[^"]*-s4(?:-\w+)*"/.test(HTML) && /charm-nest-cloud-sheets\.js\?v=[^"]*-s4(?:-\w+)*"/.test(HTML));
   const cs = fs.readFileSync(path.join(ROOT, 'charm-nest-cloud-sheets.js'), 'utf8');
-  ok('H4 the change feed and a reload tell the viewer each record\'s nestJob', (cs.match(/root\.CNViewer\.sawSheet\(p, rec\)/g) || []).length === 2);
+  ok('H4 the change feed and a reload tell the viewer each record\'s nestJob (and SHEETLIVE\'s cloud-mode cards, liveChanged, 27 Nov 2026)', (cs.match(/root\.CNViewer\.sawSheet\(p, rec\)/g) || []).length === 3 && /async function liveChanged\(p, rec, L\) \{[\s\S]{0,1200}root\.CNViewer\.sawSheet\(p, rec\)/.test(cs));
 }
 
 (async () => {
