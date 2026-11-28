@@ -1,4 +1,5 @@
 // ENGLIVE (engrave-ui-1012 round 2): the REAL-TIME test, on REAL drawings (tests/charm-nest/_engraveRealWorld.cjs).
+// FRONTBACK (Paul, 28 Nov 2026): None | Front | Back; a face is engraved when it has words; updated without a browser here (no playwright on this Mac): not run.
 //
 // Paul, 12 Oct 2026, on the live round-1 UI: "nothing seems to happen in real-time", "the text in the work area does not show the preview of the selected text font style",
 // the two boxes "are not working" (no charm, only plain text), "the front is gonna have to show all of the engraving/cutouts for each given charm", the order window "does not show the
@@ -390,12 +391,13 @@ async function partDetail(w, made) {
   // ── mode: faces follow the staged mode, live ──
   // (ENGSTAGE, Paul 30 Oct 2026: both faces are always drawn on the Engrave detail's card; the mode decides which are ENGRAVED (data-engraved), the others are the plain charm)
   const faceNames = f => (f.faces || []).filter(x => x.engraved).map(x => x.face).join('+') || 'none';
-  // (ENGSTAGE, Paul 30 Oct 2026: the four options None | Front | Back | Front & Back: Front is the front ONLY; the save path is held here (a promise that never ends) so each press is seen staged, then let go: nothing is kept)
-  const modes = [['front', 'front'], ['none', 'none'], ['back', 'back']];
+  // (FRONTBACK, Paul 28 Nov 2026: None | Front | Back: Front / Back show that face and engrave nothing new (the back-only piece stays the back's), None engraves neither; the save path is held here (a promise that
+  //  never ends) so each press is seen staged, then let go: nothing is kept)
+  const modes = [['front', 'back'], ['none', 'none'], ['back', 'back']];
   await page.evaluate(() => { window.__saveRt = Engrave.saveSetup; Engrave.saveSetup = () => new Promise(() => {}); });
   for (const [m, want] of modes) {
     t = await trial(w, 'mode', m);
-    { const chose = await page.evaluate(() => (document.querySelector('#egQueue .rvItem[data-kind=placement] .engp') || { dataset: {} }).dataset.choice || ''); check(`R3 pressing "${m}": the panel's choice is ${m} in the same tick`, 'smart', chose === m, chose); }   // (ENGSTAGE: the four options: the panel's own staged choice)
+    { const chose = await page.evaluate(() => (document.querySelector('#egQueue .rvItem[data-kind=placement] .engp') || { dataset: {} }).dataset.choice || ''); check(`R3 pressing "${m}": the panel's engraved faces are ${want} in the same tick`, 'smart', chose === want, chose); }   // (the panel's own staged faces: data-choice)
     await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (c && c._pieceMount) c._pieceMount.refresh(); else Engrave.render(); } }); await R.settle(page, 500);
     const got = faceNames(t.tick.facts);
     check(`R3 pressing "${m}": the card shows ${want} engraved in the same tick (both faces drawn)`, 'smart', got === want && t.tick.facts.faces.length === 2, `engraved faces on the card at the tick: ${got} of ${t.tick.facts.faces.map(f => f.face).join('+')}; ${t.tick.facts.faces.filter(f => f.empty === '1').length} empty slot(s)`);
@@ -406,10 +408,10 @@ async function partDetail(w, made) {
   }
   await page.evaluate(() => { Engrave.saveSetup = window.__saveRt; CharmNestEngravePanel.DRAFTS.clear(); { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (c && c._pieceMount) c._pieceMount.refresh(); else Engrave.render(); } }); await R.settle(page, 700);
 
-  // ── Front pressed on the back-only piece (LIVEWORDS: kept at once, both faces engraved): BOTH thumbnails, and the edits of the back leave the front alone ──
-  await page.evaluate(() => window.__act.mode('front')); await R.settle(page, 2500);
+  // ── Front pressed on the back-only piece and words typed on it (FRONTBACK: a face with words is engraved: both faces engraved): BOTH thumbnails, and the edits of the back leave the front alone ──
+  await page.evaluate(() => window.__act.mode('front')); await R.settle(page, 500); await page.evaluate(() => window.__act.type('W')); await R.settle(page, 2500);
   const both0 = await detailFacts(page);
-  check('R5 with Front + back staged the card shows two faces, each with the charm', 'smart', faceNames(both0) === 'front+back', `faces ${faceNames(both0)}`);
+  check('R5 with words on the front and the back staged the card shows two engraved faces, each with the charm', 'smart', faceNames(both0) === 'front+back', `faces ${faceNames(both0)}`);
   await page.evaluate(() => window.__act.face('back')); await R.settle(page, 500);
   t = await trial(w, 'type', 'Anna');
   await evalChange('R6 (front + back) typing "Anna" on the back', t, { thumbs: ['front', 'back'], edit: 'back', thumbLook: { what: 'words', right: refImg.anna, wrong: refImg.base }, work: { what: 'words', right: refImg.anna, wrong: refImg.base } });

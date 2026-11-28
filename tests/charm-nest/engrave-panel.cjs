@@ -1,6 +1,7 @@
 // ENGPANEL (engrave-ui-1012): the engraving panel of the Engrave tab's detail card (charm-nest-engrave-panel.js), in the REAL page (charm-nest-1.html, headless Chromium against the local fake site;
 // offline: no Etsy, no paid reading, no live write). Paul's image 7 / 9: the menu was a one-character-wide text box, a font drop-down on top of it, four choices on two rows, an "Undo my edit" button.
 //   1  the face control is ONE row: None | Front | Back (LIVEWORDS, 29 Oct 2026: no "Front + back"; Front and Back are toggles, both pressed = both faces engraved)
+//   FRONTBACK (Paul, 28 Nov 2026): None | Front | Back; a face is engraved when it has words; updated without a browser here (no playwright on this Mac): not run.
 //   2  the text area is a normal width (>= 200px: computed in the real stylesheet), the font drop-down is under it and does not touch it; there is no Save and no Cancel (LIVEWORDS: Approve keeps the words)
 //   3  none of the old words: no "ENGRAVES", "The system read", "nothing in the listing", "Undo", no percentage
 //   4  an earring (spec.engraveNever) gets no panel, so it has no Back choice anywhere
@@ -60,12 +61,12 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
         return { panel: r(p), segs: segs.map(s => ({ t: s.textContent.trim(), top: Math.round(r(s).t), right: Math.round(r(s).r) })), segBox: r(p.querySelector('.engpMode:not(.engpFaceSw)')), ta: r(ta), sel: r(sel),
           taW: parseFloat(getComputedStyle(ta).width), buttons: [...p.querySelectorAll('button')].map(b => b.textContent.trim()).filter(Boolean), text: p.textContent.replace(/\s+/g, ' ') };
       });
-      check(/^None\|Front\|Back\|(Front & Back|Both)$/.test(m.segs.map(s => s.t).join('|')), `${w}px: the choices are None | Front | Back | Front & Back (ENGSTAGE, Paul 30 Oct 2026; "Both" when the column is narrow): ${m.segs.map(s => s.t).join(' | ')}`);
-      check(new Set(m.segs.map(s => s.top)).size === 1 && m.segs.every(s => s.right <= Math.ceil(m.segBox.r)), `${w}px: all four on ONE row inside the control (tops ${m.segs.map(s => s.top)})`);
+      check(/^None\|Front\|Back$/.test(m.segs.map(s => s.t).join('|')), `${w}px: the choices are None | Front | Back (FRONTBACK, Paul 28 Nov 2026: no Front & Back): ${m.segs.map(s => s.t).join(' | ')}`);
+      check(new Set(m.segs.map(s => s.top)).size === 1 && m.segs.every(s => s.right <= Math.ceil(m.segBox.r)), `${w}px: all three on ONE row inside the control (tops ${m.segs.map(s => s.top)})`);
       check(m.panel.w >= 232 - 1, `${w}px: the panel is at least 232px wide: ${Math.round(m.panel.w)}px`);
       check(m.taW >= 200 && m.ta.w >= 200, `${w}px: the text area is a normal width: ${Math.round(m.ta.w)}px (computed ${Math.round(m.taW)})`);
       check(m.sel.t >= m.ta.b - 0.5 && m.sel.w >= 200, `${w}px: the font drop-down is under the text area, full width, touching nothing: select top ${Math.round(m.sel.t)} >= text bottom ${Math.round(m.ta.b)}, width ${Math.round(m.sel.w)}`);
-      const acts = m.buttons.filter(b => !/^(None|Front|Back|Front & Back|Both|Emoji|Aα)$/.test(b));   // (Emoji and Aα, the other alphabets (ALPHAFIND, 28 Oct 2026), are Paul's own picker buttons, beside the words)
+      const acts = m.buttons.filter(b => !/^(None|Front|Back|Emoji|Aα)$/.test(b));   // (Emoji and Aα, the other alphabets (ALPHAFIND, 28 Oct 2026), are Paul's own picker buttons, beside the words)
       check(acts.length === 0, `${w}px: no Save, no Cancel, no other action button (besides the quiet Emoji and Aα buttons): ${acts.join(' | ')}`);
       check(!/ENGRAVES|system read|nothing in the listing|Undo|sure|%|Why change|Changed:/i.test(m.text), `${w}px: none of the old words in the panel: "${m.text.slice(0, 120)}"`);
       if (shots) await page.screenshot({ path: path.join(shots, `panel-${w}.png`) });
@@ -197,7 +198,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       staged: !!(p && p.dataset.staged), noSave: !!p && !p.querySelector('[data-engp=save],[data-engp=cancel]'), w: p && p.querySelector('.engpWords') ? p.querySelector('.engpWords').getBoundingClientRect().width : 0,
       seg: [...s.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg')].map(b => b.getAttribute('aria-pressed') === 'true' ? b.textContent.trim() : '').join(''), ov: row.engravingOverride || null }; }, KEY);
     let st = await state();
-    check(st.face === 'back' && st.mode === 'both' && st.text === '1. 27. 24' && !st.staged && st.noSave && /^(Front & Back|Both)$/.test(st.seg), 'opens on the Back (the card\'s face) with its words, Front & Back pressed (ENGSTAGE: one option), nothing staged, no Save / Cancel: ' + JSON.stringify({ face: st.face, text: st.text, staged: st.staged, seg: st.seg }));
+    check(st.face === 'back' && st.mode === 'both' && st.text === '1. 27. 24' && !st.staged && st.noSave && st.seg === 'Back', 'opens on the Back (the card\'s face) with its words, both faces engraved (data-mode both), the pill on Back (FRONTBACK: the face shown), nothing staged, no Save / Cancel: ' + JSON.stringify({ face: st.face, text: st.text, staged: st.staged, seg: st.seg }));
     check(st.w >= 200, 'the text area is ' + Math.round(st.w) + 'px wide in a 232px slot');
 
     await page.evaluate(() => __h.setFace('front'));

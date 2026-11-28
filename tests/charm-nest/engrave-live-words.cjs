@@ -3,11 +3,12 @@
 // engraving changes including asking the user to click save ... As soon as the user types a letter into the text box, that letter must immediately appear in all charm vector preview images and main
 // Engraving preview in real-time. The user just needs to press the green approve when done typing").
 // On the real sorter page over the repo's fake site (_engraveRealWorld.cjs: offline, made-up names), the order "both" (front "W", back "Name One", both faces fitted for real):
-//   L1  ENGSTAGE (Paul, 30 Oct 2026: "a clean and elegant solution to choose both Back & Front"): the options are None | Front | Back | Front & Back, Front & Back the one pressed (both faces engraved); no Save, no Cancel, no "Why change it?", no "Changed: ..." line
+//   FRONTBACK (Paul, 28 Nov 2026): None | Front | Back; a face is engraved when it has words; updated without a browser here (no playwright on this Mac): not run.
+//   L1  the options are None | Front | Back (no Front & Back: both faces with words are both engraved), the pill on the face shown (the Front); no Save, no Cancel, no "Why change it?", no "Changed: ..." line
 //   L2  the card shows BOTH faces as thumbnails (a picture each), the face shown marked
 //   L3  a typed letter is on the face's thumbnail and in the work area's drawing within two frames, nothing pressed
 //   L4  a click on the Back thumbnail shows the back in the work area (the card of the back's job, or Engrave.showFace's own turn) and marks the Back thumbnail
-//   L5  a press on the Front thumbnail shows the front again (ENGSTAGE: the Front OPTION would mean "the front only"; the thumbnails choose the face shown)
+//   L5  a press on the Front thumbnail shows the front again (the thumbnails, like the Front / Back options, choose the face shown)
 //   L6  Approve with the words still staged: the new words are kept (no question asked), fitted, and approved: the front job approved with the new words, no reason recorded
 //   L7  nothing erred
 //   PW_DIR=<playwright node_modules> node tests/charm-nest/engrave-live-words.cjs      (SHOTS=<dir> for screenshots)
@@ -38,7 +39,7 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
       const acts = p ? [...p.querySelectorAll('button')].map(b => b.textContent.trim()).filter(t => /^(Save|Cancel)$/.test(t)) : [];
       return { segs, acts, why: !!(c && c.querySelector('.engpWhy,.engpWhyLine')), changed: /Changed:/.test(c ? c.textContent : '') };
     }, Q);
-    check('L1 None | Front | Back | Front & Back, Front & Back pressed (both faces engraved), one option pressed', ui.segs.map(s => s[0]).join('|') === 'none|front|back|both' && ui.segs.filter(s => s[1] === 'true').map(s => s[0]).join() === 'both', JSON.stringify(ui.segs));
+    check('L1 None | Front | Back (no Front & Back), one option pressed: the Front, the face shown (both faces engraved)', ui.segs.map(s => s[0]).join('|') === 'none|front|back' && ui.segs.filter(s => s[1] === 'true').map(s => s[0]).join() === 'front', JSON.stringify(ui.segs));
     check('L1 no Save, no Cancel, no reason prompt, no "Changed:" line', !ui.acts.length && !ui.why && !ui.changed, JSON.stringify(ui));
 
     // L2 · both thumbnails

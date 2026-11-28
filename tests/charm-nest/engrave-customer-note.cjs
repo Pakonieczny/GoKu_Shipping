@@ -2,6 +2,7 @@
 // what the customer wrote/communicated." The Engrave tab's detail (placementCard) shows the customer's own words ALWAYS, as ONE box titled "What the customer wrote": the personalisation, the buyer's message, the
 // staff note and the customer's engraving-related option choices; nothing (no empty box) when the customer wrote and chose nothing. The blocks ENGTRIM removed stay removed.
 // Real charm-nest-1.html in headless Chromium over the fake loopback site (bridge-server.cjs): no Etsy, no paid reading, no live write. Names are made up.
+// FRONTBACK (Paul, 28 Nov 2026): None | Front | Back; a face is engraved when it has words; updated without a browser here (no playwright on this Mac): not run.
 //   1  an order with personalisation, buyer message, staff note and options (front + back, a font): the box is in the Engrave detail, once, titled, with the exact words and the engraving options
 //      only (the metal is not one of them), on a settled read, on an uncertain read and on a read a person decided (not only when the read is uncertain)
 //   2  the blocks ENGTRIM removed are still absent: "From the order", Reading / Font / Decided by, the "NN% sure" pill, the block titles, the second words box, the reference picture, the head's face switch
@@ -123,7 +124,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     check(d.words === 0 && d.oldBox === 0 && d.use === 0 && !/Words on the|Use these words|Engrave these words/i.test(d.text), 'no second "Words on the back" box, no "Use these words"');
     check(d.ref === 0 && !/reference/i.test(d.text) && d.mainTitle === 0 && d.checkTitle === 0 && d.faceSw === 0, 'no reference picture, no big picture title, no "To check with the buyer" title, no head Front | Back switch');
     check(d.titles.join('|') === 'What the customer wrote', 'the box\'s is the ONLY block title on the detail: ' + JSON.stringify(d.titles));
-    check(d.emoji === 1 && d.approve === 1 && /^None\|Front\|Back\|(Front & Back|Both)$/.test(d.seg) && d.thumbs === 2, 'the panel, the card\'s two pictures, one Emoji button and Approve are all still there');
+    check(d.emoji === 1 && d.approve === 1 && /^None\|Front\|Back$/.test(d.seg) && d.thumbs === 2, 'the panel, the card\'s two pictures, one Emoji button and Approve are all still there');
 
     // ── 3 · the customer wrote and chose nothing: no box; a part left empty is not drawn ──
     const NONE = { patch: {}, spec: { personalization: [], buyerMessage: '', staffNote: '' }, line: { variations: METAL, personalization: [] } };

@@ -10,6 +10,9 @@
 //   B1 Back · engraving: every book's words are drawn as the laser burns them (from the cloud's place), none as a label
 //   B2 each book's words are on that book, and no label is drawn over the neighbours (no label ink on the plate)
 //   B3 the words drawn from the cloud's place are where they are drawn once this computer fits the job at that place (no jump when the fit lands)
+// WINDOWENG (Paul, 28 Nov 2026: the sheet window shows exactly what the downloaded .ai holds; names not approved and saved must not show there): B1 and B3 now expect the opposite of the
+// above. The four books are jobs in Review with no saved engraving record, which the .ai never holds: Back · engraving draws no words on any book and no label, and still none once the job
+// is fitted here (B3). B2 stays: no label drawn over the neighbours (and any word drawn is on its own book).
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/sheet-back-pending-words.cjs
 'use strict';
 const path = require('path');
@@ -89,23 +92,23 @@ const order = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, upda
         return { poolId: w.poolId, text: w.text, drawn: w.drawn, x: w.x, y: w.y, nearest: best }; });
       // the hatching blue of the words inside each book (a box 40 % of its size about the point its words are drawn at)
       const blue = w => { const d = ctx.getImageData(Math.round(w.x) - 25, Math.round(w.y) - 12, 50, 24).data; let n = 0; for (let j = 0; j < d.length; j += 4) if (Math.abs(d[j] - 26) < 30 && Math.abs(d[j + 1] - 95) < 30 && Math.abs(d[j + 2] - 196) < 30) n++; return n; };
-      return { words: words.map(w => Object.assign(w, { blue: w.drawn ? blue(w) : 0 })), label, k: cv.width / r.width };
+      return { words: words.map(w => Object.assign(w, { blue: w.drawn ? blue(w) : 0 })), label, k: cv.width / r.width, ink: BOOKS.map(p => blue(centres[p])) };
     }, BOOKS);
     const b = await plate();
     if (process.env.SHOT) await page.locator('#owPlateWrap').screenshot({ path: process.env.SHOT });
-    check('B1 Back · engraving: every book\'s words are drawn as the laser burns them, from the cloud\'s place (none left as a label)',
-      b.words.length === 4 && b.words.every(w => w.text === 'Book Lover' && w.drawn && w.blue >= 20), JSON.stringify(b.words));
+    check('B1 Back · engraving: the four books, in Review with no saved record, draw no words (not from the cloud\'s place, not as a label): WINDOWENG',
+      b.words.length === 4 && b.words.every(w => w.text === 'Book Lover' && !w.drawn) && b.ink.every(n => n < 5) && b.label === 0, JSON.stringify({ words: b.words, ink: b.ink, label: b.label }));
     check(`B2 each book's words are on that book, and no "Book Lover" label is drawn over the neighbours (${b.label} label pixels)`,
-      b.words.every(w => w.nearest === w.poolId) && b.label === 0, JSON.stringify({ label: b.label, words: b.words.map(w => [w.poolId.slice(-1), w.nearest && w.nearest.slice(-1)]) }));
+      b.words.filter(w => w.drawn).every(w => w.nearest === w.poolId) && b.label === 0, JSON.stringify({ label: b.label, words: b.words.map(w => [w.poolId.slice(-1), w.nearest && w.nearest.slice(-1)]) }));
     // the job fitted on this computer AT the cloud's place (what fitJob keeps, keepPlace): the words are where they were already drawn
     await page.evaluate(BOOKS => { for (const p of BOOKS) { const j = [...Engrave.items().values()].find(x => (x.copies || []).includes(p)), k = j.keepPlace;
       j.fit = { centre: k.centre.slice(), angle: k.angle || 0, size: k.size, weight: k.weight, lines: k.lines.slice(), fittedMax: k.fittedMax, layout: { lineGap: k.lineGap } }; j.view = { upAngle: k.upAngle, cx: k.cx, cy: k.cy, members: [] }; }
       // (the words worked out for each piece are forgotten, as a drawing does when what it draws from changes: dropGeo)
       const i = OrderWin._sheet(); for (const x of i.pieces) { x._engGeo = null; x._engGeoKey = null; } i.redraw(); }, BOOKS);
     await page.waitForTimeout(300);
-    const b3 = await page.evaluate(BOOKS => OrderWin._sheet().words().filter(w => BOOKS.includes(w.poolId)).map(w => ({ poolId: w.poolId, x: w.x, y: w.y, drawn: w.drawn })), BOOKS);
-    const moved = b.words.map(w => { const f = b3.find(q => q.poolId === w.poolId); return f && w.drawn && f.drawn ? Math.hypot(f.x - w.x, f.y - w.y) : Infinity; });
-    check(`B3 the words drawn from the cloud's place are where they are drawn once the job is fitted here at that place (moved ${moved.map(v => v.toFixed(2)).join(', ')} px)`, moved.every(v => v < 0.5), JSON.stringify({ before: b.words, after: b3 }));
+    const b3 = await plate();
+    check('B3 the jobs fitted here at the cloud\'s place, still in Review with no saved record: still no words on any book and no label (WINDOWENG)',
+      b3.words.length === 4 && b3.words.every(w => !w.drawn) && b3.ink.every(n => n < 5) && b3.label === 0, JSON.stringify({ before: b.words, after: b3.words, ink: b3.ink, label: b3.label }));
     check('B4 no page error', errors.length === 0, JSON.stringify(errors).slice(0, 400));
   } finally { await browser.close(); srv.close(); }
   const bad = RESULTS.filter(r => !r.ok);

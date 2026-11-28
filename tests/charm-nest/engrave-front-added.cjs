@@ -10,6 +10,7 @@
 //
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-front-added.cjs      (CHROMIUM=/opt/pw-browsers/chromium if the default path is missing; SHOTS=<dir> for screenshots)
 //   Exit code 1 while any check is red; every line is PASS|FAIL id evidence.
+//   FRONTBACK (Paul, 28 Nov 2026): None | Front | Back; a face is engraved when it has words; updated without a browser here (no playwright on this Mac): not run.
 const R = require('./_engraveRealWorld.cjs');
 const RESULTS = [];
 const check = (id, ok, evidence) => { RESULTS.push({ id, ok: !!ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${id}  ${evidence}`); };
@@ -41,9 +42,9 @@ const watch = page => page.evaluate(() => {
 });
 const seen = page => page.evaluate(() => (window.__seen || []).filter((t, i, a) => t && a.indexOf(t) === i));
 
-/** the person adds the front in the Engrave detail: Front & Back pressed stages the front beside the back (ENGSTAGE, Paul 30 Oct 2026: four options; the Front option alone would mean "the front only"), the Front
- *  thumbnail makes it the face edited, the front words are typed, and the staged change is kept without an approval (the panel's commit: what Approve does first; no Save, no question) */
-const stageFront = page => page.evaluate(Q => { document.querySelector(Q + ' .engp [data-engp="choice"][data-choice="both"]').click(); const t = document.querySelector(Q + ' [data-eng-thumb="front"]') || document.querySelector(Q + ' .engCard .engFace[data-face="front"] .engThumb'); if (t) t.click(); }, Q);
+/** the person adds the front in the Engrave detail: Front pressed shows the front, the face edited (FRONTBACK, Paul 28 Nov 2026: None | Front | Back; the back stays engraved; the front is engraved once it has
+ *  words), the front words are typed, and the staged change is kept without an approval (the panel's commit: what Approve does first; no Save, no question) */
+const stageFront = page => page.evaluate(Q => { document.querySelector(Q + ' .engp [data-engp="choice"][data-choice="front"]').click(); const t = document.querySelector(Q + ' [data-eng-thumb="front"]') || document.querySelector(Q + ' .engCard .engFace[data-face="front"] .engThumb'); if (t) t.click(); }, Q);
 async function addFront(w, name, text) {
   const page = w.page;
   await R.openEngraveDetail(w, name, { face: 'back' });
@@ -72,12 +73,13 @@ async function addFront(w, name, text) {
 
     // ═══ P · Paul's flow: back fitted, add the front, press the Front thumbnail ═══
     const { staged, mid } = await addFront(w, 'back', 'B');
-    // (STAGEALL, Paul 29 Oct 2026: "it's not approved until the Approve button is pressed again": Front & Back STAGES the front; it is made when the staged change is kept: Approve, or here the panel's commit)
-    check('P1 Front & Back and the Front thumbnail stage the front: the Front is marked and edited, nothing is made or saved yet (no front job); Approve is there to keep it',
-      staged.current === 'front' && staged.mode === 'both' && !/~front$/.test(staged.job || '') && staged.approve, JSON.stringify({ staged }));
+    // (STAGEALL, Paul 29 Oct 2026: "it's not approved until the Approve button is pressed again": the front is made when the staged change is kept: Approve, or here the panel's commit)
+    // (FRONTBACK, Paul 28 Nov 2026: Front shows the front, empty; the back stays engraved; the front is engraved once its words are typed: P2)
+    check('P1 Front and the Front thumbnail show the front: the Front is marked and edited, the back still the one engraved (data-mode back), nothing made or saved yet (no front job); Approve is there',
+      staged.current === 'front' && staged.mode === 'back' && staged.words === '' && !/~front$/.test(staged.job || '') && staged.approve, JSON.stringify({ staged }));
     // (FRONTSTAGE, Paul 29 Oct 2026, "without any explanations": the staged front is SHOWN, never "being prepared": the charm's front, and the words typed fitted on it as a draft)
     check('P1b the work area shows the staged front at once (the charm\'s front, no "being prepared" line)', staged.canvas && staged.staged && staged.viewFace === 'front' && !/being prepared/i.test(staged.text), JSON.stringify(staged));
-    check('P2 the front words are typed in the front\'s own box and drawn on the staged front in the work area (more ink than the bare front)', mid.words === 'B' && mid.staged && mid.viewFace === 'front' && mid.ink > staged.ink + 20 && !/being prepared/i.test(mid.text), JSON.stringify({ mid, bare: staged.ink }));
+    check('P2 the front words are typed in the front\'s own box (both faces engraved now) and drawn on the staged front in the work area (more ink than the bare front)', mid.words === 'B' && mid.mode === 'both' && mid.staged && mid.viewFace === 'front' && mid.ink > staged.ink + 20 && !/being prepared/i.test(mid.text), JSON.stringify({ mid, bare: staged.ink }));
     await R.shot(w, 'FRONT-1-staged-unsaved');
     const fj = await until(async () => { const js = await jobsOf(page, key); const f = js.find(j => j.face === 'front'); return f && f.state === 'review' && f.fitted ? f : null; }, 90000);
     const sawNow = await seen(page);

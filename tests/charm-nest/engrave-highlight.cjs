@@ -2,7 +2,8 @@
 // those selections." The engraving panel of the Engrave tab (charm-nest-engrave-panel.js) marks what the SYSTEM chose and keeps it marked when a person picks something else. REAL page, headless Chromium, offline fake site
 // (no Etsy, no paid reading, no live write). The real preview and position components are on the page (nothing is stubbed but CharmNestEngraveSetup.autoChoice in step 6, to prove it is the source of truth).
 //   1  untouched: the mark (a gold sparkle, title "Chosen by the system") is on the system's mode segment, on the system's font (its entry in the list and the select's tint) and on the shown face's words box (tinted)
-//   2  ENGSTAGE (Paul, 30 Oct 2026): four options, None | Front | Back | Front & Back: the system's "both" marks Front & Back; a press on a face's thumbnail only shows it (the marks and the selection stay); no option is tinted
+//   FRONTBACK (Paul, 28 Nov 2026): None | Front | Back; a face is engraved when it has words; updated without a browser here (no playwright on this Mac): not run.
+//   2  three options, None | Front | Back: the system's "both" marks Front AND Back; the pill is on the face shown (None when nothing is engraved); a press on a face's thumbnail only shows it (the marks stay); no option is tinted
 //      (the one white pill is the selection: "the white selection background on each button does not work on the "Back" button")
 //   3  the person types other words / picks another font: the tint goes, the mark stays (ghost beside the closed font drop-down, on the words box), its title now says what the system chose; typing the system's words back brings the tint back
 //   4  the other face (the Front thumbnail) carries its own system words; letting the draft go (no Cancel any more) brings every tint back; nothing disappears anywhere
@@ -33,9 +34,9 @@ const MARKS_FN = sel => {
         font: { sys: fb ? fb.dataset.sys || '' : null, ghost: mk(fb), selTitle: s ? s.title : '', value: s && s.value, bg: bg(s), opts: s ? [...s.options].map(o => ({ v: o.value, text: o.text, label: o.label, star: !!o.dataset.sys })) : [] }
       };
 };
-const segsOf = mode => mode;   // (ENGSTAGE: one option per choice, "both" is Front & Back)
+const segsOf = mode => (mode === 'both' ? 'front,back' : mode);   // (FRONTBACK: no Front & Back option: the system's "both" marks Front and Back)
 const onlySeg = (m, mode) => m.seg.filter(s => s.mark).map(s => s.m).join() === segsOf(mode) && m.seg.filter(s => s.sys).map(s => s.m).join() === segsOf(mode);
-const pressed = (m, mode) => m.seg.filter(s => s.on).map(s => s.m).join() === segsOf(mode);
+const pressed = (m, mode) => m.mode === mode && m.seg.filter(s => s.on).map(s => s.m).join() === (mode === 'none' ? 'none' : m.face);   // (FRONTBACK: the panel engraves `mode`; the pill is None when nothing is engraved, else on the face shown)
 const CARD_BG = 'rgb(255, 254, 251)';
 
 /** 9 · the REAL-DRAWING world (ENGLIVE: real charm drawings, real intake / pool / classifier / fit, real fonts, offline): on each real piece the marks are exactly the system's own choice (autoChoice), untouched; an override moves the selection, not the marks */
@@ -124,7 +125,7 @@ async function realWorld(check, shots) {
     await page.waitForSelector('.pvSetup .engp .engpWords', { timeout: 20000 });
     const PV = '.pvSetup';
     let m = await marks(PV);
-    check(m.mode === 'both' && onlySeg(m, 'both') && m.seg.every(s => !s.mark || (s.mark.title === TITLE && s.title === TITLE)) && pressed(m, 'both'), `1 untouched: the mark and the tint are on the system's faces (Front and Back), pressed, and nowhere else; title "${TITLE}"`);
+    check(m.mode === 'both' && onlySeg(m, 'both') && m.seg.every(s => !s.mark || (s.mark.title === TITLE && s.title === TITLE)) && pressed(m, 'both'), `1 untouched: the marks are on the system's faces (Front and Back), both engraved, the pill on the face shown, and no mark anywhere else; title "${TITLE}"`);
     check(m.words.sys === 'same' && m.words.mark && m.words.mark.st === 'same' && m.words.mark.title === TITLE && m.words.bg !== CARD_BG, `1 untouched: the words box (the Back: "${m.words.value}") carries the mark and a quiet tint (${m.words.bg})`);
     const starred = m.font.opts.filter(o => o.star);
     check(starred.length === 1 && starred[0].v === '' && /^✦ /.test(starred[0].label) && starred[0].label.endsWith(starred[0].text) && m.font.sys === 'same' && m.font.selTitle === TITLE && m.font.bg !== CARD_BG && !m.font.ghost,
@@ -137,9 +138,9 @@ async function realWorld(check, shots) {
     // 2 · a press on an engraved face's thumbnail only shows it: the selection and the marks stay
     await page.evaluate(PV => { const t = document.querySelector(PV + ' [data-eng-thumb=back]') || document.querySelector(PV + ' .engFace[data-face=back] .engThumb'); if (t) t.click(); }, PV);
     m = await marks(PV);
-    check(m.mode === 'both' && pressed(m, 'both') && onlySeg(m, 'both') && m.seg.find(s => s.m === 'both').mark.title === TITLE, '2 the Back shown while engraved: Front & Back stays pressed and marked (no reason, none asked)');
+    check(m.mode === 'both' && pressed(m, 'both') && onlySeg(m, 'both') && ['front', 'back'].every(f => m.seg.find(s => s.m === f).mark.title === TITLE), '2 the Back shown while both are engraved: the pill on Back, the marks on Front and Back (no reason, none asked)');
     check(m.seg.find(s => s.m === 'none').bg === m.seg.find(s => s.m === 'back').bg, '2 no option is tinted, Back included');
-    check(m.seg.length === 4 && m.seg.map(s => s.m).join() === 'none,front,back,both', '2 the four choices: ' + m.seg.map(s => s.m).join());
+    check(m.seg.length === 3 && m.seg.map(s => s.m).join() === 'none,front,back', '2 the three choices (no Front & Back): ' + m.seg.map(s => s.m).join());
 
     // 3 · other words, another font
     await page.fill(`${PV} .engpWords`, 'Name Two');
@@ -200,8 +201,8 @@ async function realWorld(check, shots) {
     await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back'); Object.assign(j, { text: 'Name Two', lines: ['Name Two'] }); row.engravingOverride = { mode: 'back', back: { text: 'Name Two', fontWord: 'Pristina' }, by: 'Name One', at: 1, reason: { code: 'asked', text: 'Customer asked in a message', by: 'Name One', at: 1 } }; }, KEY);
     await mountSlot();
     m = await marks(S);
-    const segFront = m.seg.find(s => s.m === 'both'), segBack = m.seg.find(s => s.m === 'back');
-    check(pressed(m, 'back') && onlySeg(m, 'both') && segFront.mark.title === TITLE && segFront.title === TITLE && !/Changed:/.test(m.text), '5 override Back saved: only Back is pressed, the mark stays on Front & Back, no reason anywhere: ' + JSON.stringify(segFront.title));
+    const segFront = m.seg.find(s => s.m === 'front'), segBack = m.seg.find(s => s.m === 'back');
+    check(pressed(m, 'back') && onlySeg(m, 'both') && segFront.mark.title === TITLE && segFront.title === TITLE && !/Changed:/.test(m.text), '5 override Back saved: the back alone engraved, the pill on Back, the marks stay on Front and Back (the system\'s both), no reason anywhere: ' + JSON.stringify(segFront.title));
     check(m.words.value === 'Name Two' && m.words.sys === 'changed' && m.words.mark.title === `${TITLE}: 1. 27. 24`, '5 the words box shows the person\'s words, its mark names the system\'s words (no reason): ' + JSON.stringify(m.words.mark));
     check(m.font.value === 'Pristina' && m.font.sys === 'changed' && m.font.ghost && m.font.ghost.title === `${TITLE}: Ace` && m.font.opts.filter(o => o.star).map(o => o.v).join() === '', '5 the font: Pristina selected, the ghost names the system\'s font (no reason): ' + JSON.stringify(m.font.ghost));
     void segBack;
@@ -211,7 +212,7 @@ async function realWorld(check, shots) {
     // 6 · the source of truth is autoChoice (ENGAUTO) when the page has it: stubbed here: the system chose Front only, "Name Three", Pristina
     await page.evaluate(() => { const S = CharmNestEngraveSetup; window.__autoWas = S.autoChoice; S.autoChoice = () => ({ mode: 'front', faces: ['front'], front: { text: 'Name Three', lines: ['Name Three'], fontWord: 'Pristina', fontId: 'marck-script' }, back: null, position: 'auto' }); });
     await mountSlot(); m = await marks(S);
-    check(m.mode === 'both' && onlySeg(m, 'front') && pressed(m, 'both') && !m.seg.find(s => s.m === 'back').mark, '6 autoChoice says Front only: the mark is on Front only; the reading engraves both faces, so Front and Back are pressed');
+    check(m.mode === 'both' && onlySeg(m, 'front') && pressed(m, 'both') && !m.seg.find(s => s.m === 'back').mark, '6 autoChoice says Front only: the mark is on Front only; the reading engraves both faces (data-mode both), the pill on the face shown');
     check(m.face === 'back' && m.words.sys === '' && !m.words.mark && !m.font.ghost && m.font.opts.every(o => !o.star), '6 the Back is not engraved by the system\'s choice: no words mark, no font mark on it');
     await page.evaluate(() => __h.setFace('front')); m = await marks(S);
     check(m.face === 'front' && m.words.sys === 'changed' && m.words.mark.title === `${TITLE}: Name Three` && m.font.opts.filter(o => o.star).map(o => o.v).join() === 'Pristina' && m.font.sys === 'changed' && m.font.ghost.title === `${TITLE}: Pristina`,

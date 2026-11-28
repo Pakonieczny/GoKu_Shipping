@@ -2,6 +2,7 @@
 // simple and minimalist". The options panel (charm-nest-engrave-panel.js) already edits the words, the font, the position and the mode of each face, and the card's Front / Back thumbnails pick the face, so the detail
 // must not draw a second route to the same words, a second face switch, a reference picture of the other face, a "From the order" list, a "NN% sure" pill or the block titles. What a person has to decide or fix stays.
 // Real charm-nest-1.html in headless Chromium over the fake loopback site (bridge-server.cjs): no Etsy, no paid reading, no live write. Names are made up.
+// FRONTBACK (Paul, 28 Nov 2026): None | Front | Back; a face is engraved when it has words; updated without a browser here (no playwright on this Mac): not run.
 //   1  a settled read (97%, personalisation box, no staff note), the detail at 1280x720: ABSENT: the "Words on the ..." box and its "Use these words", the "Front/Back . reference" picture (when the card's thumbnails are on
 //      the page), the "From the order" list, the "NN% sure" pill, every block title, the head's Front | Back switch; PRESENT: the panel (one words box, font, ONE Emoji button; no Save / Cancel since LIVEWORDS), Approve, the big picture, Open order (no "No engraving" button since NONEPRESS)
 //   2  the customer's own words are ALWAYS in the detail (ENGNOTE, Paul round 2 point 6: "I didn't ask for you to remove that"): ONE box titled "What the customer wrote" (charm-nest-engrave-said.js), settled read or not, a
@@ -86,7 +87,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       check(d.ref === 0 && !/reference/i.test(d.text), 'no "Front . reference" picture: the card\'s Front and Back thumbnails (' + d.thumbs + ') are the pictures of the piece');
       check(d.thumbs === 2 && d.engCard === 1 && d.mainTitle === 0, 'the card is on the page with its two thumbnails and the big picture has no title of its own: ' + JSON.stringify({ thumbs: d.thumbs, cards: d.engCard, mainTitle: d.mainTitle }));
     } else console.log('  (no CharmNestEngraveCard in this build: the reference picture and the big picture\'s title are still drawn until it lands — checks skipped; titles now: ' + JSON.stringify(d.titles) + ')');
-    check(/^None\|Front\|Back\|(Front & Back|Both)$/.test(d.seg) && d.font === 1 && d.save === 0 && d.cancel === 0, 'the panel keeps the choices: ' + d.seg + ', one font drop-down, no Save, no Cancel (LIVEWORDS: Approve keeps the words)');
+    check(/^None\|Front\|Back$/.test(d.seg) && d.font === 1 && d.save === 0 && d.cancel === 0, 'the panel keeps the choices: ' + d.seg + ', one font drop-down, no Save, no Cancel (LIVEWORDS: Approve keeps the words)');
     check(d.emoji === 1, 'ONE Emoji button in the detail (the panel\'s; the old box\'s is gone with the box): ' + d.emoji);
     // (NONEPRESS, Paul 29 Oct 2026: "Remove this "No Engraving" button from the UI": the None toggle of the panel is the one way to no engraving)
     check(d.approve === 1 && d.skip === 0 && d.backHost === 1 && d.openOrder === 1, 'Approve, the big picture and Open order stay; no "No engraving" button (the None toggle is the way): ' + JSON.stringify({ approve: d.approve, skip: d.skip, skipText: d.skipText, backHost: d.backHost, openOrder: d.openOrder }));

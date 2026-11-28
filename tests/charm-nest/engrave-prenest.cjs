@@ -9,6 +9,7 @@
 // and the font as a typed word in the note ("Typewriter font" = Crimson Text), ON HOLD (row state "pulled" with a person's hold on it), in no run, in no pool, on no sheet. discTwin = the same disc, words and note as a normal order
 // that went through the real pool, a sheet and the real fit: the page's OWN drawing of it (its job's view / fit) is the yardstick the held card is measured against.
 // Offline fake site only: nothing real is written, no Etsy, no paid call, made-up names ("Name One").
+// FRONTBACK (Paul, 28 Nov 2026): None | Front | Back; a face is engraved when it has words; updated without a browser here (no playwright on this Mac): not run. (PN13 only: the front is added by Front and its words)
 //
 // WHAT IS MEASURED (on the screenshot's pixels, in the page, no knowledge of the code under test; every number is in the evidence):
 //   disc      the closed dark outline of the picture (a flood fill from the picture's edge cannot get in): its box gives the centre and the inner radius; a picture with no closed outline is "no disc"
@@ -316,7 +317,7 @@ async function main() {
       await P.evaluate(() => { try { OrderWin.close(); } catch (_) {} Engrave.restoreView({ tab: 'place', focus: null, list: true, chosen: true, q: '', openDone: null }); CN.setMode('engrave'); Engrave.render(); }); await R.settle(P, 900);
       await R.openEngraveDetail(w, 'discTwin', { face: 'back' }); await R.settle(P, 900);
       const f0 = await look();
-      await click(QS + ' .engpSeg[data-mode="both"]'); await R.settle(P, 900);   // (ENGSTAGE, Paul 30 Oct 2026: Front & Back engraves the front beside the back; the Front option alone would mean the front only)
+      await click(QS + ' .engpSeg[data-choice="front"]'); await R.settle(P, 900);   // (FRONTBACK, Paul 28 Nov 2026: Front shows the front; its words, typed below, engrave it beside the back)
       await click(QS + ' .engFace[data-face=front] .engThumb'); await R.settle(P, 900);
       await P.evaluate(() => { const t = document.querySelector('#egQueue .rvItem[data-kind=placement] .engpWords'); if (!t) return; const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; t.focus(); set.call(t, 'B'); t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'B' })); t.dispatchEvent(new Event('keyup', { bubbles: true })); });
       await R.settle(P, 700); await P.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return c && c._pieceMount && c._pieceMount.panel.commit(); }); await R.settle(P, 1500);
@@ -333,7 +334,7 @@ async function main() {
       const fj = fF.jobs && fF.jobs.find(j => j.face === 'front');
       check('PN13 a front engraving added LATER to a charm with a fitted back: pressing the Front thumbnail shows the front charm with its words (no "Processing stopped" text, no blank work area), and Back again still shows the back', 'front',
         f0.card && !!fj && fj.fit && fj.view && fF.cur === 'front' && fF.words === 'B' && fF.canvas && !fF.stopped && fB.cur === 'back' && fB.canvas && !fB.stopped && /Name One/.test(fB.words),
-        `before: back job fitted ${JSON.stringify(f0.jobs)}; after adding Front + back and the words "B": jobs ${JSON.stringify(fF.jobs)}; Front pressed: ${fF.card ? `current ${fF.cur}, words ${JSON.stringify(fF.words)}, work area ${fF.canvas ? 'drawn (' + fF.ink + ' inked px)' : 'NOT drawn'}${fF.stopped ? ', says "' + fF.work + '"' : ''}` : 'no card'}; Back pressed again: ${fB.card ? `current ${fB.cur}, words ${JSON.stringify((fB.words || '').slice(0, 30))}, work area ${fB.canvas ? 'drawn (' + fB.ink + ' inked px)' : 'NOT drawn'}${fB.stopped ? ', says "' + fB.work + '"' : ''}` : 'no card'}`);
+        `before: back job fitted ${JSON.stringify(f0.jobs)}; after Front and the words "B" (both faces engraved): jobs ${JSON.stringify(fF.jobs)}; Front pressed: ${fF.card ? `current ${fF.cur}, words ${JSON.stringify(fF.words)}, work area ${fF.canvas ? 'drawn (' + fF.ink + ' inked px)' : 'NOT drawn'}${fF.stopped ? ', says "' + fF.work + '"' : ''}` : 'no card'}; Back pressed again: ${fB.card ? `current ${fB.cur}, words ${JSON.stringify((fB.words || '').slice(0, 30))}, work area ${fB.canvas ? 'drawn (' + fB.ink + ' inked px)' : 'NOT drawn'}${fB.stopped ? ', says "' + fB.work + '"' : ''}` : 'no card'}`);
     }
     check('Z0 no page errors', 'world', !w.errors.length, w.errors.slice(0, 3).join(' | ').slice(0, 300) || 'none');
   } catch (e) { console.error(e); code = 2; }

@@ -274,7 +274,7 @@ const asks = sp => sp.problems.filter(p => p.kind === 'needsMapping');
     const drawn = (rec, font) => JSON.stringify(Backs.engraveOn(rec, charm, { font, geom: G }).glyphs);
     ok(drawn(mk({}), sets['playwrite-us-modern'].Regular) !== drawn(mk({}), sets['source-sans-3'].Regular), 'the same record drawn in two fonts is two different drawings (so the font must follow the record)');
     // the viewers' own code (charm-nest-sheetwin.js backFont / otherFonts), run against a fake Engrave holding some fonts
-    const src = read('charm-nest-sheetwin.js'), a = src.indexOf('  const backFontId = rec =>'), b = src.indexOf('  /** An engraving approved in Engrave but not written yet');
+    const src = read('charm-nest-sheetwin.js'), a = src.indexOf('  const backFontId = rec =>'), b = src.indexOf('  /* WINDOWENG (Paul, 28 Nov 2026');
     ok(a > 0 && b > a, 'the viewers\' font code is in charm-nest-sheetwin.js');
     const loaded = new Set(), asked = [], Engrave = { fonts: sets['source-sans-3'], fontSetFor: id => id === 'source-sans-3' ? Engrave.fonts : loaded.has(id) ? sets[id] : null, loadFontSet: id => { asked.push(id); loaded.add(id); return Promise.resolve(sets[id]); } };
     const win = { CharmNestOrders: O, Engrave }, env = vm.createContext({ window: win, tryDo: f => { try { return f(); } catch (_) { return undefined; } }, Promise, Map, Set, Array });

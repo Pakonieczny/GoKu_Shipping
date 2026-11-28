@@ -3,10 +3,11 @@
 //   "When Engraving setting (None or Front or Back) has already been chosen and "Approved" and then the user updates their original choice then the "Approved" button must become immediately clickable
 //    again ... If the user does not click "Approve" again then the changes will be lost and system will revert to previous state of engraving and the "Engrave" button will return to "Engraved"".
 //   "We also need a clean and elegant solution to choose both Back & Front".  "the white selection background on each button does not work on the "Back" button".  "the hover states ... are inadequate".
-//   P1-P3  the four options, one white pill that sits under the selected option, Back included, and slides; it fits the column at 40 px
-//   A1-A7  Paul's case: the Back typed "Ruby" and approved; Front pressed; Approve: "Approved ✓" in the same frame, the card never empty, never "Words to confirm" / "Engrave these words"; the Front is made WITH
-//          "Ruby", fitted and approved; the Back is taken away with no seal
-//   B1-B4  Front & Back: the face with no words turns Approve off with the gold pulse; its thumbnail makes it active; typing lights Approve; one press approves both faces
+//   FRONTBACK (Paul, 28 Nov 2026): None | Front | Back; a face is engraved when it has words; updated without a browser here (no playwright on this Mac): not run.
+//   P1-P3  the three options (None | Front | Back), one white pill that sits under the selected option (the face shown; None when nothing is engraved), Back included, and slides; it fits the column at 40 px
+//   A1-A7  Paul's case: the Back typed "Ruby" and approved; Front pressed (its box empty, the Back still "Ruby", nothing staged); "Mia" typed on the Front; Approve: "Approved ✓" in the same frame, the card never
+//          empty, never "Words to confirm" / "Engrave these words"; the Front is made WITH "Mia", fitted and approved; the Back stays approved with "Ruby"
+//   B1-B4  the Back shown (its own words), deleted (no longer engraved: Approve follows the Front), typed again (both engraved); one press approves both faces
 //   C1-C4  a change and the card left with no Approve is discarded: the jobs, the override, the row of the order and the panel are as kept
 //   D1-D3  rapid presses of the options and the thumbnails, typing, Approve pressed three times: one commit of what was staged at the press, no double jobs
 //   H1     hover, focus-visible and pressed states on the options, the words box, Aα, Emoji, the font picker and Approve
@@ -58,12 +59,12 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     console.log(`   built: back ${JSON.stringify(made.back.jobs.map(j => [j.face, j.state, j.text]))} · both ${JSON.stringify(made.both.jobs.map(j => [j.face, j.state, j.text]))}`);
     const KB = made.back.key, KF = made.both.key;
 
-    /* ── P · the four options and the one pill ── */
+    /* ── P · the three options and the one pill ── */
     await open('both', 'front');
     const pill = await page.evaluate(async () => {
       const box = window.__card().querySelector('.engp .engpChoice'), out = [];
       const wait = ms => new Promise(r => setTimeout(r, ms));
-      for (const c of ['back', 'none', 'front', 'both', 'back']) {
+      for (const c of ['back', 'none', 'front', 'back', 'front']) {   // (FRONTBACK: None, then Front: the front's own words come back, so the pill sits on the face shown again)
         const b = window.__card().querySelector('.engp .engpChoice'); void box;   // (the card in front now: a card drawn again replaces the panel)
         b.querySelector(`[data-choice="${c}"]`).click();
         const b2 = window.__card().querySelector('.engp .engpChoice'), mid = getComputedStyle(b2.querySelector('.engpPill')).transitionDuration;
@@ -74,9 +75,9 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
       }
       return out;
     });
-    check('P1 four options None | Front | Back | Front & Back (or Both), exactly one pressed after each press', pill.length === 5 && pill.every(p => p.pressed === p.c), JSON.stringify(pill.map(p => [p.c, p.pressed])));
+    check('P1 three options None | Front | Back (no Front & Back), exactly one pressed after each press', pill.length === 5 && pill.every(p => p.pressed === p.c) && (await page.evaluate(() => window.__card().querySelectorAll('.engp [data-engp="choice"]').length)) === 3, JSON.stringify(pill.map(p => [p.c, p.pressed])));
     check('P2 the one white pill sits under the selected option for every option, Back included (no tint of its own on any option)', pill.every(p => p.dx <= 2 && p.dw <= 2 && /^rgb\(255, 25[0-9], 2[45][0-9]\)$/.test(p.bg) && /rgba\(0, 0, 0, 0\)|transparent/.test(p.segBg)), JSON.stringify(pill));
-    check('P3 the pill slides (a transform transition), the options are 40 px tall and their words fit', pill.every(p => /0\.18s|180ms/.test(p.dur) && p.h >= 40 && !p.over) && /^(Front & Back|Both)$/.test(pill.find(p => p.c === 'both').label), JSON.stringify(pill.map(p => [p.c, p.dur, p.h, p.over, p.label])));
+    check('P3 the pill slides (a transform transition), the options are 40 px tall and their words fit', pill.every(p => /0\.18s|180ms/.test(p.dur) && p.h >= 40 && !p.over) && pill.every(p => p.label === { none: 'None', front: 'Front', back: 'Back' }[p.c]), JSON.stringify(pill.map(p => [p.c, p.dur, p.h, p.over, p.label])));
     if (w.shots) await R.shot(w, 'stage-pill-back').catch(() => {});
 
     /* ── H · hover, focus-visible, pressed ── */
@@ -117,7 +118,10 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     check('A1 the approved Back opens calm: "Approved", nothing staged, Back selected, the words "Ruby"', a1.approve && a1.approve.a === 'approved' && a1.approve.dis && /^Approved/.test(a1.approve.text) && !a1.dirty && a1.choice === 'back' && a1.words && a1.words.value === 'Ruby' && a1.others === 0, JSON.stringify(a1).slice(0, 700));
     await page.click(P + ' .engp [data-engp="choice"][data-choice="front"]');
     const a2 = await st();
-    check('A2 Front pressed: Front selected and shown, its words "Ruby" (the order\'s words), Approve green at once', a2.choice === 'front' && a2.active === 'front' && a2.pressed.join() === 'front' && a2.words && a2.words.value === 'Ruby' && a2.words.face === 'front' && a2.approve && a2.approve.a === 'approve' && !a2.approve.dis && a2.dirty, JSON.stringify(a2).slice(0, 700));
+    check('A2 Front pressed: Front selected and shown, its box EMPTY (nothing copied or moved from the Back), the Back still engraved, nothing staged (calm "Approved")', a2.choice === 'back' && a2.active === 'front' && a2.pressed.join() === 'front' && a2.words && a2.words.value === '' && a2.words.face === 'front' && a2.approve && a2.approve.a === 'approved' && !a2.dirty, JSON.stringify(a2).slice(0, 700));
+    await typeInto('Mia', true);
+    const a2b = await st();
+    check('A2 "Mia" typed on the Front: both faces engraved, Approve green at once', a2b.choice === 'both' && a2b.active === 'front' && a2b.words && a2b.words.value === 'Mia' && a2b.approve && a2b.approve.a === 'approve' && !a2b.approve.dis && a2b.dirty, JSON.stringify(a2b).slice(0, 700));
     if (w.shots) await R.shot(w, 'stage-A2-front-staged').catch(() => {});
     // the press, and what the card shows in the same frame
     const a3 = await page.evaluate(() => { const b = window.__card().querySelector('[data-engp-approve]'); b.click(); return { a: b.dataset.a, dis: b.disabled, text: b.textContent.trim() }; });
@@ -136,27 +140,27 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     check('A4 while Approve is kept the card of the piece always has its panel and its Approve, never "Words to confirm" / "Engrave these words"', bad.length === 0, bad.slice(0, 6).join(' '));
     check('A5 the Front job never waits for words (made WITH the staged words)', !seen.has('words') && !seen.has('blocked'), [...seen].join(','));
     const aj = await jobsOf(KB), fr = aj.find(j => j.face === 'front'), bk = aj.find(j => j.face === 'back');
-    check('A6 the Front exists, approved, with "Ruby"', !!fr && ['approved', 'written'].includes(fr.state) && /Ruby/.test(fr.text) && fr.fit, JSON.stringify(aj));
-    check('A7 the Back is taken away with no seal ("none", removed), never cut plain', !!bk && bk.state === 'none' && bk.removed && bk.seals === 0, JSON.stringify(bk));
+    check('A6 the Front exists, approved, with "Mia"', !!fr && ['approved', 'written'].includes(fr.state) && /Mia/.test(fr.text) && fr.fit, JSON.stringify(aj));
+    check('A7 the Back stays approved with "Ruby" (pressing Front never made it plain)', !!bk && ['approved', 'written'].includes(bk.state) && /Ruby/.test(bk.text), JSON.stringify(bk));
     if (w.shots) await R.shot(w, 'stage-A7-after').catch(() => {});
 
-    /* ── B · Front & Back ── */
+    /* ── B · both faces: the Back shown, deleted, typed again ── */
     const frontKey = fr && fr.key;
     await openKey(frontKey);
     const b0 = await st();
-    await page.click(P + ' .engp [data-engp="choice"][data-choice="both"]');
-    const b1 = await st();
-    check('B1 Front & Back with no words for the Back: Approve off with the gold pulse on the Back (no text), the Front still shown', b1.choice === 'both' && b1.approve && b1.approve.dis && b1.approve.gate === 'need' && /back/.test(b1.need) && b1.active === 'front' && !/words/i.test((b1.approve.text || '').replace(/Approve/, '')), JSON.stringify({ b0: b0.approve, b1 }).slice(0, 700));
     const thumbed = await clickThumb('back'); await R.settle(page, 250);
+    const b1 = await st();
+    check('B1 the Back thumbnail makes the Back active: its own words "Ruby", both faces still engraved, nothing staged', thumbed && b1.choice === 'both' && b1.active === 'back' && b1.words && b1.words.face === 'back' && b1.words.value === 'Ruby' && !b1.dirty, JSON.stringify({ b0: b0.approve, b1 }).slice(0, 700));
+    await typeInto('', true);
     const b2 = await st();
-    check('B2 the Back thumbnail makes the Back active: an empty words box named "Back words"', thumbed && b2.active === 'back' && b2.words && b2.words.face === 'back' && b2.words.value === '' && /Back words/.test(b2.words.ph), JSON.stringify(b2).slice(0, 600));
+    check('B2 the Back\'s words deleted: the Back is no longer engraved (the Front alone), Approve lit; its box empty, named "Back words"', b2.choice === 'front' && b2.active === 'back' && b2.words && b2.words.value === '' && /Back words/.test(b2.words.ph) && b2.approve && b2.approve.a === 'approve' && !b2.approve.dis, JSON.stringify(b2).slice(0, 600));
     await typeInto('Name Two');
     const b3 = await st();
-    check('B3 typing the Back\'s words lights Approve', b3.choice === 'both' && b3.approve && b3.approve.a === 'approve' && !b3.approve.dis && b3.words.value === 'Name Two', JSON.stringify(b3).slice(0, 600));
+    check('B3 typing the Back\'s words: both engraved again, Approve lit', b3.choice === 'both' && b3.approve && b3.approve.a === 'approve' && !b3.approve.dis && b3.words.value === 'Name Two', JSON.stringify(b3).slice(0, 600));
     await page.click(Q + ' [data-engp-approve]');
-    const both = await approvedAll(KB, ['front', 'back']);
+    const both = await until(async () => { const js = await jobsOf(KB); return ['front', 'back'].every(f => js.some(j => j.face === f && ['approved', 'written'].includes(j.state))) && js.some(j => j.face === 'back' && /Name Two/.test(j.text)) ? js : null; }, 120000);
     const bf = both && both.filter(j => j.face === 'front'), bb = both && both.filter(j => j.face === 'back');
-    check('B4 one press approves both faces: the Front "Ruby", the Back "Name Two" (the Back taken away earlier is opened again with the new words)', !!both && bf.length === 1 && bb.length === 1 && /Ruby/.test(bf[0].text) && /Name Two/.test(bb[0].text), JSON.stringify(both));
+    check('B4 one press approves both faces: the Front "Mia", the Back "Name Two"', !!both && bf.length === 1 && bb.length === 1 && /Mia/.test(bf[0].text) && /Name Two/.test(bb[0].text), JSON.stringify(both));
 
     /* ── C · a change left with no Approve is discarded ── */
     await open('both', 'front');
@@ -177,12 +181,12 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     check('C3 the row of the order in the list shows what is kept (its chip as before the change)', row1 === row0 && !!row0, JSON.stringify({ row0, row1 }));
     await open('both', 'front');
     const c4 = await st();
-    check('C4 opened again: Front & Back, calm "Approved", nothing staged, the kept words', c4.choice === 'both' && c4.approve && c4.approve.a === 'approved' && !c4.dirty && c4.words && !/Zed/.test(c4.words.value), JSON.stringify(c4).slice(0, 500));
+    check('C4 opened again: both faces engraved, calm "Approved", nothing staged, the kept words', c4.choice === 'both' && c4.approve && c4.approve.a === 'approved' && !c4.dirty && c4.words && !/Zed/.test(c4.words.value), JSON.stringify(c4).slice(0, 500));
 
     /* ── D · rapid presses, then Approve three times ── */
     const rapid = await page.evaluate(async () => {
       const q = '#egQueue .rvItem[data-kind=placement]', opt = c => window.__card().querySelector(`.engp [data-engp="choice"][data-choice="${c}"]`), tick = () => new Promise(r => requestAnimationFrame(r));
-      for (const c of ['none', 'front', 'back', 'both', 'none', 'back', 'front', 'both', 'back']) { opt(c).click(); if (c === 'both') { const t = window.__thumb('front'); if (t) t.click(); const t2 = window.__thumb('back'); if (t2) t2.click(); } }
+      for (const c of ['none', 'front', 'back', 'thumbs', 'none', 'back', 'front', 'thumbs', 'none', 'back']) { if (c === 'thumbs') { const t = window.__thumb('front'); if (t) t.click(); const t2 = window.__thumb('back'); if (t2) t2.click(); } else opt(c).click(); }   // (FRONTBACK: no Front & Back option; the last None then Back leaves the back the face the words go on)
       await tick();
       const ta = window.__card().querySelector('.engp .engpWords'); ta.focus(); ta.value = 'Fast'; ta.dispatchEvent(new Event('input', { bubbles: true }));
       const b = window.__card().querySelector('[data-engp-approve]'), s0 = { choice: window.__card().querySelector('.engp').dataset.choice, face: ta.dataset.face, a: b.dataset.a, dis: b.disabled };
@@ -223,15 +227,14 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     const burst = await page.evaluate(async key => {
       const P = CharmNestEngravePanel, card = () => window.__card(), opt = c => card().querySelector(`.engp [data-engp="choice"][data-choice="${c}"]`), ta = () => card().querySelector('.engp .engpWords'), ap = () => card().querySelector('[data-engp-approve]');
       const type = v => { const t = ta(); t.focus(); t.value = v; t.dispatchEvent(new Event('input', { bubbles: true })); };
-      const seq = ['both', 'front', 'back', 'both', 'back', 'front', 'back', 'both', 'back', 'back'], presses = [];
+      const seq = ['thumb', 'front', 'back', 'thumb', 'back', 'front', 'back', 'thumb', 'back', 'back'], presses = [];   // (FRONTBACK: no Front & Back option: a thumbnail instead)
       for (let i = 0; i < seq.length; i++) {
-        opt(seq[i]).click();
-        if (seq[i] === 'both') { const t = window.__thumb(i % 2 ? 'front' : 'back'); if (t) t.click(); }
+        if (seq[i] === 'thumb') { const t = window.__thumb(i % 2 ? 'front' : 'back'); if (t) t.click(); } else opt(seq[i]).click();
         type('B' + i);
         const b = ap(); if (b && !b.disabled && b.dataset.a === 'approve') { b.click(); presses.push(i); }
         if (i % 3 === 2) await new Promise(r => setTimeout(r, 0));   // (now and then a task between: the commits start under the burst)
       }
-      opt('back').click(); type('Last'); const b = ap(); const lit = !!b && !b.disabled; if (lit) b.click();
+      opt('none').click(); opt('back').click(); type('Last'); const b = ap(); const lit = !!b && !b.disabled; if (lit) b.click();   // (None first: the front's words of the burst go, the back alone is engraved)
       return { presses, lit, st: P.stateOf(key) };
     }, KF);
     check('F1 a burst of options, words and presses: the last Approve is lit and taken; commits run under it', burst.lit && burst.presses.length >= 3 && burst.st && (burst.st.running || burst.st.pending || burst.st.committing), JSON.stringify(burst));

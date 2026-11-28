@@ -88,7 +88,7 @@ const BASE = { console, setTimeout, clearTimeout, Date, Math, JSON, Promise, Map
     try { vm.runInContext(pu, pctx); } catch (e) { ok('C0 picUrl load', false, e.message); }
     const u1 = pctx.picUrl ? pctx.picUrl({ preview: 'https://x/p.png', previewRev: 3 }) : '', u2 = pctx.picUrl ? pctx.picUrl({ preview: 'https://x/p.png', previewAt: 1234, previewRev: 3 }) : '';
     ok('C1 picUrl: a picture with only its layout revision is versioned too (?v=r3); its time when it has one', /[?&]v=r3$/.test(u1) && /[?&]v=1234$/.test(u2), { u1, u2 });
-    const live = between(html, '(function livePreviews() {', 'window.LivePreview = { tick, forget: id => id ? memo.delete(id) : memo.clear() };\n})();');
+    const live = between(html, '(function livePreviews() {', 'window.LivePreview = { tick, owns, forget: id => id ? memo.delete(id) : memo.clear() };\n})();');
     const St = freshStore(); await St.init({ world: 'production' });
     const imgs = [], pages = [], lr = new Map();
     const img = id => { const o = { dataset: { sheetPreview: id }, isConnected: true, offsetParent: {}, _src: 'https://cloud/' + id + '.png?v=1', getAttribute(n) { return n === 'src' ? this._src : null; }, removeAttribute() {} }; Object.defineProperty(o, 'src', { get() { return this._src; }, set(v) { this._src = v; } }); imgs.push(o); return o; };
