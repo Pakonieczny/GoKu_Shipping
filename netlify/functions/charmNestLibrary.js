@@ -5342,7 +5342,9 @@ function cleanCustomSheet(b) {
     }
   }
   if (!count) return null;
-  const doc = { ck: r.ck, rid: String(r.rid), at: num(r.at) > 0 ? num(r.at) : at, phase, files, sent: { id, at, by, lines } };
+  // (NODUPDROP: replaces, the recorded send of this card a new design takes the place of, when the page reopened the card for it: customSheetPut checks it, it is no part of the decision)
+  const replaces = typeof sent.replaces === "string" && sent.replaces && sent.replaces !== id ? str(sent.replaces, 600) : "";
+  const doc = { ck: r.ck, rid: String(r.rid), at: num(r.at) > 0 ? num(r.at) : at, phase, files, sent: Object.assign({ id, at, by, lines }, replaces ? { replaces } : {}) };
   if (bytesOf(doc) > 800000) return null;
   return doc;
 }
@@ -5353,21 +5355,67 @@ function customSheetEvents(r) {
     data: { decisionId: r.sent.id, card: r.ck, files: r.files.map(f => ({ name: f.name, qty: f.qty, metal: f.metal, pieces: f.pieces })).slice(0, 12), pieces: r.sent.lines[key].length }
   }, { source: "sorter" })).filter(Boolean);
 }
+/* NODUPDROP (Paul, 28 Nov 2026: "The user added an .ai file to a custom order that was already nested. This duplicated the pieces of this order"; order 4249694385 read 25 pieces where its
+   necklace holds 12). A send is recorded here before any of its pieces is made, so this is where a send is held against the pieces its lines ALREADY have, whichever page or computer sends it
+   (an older page too): each line's pieces (the pool rows <line>_1 .. <line>_n, n the most copies either send makes: read by id, never a scan) and the sheets they name are read in the same
+   transaction and charm-nest-pool-pieces.js dropRule decides, the rule the page reads at the drop. A line whose pieces were made from designs dropped before (custom rows, or a recorded send of
+   the line) keeps them while one is on a sheet: the send is refused in words (status 409, refused "nodupdrop", nothing written), never made beside them. With none on a sheet, a send that names
+   the send it replaces (sent.replaces: the page reopened that card for its new design) takes its place, same card, every line of it: the record and its lines' claims are the new send's, the
+   old design's pieces (on no sheet) are superseded here, in the same commit, so none of them is ever placed, and the send makes the line again from the new design under the same pool ids
+   (fewer pieces than before: the copies past the new count stay superseded). A send that names none is refused as before (a retry never changes a recorded send). A line whose pieces are its
+   matched charm's (none custom, no send recorded) is replaced in place as before (REVDROP). A record that only describes the pieces already made from it (a send recorded after its pieces,
+   the same files and charms copy for copy) is taken as it is. A retry of the same send changes nothing. */
+const NODUP_TAKEN = new Set(["abandoned", "superseded"]);
+const nodupPath = v => String(v || "").replace(/#fit-.*$/, "");
+/** Are these live rows exactly the pieces this record makes for the line (copy n = entry n: its file's path and its charm), nothing more, nothing less? */
+function nodupSameAsPieces(doc, key, live) {
+  const list = doc.sent.lines[key] || [], files = new Map(doc.files.map(f => [f.id, f])), kept = list.filter(pc => !pc.removed);
+  if (!live.length || live.length !== kept.length || live.some(p => p.custom !== true)) return false;
+  return live.every(p => { const c = (PoolPieces.parsePoolId(p.poolId) || {}).copy, pc = c ? list[c - 1] : null, f = pc && !pc.removed ? files.get(pc.f) : null;
+    return !!f && nodupPath(p.aiPath) === nodupPath(f.cloud && f.cloud.path) && (p.customIndex == null || p.customIndex === "" || +p.customIndex === pc.i); });
+}
+/** A line's live pieces <key>_1 .. <key>_n, each with the live sheet that lists it (dropRule's pieces), read by id in the transaction. */
+async function nodupPieces(tx, key, n) {
+  const ids = Array.from({ length: Math.max(1, Math.min(300, n)) }, (_, i) => `${key}_${i + 1}`);
+  const got = await txGetAll(tx, ids.map(id => col(POOL).doc(id)));
+  const live = got.map((s, i) => (s.exists ? Object.assign({}, s.data(), { poolId: ids[i] }) : null)).filter(p => p && !NODUP_TAKEN.has(String(p.state || "")));
+  const sheetIds = [...new Set(live.map(p => String(p.sheetId || "")).filter(isId))].slice(0, 40), sheets = new Map();
+  if (sheetIds.length) for (const s of await txGetAll(tx, sheetIds.map(id => col(SHEETS).doc(id)), ["poolIds", "archived", "fileBase", "laserDoneAt", "roseCutAt"])) if (s.exists) sheets.set(s.id, s.data() || {});
+  return live.map(p => { const r = sheets.get(String(p.sheetId || "")), on = !!(r && !r.archived && (r.poolIds || []).map(String).includes(p.poolId));
+    return { row: p, poolId: p.poolId, custom: p.custom === true, sheet: on ? str(r.fileBase || p.sheetName || p.sheetId, 80) || "its sheet" : "", cut: p.state === "committed" || !!(on && (num(r.laserDoneAt) > 0 || num(r.roseCutAt) > 0)) }; });
+}
 async function op_customSheetPut(b) {
   const doc = cleanCustomSheet(b); if (!doc) return { error: "valid custom sheet files, signed decision and piece copy mapping required" };
   // Cleanup markers describe what happened to a copy later; its original assignment and signed decision stay fixed.
   const decision = r => ({ ck: r.ck, rid: r.rid, files: r.files, sent: { id: r.sent.id, at: r.sent.at, by: r.sent.by,
     lines: Object.fromEntries(Object.entries(r.sent.lines).map(([key, pcs]) => [key, pcs.map(pc => ({ f: pc.f, i: pc.i }))])) } });
   const fingerprint = customSheetCanonical(decision(doc));
-  const ref = customSheetRef(doc.ck), lineRefs = Object.keys(doc.sent.lines).map(customSheetLineRef);
-  return db.runTransaction(async tx => {
-    const snap = await tx.get(ref), old = snap.exists ? snap.data() : null;
-    if (old && customSheetCanonical(decision(old)) !== fingerprint) return { error: "These custom designs were already sent with a different decision; reload the original send before retrying", status: 409 };
+  const ref = customSheetRef(doc.ck), keys = Object.keys(doc.sent.lines), lineRefs = keys.map(customSheetLineRef);
+  const out = await db.runTransaction(async tx => {
+    const snap = await tx.get(ref), old = snap.exists ? snap.data() : null, same = !!old && customSheetCanonical(decision(old)) === fingerprint;
     const claimed = lineRefs.length ? await tx.getAll(...lineRefs) : [];
-    if (claimed.some(s => s.exists && (s.data().ck !== doc.ck || s.data().sendId !== doc.sent.id))) return { error: "A piece of this order already belongs to another custom sheet decision", status: 409 };
-    const phase = old?.phase === "sent" ? "sent" : doc.phase, next = Object.assign({}, old || doc, { phase });
+    const foreign = claimed.map(s => s.exists && (s.data().ck !== doc.ck || s.data().sendId !== doc.sent.id));
+    // NODUPDROP: a new send (not a retry of this one) is held against what its lines already have
+    let replacing = false; const extras = [];
+    if (!same) {
+      const refuse = error => ({ error, status: 409, refused: "nodupdrop" });
+      if (claimed.some(s => s.exists && s.data().ck !== doc.ck)) return refuse(`A piece of order ${doc.rid} already belongs to designs sent from another card: reload the page, open the order and look at its pieces before you drop a new design. Nothing was changed.`);
+      const oldLines = (old && old.sent && old.sent.lines) || {}, names = !!old && !!doc.sent.replaces && doc.sent.replaces === old.sent.id;
+      if (old && Object.keys(oldLines).some(k => !Object.prototype.hasOwnProperty.call(doc.sent.lines, k))) return { error: "These custom designs were already sent with a different decision; reload the original send before retrying", status: 409 };
+      for (const [i, key] of keys.entries()) {
+        const decided = foreign[i] || Object.prototype.hasOwnProperty.call(oldLines, key), pieces = await nodupPieces(tx, key, Math.max(doc.sent.lines[key].length, (oldLines[key] || []).length));
+        if (!decided && !pieces.some(p => p.custom)) continue;   // (its matched charm's pieces, or none: REVDROP, as before)
+        if (!decided && nodupSameAsPieces(doc, key, pieces.map(p => p.row))) continue;   // (the record of the pieces already made from it)
+        const rule = PoolPieces.dropRule({ rid: doc.rid, decided, pieces });
+        if (!rule.ok) return Object.assign(refuse(rule.words), { nodup: { lineKey: key, sheets: rule.sheets, pieces: rule.n, cut: !!rule.cut } });
+        if (rule.replace && decided && !names) return { error: "These custom designs were already sent with a different decision; reload the original send before retrying", status: 409 };   // (a retry never changes a recorded send: only a send that names it replaces it)
+        if (rule.replace) { replacing = true; for (const p of pieces) extras.push(p.poolId); }   // (every piece of the old design, none on a sheet: none of them is ever placed now; the send makes the line again)
+      }
+      if ((old || foreign.some(Boolean)) && !replacing) return { error: "These custom designs were already sent with a different decision; reload the original send before retrying", status: 409 };
+    }
+    const now = Date.now(), phase = !replacing && old?.phase === "sent" ? "sent" : doc.phase, next = Object.assign({}, replacing ? doc : old || doc, { phase });
     let removalChanged = false;
-    if (old) next.sent = Object.assign({}, old.sent, { lines: Object.fromEntries(Object.entries(old.sent.lines).map(([key, pcs]) => [key, pcs.map((pc, i) => {
+    if (old && !replacing) next.sent = Object.assign({}, old.sent, { lines: Object.fromEntries(Object.entries(old.sent.lines).map(([key, pcs]) => [key, pcs.map((pc, i) => {
       const removed = doc.sent.lines[key][i].removed;
       if (!removed || pc.removed) return pc;
       removalChanged = true; return Object.assign({}, pc, { removed });
@@ -5376,20 +5424,26 @@ async function op_customSheetPut(b) {
     const recorded = eventRefs.length ? await tx.getAll(...eventRefs) : [];
     const revRef = customSheetRevRef(), revSnap = await tx.get(revRef);
     // COST (Oct 2026): the revision every page asks with (customSheetGet ifRev) moves with each put that writes the card or claims a line
-    if (!old || old.phase !== phase || removalChanged || claimed.some(s => !s.exists)) {
+    if (!old || old.phase !== phase || removalChanged || replacing || claimed.some(s => !s.exists)) {
       const r = customSheetRevOf(revSnap.exists ? revSnap.data() : null), id = r.id !== "0" ? r.id : require("crypto").randomBytes(6).toString("hex"), n = r.n + 1;
       tx.set(revRef, { id, n, log: r.log.concat([{ n, ck: next.ck, lines: Object.keys(next.sent.lines).slice(0, 100) }]).slice(-CUSTOM_SHEET_LOG), updatedAt: FV.serverTimestamp() });
     }
-    if (!old || old.phase !== phase || removalChanged) {
-      next.history = (old?.history || []).concat(old?.phase === "sent" || phase !== "sent" ? [] : [{ phase: "sent", id: next.sent.id, at: next.sent.at, by: next.sent.by }]);
-      next.updatedAtMs = Date.now(); next.updatedAt = FV.serverTimestamp(); next.fingerprint = fingerprint;
+    if (!old || old.phase !== phase || removalChanged || replacing) {
+      // (NODUPDROP: a send replaced is kept in the history, who sent it and who replaced it)
+      const prior = replacing && old ? (old.history || []).concat([{ phase: "replaced", id: old.sent.id, at: num(old.sent.at), by: str(old.sent.by, 80), replacedAt: now, replacedBy: doc.sent.by, replacedById: doc.sent.id }]) : (old?.history || []);
+      next.history = prior.concat((!replacing && old?.phase === "sent") || phase !== "sent" ? [] : [{ phase: "sent", id: next.sent.id, at: next.sent.at, by: next.sent.by }]);
+      next.updatedAtMs = now; next.updatedAt = FV.serverTimestamp(); next.fingerprint = fingerprint;
       tx.set(ref, next);
     }
-    for (const [i, s] of claimed.entries()) if (!s.exists) tx.set(lineRefs[i], { ck: next.ck, rid: next.rid, sendId: next.sent.id });
+    for (const [i, s] of claimed.entries()) if (!s.exists || foreign[i]) tx.set(lineRefs[i], { ck: next.ck, rid: next.rid, sendId: next.sent.id });
+    for (const id of extras) tx.set(col(POOL).doc(id), { state: "superseded", sheetId: null, setId: null, supersededAt: now, supersededBy: str(doc.sent.by, 80), supersededWhy: "a new design replaced it before it was on a sheet", updatedAt: FV.serverTimestamp() }, { merge: true });
     for (const [i, e] of events.entries()) if (!recorded[i].exists) tx.set(eventRefs[i], Object.assign({}, e.doc, { createdAt: FV.serverTimestamp() }));
     if (events.some((e, i) => !recorded[i].exists)) Timeline.touch(tx, db, FV, [next.rid], PREFIX);   // (COST, Oct 2026: the order window's Order_Rev moves with its events)
-    return { ok: true, record: customSheetRow(next) };
+    return Object.assign({ ok: true, record: customSheetRow(next) }, replacing ? { replaced: old ? old.sent.id : null, superseded: extras } : {});
   });
+  // (NODUPDROP: a piece superseded by a replacing send is a pool row written: the placement answers and the feed move with it)
+  if (out && out.ok && Array.isArray(out.superseded) && out.superseded.length) { feedOrders(b, [out.superseded]); await bumpPlacementGen("poolUpdate"); }
+  return out;
 }
 /* Older Send to Sheet saved its receipt only in that browser. Recover it from a recorded designSent decision plus
    the exact custom pool copies and uploaded sources, never from a placement, a sheet's date or a screenshot.

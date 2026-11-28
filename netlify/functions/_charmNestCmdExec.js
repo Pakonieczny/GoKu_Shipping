@@ -23,6 +23,7 @@ const SetEdit = require("../../charm-nest-set-edit.js");
 let SetRepair = null; try { SetRepair = require("../../charm-nest-set-repair.js"); } catch (_) { SetRepair = null; }
 let SetRules = null; try { SetRules = require("../../charm-nest-set-rules.js"); } catch (_) { SetRules = null; }
 const CutLine = require("../../charm-nest-rose.js");
+const PoolPieces = require("../../charm-nest-pool-pieces.js");   // (NODUPDROP: dropRule, the one rule of a design dropped for a line that has pieces)
 const { busyRec, WORK } = require("./_charmNestCmdOps");
 /* NESTOWEDREAD (Paul, 23 Nov 2026: RG Draft 2's Empty onto RG Draft 1 said "Nesting on RG Draft 7…" for its whole 25 minutes although the nest had placed all 21 pieces, verified, two
    minutes in): a sheet's nestOwed mark is the reason a nest was asked, and no nest clears it (_charmNestNest.owedNest reads it as the reason only, so a mark nobody clears never nests a
@@ -933,7 +934,16 @@ async function customsend(x) {
     const todo = [];
     for (const k of open) {
       const ids = (L[k].poolIds || []).map(String), rows = ids.length ? await pools(ctx, ids) : new Map();
-      if (ids.length && ids.every(id => { const r = rows.get(id); return r && r.custom && !TAKEN.has(r.state) && paths.has(String(r.aiPath || "")); })) continue;   // (already these designs)
+      // (NODUPDROP, Paul 28 Nov 2026: "already these designs" is the send's own pieces, as many as it makes for the line: the same files with another count is made again, never taken as done)
+      const want = (rec.sent.lines[k] || []).filter(pc => pc && !pc.removed).length;
+      if (ids.length && ids.length === want && ids.every(id => { const r = rows.get(id); return r && r.custom && !TAKEN.has(r.state) && paths.has(String(r.aiPath || "")); })) continue;   // (already these designs)
+      /* NODUPDROP: the cloud never makes a send's pieces beside the pieces of an earlier design that are on a sheet (the server refuses such a send since NODUPDROP; this is a send recorded
+         before it, or pieces placed between the record and this request): refused in the words the drop says, nothing changed. Its matched charm's pieces (none custom) are replaced as before. */
+      const live = ids.map(id => (rows.get(id) ? Object.assign({}, rows.get(id), { poolId: id }) : null)).filter(r => r && !TAKEN.has(r.state));
+      if (live.some(r => r.custom && !paths.has(String(r.aiPath || "").replace(/#fit-.*$/, "")))) {
+        const sh = await sheetsWith(ctx, ids), by = listedBy(sh), rule = PoolPieces.dropRule({ rid, decided: true, pieces: live.map(r => { const s = by.get(String(r.poolId)); return { poolId: r.poolId, custom: !!r.custom, sheet: s ? nameOf(s) : "", cut: r.state === "committed" || !!(s && (num(s.laserDoneAt) > 0 || num(s.roseCutAt) > 0)) }; }) });
+        if (!rule.ok) return no(rule.words);
+      }
       todo.push(k);
     }
     if (!todo.length) return ok("These designs are its pieces already");
