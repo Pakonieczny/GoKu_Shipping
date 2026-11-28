@@ -110,7 +110,7 @@
     try{
       const list=C.activeCharms?C.activeCharms(sh):(sh.charms||[]);if(!list.length)return {};
       const by=new Map();for(const c of list){const k=c.order||c.id;by.set(k,(by.get(k)||0)+1);}
-      const unit=Math.min(...by.values());if(!(unit>1))return {};
+      const unit=Math.min(...by.values());if(!(unit>=1))return {};   // (LEFTOVERNOROOM, 27 Nov 2026: a single-piece order asks for room for its one piece too, as the cloud's fitHint)
       const MM=25.4/72,area=list.reduce((n,c)=>n+(C.inflatedArea?C.inflatedArea(c):+c.areaPt2||0),0)/list.length*MM*MM;
       const sides=list.map(c=>[(+c.widthPt||0)*MM,(+c.heightPt||0)*MM]).filter(x=>x[0]>0&&x[1]>0);
       return {fit:{unit,areaMm2:+area.toFixed(1),...(sides.length?{minMm:+(sides.reduce((n,x)=>n+Math.min(...x),0)/sides.length).toFixed(2),maxMm:+(sides.reduce((n,x)=>n+Math.max(...x),0)/sides.length).toFixed(2)}:{})}};
