@@ -787,7 +787,8 @@
     const note = () => { try { const f = doc && doc.getElementById('owVector'), n = f && f.closest('figure'); return n ? n.querySelector('.owCharmEditNote') : null; } catch (_) { return null; } };
     const tell = (text, bad) => { const n = inWin ? note() : null; if (n) { n.textContent = text || ''; n.classList.toggle('bad', !!bad); n.hidden = !text; return; } if (text) say(text, bad ? 'bad' : '', 6000); };
     busyCards.add(pc.rid); repaint(pc.rid);
-    try { return await E.openCharmEditor({ row: pc.row, poolId: pc.poolId, from: inWin ? 'orderWindow' : 'piece', say: tell }); }
+    // (CEONE, the owner 28 Nov 2026: one editor, whatever opens it: the piece through the page's one open, charm-nest-bridge.js CharmEditorHub)
+    try { const H = root.CharmEditorHub; return await (H && typeof H.open === 'function' ? H.open({ piece: pc.poolId, row: pc.row }, { from: inWin ? 'orderWindow' : 'piece', say: tell }) : E.openCharmEditor({ row: pc.row, poolId: pc.poolId, from: inWin ? 'orderWindow' : 'piece', say: tell })); }
     finally { busyCards.delete(pc.rid); repaint(pc.rid); }
   }
   /* EDITTARGET: one open at a time FOR WHAT IS ASKED. It was one open at a time, full stop: a press while an earlier open was still on its way (the master read, the fonts: seconds on the live
@@ -833,7 +834,8 @@
       const l = live = { orderId: rid, design: base, name, source, saved: null, sent: null };
       let res;
       try {
-        res = await CE.open({ title: name, subtitle: `Custom order ${rid}${info.buyer ? ' · ' + info.buyer : ''}${info.label ? ' · ' + info.label : ''} · Save, then send it to a sheet`, faces, startFace: 'front',
+        const HUB = root.CharmEditorHub, edOpen = o => (HUB && typeof HUB.editor === 'function' ? HUB.editor(o, { custom: rid }) : CE.open(o));   // (CEONE: the one editor)
+        res = await edOpen({ title: name, subtitle: `Custom order ${rid}${info.buyer ? ' · ' + info.buyer : ''}${info.label ? ' · ' + info.label : ''} · Save, then send it to a sheet`, faces, startFace: 'front',
           fonts: T.fonts, textToPaths: T.text, lockRoles: blank ? [] : ['cut'],
           design: { id: base ? base.id : null, version: base ? base.version : null, name, orderId: rid, source }, orderId: rid, hold: true });   // (CES3 hold: the workspace stays under the pop-up after Save)   // (design, orderId: what the design library's own hooks read)
       } finally { if (live === l) live = null; }
@@ -841,7 +843,8 @@
       busyCards.delete(rid); repaint(rid);
       const letGo = () => { try { CE.release && CE.release(); } catch (_) { /* CES3: the held workspace goes once the pop-up is answered */ } };
       try {
-        const saved = await saveResult(res, { base: l.saved || base, orderId: rid, name, source, by, from });
+        const HUB = root.CharmEditorHub, keep = r => saveResult(r, { base: l.saved || base, orderId: rid, name, source, by, from });
+        const saved = await (HUB && typeof HUB.save === 'function' ? HUB.save({ custom: rid }, res, keep) : keep(res));   // (CEONE: the one Save)
         if (!saved) return null;
         // (sent from inside the designer already, and nothing changed since: the pop-up is not offered a second time)
         if (l.sent && l.sent.id === saved.id && l.sent.version === saved.version) return l.sent.out;

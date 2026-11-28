@@ -1011,8 +1011,10 @@
     } finally { opening = false; }
     if (!next) return;
     // (the session opened here may itself open another design: this one's Save, if it comes, is still a version of THIS design)
-    const res = await C.open(next);
-    if (res) await keepVersion(design, res);
+    // (CEONE: the one editor and the one Save of the page's hub, charm-nest-bridge.js CharmEditorHub)
+    const HUB = root.CharmEditorHub, content = design.id ? { design: design.id, version: design.version } : { empty: { from: 'library', sku: design.sku || null } };
+    const res = await (HUB && typeof HUB.editor === 'function' ? HUB.editor(next, content) : C.open(next));
+    if (res) await (HUB && typeof HUB.save === 'function' ? HUB.save(content, res, r => keepVersion(design, r)) : keepVersion(design, res));
   }
   /** The open session closed as chosen: kept (exactly as its Save) or left (as Cancel, with nothing asked again). False when the editor cannot be closed from here. */
   function endSession(cur, keep) {
@@ -1141,8 +1143,9 @@
     const opts = Object.assign({ title: design.name, subtitle: `design · v${d.version} · ${noOrder(design.orderId) ? (design.customName ? `custom · ${design.customName}` : 'custom · no order') : 'order ' + design.orderId}`,
       faces, startFace: faces.front ? 'front' : 'back', design }, o.back ? { back: o.back } : {});
     const DM = root.CharmEditDesign;
-    const res = await (DM && typeof DM.open === 'function' ? DM.open(opts) : C.open(opts));
-    if (res) await keepVersion(design, res);
+    const HUB = root.CharmEditorHub, content = { design: id, version: d.version };
+    const res = await (HUB && typeof HUB.editor === 'function' ? HUB.editor(opts, content) : DM && typeof DM.open === 'function' ? DM.open(opts) : C.open(opts));   // (CEONE: the one editor)
+    if (res) await (HUB && typeof HUB.save === 'function' ? HUB.save(content, res, r => keepVersion(design, r)) : keepVersion(design, res));
     return res ? { designId: id } : null;
   }
 

@@ -14,10 +14,15 @@
  *   per face { text, font, pos } (pos: { charm: [x, y], centre: [x, y] } dragged in the work area, CharmNestEngravePanel.stagePos, or null for the automatic place)
  * dirty = what is staged differs from what is kept (the jobs, the setup, the approvals); while an Approve is being kept, from what that press staged.
  *
+ * FRONTBACK (Paul, 28 Nov 2026, order 4251007183 ANARCHY 56633: "Get rid of the option for both ... user should just be able to choose front and back if there's engraving on both the system should just
+ * add engraving to both front and back the user has ultimate control"; "Why would you immediately copy the words from the back engraving text box to the front engraving box"): the control is
+ * None | Front | Back. Front / Back pick the face shown and edited; it never makes the other face plain and never copies or moves words: each face keeps its own. A face is engraved when it has words
+ * (both faces with words: both engraved; a saved face with no words is not); deleting a face's words takes its engraving away, and it stays away (the face is shown again with an empty box). None: no
+ * engraving on either face; no face with words left is the same as None (the pill on None: Approve keeps it as no engraving).
+ *
  * ONE column, nothing explained in words:
- *   [ None | Front | Back | Front & Back ]  one segmented control; ONE white raised pill shows the choice and slides between the options (Back looks like every other option: the ✦ of the system's own
- *                                         reading is a small mark, never a tint). A press stages at once: None draws both faces plain, Front / Back makes that face active and engraved and the other plain,
- *                                         Front & Back engraves both and keeps the face shown.
+ *   [ None | Front | Back ]               one segmented control; ONE white raised pill (None while None is staged, else the face shown) slides between the options (the ✦ of the system's own reading is
+ *                                         a small mark, never a tint: on each face it engraves). A press stages at once.
  *   [words]                               the active face's words (placeholder "Front words" / "Back words"). Typing on a face that is not engraved engraves it too (back + front typed = both, none + front = front).
  *   [font]                                the active face's font
  * Every change paints at once through ONE call, Engrave.showStage(job, stage) (the thumbnails and the work area; until the page has it the old previews: CharmNestEngravePreview.update, Engrave.draftFit,
@@ -53,8 +58,8 @@
   const linesOf = v => (Array.isArray(v) ? v : str(v).split(/\r?\n/)).map(x => str(x).replace(/\s+/g, ' ').trim()).filter(Boolean);
   const lineOf = row => (row && row.parentRow) || row || null;
   const tryDo = (f, d) => { try { return f(); } catch (_) { return d; } };
-  const CHOICES = [['none', 'None'], ['front', 'Front'], ['back', 'Back'], ['both', 'Front & Back']];   // (ENGSTAGE: four options, one selected; "Both" when the column is too narrow for its words)
-  const MODES = CHOICES;
+  const CHOICES = [['none', 'None'], ['front', 'Front'], ['back', 'Back']];   // (FRONTBACK, Paul 28 Nov 2026: three options, no "Front & Back": a face with words is engraved, both faces with words are both engraved)
+  const MODES = CHOICES.concat([['both', 'Front & Back']]);   // (what a piece may engrave: the model's modes, a saved 'both' included; never a button)
   const FACES = ['front', 'back'];
   const facesOf = mode => (mode === 'both' ? ['front', 'back'] : mode === 'front' ? ['front'] : mode === 'back' ? ['back'] : []);
   const withFace = (choice, f) => { const on = new Set(facesOf(choice)); on.add(f); return on.has('front') && on.has('back') ? 'both' : on.has('front') ? 'front' : on.has('back') ? 'back' : 'none'; };
@@ -73,7 +78,7 @@
   const facesFor = line => (choicesFor(line).some(([m]) => m === 'back') ? FACES : choicesFor(line).length ? ['front'] : []);
 
   /* ── the staged state ─────────────────────────────────────────────────────── */
-  const DRAFTS = new Map();    // piece key -> { key, sig, choice, active, faces: { front: { text, font, pos }, back }, seq, pillAt, copied, jobKey, shown, focus, error }
+  const DRAFTS = new Map();    // piece key -> { key, sig, choice, active, faces: { front: { text, font, pos, was? }, back }, seq, pillAt, noneBy, jobKey, shown, focus, error }
   const LIVE = new Map();      // piece key -> the bindings on screen
   const COMMITS = new Map();   // piece key -> { seq, draft, stage } of the Approve being kept now (the baseline the draft is compared with until it lands)
   const CHAINS = new Map();    // piece key -> the promise of the last Approve queued (ENGSTAGE: one chain per piece)
@@ -126,11 +131,18 @@
     let typed = null;
     if (d && d.sig !== vm.sig && !COMMITS.has(key) && !d.touched) { const keep = d.active; sv = { svStage: d.svStage, svDragged: d.svDragged, why: d.why }; typed = d.faces; d = null; face = keep || face; }   // (svStage / svDragged: stage-view's own fields on the draft, carried over)   // (what the piece says changed under a draft nobody changed: start again from it, on the face shown)
     if (!d) {
-      d = { key, sig: vm.sig, line: vm.line, choice: vm.mode, active: '', faces: {}, seq: 0, touched: false, dirty: false, pillAt: null, copied: {}, error: '', focus: null, shown: '', jobKey: '' };
+      d = { key, sig: vm.sig, line: vm.line, choice: vm.mode, active: '', faces: {}, seq: 0, touched: false, dirty: false, pillAt: null, noneBy: '', error: '', focus: null, shown: '', jobKey: '' };
       for (const f of FACES) { const r = vm.rows.find(x => x.face === f); d.faces[f] = { text: r ? r.text : '', font: r ? r.fontWord : '', pos: null }; }
       // (CAPSWORDS, coordinator 30 Oct 2026: "never replace the box's contents with the job's normalized text while the card is open": the words as the person typed them stay in the box when they are
       //  the words kept (an approval of "Name Oneo" keeps "NAME" / "ONEO" in Ace: the box keeps "Name Oneo"))
       if (typed) { const S = Setup(); for (const f of FACES) { const t = typed[f] && str(typed[f].text), r = vm.rows.find(x => x.face === f); if (t && r && r.text && t !== r.text && S && S.sameKept && tryDo(() => S.sameKept(vm, f, t, r.fontWord), false)) d.faces[f].text = t; } }
+      // (FRONTBACK, Paul 28 Nov 2026: a face is engraved only when it has words: a saved face with none (the front of a 'both' line still waiting for its words) is not, and Approve follows the faces that
+      //  have them. A face the Charm Editor drew, or whose words differ per piece, is engraved without words of its own. A piece none of whose faces has words stays as it is kept (a question for Paul))
+      { const on0 = facesOf(d.choice), sure = on0.filter(f => linesOf(d.faces[f].text).length || artOn(vm, f) || (vm.rows.find(r => r.face === f) || {}).perPiece); if (sure.length && sure.length < on0.length) d.choice = faceSet(sure); }
+      d.noneBy = d.choice === 'none' ? 'press' : '';
+      // (the words box of a face shows its words; a face the piece does not engrave starts with none (pressing it shows it empty, typing engraves it). With None kept, each face's own words wait in `was`:
+      //  pressing that face brings them back, as it always did)
+      for (const f of FACES) if (!facesOf(d.choice).includes(f)) { const x = d.faces[f]; if (d.choice === 'none' && str(x.text).trim()) x.was = x.text; x.text = ''; }
       d.active = firstActive(vm, d, face);
       if (sv) for (const k of ['svStage', 'svDragged', 'why']) if (sv[k] !== undefined) d[k] = sv[k];   // (and why the last Approve did not approve: said until the next change or press)
       DRAFTS.set(key, d);
@@ -147,30 +159,50 @@
   }
   /** EDITOR WORDS (Paul, 27 Oct 2026: "the system should not force the user to also add text on top of already added text from within the Charm Editor"): is this face engraved by the charm editor's parts? */
   const artOn = (vm, face) => { const S = Setup(); return !!(face && S && S.editorArtOn && tryDo(() => S.editorArtOn(vm, face), false)); };
-  /** The words a face starts with when it is engraved and nothing was typed: the line's own, else the buyer's labelled words, else (one face and no labels) the other face's. Never a guess between two faces. */
-  function seedText(vm, face, mode) {
-    const S = Setup(), here = vm.rows.find(r => r.face === face); if (here && here.text) return here.text;
+  /** The words a face starts with when None is left for it and it kept none: the line's own (with a draft `d`: the words it kept, `was`, are its own), else the buyer's labelled words for it, else (no labels,
+   *  and no words on the other face) the buyer's note. FRONTBACK (Paul, 28 Nov 2026: "Why would you immediately copy the words from the back engraving text box to the front engraving box"): never the other
+   *  face's words, and never words a person deleted. */
+  function seedText(vm, face, mode, d) {
+    const S = Setup(), here = vm.rows.find(r => r.face === face); if (!d && here && here.text) return here.text;
     if (artOn(vm, face)) return '';   // (EDITOR WORDS: a face the charm editor drew is engraved already: the buyer's words stay an offer, never filled in)
     const lab = S.labelled(vm.raw); if (lab[face]) return lab[face].join('\n');
     if (mode !== 'both' && !lab.any) {
-      const other = vm.rows.find(r => r.face !== face && r.text), rd = vm.setup && vm.setup[face === 'front' ? 'back' : 'front'];
-      if (other) return other.text; if (rd) return rd.text;
-      return linesOf(vm.raw).join('\n');
+      const of = face === 'front' ? 'back' : 'front', o = d && d.faces && d.faces[of], rd = vm.setup && vm.setup[of];
+      const otherHas = vm.rows.some(r => r.face === of && r.text) || !!(rd && rd.text) || !!(o && (str(o.text).trim() || str(o.was).trim()));
+      if (!otherHas) return linesOf(vm.raw).join('\n');   // (one face and a note with no labels: all of it is that face's words)
     }
     return '';
   }
-  /** The choice changes. Front or Back alone: that face keeps its words, or starts with the words the order gives it (the line's own, the buyer's labelled words, else the other face's: Paul's case, Back "Ruby",
-   *  Front pressed: the front gets "Ruby"); words taken from the other face MOVE (that face, no longer engraved, is left with none). Front & Back: a face added starts empty unless the buyer labelled words for
-   *  it; a face that has its words keeps them (None, then Front & Back again, brings back what was there). */
-  function setChoice(vm, d, choice) {
-    const S = Setup(); d.choice = choice; d.error = '';
-    for (const f of facesOf(choice)) {
-      const x = d.faces[f] || (d.faces[f] = { text: '', font: '', pos: null }), of = f === 'front' ? 'back' : 'front', o = d.faces[of] || (d.faces[of] = { text: '', font: '', pos: null });
-      if (str(x.text).trim()) continue;
-      if (choice === 'both') { const lab = tryDo(() => S.labelled(vm.raw), null); x.text = lab && lab[f] ? lab[f].join('\n') : ''; d.copied[f] = false; continue; }
-      const own = vm.rows.find(r => r.face === f && r.text), t = seedText(vm, f, choice);
-      x.text = t; d.copied[f] = !!t && !own && normWords(t) === normWords(o.text);
-      if (d.copied[f]) { o.text = ''; d.copied[of] = false; }   // (moved: the face left behind keeps no copy of them)
+  /* FRONTBACK (Paul, 28 Nov 2026): the staged faces follow the words; a face is engraved when it has words.
+   *   pressFace   Front / Back: the face shown and edited. The other face keeps its words and its engraving. After None was PRESSED, the face pressed gets its own words back (seedText when it kept none)
+   *               and is engraved again when it has some.
+   *   pressNone   no engraving on either face (noneBy 'press'): their words wait (`was`) until a face is pressed again.
+   *   typedOn     words typed on a face engrave it; a face whose words are all deleted is engraved no more, and stays so when the faces are switched. When no face has words left, nothing is engraved:
+   *               the same as None (noneBy 'words': the pill on None, Approve keeps it as no engraving), and pressing a face never brings deleted words back. A face the Charm Editor drew stays
+   *               engraved by its parts. */
+  const faceSet = fs => (fs.includes('front') && fs.includes('back') ? 'both' : fs.includes('front') ? 'front' : fs.includes('back') ? 'back' : 'none');
+  function pressFace(vm, d, f) {
+    d.error = '';
+    if (d.choice === 'none' && d.noneBy !== 'words') {
+      const x = d.faces[f] || (d.faces[f] = { text: '', font: '', pos: null }), t = str(x.was).trim() ? x.was : seedText(vm, f, f, d);
+      if (linesOf(t).length || artOn(vm, f)) { x.text = t; for (const g of FACES) if (d.faces[g]) delete d.faces[g].was; d.choice = f; d.noneBy = ''; }
+    }
+    d.active = f;
+  }
+  function pressNone(d) {
+    d.error = ''; d.noneBy = 'press';
+    for (const f of FACES) { const x = d.faces[f]; if (x && str(x.text).trim()) { x.was = x.text; x.text = ''; } }
+    d.choice = 'none';
+  }
+  function typedOn(vm, d, f, value) {
+    const x = d.faces[f] || (d.faces[f] = { text: '', font: '', pos: null }); x.text = value;
+    const on = facesOf(d.choice);
+    if (linesOf(value).length) {
+      if (d.choice === 'none') { for (const g of FACES) if (d.faces[g]) delete d.faces[g].was; d.noneBy = ''; }   // (None left by typing: the other face is not engraved)
+      if (!on.includes(f)) d.choice = withFace(d.choice, f);
+    } else if (on.includes(f) && !artOn(vm, f)) {
+      const rest = on.filter(g => g !== f);
+      d.choice = faceSet(rest); if (!rest.length) d.noneBy = 'words';
     }
   }
   /** What a save would make of the piece's setup (for the consequences). */
@@ -339,9 +371,9 @@
       const face = p.dataset.active || p.dataset.face || '', m = hiModel(vm, d, face, slot);
       const put = (host, st, title) => { let k = host.querySelector(':scope > .engpSys'); if (!k) { k = doc.createElement('i'); k.className = 'engpSys'; k.innerHTML = HI_SPARK; host.appendChild(k); } k.dataset.st = st; k.title = title; return k; };
       const drop = host => { const k = host && host.querySelector(':scope > .engpSys'); if (k) k.remove(); };
-      // the choice: the ✦ stays on the system's option whatever is selected (the pill is the selection)
+      // the choice: the ✦ stays on the system's option whatever is selected (the pill is the selection); FRONTBACK: on each face the system engraves (both faces: Front and Back)
       for (const seg of p.querySelectorAll('.engpChoice .engpSeg[data-engp="choice"]')) {
-        if (seg.dataset.choice === m.mode.sys) { seg.dataset.sys = m.mode.same ? 'same' : 'changed'; seg.title = HI_TITLE; put(seg, 'same', HI_TITLE); }
+        if (seg.dataset.choice === 'none' ? m.mode.sys === 'none' : facesOf(m.mode.sys).includes(seg.dataset.choice)) { seg.dataset.sys = m.mode.same ? 'same' : 'changed'; seg.title = HI_TITLE; put(seg, 'same', HI_TITLE); }
         else { delete seg.dataset.sys; drop(seg); seg.title = CHOICE_TITLE[seg.dataset.choice] || ''; }
       }
       const box = p.querySelector('.engpBox');
@@ -360,7 +392,9 @@
   }
 
   /* ── the markup ────────────────────────────────────────────────────────────── */
-  const CHOICE_TITLE = { none: 'No engraving on this piece', front: 'Engrave the front only', back: 'Engrave the back only', both: 'Engrave the front and the back' };
+  const CHOICE_TITLE = { none: 'No engraving on this piece', front: 'The front: its words are engraved on the front', back: 'The back: its words are engraved on the back' };
+  /** FRONTBACK: the option the pill sits under: None while None is staged, else the face shown. */
+  const pillOf = d => (d.choice === 'none' ? 'none' : d.active);
   function faceHtml(vm, d, face, id) {
     const cur = vm.rows.find(r => r.face === face), x = d.faces[face] || { text: '', font: '' }, per = !!(cur && cur.perPiece), on = facesOf(d.choice).includes(face);
     const words = `<div class="engpBox"><textarea class="engpWords" id="${id}" data-engp="words" data-face="${face}" rows="3" placeholder="${cap1(face)} words" aria-label="${cap1(face)} words"${per ? ' disabled' : ''}>${esc(per || !on ? '' : x.text)}</textarea>${per ? '' : `<span class="engpTools"><button type="button" class="btn ghost xs engpAlpha emBtn" data-alpha title="Other alphabets: letters, words and phrases in Greek, Hebrew, Arabic, Chinese, Japanese, Korean, Latin and more, found by their English" aria-label="Other alphabets">Aα</button><button type="button" class="btn ghost xs engpEmoji emBtn" data-emoji title="Choose an emoji the laser can engrave and put it in the words">Emoji</button></span>`}</div>`;
@@ -375,8 +409,8 @@
     ctx = ctx || {};
     if (d.choice == null && d.mode != null) d.choice = d.mode;   // (an old-shaped draft from a test)
     if (!d.active) d.active = d.face || firstActive(vm, d, null);
-    const id = 'engp' + (++uid), choices = choicesFor(vm.line), idx = choices.findIndex(([c]) => c === d.choice), at = d.pillAt != null && d.pillAt >= 0 && d.pillAt < choices.length ? d.pillAt : idx;
-    const seg = `<div class="engpMode engpChoice" role="group" aria-label="Engraved faces" style="--engp-n:${choices.length};--engp-i:${Math.max(0, at)}"><span class="engpPill" aria-hidden="true"${idx < 0 ? ' hidden' : ''}></span>${choices.map(([c, t]) => `<button type="button" class="engpSeg" data-engp="choice" data-choice="${c}" data-mode="${c}" aria-pressed="${c === d.choice}" title="${esc(CHOICE_TITLE[c])}">${esc(t)}</button>`).join('')}</div>`;
+    const id = 'engp' + (++uid), choices = choicesFor(vm.line), pick = pillOf(d), idx = choices.findIndex(([c]) => c === pick), at = d.pillAt != null && d.pillAt >= 0 && d.pillAt < choices.length ? d.pillAt : idx;
+    const seg = `<div class="engpMode engpChoice" role="group" aria-label="Engraved faces" style="--engp-n:${choices.length};--engp-i:${Math.max(0, at)}"><span class="engpPill" aria-hidden="true"${idx < 0 ? ' hidden' : ''}></span>${choices.map(([c, t]) => `<button type="button" class="engpSeg" data-engp="choice" data-choice="${c}" data-mode="${c}" aria-pressed="${c === pick}" title="${esc(CHOICE_TITLE[c] || '')}">${esc(t)}</button>`).join('')}</div>`;
     const allowed = facesFor(vm.line), face = allowed.includes(d.active) ? d.active : allowed[0] || '';
     const sw = ctx.faceSwitch && allowed.length > 1 ? `<div class="engpMode engpFaceSw" role="radiogroup" aria-label="Face">${allowed.map(f => `<button type="button" role="radio" class="engpSeg" data-engp="face" data-face="${f}" aria-checked="${f === face}">${cap1(f)}</button>`).join('')}</div>` : '';
     const g = ctx.gate || null, warn = g && g.st === 'blocked' ? `<div class="engpErr" role="alert">${esc(g.why)}</div>` : '';
@@ -770,21 +804,12 @@
     /* ── drawing ── */
     const syncPill = d => {
       const box = el.querySelector('.engpChoice'); if (!box) return;
-      const choices = choicesFor(line), i = choices.findIndex(([c]) => c === d.choice), pill = box.querySelector('.engpPill');
+      const choices = choicesFor(line), pick = pillOf(d), i = choices.findIndex(([c]) => c === pick), pill = box.querySelector('.engpPill');
       if (pill) pill.hidden = i < 0;
       if (i >= 0 && str(box.style.getPropertyValue('--engp-i')).trim() !== String(i)) { if (pill) void pill.offsetWidth; box.style.setProperty('--engp-i', String(i)); }
       d.pillAt = i;
-      for (const b of box.querySelectorAll('.engpSeg[data-engp="choice"]')) b.setAttribute('aria-pressed', String(b.dataset.choice === d.choice));
+      for (const b of box.querySelectorAll('.engpSeg[data-engp="choice"]')) b.setAttribute('aria-pressed', String(b.dataset.choice === pick));
       const p = el.querySelector('.engp'); if (p) { p.dataset.choice = d.choice; p.dataset.mode = d.choice; }
-    };
-    /** "Front & Back" when it fits the column, else "Both" (SPEC: the four options fit the 382 px column at 40 px). */
-    const fitLabels = () => {
-      const b = el.querySelector('.engpSeg[data-choice="both"]'); if (!b || !b.isConnected || !b.clientWidth) return;
-      try {
-        const cs = doc.defaultView.getComputedStyle(b), room = b.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0), g = (fitLabels.cv || (fitLabels.cv = doc.createElement('canvas'))).getContext('2d');
-        g.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`; const want = g.measureText('Front & Back').width <= room - 2 ? 'Front & Back' : 'Both';
-        const t = [...b.childNodes].find(n => n.nodeType === 3); if (t) { if (t.nodeValue !== want) t.nodeValue = want; } else b.insertBefore(doc.createTextNode(want), b.firstChild);
-      } catch (_) { /* the words it has */ }
     };
     const draw = () => {
       if (dead) return;
@@ -794,7 +819,6 @@
       const { vm, d } = m, g = gateOf(vm, d, key);
       el.innerHTML = html(vm, d, { faceSwitch: !!opts.faceSwitch, gate: g });
       syncPill(d);   // (the pill slides from where it was drawn last to the choice: one transform, 180 ms)
-      fitLabels(); { const w = doc.defaultView; if (w && w.requestAnimationFrame) w.requestAnimationFrame(() => { if (!dead) fitLabels(); }); }
       const ta = el.querySelector('.engpWords'); if (ta) growBox(ta);
       { const fsel = el.querySelector('.engpFont'); if (fsel && fsel.selectedOptions[0] && fsel.selectedOptions[0].style.fontFamily) fsel.style.fontFamily = fsel.selectedOptions[0].style.fontFamily; }
       { const eb = el.querySelector('[data-emoji]'), tb = el.querySelector('.engpWords'), CE = doc.defaultView && doc.defaultView.CNEmojiPicker;   // (Paul's own Emoji button: it types into the box, so the panel sees an ordinary input)
@@ -833,13 +857,15 @@
       changed('active', face);
       return true;
     };
-    /** A press of one of the four options: staged at once (the pill slides; the faces it engraves get their words; Front / Back is shown). */
+    /** A press of None, Front or Back: staged at once (the pill slides). FRONTBACK: Front / Back shows and edits that face and changes nothing else (pressFace); None engraves neither (pressNone). */
     const pressChoice = (m, choice) => {
-      const { vm, d } = m; if (!choicesFor(line).some(([c]) => c === choice)) return;
-      if (d.choice === choice && (choice === 'none' || choice === 'both' || d.active === choice)) return;
-      setChoice(vm, d, choice);
-      if (choice === 'front' || choice === 'back') d.active = choice;
-      bump(d, true); draw(); paint('choice', m); changed('choice', d.active);
+      const { vm, d } = m; if (!choicesFor(line).some(([c]) => c === choice)) return;   // (an old "both" press: no such option)
+      if (choice === 'none') { if (d.choice === 'none') return; pressNone(d); bump(d, true); }
+      else {
+        if (d.choice !== 'none' && d.active === choice) return;
+        const before = d.choice; pressFace(vm, d, choice); bump(d, d.choice !== before);   // (only a change of the faces engraved is a staged change; showing a face is not)
+      }
+      draw(); paint('choice', m); changed('choice', d.active);
     };
     const click = e => {
       const b = e.target && e.target.closest && e.target.closest('[data-engp]'); if (!b || !el.contains(b) || b.disabled || dead) return;
@@ -853,8 +879,7 @@
       const x = d.faces[f] || (d.faces[f] = { text: '', font: '', pos: null });
       if (t.dataset.engp === 'words') {
         if (e.type === 'change' || !t.isConnected) return;   // (every letter arrives as an input; the box's own "change" carries nothing new)
-        x.text = t.value; d.copied[f] = false; growBox(t);
-        if (str(t.value).trim() && !facesOf(d.choice).includes(f)) d.choice = withFace(d.choice, f);   // (typing on a face that is not engraved engraves it: the pill slides to the new choice)
+        typedOn(vm, d, f, t.value); growBox(t);   // (FRONTBACK: typing on a face engraves it; deleting all its words takes its engraving away)
       } else if (t.dataset.engp === 'font') { if (x.font === t.value || !t.isConnected) return; x.font = t.value; if (t.tagName === 'SELECT') t.style.fontFamily = (t.selectedOptions[0] && t.selectedOptions[0].style.fontFamily) || ''; }
       else return;
       bump(d, true);

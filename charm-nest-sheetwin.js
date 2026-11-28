@@ -2876,16 +2876,35 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function inPlaceFitOf(c) { const m = c && c.manual, v = c && c.inPlaceFit ? +c.inPlaceFit : m && m.fit === "inplace" && !c.frozen ? +m.size : 0; return v >= 0.9 - 1e-9 && v < 1 ? v : 0; }
   // (INPLACE SHRINK: a piece shrunk to go back into its old spot says the size it is cut at, "94% · 16.9 × 12.0 mm")
   const mmOf = x => { const f = x.fit || 0, k = f || 1, pre = f ? `${Math.round(f * 100)}% · ` : ""; return pre + (x.c ? `${fmt.mm(x.c.widthPt * k).replace(" mm", "")} × ${fmt.mm(x.c.heightPt * k)}` : `${fmt.mm(x.p.wPt).replace(" mm", "")} × ${fmt.mm(x.p.hPt)}`); };
+  /* WINDOWENG (Paul, 28 Nov 2026: the whole window shows exactly what the downloaded .ai holds): the panel's picture of a piece is drawn as the plate draws it: the charm with its FRONT words,
+     and beside it its BACK, turned over as the plate's back shows it, when the plate's back draws anything of it (its words, the Charm Editor's parts); every face's words only from the saved
+     record the download composes (engGeoOf / savedRecOf). It no longer lays CharmNestMadeThumb's picture "as made" over it (THUMBSYNC): that picture is drawn from Engrave's jobs, words still
+     to approve among them (Design & Engrave shows them there, for approval). A piece of no order (a design's list) is drawn as before, the charm alone. */
   function drawThumb(cv, x) {
     const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
     const c = x.c; cv._bare = !c; if (!c) { if (x.thumb) { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => { if (!cv._bare) return; const s = Math.min(cv.width / im.width, cv.height / im.height) * .86; ctx.drawImage(im, (cv.width - im.width * s) / 2, (cv.height - im.height * s) / 2, im.width * s, im.height * s); }; im.src = cors(x.thumb); } return; }
-    const k = Math.min(cv.width / c.widthPt, cv.height / c.heightPt) * .82, cx = c.centerPt[0], cy = c.centerPt[1];
-    ctx.save(); ctx.translate(cv.width / 2, cv.height / 2);
+    const backs = x.poolId ? thumbBacks() : null, fw = backs && hasFrontFace(x) ? engGeoOf(x, backs, "front") : null, bw = backs ? engGeoOf(x, backs) : null, two = !!(bw || (backs && backArtOf(x).length));
+    cv._weSig = backs ? thumbSig(x, backs) : undefined;
+    const tw = two ? cv.width / 2 : cv.width, k = Math.min(tw / c.widthPt, cv.height / c.heightPt) * .82, cx = c.centerPt[0], cy = c.centerPt[1];
     const t = (px, py) => [(px - cx) * k, (cy - py) * k];
-    ctx.fillStyle = "rgba(200,162,78,.12)"; ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, t); for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, t); ctx.fill("evenodd");
-    CharmNestPDF.drawCharm(ctx, c, t, k); ctx.restore();
-    if (x.poolId && window.CharmNestMadeThumb) tryDo(() => window.CharmNestMadeThumb.paintInto(cv, x.poolId));   // (THUMBSYNC, Paul 28 Oct 2026: the piece as it will be made, its words and its Charm Editor parts and images, front and back, when it has any: charm-nest-made-thumb.js)
+    const body = holes => { ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, t); if (holes) for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, t); };
+    ctx.save(); ctx.translate(tw / 2, cv.height / 2);
+    ctx.fillStyle = "rgba(200,162,78,.12)"; body(true); ctx.fill("evenodd");
+    CharmNestPDF.drawCharm(ctx, c, t, k);
+    if (fw) tryDo(() => CharmNestBacks.drawEngrave(ctx, fw, t, { fill: backInk() }));   // (the front's saved words, as the plate's front draws them)
+    ctx.restore();
+    if (!two) return;
+    ctx.save(); ctx.translate(tw * 1.5, cv.height / 2); ctx.scale(-1, 1);   // (the back as the plate's back draws it: turned over, its outline, the editor's parts, its saved words)
+    ctx.fillStyle = "rgba(200,162,78,.12)"; body(true); ctx.fill("evenodd"); ctx.strokeStyle = "rgba(60,54,46,.5)"; ctx.lineWidth = Math.max(1, cv.width / 184); body(false); ctx.stroke();
+    tryDo(() => drawBackArt(ctx, x, t, k, backInk()));
+    if (bw) tryDo(() => CharmNestBacks.drawEngrave(ctx, bw, t, { fill: backInk() }));
+    ctx.restore();
   }
+  /** WINDOWENG: the saved records the panel's picture reads (the window's own, as the plate reads them), whether the plate's front draws a front for the piece, and what the picture was drawn from (the
+      engraving poll draws it again when a record is saved, withdrawn or its font lands). */
+  const thumbBacks = () => backsOf(W.rec || { id: W.id }, W.live || (W.rec ? null : liveOf(W.id)), W.backsList);
+  const hasFrontFace = x => !!(x.eng && x.eng.faces && x.eng.faces.front);
+  const thumbSig = (x, backs) => [hasFrontFace(x) ? 1 : 0].concat(["front", "back"].map(f => { const r = savedRecOf(x, backs, f); return r ? [+r.approvedAt || 0, backFontId(r), !!backFont(r.weight, r)].join(":") : "-"; })).join("|");
   /** MSSTALE: what a monogram piece's panel says (its seals and its status), as one text: a monogram has no job, so engOf cannot tell the poll that its approval changed (another computer approved it while this window was open). "" for any other piece. */
   function monoSigOf(x) {
     const M = window.CNMonogramSeals; if (!M) return "";
@@ -2926,7 +2945,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (b.disabled) return;
       const was = b.innerHTML; b.disabled = true; b.setAttribute("aria-busy", "true"); b.innerHTML = `<span class="spin"></span>Opening the Charm Editor…`;
       const back = () => { if (b.isConnected) { b.disabled = false; b.removeAttribute("aria-busy"); b.innerHTML = was; } };
-      close().then(() => CharmNestCeLibrary.openDesign(f.designId, f.version || undefined)).then(back, e => { back(); toast(`The design did not open: ${(e && e.message) || e}`, "bad", 7000); });
+      close().then(() => (window.CharmEditorHub ? CharmEditorHub.open({ design: f.designId, version: f.version || undefined }) : CharmNestCeLibrary.openDesign(f.designId, f.version || undefined))).then(back, e => { back(); toast(`The design did not open: ${(e && e.message) || e}`, "bad", 7000); });
     };
   }
   /** The switch the card shows for a piece: the discs of a counted order (the order window's own cycle) and, for a piece engraved on both faces, its Front | Back. A piece with no front gets
@@ -5715,6 +5734,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     let changed = false;
     for (const x of W.pieces) { const e = engOf(x); if (!x.eng || !engSame(e, x.eng)) { x.eng = e; changed = true; } }
     if (changed) { renderStrip(); if (W.view === "sheet") renderSheetPane(); else if (W.sel) renderEng(W.sel, true); paintFx(); frontWordsAgain(); }
+    // (WINDOWENG: the selected piece's picture follows its saved records: drawn again when one is saved, withdrawn, or its font lands)
+    if (W.view !== "sheet" && W.sel && W.sel.c && W.el && W.el.detail) { const th = W.el.detail.querySelector("canvas.swThumb"); if (th && th._weSig !== undefined && thumbSig(W.sel, thumbBacks()) !== th._weSig) tryDo(() => drawThumb(th, W.sel)); }
     // (MSSTALE: the selected piece is a monogram whose seals or status moved since its panel was drawn: drawn again, unless its button is busy opening Engraving)
     else if (W.view !== "sheet" && W.sel && typeof W.sel._monoSig === "string" && monoSigOf(W.sel) !== W.sel._monoSig && !(W.el && W.el.detail && W.el.detail.querySelector("[data-r2=eng] button:disabled"))) renderEng(W.sel, true);
   }, 600);   // (ENGLIVE: 1.5 s -> 0.6 s: it only compares what Engrave and the record already hold, no cloud call)
@@ -7722,8 +7743,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      all of the back engraving on all of the charms … a standard for all sheets") ──
      The words of the whole sheet, every order on it, come from the backs the record already carries (the one getSheet
      read) and, for a sheet this sorter holds, the page's own; a saved sheet whose record carries none is asked once for
-     the whole sheet (backList, cached), never once per charm, and never from Etsy. An engraving approved but not written
-     yet is drawn from its open Engrave job. CharmNestBacks.engraveOn undoes the back file's mirror and hoop-up turn, so
+     the whole sheet (backList, cached), never once per charm, and never from Etsy. Only a saved record the download
+     composes is drawn (WINDOWENG: savedRecOf). CharmNestBacks.engraveOn undoes the back file's mirror and hoop-up turn, so
      the words sit on the charm exactly as they are cut — same place, same size, same mirroring. ── */
   const sheetBacks = new Map();   // sheet id → { at, p }: one read of a sheet's backs, kept for a minute
   function backsFor(id) {
@@ -7761,24 +7782,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     for (const x of pieces || []) for (const u of unitsOf(x)) { if (u.back) see(u.back); const j = u.job; if (j && j.fontKey && j.fontKey !== "source-sans-3") ids.add(j.fontKey); }
     return [...ids].filter(id => !tryDo(() => E.fontSetFor(id))).map(id => Promise.resolve(tryDo(() => E.loadFontSet(id))).catch(() => {}));
   }
-  /* BROKENBACK (Paul, 22 Nov 2026, order 4238583182 "Book Lover" x4 on SS Sheet 1: "some order show a broken version of the back engraving. This has resolved it's self previously"): a job taken
-     from the cloud has NO fit of this computer's own until it is fitted again here (CharmNestEngraveSync take: fit and view set to null, the cloud's place kept as keepPlace; fitMissing / the
-     open card fit it later, and a computer that cannot read the piece's charm never does). The plate read only the fit, so such a piece got the "not drawable yet" label (an ~80 px italic box
-     centred on the charm, wider than it: two neighbours' boxes drawn over one another) until that fit landed, and again after the next take. The cloud's place IS the fit's numbers, in the same
-     back frame (jobRec / placeOf: centre, angle, size, lines, weight, lineGap, upAngle): the words are drawn from it, for the very words and font it was made for, while no fit is here. */
-  const placeWords = l => (Array.isArray(l) ? l : []).join(" ").replace(/\s+/g, " ").trim();
-  /** An engraving approved in Engrave but not written yet, as a back record: its fitted words, in the same back frame. A front job's record says `face: "front"` (its words are laid as the charm is, not turned over). */
-  function backOfJob(x, face) {
-    const u = x.eng && (x.eng.faces ? x.eng.faces[face === "front" ? "front" : "back"] : face === "front" ? null : x.eng), j = u && u.job; if (!j) return null;
-    if (!j.fit || !j.view || !j.fit.centre) {
-      const k = j.keepPlace;
-      if (!k || !Array.isArray(k.centre) || k.centre.length !== 2 || !(+k.size > 0) || !placeWords(k.lines) || placeWords(k.lines) !== placeWords(j.lineInput || j.lines) || (k.fontKey && j.fontKey && k.fontKey !== j.fontKey)) return null;
-      return { poolId: x.poolId, ...(face === "front" ? { face: "front" } : {}), text: j.text, lines: k.lines, sizePt: +k.size, weight: k.weight, centre: k.centre, angle: +k.angle || 0, lineGap: k.lineGap,
-        upAngle: k.upAngle, approvedAt: +j.approvedAt || 0, font: j.fontName || "Source Sans 3", fontKey: j.fontKey || k.fontKey || "source-sans-3" };
-    }
-    return { poolId: x.poolId, ...(face === "front" ? { face: "front" } : {}), text: j.text, lines: j.lines, sizePt: j.fit.size, capMm: j.fit.capMm, weight: j.fit.weight,
-      centre: j.fit.centre, angle: j.fit.angle || 0, lineGap: j.fit.layout && j.fit.layout.lineGap, upAngle: j.view.upAngle, approvedAt: +j.approvedAt || 0,
-      font: j.fontName || "Source Sans 3", fontKey: j.fontKey || "source-sans-3" };
+  /* WINDOWENG (Paul, 28 Nov 2026: the sheet window draws exactly what the downloaded .ai shows. RG_Nov.26.26_Set-1_Sheet-1 drew "Ada Love" on TINY_7557, GF draft d-34970fa918a0793f
+     drew "IOWA" on CURB-BEADY-2: words of engraving jobs not approved or not saved, which the .ai never holds). The download composes ONLY the sheet's saved engraving records
+     (charm-nest-export-ui.js build / missingBacks: per piece and face the newest record not withdrawn, CharmNestBacks.forSheet, that is not still being saved and has its file). The plate
+     draws that very record and nothing else: `backs` (backsOf) holds the newest record of each piece and face not withdrawn; one still saving (pending) or without its file is not in the .ai
+     and is not drawn, and a job's words (in Review, approved but not written, or the cloud's place of one) never are. */
+  /** The saved record of one face of a piece ("front", else the back) that the download composes, or null. */
+  function savedRecOf(x, backs, face) {
+    const front = face === "front", r = x && x.poolId && backs ? backs.get(front ? recKeyOf(x.poolId, "front") : x.poolId) : null;
+    return r && isFrontRec(r) === front && !r.invalidated && !r.pending && ((r.outputs && r.outputs.ai) || r.ai) ? r : null;
   }
   /** The back side asked for: the sheet's backs read once for the whole sheet and the engraving font loaded, the plate
       drawn again as they land. Nothing waits on them — the plate is already there, and a small note says what it waits
@@ -7814,8 +7826,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       default, the back, is what it always gave. */
   function engGeoOf(x, backs, face) {
     if (!x.c || !window.CharmNestBacks || !CharmNestBacks.engraveOn) return null;
-    const front = face === "front", u = x.eng && (x.eng.faces ? x.eng.faces[front ? "front" : "back"] : front ? null : x.eng);
-    const rec = (x.poolId && backs && backs.get(front ? recKeyOf(x.poolId, "front") : x.poolId)) || (u && u.back) || backOfJob(x, front ? "front" : "back");
+    const front = face === "front", rec = savedRecOf(x, backs, face);   // (WINDOWENG: only the saved record the download composes; never a job's words, a record still saving or one without its file)
     if (!rec) return null;
     const key = [x.poolId || x.id, +rec.approvedAt || 0, rec.sizePt, rec.angle, String(rec.centre || ""), backFontId(rec), !!backFont(rec.weight, rec)].concat(front ? ["front"] : []).join("|");   // (BROKENBACK: the centre too, so a fit that lands a little off the cloud's place is drawn where it is)
     const own = front ? "_engGeoF" : "_engGeo", ownKey = front ? "_engGeoFKey" : "_engGeoKey";
@@ -7946,7 +7957,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const geo = engGeoOf(x, G.backs), ink = backInk();   // (BLUEBACK, Paul 12 Nov 2026: every back's words in the hatching blue, this order's and the others' alike)
       // (SHEETBACK: what the Charm Editor added to the back — its words, an image — is laid on the charm first, the back's own words over it; a back made only in the editor is drawn by its parts)
       if (x.c && backArtOf(x).length) orderPiece(ctx, G, x, () => { const c = x.c, k = G.k, cx = c.centerPt[0], cy = c.centerPt[1]; tryDo(() => drawBackArt(ctx, x, (px, py) => [(px - cx) * k, (cy - py) * k], k, ink)); });
-      if (!geo || !geo.glyphs) { if (faceTextOf(x, "back") && !backArtOf(x).length) pills.push(x); continue; }
+      if (!geo || !geo.glyphs) { const r = savedRecOf(x, G.backs), w = r ? String(r.text || (Array.isArray(r.lines) ? r.lines.join(" ") : "")).trim() : ""; if (w && !backArtOf(x).length) pills.push([x, w]); continue; }   // (WINDOWENG: the label says a saved record's words only, never a job's)
       orderPiece(ctx, G, x, () => {
         const c = x.c, k = G.k, cx = c.centerPt[0], cy = c.centerPt[1];
         CharmNestBacks.drawEngrave(ctx, geo, (px, py) => [(px - cx) * k, (cy - py) * k], { fill: ink });
@@ -7965,8 +7976,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, .5 * G.k); ctx.strokeRect(.5, .5, G.Wp - 1, G.Hp - 1);
     ctx.restore();
     // the words of a charm whose drawing or engraving font is not here yet: said on the plate until they can be drawn
-    if (G.backSide) for (const x of pills) {
-      const words = faceTextOf(x, "back"); if (!words) continue;
+    if (G.backSide) for (const [x, words] of pills) {
       const px = R + G.Wp - x.p.cxPt * G.k, py = R + x.p.cyPt * G.k, size = Math.max(9 * dpr, Math.min(14 * dpr, Math.min(x.p.wPt, x.p.hPt) * G.k * .22));
       ctx.save(); ctx.font = `italic ${size}px Georgia, serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
       const tw = ctx.measureText(words).width + 10 * dpr; ctx.fillStyle = "rgba(255,254,251,.92)"; ctx.strokeStyle = "rgba(169,130,63,.8)"; ctx.lineWidth = dpr;

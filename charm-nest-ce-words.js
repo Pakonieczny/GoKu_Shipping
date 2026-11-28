@@ -26,10 +26,15 @@
  *      the same box to 1 %, every letter's box in place to 3 % of the size: match) it opens as editable Type again in that font, size and place, its id kept; a Save that does not change
  *      it writes its saved outlines again, exactly (the bridge's outlinesWas)                                                                                         ('type')
  *      else it stays the outlines it is, as Illustrator keeps words after Type ▸ Create Outlines (a weight grown on them, a stretch: nothing proves the letters)      ('keep')
+ *   c. CESAVE1128 (Paul, 28 Nov 2026, order 4242919793 SKINNY_2952: "This should never ever be allowed to happen ... the user changed the same engraving that was already there using the
+ *      charm editor"): a part the editor ADDED to the face with NO words on it (outlines only: Charm_Pool_Art …~front added "cemwxw1q90b", kind path, the approved front's "Fiona" as
+ *      outlines beside the engraving, so the sheet drew Fiona twice), on a face whose engraving job has words: when its outlines ARE the job's words set in the job's font (match, exact,
+ *      as in b) it is a copy of the face's engraving words: dropped (by Save), the words stay the job's ('drop'); otherwise it is not touched. The master's own parts are never looked at.
  *
- *   CharmNestCeWords.HANDBACK            /^engrave-words-(front|back)-/
+ *   CharmNestCeWords.HANDBACK           /^engrave-words-(front|back)-/
  *   CharmNestCeWords.match(part, o)      → { fontKey, sizePt, align, tx, ty, exact, dev } | null    o: { text, engine(text, fontKey, sizePt, opts), fonts: [fontKey], aligns?, lineGap?, bboxOf?, loose? }
- *   CharmNestCeWords.sortParts(o)        → [{ act: 'words' | 'drop' | 'type' | 'keep', id, part, m?, repair?, name? }]   o: { face, items, job: { key, words: [lines], fontKey } | null, handed, match }
+ *   CharmNestCeWords.sortParts(o)        → [{ act: 'words' | 'drop' | 'type' | 'keep', id, part, m?, repair?, name? }]   o: { face, items, job: { key, words: [lines], fontKey, lineGap? } | null, handed, match }
+ *                                          match(part, fonts, loose, more): more = { text, lineGap } for a part with no words of its own (c)
  *   CharmNestCeWords.typeOf(part, m, o)  the Type item a part becomes
  *   CharmNestCeWords.diff(given, now, cased) → { gone, text, font, place, style: [names], changed, words }   what a Save of the handed-in words gives the job
  *   CharmNestCeWords.placeOf(item, o)    → { centre: [x, y] (the job's view, y up), angle, size }   where the job's words go when the person moved them (charmEditWords' own sum, the other way)
@@ -119,6 +124,15 @@
       out.push({ act: 'keep', id: String(p.id), part: p, name: say(p, "an earlier engraving's words: Type › Create Outlines was used; retype to edit") });   // (a3)
     }
     for (const p of parts) if (!hb.includes(p)) out.push(sortOther(p, o, say));
+    // (c, CESAVE1128: an added part with no words whose outlines are exactly the job's words in the job's font is a copy of the engraving's words; nothing else is touched)
+    if (job && jobWords && o.match) {
+      const lines = (job.words || []).map(s => String(s == null ? '' : s).trim()).filter(Boolean);
+      for (const p of o.items || []) {
+        if (!p || p.kind !== 'path' || norm(p.text) || p.source !== 'added' || p.role === 'cut' || !Array.isArray(p.subpaths) || !p.subpaths.length) continue;
+        const m = o.match(p, [job.fontKey], false, Object.assign({ text: lines.join('\n') }, fin(+job.lineGap) && +job.lineGap > 0 ? { lineGap: +job.lineGap } : {}));
+        if (m && m.exact) out.push({ act: 'drop', id: String(p.id), part: p, m, outlined: true });
+      }
+    }
     return out;
   }
   function sortOther(p, o, say) {

@@ -539,14 +539,16 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
     const opts = Object.assign({ title: start.title || start.name, subtitle: start.subtitle || '', faces: start.faces, startFace: 'front', lockRoles: [] },
       Array.isArray(fonts) && fonts.length ? { fonts } : {}, textToPaths ? { textToPaths } : {}, start.back ? { back: Object.assign({}, start.back) } : {}, { hold: true }, start.repo ? { repo: Object.assign({}, start.repo) } : {}, start.saveOff ? { saveOff: start.saveOff } : {},
       draft ? { autosave: draft.autosave } : {}, draft && draft.offer ? { offer: draft.offer, base: start.faces } : {});   // (CES3 hold: the workspace stays under the windows after Save)   // (the way back: the editor's head, CharmEditor opts.back)
+    // (CEONE, the owner 28 Nov 2026: ONE editor, centrally connected: the open and the Save go through the page's one hub (charm-nest-bridge.js CharmEditorHub), by what is opened)
+    const content = start.saveOff ? { master: (start.repo && start.repo.sku) || start.name } : start.id ? { design: start.id, version: start.version } : { empty: true }, HUB = root.CharmEditorHub;
     let shown;
-    try { shown = E.open(opts); }
+    try { shown = HUB && typeof HUB.editor === 'function' ? HUB.editor(opts, content) : E.open(opts); }
     catch (e) { drop(); letGo(); note(`The charm editor could not open · ${(e && e.message) || e}`, true); return null; }
     if (start.log !== false) log('designOpen', Object.assign({ name: start.name, by }, start.log || {}, start.id ? { designId: start.id, version: start.version } : {}, start.orderId ? { orderId: start.orderId } : {}, start.from ? { from: start.from } : {}));
     let res;
     try { res = await shown; } catch (e) { drop(); note(`The charm editor could not open · ${(e && e.message) || e}`, true); return null; }
     if (!res) { drop(); return null; }   // (Cancel, the ×, Esc: nothing is saved; a master or a design picked in the library panel closes it this way too)
-    try { const out = await saved(start, res, by, () => opened !== my || pending > 0 || !mine()); if (draft && out) draft.drop().catch(() => { /* ENGPROOF: the next open offers it */ }); return out; }   // (a design kept: its draft is no longer needed)
+    try { const keep = r => saved(start, r, by, () => opened !== my || pending > 0 || !mine()), out = await (HUB && typeof HUB.save === 'function' ? HUB.save(content, res, keep) : keep(res)); if (draft && out) draft.drop().catch(() => { /* ENGPROOF: the next open offers it */ }); return out; }   // (a design kept: its draft is no longer needed)
     finally { drop(); }
   }
   /** The editor's result saved as a version of the design (none when nothing changed since the version it was opened on), then the card: Send to sheet, Keep editing, Done.
