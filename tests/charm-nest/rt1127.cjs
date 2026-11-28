@@ -3,7 +3,7 @@
    R · REPOONLY / DRAWN: a Master files card opens its charm in the Charm Editor for the repository alone (the blue Save off, Update repository saves), the master read as its .ai draws it (the hoop not welded)
    S · SAMEFILE: an update of one SKU updates every SKU that is the very same drawing, in the same transaction; one that no longer draws it is left as it is
    M · MIDPAN: in Manual Control the wheel button pans from anywhere (over a charm too), Option + wheel zooms
-   O · OWNROW: the seat trusts a neighbour's drawing only when it is the size its sheet keeps
+   O · OWNROW: a custom piece of a file of several charms is drawn as its own charm (the 3 % size rule was removed 28 Nov 2026: not Paul's rule)
    E · SHEETTRUTH: the engraving panel asks the cloud before saying an order has no piece on a sheet */
 'use strict';
 const fs = require('fs'), path = require('path');
@@ -106,7 +106,7 @@ const boxOf = (it) => M.bboxOf(M.transformSubpaths(it.subpaths, geo.matrix(it)))
   /* ── O · the seat's neighbours ── */
   const seat = read('netlify/functions/_charmNestSeatNow.js'), np = read('netlify/functions/_charmNestNestPieces.js');
   ok('O1 every piece is drawn with its own row (its customIndex, its body), as rebuild draws it', /rows\.set\(String\(rc\.poolId\), pool\);/.test(np));
-  ok('O2 a neighbour drawn at another size than its sheet keeps stands as its circle', /if \(!sizeOk\(q, s\.c\)\) throw new Error\(`drawn /.test(seat));
+  ok('O2 no size rule of its own decides whether a neighbour counts (NO3PCT, 28 Nov 2026: Paul: "No rules are allowed to be made by you")', !/sizeOk/.test(seat));
 
   /* ── E · the engraving panel and the cloud ── */
   ok('E1 the cloud\'s pieces of a line are read (once in 30 s, in memory) and given to the panel', /async function linePieces\(row\)/.test(br) && /linePieces, linePiecesKnown, heldWhy:/.test(br));
