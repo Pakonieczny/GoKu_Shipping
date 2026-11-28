@@ -58,6 +58,8 @@
   const revBefore = (a, b) => { const x = docRev(a), y = docRev(b); return !!x && !!y && (x[0] < y[0] || (x[0] === y[0] && x[1] < y[1])); };
   const ordersOf = r => (r && Array.isArray(r.orders) ? r.orders.map(sid) : []);
   const safe = (f, d) => { try { const v = f(); return v === undefined ? d : v; } catch (_) { return d; } };
+  // (NOSCROLLJUMP: two records with the same content; a record that cannot be compared is not the same)
+  const sameRec = (a, b) => { if (a === b) return true; try { return JSON.stringify(a) === JSON.stringify(b); } catch (_) { return false; } };
 
   function create(o) {
     const C = Object.assign({ api: null, now: () => Date.now(), setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: t => clearTimeout(t), newerOf: null, busyWhy: null, switches: null, live: null,
@@ -73,7 +75,7 @@
     const SUBS = new Map();     // id | '*' → Set(fn)
     const GONE = new Map();     // id → the record it had when the cloud said it was gone: a copy of it seen again later (the store's archived mark, a list) never brings it back; a read of it does
     const Q = new Set(); let qT = 0;
-    const st = { puts: 0, taken: 0, older: 0, merged: 0, mine: 0, reads: 0, many: 0, same: 0, gone: 0, fails: 0, retries: 0, names: 0, again: 0, told: 0 };
+    const st = { puts: 0, taken: 0, older: 0, echo: 0, merged: 0, mine: 0, reads: 0, many: 0, same: 0, gone: 0, fails: 0, retries: 0, names: 0, again: 0, told: 0 };
     const now = () => C.now();
     const log = (...a) => { if (C.log) safe(() => C.log(...a)); };
 
@@ -108,6 +110,10 @@
       if (e && e.min) { const ok = r && e.min.rev ? (e.min.strict ? revBefore(e.min.rev, r) : !revBefore(r, e.min.rev)) : newer(rec, '', e.rec, '') > 0; if (!ok) { st.older++; return e.rec; } }   // (no revision to go by: only one newer by its counters)
       const c = !e ? 1 : e.min ? 1 : newer(rec, r, e.rec, e.rev);
       if (c < 0) { st.older++; return e.rec; }   // (NEWERWINS: the record held is newer; it stays, and every view keeps drawing it)
+      /* NOSCROLLJUMP (Paul, 28 Nov 2026: "Why does the library continuously scroll on my behalf when it's being updated? I told you I don't want any part of the system to get changed when things are
+         being updated"): the SAME record again (the store's echo of what a view just put here, a list read of a version already held, a read that brought nothing new) is no change: the object held
+         stays, its revision is learned, and NO view is told. Every such copy was taken as a new object and told to every view, about every 5 s on an open page, and the Library drew the card again each time. */
+      if (e && !e.min && sameRec(rec, e.rec)) { if (r && (!e.rev || !revBefore(r, e.rev))) e.rev = r; st.echo++; return e.rec; }
       let next = rec, nf = f, nr = r;
       if (e && c === 0 && !e.min) {
         if (e.full && !f) { next = withDerived(e.rec, rec); nf = true; nr = e.rev || r; if (next === e.rec) return e.rec; st.merged++; }   // (the same version as a list row: the whole record stays, with its readiness)

@@ -14836,9 +14836,33 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
        screen at once, not after the other forty-nine have been worked out. Anything else that asks for a drawing (changed() with no keys) draws every card, as before;
        when both are waiting the changed cards go first and the rest follows in the next frame. */
     const only=dirty,every=drawAll;dirty=null;drawAll=false;
-    if(only && every){batch(()=>paint(only));drawAll=true;if(!frame)frame=requestAnimationFrame(refresh);return;}
-    batch(()=>paint(only));
+    if(only && every){keepView(()=>batch(()=>paint(only)));drawAll=true;if(!frame)frame=requestAnimationFrame(refresh);return;}
+    keepView(()=>batch(()=>paint(only)));   // (NOSCROLLJUMP: what the person looks at stays where it is, below)
   }
+  /* NOSCROLLJUMP (Paul, 28 Nov 2026: "Why does the library continuously scroll on my behalf when it's being updated? ... You can't scroll the user or scroll down or scroll up."): a drawing of the
+     Library's cards (a card drawn again for a change in the cloud, a rail that says "Checking…", a list read again) never moves what the person is looking at. The card (or sheet, or date line) at the
+     top of the view and where it stands are noted before the drawing; after it, when something above it grew or shrank, the Library's scroller is put back by that much, so it stands exactly where it
+     stood (scroll anchoring, done by the page: the browser's own loses its place when the node it held to is drawn again). Nothing is ever scrolled to: no scrollIntoView, no scrollTo, no focus.
+     At the very top of the list nothing is held (a new card above shows, as at the top of any list). */
+  const VIEW_SEL='#libBody .libCard[data-id], #libBody [data-laser-card], #libBody .laserDayRule';
+  const viewKey=n=>{if(!n || !n.dataset)return '';if(n.classList && n.classList.contains('libCard'))return 'sheet:'+n.dataset.id;if(n.dataset.laserCard)return n._laserSet && n._laserSet.setId?'set:'+n._laserSet.setId:'card:'+(n._laserSheets || []).join(',');return n.dataset.day?'day:'+n.dataset.day:'';};
+  function viewMark(){
+    try{
+      if(S.mode!=='library')return null;
+      const sc=document.getElementById('stage');if(!sc || !(sc.scrollTop>0))return null;
+      const box=sc.getBoundingClientRect();let best=null;
+      for(const n of document.querySelectorAll(VIEW_SEL)){const r=n.getBoundingClientRect();if(!(r.height>0) || r.bottom<=box.top || r.top>=box.bottom)continue;const d=Math.abs(r.top-box.top);if(!best || d<best.d)best={n,d,at:r.top};}
+      return best?{sc,n:best.n,at:best.at,key:viewKey(best.n)}:null;
+    }catch(_){return null;}
+  }
+  function viewBack(m){
+    try{
+      if(!m || !m.sc.isConnected)return;
+      const n=m.n.isConnected?m.n:(m.key?[...document.querySelectorAll(VIEW_SEL)].find(x=>viewKey(x)===m.key):null);if(!n)return;
+      const d=n.getBoundingClientRect().top-m.at;if(Math.abs(d)>=1)m.sc.scrollTop+=d;
+    }catch(_){}
+  }
+  function keepView(fn){const m=viewMark();try{return fn();}finally{viewBack(m);}}
   /** The cards of each area in their order (actual sets first, each by its last activity), and (areas) which area shows and which says it is empty: after every drawing, and when the
    *  Library shows its cards again for a metal chip (Sets.renderLibrary, NAV round 4) */
   /* SETORDER (Paul, 11 Nov 2026: "add a separation layer that's visible from date to date and then in each date there should be sets that are ordered the same way"): the actual sets
@@ -15436,11 +15460,18 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
      window's whole record, the order window's, a Nest card's, a person's own write: mine), is drawn on its card at once: its record, its list row, its picture under its version, its refit; no read
      is made for it (the one copy read it already). The Library's own reads (from 'library') and a list being drawn (from 'list') are not told back to it. */
   let slOff=null;
+  /* NOSCROLLJUMP (Paul, 28 Nov 2026): what a sheet's card shows of its record: all of it but the fields no card draws (when it was written, the nest job's own beat and lease: the spinner, CNSheetBusy,
+     is told those by itself). Two records with the same face draw the same card. */
+  const UNSHOWN=new Set(['updatedAt','nestJob','picking','beatAt','polledAt','readAt','checkedAt','servedAt','lease','leaseAt','heartbeatAt']);
+  const cardFace=r=>{try{return JSON.stringify(r,function(k,v){return this===r && (UNSHOWN.has(k) || k.charAt(0)==='_')?undefined:v;});}catch(_){return String(Math.random());}};
   const slFollow=()=>{if(slOff || !window.CNSheetLive || typeof window.CNSheetLive.subscribe!=='function')return;slOff=window.CNSheetLive.subscribe('*',ev=>{try{
     if(!slLib() || !ev || !ev.id || ev.from==='library' || ev.from==='list')return;
     if(!ev.rec){if(ev.why==='gone' && records.has(ev.id))patch(null,ev.id);return;}
     if(ev.rec===ev.prev)return;   // (a name of its set or orders: the record is the same)
     const had=records.get(ev.id);if(had===ev.rec || (had && olderRec(ev.rec,had)))return;
+    // (NOSCROLLJUMP, Paul 28 Nov 2026: "I don't want any part of the system to get changed when things are being updated": a newer record that changes nothing its card shows (its write time, the nest job's beat,
+    //  which the "Updating…" spinner follows by itself) is kept, and the card is NOT drawn again)
+    if(had && cardFace(had)===cardFace(ev.rec)){records.set(ev.id,ev.rec);patchRow(ev.rec);try{if(window.CNRefit)CNRefit.see(ev.rec);}catch(_){}return;}
     patchRow(ev.rec);if(!had)return;   // (a card not read here yet: its list row only)
     records.set(ev.id,ev.rec);picNow(ev.rec,ev.id);try{if(window.CNRefit)CNRefit.see(ev.rec);}catch(_){}changed(new Set(['s:'+ev.id]));
   }catch(e){console.warn('Library: sheet live',e);}});};
@@ -15460,7 +15491,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       return c && c.why ? String(c.why) : '';
     }catch(_){return '';}
   }
-  return {follow:ensureLive,record,recOf:id=>(slLib() && slLib().get(String(id || ''))) || recOf(id),sheet,group,canCut,labels,sections,place,changed,changes:()=>changes,missed,owes,arrange:()=>{arrange(false);arrange(true);},saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,moveBlock,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
+  return {follow:ensureLive,keepView,cardFace,record,recOf:id=>(slLib() && slLib().get(String(id || ''))) || recOf(id),sheet,group,canCut,labels,sections,place,changed,changes:()=>changes,missed,owes,arrange:()=>{arrange(false);arrange(true);},saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,moveBlock,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -16172,23 +16203,47 @@ const Sets = window.Sets = (() => {
       const shown = again ? new Map([...body.querySelectorAll(".laserAreaItems > .setCard")].filter(c => c._keptSt).map(c => { c._keptReady = !!c.closest('[data-laser-area="ready"]'); return [c._keptSt, c]; })) : null;
       const keepRest = () => { if (shown) for (const [st, c] of shown) { c._keptAt = LaserReview.owes(c) ? -1 : LaserReview.changes(); kept.cards.set(st, c); } kept.cache = _cache; kept.q = q; };   // (-1: it is painted again when it is back)
       if (!sets.length) { body.innerHTML = `<div class="libEmpty">${focus ? "" : q || metal ? "No sets match this filter." : "No sets yet."}</div>`; keepRest(); if (LD) LD.decorate(body); return; }
-      LaserReview.sections(body);
-      const fresh = [], back = [];
-      LaserReview.batch(() => { for (const st of sets) {
-        let card = again ? shown.get(st) || null : null;
-        if (card) shown.delete(st); else if (again && (card = kept.cards.get(st) || null)) { kept.cards.delete(st); if (LaserReview.missed(card, card._keptAt)) back.push(card); }
-        if (card) { LaserReview.place(card, card._keptReady, body); continue; }
-        const all = st.sheets.slice().sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || (a.sheetIndex || 0) - (b.sheetIndex || 0));
-        // (after Undo set the view is read again, and each card glides from where it was rather than being redrawn in one go)
-        card = libraryCard(st, all, all, {onUndo: () => LD && LD.glide ? LD.glide(body, () => renderLibrary(body)) : renderLibrary(body)});
-        card._keptSt = st; card._lrFresh = true; fresh.push(card);
-        LaserReview.place(card,LaserReview.group(st,all).ready,body);
-      } });
-      // (every card drawn anew is painted in the next frame; on a chip press only those, by their keys)
-      if (again) { LaserReview.arrange(); LaserReview.changed(new Set(fresh.concat(back).flatMap(c => (c._laserSheets || []).map(id => "s:" + id).concat(c._laserSet && c._laserSet.setId ? ["t:" + c._laserSet.setId] : [])))); }   // (in their order, and the areas' empty lines, at once: no drawing of every card follows)
-      else LaserReview.changed();
-      keepRest();
-      if (LD) LD.decorate(body, again ? fresh : null);
+      /* NOSCROLLJUMP (Paul, 28 Nov 2026: "Why does the library continuously scroll on my behalf when it's being updated? I told you I don't want any part of the system to get changed when things are
+         being updated. You can't scroll the user"): a list read again (the cloud named a sheet, a set changed, a sheet was cut elsewhere) emptied the Library and drew EVERY card anew, and what the
+         person was looking at moved. Now the cards stay: a set whose record, sheets and drawing are what its card already shows keeps that very card (its picture, its rails, its place); only a set
+         that changed has its own card drawn again, in its place; a set gone takes only its card away; and the view is held where it is (LaserReview.keepView). The first drawing, and a Library that
+         shows no cards, are drawn whole as before. */
+      const keyOf = st => (st.setId ? "t:" + st.setId : "g:" + (st.key || st.name || "") + (st.standalone ? "|solid" : st.working ? "|work" : ""));
+      const sigOf = st => { try { return JSON.stringify(st); } catch (_) { return null; } };
+      const areasHeld = !!(body.querySelector(':scope > [data-laser-area="ready"] > .laserAreaItems') && body.querySelector(':scope > [data-laser-area="pending"] > .laserAreaItems'));
+      const prior = !again && areasHeld ? new Map([...body.querySelectorAll(".laserAreaItems > .setCard")].filter(c => c._cardKey && c._builtHtml).map(c => [c._cardKey, c])) : null;
+      const inPlace = !!(prior && prior.size) || (again && areasHeld);
+      const view = typeof LaserReview.keepView === "function" ? LaserReview.keepView : fn => fn();
+      const fresh = [], back = [], placed = new Set();
+      view(() => {
+        if (!inPlace) LaserReview.sections(body);
+        else for (const n of [...body.children]) if (n.classList && (n.classList.contains("libEmpty") || n.classList.contains("libStale"))) n.remove();   // (the sections and their cards stay; a loading or "not refreshed" line goes, as a drawing whole took it)
+        const itemsOf = ready => body.querySelector(`[data-laser-area="${ready ? "ready" : "pending"}"] .laserAreaItems`);
+        const placeAt = (card, ready) => { placed.add(card); if (card.parentElement !== itemsOf(ready)) LaserReview.place(card, ready, body); };
+        LaserReview.batch(() => { for (const st of sets) {
+          let card = again ? shown.get(st) || null : null;
+          if (card) shown.delete(st); else if (again && (card = kept.cards.get(st) || null)) { kept.cards.delete(st); if (LaserReview.missed(card, card._keptAt)) back.push(card); }
+          if (card) { placeAt(card, card._keptReady); continue; }
+          const all = st.sheets.slice().sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || (a.sheetIndex || 0) - (b.sheetIndex || 0));
+          // (after Undo set the view is read again, and each card glides from where it was rather than being redrawn in one go)
+          card = libraryCard(st, all, all, {onUndo: () => LD && LD.glide ? LD.glide(body, () => renderLibrary(body)) : renderLibrary(body)});
+          const key = keyOf(st), sig = sigOf(st), html = card.innerHTML, had = prior ? prior.get(key) || null : null, ready = LaserReview.group(st, all).ready;
+          card._cardKey = key; card._cardSig = sig; card._builtHtml = html;
+          if (had) prior.delete(key);
+          // (NOSCROLLJUMP: the same set, drawn the same: the card on screen stays, the one just made is never shown)
+          if (had && sig && had._cardSig === sig && had._builtHtml === html) { had._keptSt = st; placeAt(had, ready); continue; }
+          card._keptSt = st; card._lrFresh = true; fresh.push(card);
+          if (had && had.parentElement === itemsOf(ready)) { had.replaceWith(card); placed.add(card); }   // (a set that changed: its own card, drawn again where it stood)
+          else placeAt(card, ready);
+        } });
+        // (a card no set of this list holds any more: that card alone is taken away; a metal chip's cards not shown are kept for the next chip, keepRest)
+        if (inPlace) for (const n of [...body.querySelectorAll(".laserAreaItems > *")]) if (!placed.has(n) && !(n.classList && n.classList.contains("laserDayRule"))) n.remove();
+        // (every card drawn anew is painted in the next frame; on a chip press, or a list read again in place, only those, by their keys)
+        if (inPlace) { LaserReview.arrange(); LaserReview.changed(new Set(fresh.concat(back).flatMap(c => (c._laserSheets || []).map(id => "s:" + id).concat(c._laserSet && c._laserSet.setId ? ["t:" + c._laserSet.setId] : [])))); if (!again) try { LaserReview.follow(); } catch (_) {} }   // (in their order, and the areas' empty lines, at once: no drawing of every card follows)
+        else LaserReview.changed();
+        keepRest();
+        if (LD) LD.decorate(body, inPlace ? fresh : null);
+      });
     } catch (e) {
       if (request !== libraryRequest || S.library.kind !== "sets") return;
       // ADV-MASTER (Paul, 15 Oct 2026: "lost internet connections"): sets already on screen stay when their refresh fails, with the time of the list, why it was not refreshed and a Retry, as the Sheets list always did (libraryStale);

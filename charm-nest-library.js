@@ -638,7 +638,7 @@
       const allowed=done || canComplete('sheet',c.dataset.id,at);
       if (!allowed) { if(b)b.remove(); continue; }
       if(!b){b=doc.createElement('button');b.type='button';b.className='ldMark';c.appendChild(b);}
-      b.dataset.ld='sheet:'+c.dataset.id;b.dataset.done=done?'1':'0';b.innerHTML=done?ICON.undo:ICON.check;
+      b.dataset.ld='sheet:'+c.dataset.id;b.dataset.done=done?'1':'0';{const h=done?ICON.undo:ICON.check;if(b._h!==h){b.innerHTML=h;b._h=h;}}   // (NOSCROLLJUMP, Paul 28 Nov 2026: "I don't want any part of the system to get changed when things are being updated": drawn again only when it changed)
       // (LASERWORDS, Paul, 11 Nov 2026: one word, Reopen, for taking the completed mark off, here, on the set button and in the Completed rows)
       b.title=done?'Reopen sheet · back to Laser cutting':'Mark completed · the laser has cut this sheet';b.setAttribute('aria-label',done?'Reopen sheet · back to Laser cutting':'Mark this sheet completed');
     }
@@ -650,7 +650,7 @@
       if(!allowed){if(b)b.remove();head.querySelector(':scope > .ovSet')?.remove();continue;}
       if(!b){b=doc.createElement('button');b.type='button';b.className='ldMark ldMarkSet';(head.querySelector('.nm') || head.firstChild).after(b);}
       b.dataset.ld='set:'+st.setId;b.dataset.done=done?'1':'0';
-      b.innerHTML=(done?ICON.undo:ICON.check)+`<span>${done?'Reopen set':'Mark set completed'}</span>`;
+      {const h=(done?ICON.undo:ICON.check)+`<span>${done?'Reopen set':'Mark set completed'}</span>`;if(b._h!==h){b.innerHTML=h;b._h=h;}}   // (NOSCROLLJUMP: drawn again only when it changed)
       // (OVERRIDE, Paul 23 Nov 2026: "I tried to mark this sheet as 'Mark set completed' but it would not let me": the cloud refused it: the owner's override stands beside it: charm-nest-set-override.js)
       { const refused=!done && L.refused.has(String(st.setId)) && !!window.CharmNestSetOverride;let o=head.querySelector(':scope > .ovSet');
         if(!refused){if(o)o.remove();}
@@ -664,7 +664,7 @@
      cloud's), and a mark it refuses turns the check back. */
   function act(kind, id, done, btn) {
     const card = btn && btn.closest && btn.closest('.libCard, .setCard'), was = btn && { html: btn.innerHTML, done: btn.dataset.done, title: btn.title };
-    const put = on => { if (!btn || !btn.isConnected) return; btn.classList.toggle('ldNow', on); if (card) card.classList.toggle('ldNowCard', on);
+    const put = on => { if (!btn || !btn.isConnected) return; btn._h = ''; /* (NOSCROLLJUMP: the next drawing of the mark draws it) */ btn.classList.toggle('ldNow', on); if (card) card.classList.toggle('ldNowCard', on);
       if (on) { btn.dataset.done = done ? '1' : '0'; btn.innerHTML = (done ? ICON.undo : ICON.check) + (kind === 'set' ? `<span>${done ? 'Completed' : 'Reopened'}</span>` : ''); btn.title = done ? 'Marked completed' : 'Reopened'; }
       else { btn.dataset.done = was.done; btn.innerHTML = was.html; btn.title = was.title; } };
     let shown = false;
