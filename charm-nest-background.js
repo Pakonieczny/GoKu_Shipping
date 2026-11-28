@@ -43,7 +43,9 @@
   // rendered images, workers, masks or cached source document.
   // (EXPORTFACES, 11 Nov 2026: the front engravings (4th argument) and each record's ear (side, groupKey) go to the worker too; they were dropped here, so a sheet
   //  composed in the worker lost its FRONT layers and named no Left / Right on its BACK layers)
-  const rec=b=>Object.fromEntries(['poolId','bytes','face','side','groupKey'].filter(k=>b[k]!==undefined).map(k=>[k,b[k]]));
+  // (FRONTARTONLY, Paul 28 Nov 2026, GF_Nov.25.26_Set-1_Sheet-3 would not download: "Front engraving contains no engraving paths". A front approved before 25 Nov whose Charm Editor parts are in
+  //  the sheet's own drawing says artOnly, and the composer goes on without it (FRONTLIKEBACK); this copy for the worker dropped that word, so the worker stopped the whole download on it)
+  const rec=b=>Object.fromEntries(['poolId','bytes','face','side','groupKey','artOnly'].filter(k=>b[k]!==undefined).map(k=>[k,b[k]]));
   E.compose=(front,sheet,backs,fronts)=>{
     const minimal={...sheet,charms:(sheet.charms||[]).map(c=>({id:c.id,poolId:c.poolId,...(c.side==='L'||c.side==='R'?{side:c.side}:{})}))};
     const data=Object.fromEntries(['id','sheetId','fileBase','metal','roseStockId','rosePlanJson','rosePlan','placements','charms'].filter(k=>minimal[k]!==undefined).map(k=>[k,minimal[k]]));
